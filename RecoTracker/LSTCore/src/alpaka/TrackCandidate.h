@@ -170,11 +170,6 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
           float eta1 = __H2F(quintuplets.eta()[iT5]);
           float phi1 = __H2F(quintuplets.phi()[iT5]);
 
-          float iEmbedT5[Params_T5::kEmbed];
-          CMS_UNROLL_LOOP for (unsigned k = 0; k < Params_T5::kEmbed; ++k) {
-            iEmbedT5[k] = quintuplets.t5Embed()[iT5][k];
-          }
-
           // Cross-clean against both pT5s and pT3s
           for (unsigned int jx : cms::alpakatools::uniform_elements_x(acc, loop_bound)) {
             float eta2, phi2;
@@ -190,24 +185,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
             float dEta = alpaka::math::abs(acc, eta1 - eta2);
             float dPhi = cms::alpakatools::deltaPhi(acc, phi1, phi2);
             float dR2 = dEta * dEta + dPhi * dPhi;
-
-            if (jx < pixelQuintuplets.nPixelQuintuplets()) {
-              unsigned int jT5 = pixelQuintuplets.quintupletIndices()[jx];
-              float d2 = 0.f;
-              // Compute distance-squared between the two t5 embeddings.
-              CMS_UNROLL_LOOP for (unsigned k = 0; k < Params_T5::kEmbed; ++k) {
-                float df = iEmbedT5[k] - quintuplets.t5Embed()[jT5][k];
-                d2 += df * df;
-              }
-              if ((dR2 < 0.02f && d2 < 0.1f) || (dR2 < 1e-3f && d2 < 1.0f)) {
-                quintuplets.isDup()[iT5] = true;
-              }
-            } else if (dR2 < 1e-3f) {
+            if (dR2 < 1e-3f)
               quintuplets.isDup()[iT5] = true;
-            }
-
-            if (quintuplets.isDup()[iT5])
-              break;
           }
         }
       }
