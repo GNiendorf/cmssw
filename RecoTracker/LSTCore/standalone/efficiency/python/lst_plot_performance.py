@@ -136,7 +136,13 @@ def plot(args):
 
 
     if params["breakdown"]:
-        params["legend_labels"] = ["TC" ,"pT5" ,"pT3" ,"T5" ,"pLS"]
+        params["legend_labels"] = [
+            "All LST objects",          # ← was "TC"
+            "pT5",
+            "pT3",
+            "T5",
+            r"Unused #it{initial} iteration seeds"  # ← was "pLS"
+        ]
     else:
         params["legend_labels"] = [args.objecttype]
 
@@ -412,30 +418,40 @@ def get_chargestr(charge):
 #______________________________________________________________________________________________________
 def set_label(eff, output_name, raw_number):
     if "phi" in output_name:
-        title = "#phi"
+        title = "Simulated track #phi"
     elif "_dz" in output_name:
-        title = "z [cm]"
+        title = "Simulated track z [cm]"
     elif "_dxy" in output_name:
-        title = "d0 [cm]"
+        title = "Simulated track d_{0} [cm]"
     elif "_vxy" in output_name:
-        title = "r_{vertex} [cm]"
+        title = "Simulated track r_{vertex} [cm]"
     elif "_pt" in output_name:
-        title = "p_{T} [GeV]"
+        title = "Simulated track p_{T} [GeV]"
     elif "_hit" in output_name:
         title = "hits"
     elif "_lay" in output_name:
         title = "layers"
     else:
-        title = "#eta"
-    eff.GetXaxis().SetTitle(title)
+        title = "Simulated track #eta"
+
+    if "fakerate" in output_name or "duplrate" in output_name:
+        title = title.replace("Simulated ", "")
+        title = title[0].upper() + title[1:]
+
+    xax = eff.GetXaxis()
+    #eff.GetYaxis().SetTitleOffset(1.4)
+    xax.SetTitle(title)
+    #xax.SetLabelOffset(0.02)
+    xax.SetTitleOffset(1.2)
+
     if "fakerate" in output_name:
-        eff.GetYaxis().SetTitle("Fake Rate")
+        eff.GetYaxis().SetTitle("Fake rate")
     elif "duplrate" in output_name:
-        eff.GetYaxis().SetTitle("Duplicate Rate")
+        eff.GetYaxis().SetTitle("Duplicate rate")
     elif "inefficiency" in output_name:
-        eff.GetYaxis().SetTitle("Inefficiency")
+        eff.GetYaxis().SetTitle("Tracking inefficiency")
     else:
-        eff.GetYaxis().SetTitle("Efficiency")
+        eff.GetYaxis().SetTitle("Tracking efficiency")
     if raw_number:
         eff.GetYaxis().SetTitle("# of objects of interest")
     eff.GetXaxis().SetTitleSize(0.05)
@@ -445,69 +461,64 @@ def set_label(eff, output_name, raw_number):
 
 #______________________________________________________________________________________________________
 def draw_label(params):
-    version_tag = params["git_hash"]
-    sample_name = params["sample_name"]
-    pdgidstr = get_pdgidstr(params["pdgid"])
-    chargestr = get_chargestr(params["charge"])
+    """
+    Draws the 3-row CMS label block and returns the y-coordinate
+    just below the last row so draw_plot() can place the legend.
+    """
+    # Unpack what we need
     output_name = params["output_name"]
-    n_events_processed = params["nevts"]
-    ptcut = params["pt_cut"]
-    etacut = params["eta_cut"]
-    # Label
-    t = r.TLatex()
+    ptcut       = params["pt_cut"]
+    etacut      = params["eta_cut"]
 
-    # Draw information about sample, git version, and types of particles
-    t.SetTextAlign(11) # align bottom left corner of text
-    t.SetTextColor(r.kBlack)
-    t.SetTextSize(0.04)
-    x = r.gPad.GetX1() + r.gPad.GetLeftMargin()
-    y = r.gPad.GetY2() - r.gPad.GetTopMargin() + 0.09 + 0.03
-    sample_name_label = "Sample:" + sample_name
-    sample_name_label += "   Version tag:" + version_tag
-    if n_events_processed:
-        sample_name_label +="  N_{evt}:" + n_events_processed
-    t.DrawLatexNDC(x,y,"#scale[0.9]{#font[42]{%s}}" % sample_name_label)
-
-    x = r.gPad.GetX1() + r.gPad.GetLeftMargin()
-    y = r.gPad.GetY2() - r.gPad.GetTopMargin() + 0.045 + 0.03
-
+    # ── Build the fiducial (third) row exactly as before ──────────────────
     etacutstr = "|#eta| < 4.5"
-    if params["selection"] == "loweta":
-        etacutstr = "|#eta| < 2.4"
-    if params["selection"] == "xtr":
-        etacutstr = "x-reg"
-    if params["selection"] == "vtr":
-        etacutstr = "not x-reg"
-    if "eff" in output_name:
-        if "_pt" in output_name:
-            fiducial_label = "{etacutstr}, |Vtx_{{z}}| < 30 cm, |Vtx_{{xy}}| < 2.5 cm".format(etacutstr=etacutstr)
-        elif "_eta" in output_name:
-            fiducial_label = "p_{{T}} > {pt} GeV, |Vtx_{{z}}| < 30 cm, |Vtx_{{xy}}| < 2.5 cm".format(pt=ptcut)
-        elif "_dz" in output_name:
-            fiducial_label = "{etacutstr}, p_{{T}} > {pt} GeV, |Vtx_{{xy}}| < 2.5 cm".format(pt=ptcut, etacutstr=etacutstr)
-        elif "_dxy" in output_name:
-            fiducial_label = "{etacutstr}, p_{{T}} > {pt} GeV, |Vtx_{{z}}| < 30 cm".format(pt=ptcut, etacutstr=etacutstr)
-        elif "_vxy" in output_name:
-            fiducial_label = "{etacutstr}, p_{{T}} > {pt} GeV, |Vtx_{{z}}| < 30 cm".format(pt=ptcut, etacutstr=etacutstr)
-        else:
-            fiducial_label = "{etacutstr}, p_{{T}} > {pt} GeV, |Vtx_{{z}}| < 30 cm, |Vtx_{{xy}}| < 2.5 cm".format(pt=ptcut, etacutstr=etacutstr)
-        particleselection = ((", Particle:" + pdgidstr) if pdgidstr else "" ) + ((", Charge:" + chargestr) if chargestr else "" )
-        fiducial_label += particleselection
-    # If fake rate or duplicate rate plot follow the following fiducial label rule
-    elif "fakerate" in output_name or "duplrate" in output_name:
-        if "_pt" in output_name:
-            fiducial_label = "|#eta| < {eta}".format(eta=etacut)
-        elif "_eta" in output_name:
-            fiducial_label = "p_{{T}} > {pt} GeV".format(pt=ptcut)
-        else:
-            fiducial_label = "|#eta| < {eta}, p_{{T}} > {pt} GeV".format(pt=ptcut, eta=etacut)
-    t.DrawLatexNDC(x,y,"#scale[0.9]{#font[42]{%s}}" % fiducial_label)
+    if params["selection"] == "loweta": etacutstr = "|#eta| < 2.4"
+    if params["selection"] == "xtr":    etacutstr = "x-reg"
+    if params["selection"] == "vtr":    etacutstr = "not x-reg"
 
-    # Draw CMS label
-    cms_label = "Simulation"
-    x = r.gPad.GetX1() + r.gPad.GetLeftMargin()
-    y = r.gPad.GetY2() - r.gPad.GetTopMargin() + 0.005
-    t.DrawLatexNDC(x,y,"#scale[1.25]{#font[61]{CMS}} #scale[1.1]{#font[52]{%s}}" % cms_label)
+    if "eff" in output_name:
+        if "_pt"  in output_name:
+            fid = f"{etacutstr}, |z_{{vertex}}| < 30 cm, r_{{vertex}} < 2.5 cm"
+        elif "_eta" in output_name:
+            fid = f"p_{{T}} > {ptcut} GeV, |z_{{vertex}}| < 30 cm, r_{{vertex}} < 2.5 cm"
+        elif "_dz"  in output_name:
+            fid = f"{etacutstr}, p_{{T}} > {ptcut} GeV, r_{{vertex}} < 2.5 cm"
+        elif "_dxy" in output_name or "_vxy" in output_name:
+            fid = f"{etacutstr}, p_{{T}} > {ptcut} GeV, |z_{{vertex}}| < 30 cm"
+        else:
+            fid = f"{etacutstr}, p_{{T}} > {ptcut} GeV, |z_{{vertex}}| < 30 cm, r_{{vertex}} < 2.5 cm"
+    else:
+        if "_pt" in output_name:
+            fid = etacutstr
+        else:
+            fid = f"p_{{T}} > {ptcut} GeV"
+
+    # ── Draw the three rows ──────────────────────────────────────────────
+    t = r.TLatex();  t.SetNDC()
+    pad = r.gPad
+    x   = pad.GetLeftMargin() + 0.025
+    pad = r.gPad
+    y0  = 1.0 - pad.GetTopMargin() - 0.08
+    dy = 0.06           # line spacing
+
+    # Row 1 – CMS Simulation Preliminary  (≈20 % bigger)
+    t.SetTextFont(61); t.SetTextSize(0.062)     # bold “CMS”
+    t.DrawLatex(x,      y0, "CMS")
+    t.SetTextFont(52); t.SetTextSize(0.054)     # italic “Simulation Preliminary”
+    t.DrawLatex(x + 0.14, y0, "Simulation Preliminary")
+
+    # Row 2 – √s line
+    t.SetTextFont(42); t.SetTextSize(0.042)
+    y1 = y0 - dy
+    t.DrawLatex(x, y1, "#sqrt{s} = 14 TeV PU200 t#bar{t}")
+
+    # Row 3 – fiducial cuts
+    t.SetTextFont(42); t.SetTextSize(0.038)
+    y2 = y1 - dy
+    t.DrawLatex(x, y2, fid)
+
+    # Return y just below the third row so the legend can sit flush under it
+    return y2 - 0.035
 
 #______________________________________________________________________________________________________
 def draw_plot(effs, nums, dens, params):
@@ -522,10 +533,14 @@ def draw_plot(effs, nums, dens, params):
 
     # Get Canvas
     c1 = r.TCanvas()
-    c1.SetBottomMargin(0.15)
-    c1.SetLeftMargin(0.15)
-    c1.SetTopMargin(0.22)
-    c1.SetRightMargin(0.15)
+    # Make plots square
+    c1.SetCanvasSize(800, 800)
+    c1.SetBottomMargin(0.17)
+    #c1.SetLeftMargin(0.18)
+    c1.SetLeftMargin(0.17)
+    c1.SetTopMargin(0.05)
+    c1.SetRightMargin(0.05)
+    c1.SetTicks(1, 1)
 
     # Set logx
     if "_pt" in output_name:
@@ -534,30 +549,83 @@ def draw_plot(effs, nums, dens, params):
     # Set title
     # print(output_name)
     # print(parse_plot_name(output_name))
-    effs[0].SetTitle(parse_plot_name(output_name))
+    #effs[0].SetTitle(parse_plot_name(output_name))
 
     # Draw the efficiency graphs
     colors = [1, 2, 3, 4, 6]
-    markerstyles = [20, 26, 28, 24, 27]
-    markersize = 1.2
-    linewidth = 2
+    markerstyles = [20, 22, 28, 24, 27]
+    markersize = 1.
+    linewidth = 1
     for i, eff in enumerate(effs):
         if i == 0:
-            eff.Draw("epa")
+            eff.Draw("APEZ")
         else:
-            eff.Draw("epsame")
+            eff.Draw("PEZsame")
         eff.SetMarkerStyle(markerstyles[i])
-        eff.SetMarkerSize(markersize)
+        if markerstyles[i] == 20:
+            eff.SetMarkerSize(0.9)
         eff.SetLineWidth(linewidth)
         eff.SetMarkerColor(colors[i])
         eff.SetLineColor(colors[i])
         set_label(eff, output_name, raw_number=False)
 
-    nleg = len(legend_labels)
-    legend = r.TLegend(0.15,0.75-nleg*0.04,0.25,0.75)
+    if "_pt" in output_name and params["metric"] == "eff":
+        xax  = effs[0].GetXaxis()
+        xmax = xax.GetXmax()              # keep existing upper edge
+        xax.SetLimits(0.5, xmax)          # works for TGraph* on a log-x canvas
+
+    # ── Draw the stacked CMS block, get the Y where it ends ──
+    y_after_label = draw_label(params)
+
+    # ------------------------------------------------------------------
+    # Build the legend
+    #   • comparison plots → 2 columns (same as before)
+    #   • normal plots     → first row: 4 entries   second row: 1 entry
+    # ------------------------------------------------------------------
+    legend_labels = (
+        ["Legacy T5 DNN", "T3/T5/pT3 DNNs"]
+        #["pre-Embed", "T5, pLS Embed"]
+        if params["compare"]
+        else params["legend_labels"]
+    )
+
+    # layout settings
+    if params["compare"]:
+        ncols        = 2
+        vert_offset  = 0.01      # legend sits flush under the CMS block
+        legend_width = 0.65     # full-width box as before
+        col_margin   = 0.15     # default icon-to-text spacing
+        col_gap      = 0.06     # default gap between the two columns
+        #col_gap = 0.02
+        row_v        = 0.04     # per-row height (unchanged)
+    else:
+        ncols        = 4
+        vert_offset  = 0.015   # <─ push legend 0.02 units below the CMS block
+        legend_width = 0.54   #   just wide enough for 4 columns
+        col_margin   = 0.15   # <─ restore default icon-to-text spacing
+        col_gap      = 0.35   # <─ give pT5 / pT3 / T5 a bit more room
+        row_v = 0.05
+
+    nrows   = (len(legend_labels) + ncols - 1) // ncols
+    leg_y2  = y_after_label - vert_offset
+    leg_y1  = leg_y2 - row_v * nrows
+
+    pad     = r.gPad
+    LEFT    = pad.GetLeftMargin() + 0.02
+
+    legend  = r.TLegend(LEFT, leg_y1, LEFT + legend_width, leg_y2)
+    legend.SetNColumns(ncols)
+    legend.SetMargin(col_margin)
+    legend.SetColumnSeparation(col_gap)
+
+    legend.SetBorderSize(0)
+    legend.SetFillStyle(0)
+    legend.SetTextFont(42)
+    legend.SetTextSize(0.040)
+
     for i, label in enumerate(legend_labels):
-        legend.AddEntry(effs[i], label)
-    legend.Draw("same")
+        legend.AddEntry(effs[i], label, "pe")
+    legend.Draw()
 
     # Compute the yaxis_max
     yaxis_max = 0
@@ -573,44 +641,43 @@ def draw_plot(effs, nums, dens, params):
             yaxis_min = effs[0].GetY()[i]
 
     # Set Yaxis range
-    effs[0].GetYaxis().SetRangeUser(0, 1.02)
+    effs[0].GetYaxis().SetRangeUser(0, 1.6)
     if "zoom" not in output_name:
-        effs[0].GetYaxis().SetRangeUser(0, 1.02)
+        effs[0].GetYaxis().SetRangeUser(0, 1.6)
     else:
         if "fakerate" in output_name:
-            effs[0].GetYaxis().SetRangeUser(0.0, yaxis_max * 1.1)
+            effs[0].GetYaxis().SetRangeUser(0.0, yaxis_max * 1.6)
         elif "duplrate" in output_name:
-            effs[0].GetYaxis().SetRangeUser(0.0, yaxis_max * 1.1)
+            effs[0].GetYaxis().SetRangeUser(0.0, yaxis_max * 1.6)
         else:
-            effs[0].GetYaxis().SetRangeUser(0.6, 1.02)
+            effs[0].GetYaxis().SetRangeUser(0.6, 1.6)
 
     # Set xaxis range
     if "_eta" in output_name:
-        effs[0].GetXaxis().SetLimits(-4.5, 4.5)
+        effs[0].GetXaxis().SetLimits(-4.2, 4.2)
 
     # Draw label
-    draw_label(params)
+    #draw_label(params)
 
     # Output file path
     output_fullpath = output_dir + "/mtv/var/" + output_name + ".pdf"
 
     # Save
-    c1.SetGrid()
     c1.SaveAs("{}".format(output_fullpath))
-    c1.SaveAs("{}".format(output_fullpath.replace(".pdf", ".png")))
+    #c1.SaveAs("{}".format(output_fullpath.replace(".pdf")))
     effs[0].SetName(output_name)
 
     for i, num in enumerate(nums):
         set_label(num, output_name, raw_number=True)
         num.Draw("hist")
         c1.SaveAs("{}".format(output_fullpath.replace("/mtv/var/", "/mtv/num/").replace(".pdf", "_num{}.pdf".format(i))))
-        c1.SaveAs("{}".format(output_fullpath.replace("/mtv/var/", "/mtv/num/").replace(".pdf", "_num{}.png".format(i))))
+        #c1.SaveAs("{}".format(output_fullpath.replace("/mtv/var/", "/mtv/num/").replace(".pdf", "_num{}.png".format(i))))
 
     for i, den in enumerate(dens):
         set_label(den, output_name, raw_number=True)
         den.Draw("hist")
         c1.SaveAs("{}".format(output_fullpath.replace("/mtv/var/", "/mtv/den/").replace(".pdf", "_den{}.pdf".format(i))))
-        c1.SaveAs("{}".format(output_fullpath.replace("/mtv/var/", "/mtv/den/").replace(".pdf", "_den{}.png".format(i))))
+        #c1.SaveAs("{}".format(output_fullpath.replace("/mtv/var/", "/mtv/den/").replace(".pdf", "_den{}.png".format(i))))
 
     # Double ratio if more than one nums are provided
     # Take the first num as the base
@@ -636,7 +703,7 @@ def draw_plot(effs, nums, dens, params):
             other.SetLineWidth(linewidth)
             other.SetLineColor(colors[i+1])
             c1.SaveAs("{}".format(output_fullpath.replace("/mtv/var/", "/mtv/ratio/").replace(".pdf", "_ratio{}.pdf".format(i))))
-            c1.SaveAs("{}".format(output_fullpath.replace("/mtv/var/", "/mtv/ratio/").replace(".pdf", "_ratio{}.png".format(i))))
+            #c1.SaveAs("{}".format(output_fullpath.replace("/mtv/var/", "/mtv/ratio/").replace(".pdf", "_ratio{}.png".format(i))))
 
 #______________________________________________________________________________________________________
 def plot_standard_performance_plots(args):
@@ -784,4 +851,5 @@ def plot_standard_performance_plots(args):
 if __name__ == "__main__":
 
     main()
+
 
