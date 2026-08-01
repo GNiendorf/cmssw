@@ -8,6 +8,13 @@ using namespace ALPAKA_ACCELERATOR_NAMESPACE::lst;
 
 //________________________________________________________________________________________________________________________________
 void createOutputBranches() {
+  // Event identity from the input tracking ntuple: aligns output entries (which are written in
+  // stream-completion order under multi-streaming) back to tracking-ntuple events, and provides
+  // the stable event key for event-level train/test splits
+  ana.tx->createBranch<unsigned int>("run");
+  ana.tx->createBranch<unsigned int>("lumi");
+  ana.tx->createBranch<unsigned long long>("evt");
+
   createSimTrackContainerBranches();
   createTrackCandidateBranches();
 
@@ -46,6 +53,10 @@ void createOutputBranches() {
 //________________________________________________________________________________________________________________________________
 void fillOutputBranches(LSTEvent* event) {
   float matchfrac = 0.75;
+
+  ana.tx->setBranch<unsigned int>("run", trk.getU("run"));
+  ana.tx->setBranch<unsigned int>("lumi", trk.getU("lumi"));
+  ana.tx->setBranch<unsigned long long>("evt", trk.getUL("event"));
 
   unsigned int n_accepted_simtrk = setSimTrackContainerBranches(event);
 
@@ -131,6 +142,9 @@ void createT3DNNBranches() {
   ana.tx->createBranch<std::vector<float>>("t3_centerX");
   ana.tx->createBranch<std::vector<float>>("t3_centerY");
   ana.tx->createBranch<std::vector<float>>("t3_radius");
+  ana.tx->createBranch<std::vector<float>>("t3_fakeScore");
+  ana.tx->createBranch<std::vector<float>>("t3_promptScore");
+  ana.tx->createBranch<std::vector<float>>("t3_displacedScore");
   ana.tx->createBranch<std::vector<bool>>("t3_partOfPT5");
   ana.tx->createBranch<std::vector<bool>>("t3_partOfT5");
   ana.tx->createBranch<std::vector<bool>>("t3_partOfPT3");
@@ -372,6 +386,10 @@ void createMiniDoubletBranches() {
   ana.tx->createBranch<std::vector<float>>("md_other_x");   // other hit x
   ana.tx->createBranch<std::vector<float>>("md_other_y");   // other hit y
   ana.tx->createBranch<std::vector<float>>("md_other_z");   // other hit z
+  // hit index of the anchor/other hit: row into the tracking ntuple ph2_* branches for
+  // outer-tracker MDs (md_isPLS == 0), row into pix_* branches for pLS pseudo-MDs (md_isPLS == 1)
+  ana.tx->createBranch<std::vector<int>>("md_anchorHitIdx");
+  ana.tx->createBranch<std::vector<int>>("md_otherHitIdx");
   // type of the module where the mini-doublet sit (type = 1 (PS), 0 (2S))
   ana.tx->createBranch<std::vector<int>>("md_type");
   // layer index of the module where the mini-doublet sit (layer = 1 2 3 4 5 6 (barrel) 7 8 9 10 11 (endcap))
@@ -546,6 +564,7 @@ void createPixelLineSegmentBranches() {
   // phi (taken from phi of the 3-vector from see_stateTrajGlbPx/Py/Pz)
   ana.tx->createBranch<std::vector<float>>("pLS_phi");
   ana.tx->createBranch<std::vector<int>>("pLS_nhit");         // Number of actual hit: 3 if triplet, 4 if quadruplet
+  ana.tx->createBranch<std::vector<int>>("pLS_seedIdx");      // row into the tracking ntuple see_* branches
   ana.tx->createBranch<std::vector<float>>("pLS_hit0_x");     // pLS's reco hit0 x
   ana.tx->createBranch<std::vector<float>>("pLS_hit0_y");     // pLS's reco hit0 y
   ana.tx->createBranch<std::vector<float>>("pLS_hit0_z");     // pLS's reco hit0 z
@@ -644,6 +663,7 @@ void createPixelQuintupletBranches() {
 //________________________________________________________________________________________________________________________________
 void createOccupancyBranches() {
   ana.tx->createBranch<std::vector<int>>("module_layers");
+  ana.tx->createBranch<std::vector<int>>("module_detIds");
   ana.tx->createBranch<std::vector<int>>("module_subdets");
   ana.tx->createBranch<std::vector<int>>("module_rings");
   ana.tx->createBranch<std::vector<int>>("module_rods");
@@ -1034,6 +1054,8 @@ std::map<unsigned int, unsigned int> setMiniDoubletBranches(LSTEvent* event,
       ana.tx->pushbackToBranch<float>("md_other_x", other_x);
       ana.tx->pushbackToBranch<float>("md_other_y", other_y);
       ana.tx->pushbackToBranch<float>("md_other_z", other_z);
+      ana.tx->pushbackToBranch<int>("md_anchorHitIdx", hit0);
+      ana.tx->pushbackToBranch<int>("md_otherHitIdx", hit1);
       ana.tx->pushbackToBranch<int>("md_type", isPS);
       ana.tx->pushbackToBranch<int>("md_layer", layer);
       ana.tx->pushbackToBranch<int>("md_detId", detId);
@@ -1831,6 +1853,7 @@ std::map<unsigned int, unsigned int> setPixelLineSegmentBranches(
     ana.tx->pushbackToBranch<float>("pLS_deltaPhi", pixelSeeds.deltaPhi()[ipLS]);
     ana.tx->pushbackToBranch<int>("pLS_nhit", hit_idx.size());
     unsigned int seedIdx = pixelSeeds.seedIdx()[ipLS];
+    ana.tx->pushbackToBranch<int>("pLS_seedIdx", seedIdx);
     for (size_t ihit = 0; ihit < trk_see_hitIdx[seedIdx].size() && ihit < lst::Params_pLS::kHits; ++ihit) {
       int hitidx = trk_see_hitIdx[seedIdx][ihit];
       bool isPixel = static_cast<HitType>(trk_see_hitType[seedIdx][ihit]) == HitType::Pixel;
@@ -2526,6 +2549,7 @@ void setOccupancyBranches(LSTEvent* event) {
   auto trackCandidatesBase = event->getTrackCandidatesBase();
 
   std::vector<int> moduleLayer;
+  std::vector<int> moduleDetId;
   std::vector<int> moduleSubdet;
   std::vector<int> moduleRing;
   std::vector<int> moduleRod;
@@ -2543,6 +2567,7 @@ void setOccupancyBranches(LSTEvent* event) {
   for (unsigned int lowerIdx = 0; lowerIdx <= modules.nLowerModules(); lowerIdx++) {
     //layer = 0, subdet = 0 => pixel module
     moduleLayer.push_back(modules.layers()[lowerIdx]);
+    moduleDetId.push_back(modules.detIds()[lowerIdx]);
     moduleSubdet.push_back(modules.subdets()[lowerIdx]);
     moduleRing.push_back(modules.rings()[lowerIdx]);
     moduleRod.push_back(modules.rods()[lowerIdx]);
@@ -2562,6 +2587,7 @@ void setOccupancyBranches(LSTEvent* event) {
   }
 
   ana.tx->setBranch<std::vector<int>>("module_layers", moduleLayer);
+  ana.tx->setBranch<std::vector<int>>("module_detIds", moduleDetId);
   ana.tx->setBranch<std::vector<int>>("module_subdets", moduleSubdet);
   ana.tx->setBranch<std::vector<int>>("module_rings", moduleRing);
   ana.tx->setBranch<std::vector<int>>("module_rods", moduleRod);
@@ -2757,6 +2783,9 @@ void setT3DNNBranches(LSTEvent* event, float matchfrac) {
       ana.tx->pushbackToBranch<float>("t3_centerX", triplets.centerX()[tripletIndex]);
       ana.tx->pushbackToBranch<float>("t3_centerY", triplets.centerY()[tripletIndex]);
       ana.tx->pushbackToBranch<float>("t3_radius", triplets.radius()[tripletIndex]);
+      ana.tx->pushbackToBranch<float>("t3_fakeScore", triplets.fakeScore()[tripletIndex]);
+      ana.tx->pushbackToBranch<float>("t3_promptScore", triplets.promptScore()[tripletIndex]);
+      ana.tx->pushbackToBranch<float>("t3_displacedScore", triplets.displacedScore()[tripletIndex]);
       ana.tx->pushbackToBranch<bool>("t3_partOfPT5", triplets.partOfPT5()[tripletIndex]);
       ana.tx->pushbackToBranch<bool>("t3_partOfT5", triplets.partOfT5()[tripletIndex]);
       ana.tx->pushbackToBranch<bool>("t3_partOfPT3", triplets.partOfPT3()[tripletIndex]);

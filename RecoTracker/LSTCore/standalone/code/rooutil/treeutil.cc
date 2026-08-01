@@ -116,6 +116,7 @@ short const& TreeUtil::getS(std::string const& name) { return get<short>(name); 
 unsigned short const& TreeUtil::getUS(std::string const& name) { return get<unsigned short>(name); }
 int const& TreeUtil::getI(std::string const& name) { return get<int>(name); }
 unsigned int const& TreeUtil::getU(std::string const& name) { return get<unsigned int>(name); }
+unsigned long long const& TreeUtil::getUL(std::string const& name) { return get<unsigned long long>(name); }
 float const& TreeUtil::getF(std::string const& name) { return get<float>(name); }
 std::vector<short> const& TreeUtil::getVS(std::string const& name) { return get<std::vector<short>>(name); }
 std::vector<unsigned short> const& TreeUtil::getVUS(std::string const& name) {

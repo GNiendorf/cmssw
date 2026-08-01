@@ -69,6 +69,7 @@ public:
   unsigned short const& getUS(std::string const& name);
   int const& getI(std::string const& name);
   unsigned int const& getU(std::string const& name);
+  unsigned long long const& getUL(std::string const& name);
   float const& getF(std::string const& name);
   std::vector<short> const& getVS(std::string const& name);
   std::vector<unsigned short> const& getVUS(std::string const& name);
