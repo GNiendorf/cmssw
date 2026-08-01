@@ -1226,6 +1226,64 @@ acceptable to hit the bar first and refine later. Expect this to take care and i
     by ABSOLUTE mX floors alone (post-claim, jet-blind, no proximity anywhere): IP-5+
     mX floor = 85 fakes per lost sim, best rate in the study. Maintainer's
     no-proximity preference fully honored; tournament closed.
+- **2026-08-01 M14 — RECON QUICK WINS EXECUTED (flags only, no retrain); NEW WINNER
+  m14_j1 (fake .0571 / dup .3143, EVERY reachable floor cleared STRICTLY).** 11 300-evt
+  A/Bs on the w7 anchor, `ab_m14_{q1,q2,q2b,q3,q3b,q3c,q4a,q4b,q4c,j1..j6}.*`.
+  - **CODE (2 minimal `main.cc` additions, 3 bit-exact regression gates on 20 evts,
+    23/23 branches vs `ab_m12_w7.root`): `-MRI` = IP-5+ OR-rescue threshold (exempt-5+
+    keeps `-MR`; unset -> follows `-MR`), and `-Q4`/`-Q5` = POST-CLAIM absolute mX floors
+    on the IP T4-class / 5+ branches (applied after `k9Arbitrate`, so kills free no hits
+    and nothing backfills — the escape hatch from the M9 claim conservation).** Gates:
+    (1) anchor flags on the new binary, (2) explicit `-MRI` == `-MR`, (3) `-Q4/-Q5 -1e8`
+    (code path live, non-binding) — all bit-exact.
+  - **Lever 1 (recon IP@mX>=1.5, realized pre-claim as `-M4 1.5 -M5 1e9 -M6 1e9
+    -MRI 1.5`): fake .0614 -> .0561, every reachable band and length still >= baseline.**
+    The recon predicted .0551 post-hoc; the pre-claim realization lands within .001 of it
+    and keeps more efficiency (backfill).
+  - **Lever 2 (branch-aware `-MR`) as written (IP rescue -0.8 -> -0.2 with `-M5`/`-M6`
+    live) is WEAK: fake .0598.** The strong form of the branch-aware rescue is lever 1's
+    (pure-mX IP-5+ cut). Scanning that axis tighter (`-MRI 2.5`) is SATURATED: fake stays
+    .0561 while vxy[1,5)/[5,10) fall .011/.030 — the IP-5+ branch carries real displaced
+    tracks (the M7c "vxy<10 displaced have prompt-like dca" hole).
+  - **Lever 3 (`-M4D` exempt-T4 displaced admission) reproduces the recon ledger:**
+    -0.5 -> -0.75 -> -1.0 -> -1.5 moves dxy[1,5) .5161/.5236/.5236/.5311, dxy[5,10)
+    .2316/.2351/.2386/.2421, dxy[10,30) .0214/.0235/.0235/.0278 while fake climbs
+    .0561/.0572/.0586/.0621 and BARREL LENGTH falls +.007/-.000/-.009/-.030 (the M12
+    w-series length cost, confirmed). **New finding: `-M4` (IP-T4 mX kill) is a nearly
+    free LENGTH lever** — 1.5 -> 2.5 buys +.029 barrel length at zero fake/displaced cost,
+    which is what makes `-M4D -1.5` length-legal (j2: all floors + lengths pass at fake
+    .0621).
+  - **Lever 4 (post-claim mX floor) MEASURED WEAKER THAN THE PRE-CLAIM EQUIVALENT.** Same
+    IP@1.5 kill applied post-claim (q4c) vs pre-claim (q3c): fake .0562 vs .0572 but
+    vxy[1,5)/[5,10)/[10,30) .7922/.7003/.6520 vs .7979/.7208/.6724 — **backfill is worth
+    more efficiency than it costs in fake, so the K9-saturation escape hatch is NOT the
+    win the shadow-recon predicted.** A high post-claim floor (`-Q5 2.5`, 23.8 TC/evt)
+    costs .04 of vxy[5,10) for .0006 of fake. Flags kept (banked, no-op by default).
+  - **JOINT SCAN: `-MD` as a displaced rescue on the exempt-5+ branch is DEAD** (offline,
+    from the M13 chain dump): in the mX window a tighter `-MR` would kill, true fraction
+    is .479 and EVERY mD rescue cut has a LOWER true fraction (mD>=-1: .399) — re-confirms
+    M12's "mX beats mD on exempt-5+". Tightening `-MR` itself (exempt-5+, 85% of residual
+    fake) buys fake hard (.0621 -> .0559 at -0.2) but costs exactly 1 sim of the 285-sim
+    dxy[5,10) band and 5 of vxy[5,10); -0.5 pays the same displaced with less fake gain
+    (-0.2 dominates -0.5).
+  - **WINNER m14_j1 = `-M4 2.5 -M5 1e9 -M6 1e9 -MRI 1.5 -M4D -0.75 -MR -0.800 -MD 1e9
+    -U4 0 -U5 0 -U6 0 -X 0.5 -G 6 -L 0.5 -F 0.3 -B 10 -H 1 -W 0.25 -e 0`:** fake .0571
+    (-7.0% vs w7), dup .3143 (LOWEST of every strict floor-passer), eff .8172, vxy
+    .8505/.7958/.7177/.6708, dxy .8426/.5247/.2351/.0235, lengths +.028/+.063/+.780.
+    diag_dups: genuine chain-chain dup pairs **1610 vs w7's 2111 (-24%)**; hybrid
+    chain-pix artifact 86.7%; pix-pix invariant at 12433. TEST-60 (frozen): every band
+    above baseline (vxy +.002/+.029/+.064/+.048, dxy +.009/+.034/+.056, eta all up),
+    lengths +.029/+.056/+.774, fake .0548 vs w7 .0589.
+  - **ALTERNATIVE m14_j4** (`-M4 3.5 -MR -0.200 -M4D -1.5`, rest as j1): fake **.0559**,
+    dup .3037, genuine chain-chain dups **1367 (-35% vs w7)**, dxy[10,30) .0278 (ties the
+    best-anywhere record) — but dxy[5,10) .2246 is 1 sim BELOW baseline (inside the
+    -0.005 noise band; ties j1 exactly on test-60). Offered as the frontier point if a
+    1-sim dxy[5,10) payment is acceptable; j1 wins under priority-1 dominance.
+  - **CEILING STATEMENT: the flag-only fake axis is exhausted at ~.056.** Every remaining
+    fake lever prices displaced efficiency; the residual lives where M9/M13 said it does
+    (large-DCA 5+), and only a displaced-capable discriminator for that branch moves it
+    further. dxy[10,30) unchanged at .0235-.0278 by every acceptance lever (formation-side,
+    as established).
 - **2026-08-01 JET SIZING (maintainer question): a 40M-edge jet event.** Memory:
   production design stores only theta-passing edges (~12-16 B; rejects never
   materialized) -> 50-200 MB at 10-30% pass; exact-count allocation + 5b ceiling with
@@ -1380,3 +1438,15 @@ LATER separate pass (same prototype, jet-enriched ntuple) once the machinery exi
 - DISCIPLINE carried over from the offline campaign: recon-first every stage (port,
   measure, fan out on measurements — never optimize during the port); regression gates
   everywhere; commit at every milestone.
+
+**P5/P6 TEMPERED (maintainer, 2026-08-01):** the original displaced study showed upstream
+loss is spread across SEVERAL serial mechanisms (module map AND segment cuts AND triplet
+cuts — the whole chain is IP-tuned), so no single fix (P6 map alone, or P5 alone) buys a
+large gain; recovery requires a COORDINATED upstream retune, a bigger program than the P5/
+P6 phrasing implies (and the LSTGeometry runtime-computed map adds friction to P6). P5's
+t3dnn loosening (esp. displaced WPs on a displaced sample) is the most plausible piece,
+de-risked by the chain layer's demonstrated fake absorption — but judgment deferred until
+we get there; do not treat P5/P6 as booked upside. Below-T3 graph-ification: judged poor
+ROI (LS-graph edges == the uncut T3 candidate set: 10-100x compute for less per-node
+information); the surgical alternative if formation gaps demand it = new LS-level BRIDGE
+edge types inside the existing chain formalism, not LS nodes.

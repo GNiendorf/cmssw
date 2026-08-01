@@ -187,6 +187,13 @@ void usage(const char* prog) {
                "              no kill). -M4 IP T4-class (mX), -M5/-M6 IP 5+/6+ (mP), -MD\n"
                "              exempt 5+ (mD), -M4D exempt T4-class (mD), -MR mX OR-rescue.\n"
                "              -MP is an alias setting both -M5 and -M6.\n"
+               "  -MRI <v>    (M14) IP-5+ mX OR-rescue threshold; the exempt-5+ branch keeps\n"
+               "              -MR. Unset = follow -MR (bit-exact legacy).\n"
+               "  -Q4 -Q5 <v> (M14) POST-CLAIM absolute mX floors on the IP-compatible\n"
+               "              T4-class / 5+ branches (-G 6 only, default -1e9 = off). Applied\n"
+               "              after K9 arbitration, so removed chains free NO hits and no\n"
+               "              runner-up backfills -- the escape hatch from the M9 claim\n"
+               "              conservation that makes pre-claim acceptance cuts self-defeating.\n"
                "  -G <0|1|2|3>  1 = K9 acceptance score per\n"
                "              chain is the chain-gate MLP LOGIT (ChainInference over the\n"
                "              ChainFeatures.h vector; thetaChain4/5/6 cut on that scale and\n"
@@ -378,6 +385,21 @@ int main(int argc, char** argv) {
   float m3ThetaR = 1e9f;    // -MR: OR-rescue on mX for BOTH 5+ branches -- a chain that
                             // would be killed survives if mX >= m3ThetaR (1e9 = disabled;
                             // set -MP/-MD to +1e9 and -MR to t for a pure-mX 5+ gate)
+  // M14 lever 2 (branch-aware rescue): -MR is shared by both 5+ branches, but M13 measured
+  // that the rescue owns 73.9% of the residual fake and that the two branches want very
+  // different operating points (the IP branch is under-cut, the exempt branch is the
+  // displaced home and must stay loose). -MRI overrides the rescue threshold for the
+  // IP-compatible (dca < -X) 5+ branch only; the exempt branch keeps -MR. Sentinel 1e30 =
+  // "not given" -> falls back to m3ThetaR, so every pre-M14 command line is bit-exact.
+  constexpr float kMrUnset = 1e30f;
+  float m3ThetaRI = kMrUnset;  // -MRI: IP-5+ OR-rescue on mX (default: follow -MR)
+  // M14 lever 4 (post-claim mX floors). Every other -G 6 kill happens BEFORE the K9 claim,
+  // so freed hits are re-claimed by the runners-up and the claim volume is conserved (the
+  // M9 "K9 claim is SATURATED" finding: acceptance cuts backfill). A POST-claim floor
+  // removes an accepted chain TC after arbitration is finished, with no backfill -- the
+  // M13 shadow-recon lever (absolute mX floor, jet-blind, no proximity). -1e9 = no-op.
+  float q3Floor5 = -1e9f;   // -Q5: post-claim mX floor, IP-compatible (dca < -X) 5+ chains
+  float q3Floor4 = -1e9f;   // -Q4: post-claim mX floor, IP-compatible (dca < -X) T4 chains
   constexpr float kGateKill = 1e9f;    // -G 5: score subtraction for IP chains failing the gate cut
   constexpr float kNoCutTheta = -1e5f; // -G 5: internal K9 base threshold (live chains always pass;
                                        // killed (-1e9) and -A 3-demoted (-1e6) chains always fail)
@@ -437,8 +459,14 @@ int main(int argc, char** argv) {
       dst = &m3ThetaP;
     else if (s == "-MD")
       dst = &m3ThetaD;
+    else if (s == "-MRI")
+      dst = &m3ThetaRI;
     else if (s == "-MR")
       dst = &m3ThetaR;
+    else if (s == "-Q5")
+      dst = &q3Floor5;
+    else if (s == "-Q4")
+      dst = &q3Floor4;
     if (dst == nullptr) {
       args.push_back(argv[a]);
       continue;
@@ -461,6 +489,9 @@ int main(int argc, char** argv) {
     if (m3Theta6 <= -1e9f)
       m3Theta6 = m3ThetaP;
   }
+  // M14: -MRI defaults to -MR (bit-exact fallback for every pre-M14 command line).
+  if (m3ThetaRI >= kMrUnset)
+    m3ThetaRI = m3ThetaR;
 
   while ((opt = getopt(nArgs, args.data(), "i:t:o:n:m:l:e:L:T:F:G:A:a:B:W:H:D:K:R:S:X:Y:Z:Ph")) != -1) {
     switch (opt) {
@@ -1150,10 +1181,12 @@ int main(int argc, char** argv) {
                   " exempt T4-class killed if mD < %.4g;"
                   " IP nL=5 killed if mP < %.4g; IP nL>=6 killed if mP < %.4g;"
                   " exempt 5+ killed if mD < %.4g;"
-                  " OR-rescue mX >= %.4g; exempt-T4 dca floor Z=%.3f cm;"
-                  " exempt-branch legacy thresholds U4/5/6=%.3f/%.3f/%.3f\n",
+                  " OR-rescue mX >= %.4g (IP-5+) / %.4g (exempt-5+); exempt-T4 dca floor Z=%.3f cm;"
+                  " exempt-branch legacy thresholds U4/5/6=%.3f/%.3f/%.3f;"
+                  " post-claim mX floors Q4=%.4g Q5=%.4g\n",
                   chainGate3Available() ? "trained" : "sentinel", dcaSplit, m3Theta4, m3Theta4D, m3Theta5, m3Theta6,
-                  m3ThetaD, m3ThetaR, t4ExemptDcaMin, thetaExempt4, thetaExempt5, thetaExempt6);
+                  m3ThetaD, m3ThetaRI, m3ThetaR, t4ExemptDcaMin, thetaExempt4, thetaExempt5, thetaExempt6, q3Floor4,
+                  q3Floor5);
     else if (chainGateMode == 3)
       std::printf("gate (-G 3, M9 DCA split): dcaSplit=%.3f cm (gate logit below, legacy score at/above);"
                   " exempt-branch thresholds U4/5/6=%.3f/%.3f/%.3f (legacy scale)\n",
@@ -1199,6 +1232,7 @@ int main(int argc, char** argv) {
     long long totSuppByType[3] = {0, 0, 0};  // {pT5 rows, pT3 rows, pLS rows} (-A 2)
     long long totDcaBlocked = 0, totK7Dropped = 0, totGuardKept = 0;  // M7c (-A 2)
     long long totDemoted = 0, totEvidenceOk = 0;                      // M9 (-A 3)
+    long long nPostClaimKilled = 0;                                   // M14 (-Q4/-Q5)
     double totInferMs = 0.0, totWeldMs = 0.0, totArbMs = 0.0, totFillMs = 0.0, totAttachMs = 0.0;
 
     for (long long i = 0; i < nRun; ++i) {
@@ -1258,6 +1292,10 @@ int main(int argc, char** argv) {
       // acceptance cuts come from the separate thetaExempt4/5/6 set (legacy scale) via
       // ArbitrationParams::altThreshold; empty mask (modes 0/1/2) = bit-exact legacy.
       std::vector<char> exemptMask;
+      // M14 (-Q4/-Q5): the -G 6 per-chain 3-class margin mX and the chain dcaXY, kept
+      // alive past the kill block so the POST-claim floors can be applied to the accepted
+      // set. Empty for every other -G mode (the floors are -G 6 only).
+      std::vector<float> m3mX, m3dcaAll;
       if (chainGateMode >= 1 || attachMode) {
         computeChainFeatures(ev, g, chains, scores, cfHyb);
         runChainInference(cfHyb, gateLogit);
@@ -1285,11 +1323,14 @@ int main(int argc, char** argv) {
           std::vector<float> z3;
           runChainInference3(cfHyb, dcaAll, z3);
           exemptMask.assign(nC, 0);
+          m3mX.assign(nC, 0.f);
+          m3dcaAll = dcaAll;
           for (std::size_t c = 0; c < nC; ++c) {
             const float* z = &z3[3 * c];
             const float mP = z[1] - z[0];
             const float mD = z[2] - z[0];
             const float mX = std::max(z[1], z[2]) - z[0];
+            m3mX[c] = mX;
             const int nL = chains.nLayers[c];
             if (nL <= 4) {
               if (dcaAll[c] >= std::max(dcaSplit, t4ExemptDcaMin)) {
@@ -1302,8 +1343,10 @@ int main(int argc, char** argv) {
               }
             } else if (dcaAll[c] < dcaSplit) {
               // IP-compatible 5+: per-length threshold, the -G 6 analogue of -T5/-T6.
+              // M14: the OR-rescue here is -MRI (defaults to -MR); the exempt branch below
+              // keeps -MR, so the two 5+ branches can be cut independently.
               const float thr = nL >= 6 ? m3Theta6 : m3Theta5;
-              if (mP < thr && mX < m3ThetaR)
+              if (mP < thr && mX < m3ThetaRI)
                 chains.score[c] -= kGateKill;
             } else {
               // Exempt (large-DCA) 5+: the M9/M10 residual-fake home. -MD is the -G 6
@@ -1483,6 +1526,28 @@ int main(int argc, char** argv) {
       } else {
         k9Arbitrate(ev, chains, ap, accepted, attachMode == 1 ? &attachBypass : nullptr);
         nPass1 = accepted.size();
+      }
+      // M14 lever 4 (-Q4/-Q5): POST-CLAIM absolute mX floors on the IP-compatible branches.
+      // Applied AFTER k9Arbitrate, so the removed chains' hits stay claimed and no
+      // runner-up backfills (the M9 claim-conservation escape hatch). Order-preserving
+      // erase keeps the accepted/chainTCs lockstep K10 and the -A 2 pass-1/pass-2 split
+      // rely on. No-op unless -G 6 AND a floor was passed, so all pre-M14 runs are exact.
+      if (!m3mX.empty() && (q3Floor5 > -1e9f || q3Floor4 > -1e9f)) {
+        std::size_t w = 0, nP1 = 0;
+        for (std::size_t ai = 0; ai < accepted.size(); ++ai) {
+          const int c = accepted[ai];
+          const int nL = chains.nLayers[c];
+          const bool ipT4 = nL <= 4 && m3dcaAll[c] < std::max(dcaSplit, t4ExemptDcaMin);
+          const bool ip5 = nL >= 5 && m3dcaAll[c] < dcaSplit;
+          if ((ip5 && m3mX[c] < q3Floor5) || (ipT4 && m3mX[c] < q3Floor4))
+            continue;
+          if (ai < nPass1)
+            ++nP1;
+          accepted[w++] = c;
+        }
+        nPostClaimKilled += static_cast<long long>(accepted.size() - w);
+        accepted.resize(w);
+        nPass1 = nP1;
       }
       std::vector<ChainTC> chainTCs;
       k10AssembleChainTCs(ev, chains, accepted, chainTCs);
@@ -1870,6 +1935,9 @@ int main(int argc, char** argv) {
     std::printf("  chain TCs       total=%lld mean=%.1f (T5-class=%lld T4-class=%lld; %lld accepted chains"
                 " below 4 layers dropped by K10)\n",
                 totChainTCs, totChainTCs / nEvD, totT5c, totT4c, totAcceptedAll - totChainTCs);
+    if (nPostClaimKilled > 0)
+      std::printf("  post-claim kill total=%lld mean=%.1f (-Q4 %.4g / -Q5 %.4g on mX; no backfill)\n",
+                  nPostClaimKilled, nPostClaimKilled / nEvD, q3Floor4, q3Floor5);
     if (attachMode) {
       std::printf("  K8 attach       attached=%lld mean=%.1f | baseline pixel rows suppressed=%lld mean=%.1f"
                   " | pairs prefiltered=%lld scored=%lld (thetaAttach=%.3f head=%s)\n",
