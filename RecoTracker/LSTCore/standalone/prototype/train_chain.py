@@ -37,6 +37,7 @@ Outputs:
 import argparse
 import copy
 import json
+import os
 import sys
 import time
 
@@ -54,7 +55,17 @@ def log(msg):
 def parse_args():
     p = argparse.ArgumentParser(description=__doc__)
     d = "/mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/prototype"
-    p.add_argument("--input", default=f"{d}/chains_300evt.root")
+    p.add_argument("--input", nargs="+", default=[f"{d}/chains_300evt.root"],
+                   help="chain dump file(s). ONE file: original behavior (train_frac/"
+                        "val_frac event split). MULTIPLE files: M8 COMBINATION RULE -- "
+                        "file[0] is the PRIMARY (its original seed-<seed> test events "
+                        "stay the frozen test set); extra files drop every event whose "
+                        "evt id appears in the primary file, and the remaining events "
+                        "(primary non-test + extra new-id) are re-split by event "
+                        "pool_train_frac/(1-pool_train_frac) into train/val")
+    p.add_argument("--pool-train-frac", type=float, default=0.75,
+                   help="combined mode only: train fraction of the (non-frozen-test) "
+                        "event pool")
     p.add_argument("--out-model", default=f"{d}/chain_mlp_v1.pt")
     p.add_argument("--out-norm", default=f"{d}/chain_norm_v1.json")
     p.add_argument("--seed", type=int, default=42, help="seed for numpy AND torch")
@@ -78,6 +89,15 @@ def parse_args():
     p.add_argument("--lr", type=float, default=1e-3)
     p.add_argument("--train-frac", type=float, default=0.6)
     p.add_argument("--val-frac", type=float, default=0.2)
+    p.add_argument("--state-file", default="",
+                   help="checkpoint/resume file: state (model+optimizer+rng+best "
+                        "trackers) is saved after every epoch; if the file exists the "
+                        "run resumes from it EXACTLY (same command). The data pipeline "
+                        "(load/split/standardize) is deterministic and recomputed.")
+    p.add_argument("--wall-limit-sec", type=float, default=0.0,
+                   help="if > 0: after the first epoch that ends beyond this wall time, "
+                        "save state and exit(3) (resume by rerunning the same command). "
+                        "Lets long trainings run as sequential foreground chunks.")
     return p.parse_args()
 
 
@@ -184,6 +204,40 @@ def event_split(meta, train_frac, val_frac, rng):
     return tr, va, te
 
 
+def combined_event_split(meta, src, args, rng):
+    """M8 COMBINATION RULE split (leak-proof, plan 10.4c) -- mirrors train_edge.py.
+
+    Frozen test = the ORIGINAL seed event-level test split of the PRIMARY (first
+    --input) file, reproduced exactly (shuffle of the primary unique evt keys with
+    the fresh seed rng, same train_frac/val_frac slices). Every other event
+    (primary non-test + kept extra-file events; overlap ids dropped at load) forms
+    the pool, re-split by event pool_train_frac/(1-pool_train_frac)."""
+    key = meta["evt"].astype(np.uint64)
+    uniq0 = np.unique(key[src == 0])
+    rng.shuffle(uniq0)
+    n0 = len(uniq0)
+    n_tr0 = int(round(args.train_frac * n0))
+    n_va0 = int(round(args.val_frac * n0))
+    te_keys = uniq0[n_tr0 + n_va0:]
+    te = np.isin(key, te_keys)
+    assert not (te & (src != 0)).any(), "frozen-test key present in an extra input (leak)"
+    pool_keys = np.unique(key[~te])
+    rng.shuffle(pool_keys)
+    n_ptr = int(round(args.pool_train_frac * len(pool_keys)))
+    tr_keys, va_keys = pool_keys[:n_ptr], pool_keys[n_ptr:]
+    tr = np.isin(key, tr_keys)
+    va = np.isin(key, va_keys)
+    prim = set(uniq0.tolist())
+    n_tr_p = sum(1 for k in tr_keys.tolist() if k in prim)
+    n_va_p = sum(1 for k in va_keys.tolist() if k in prim)
+    log(f"COMBINED event split: frozen test = {len(te_keys)} primary events (unchanged); "
+        f"pool {len(pool_keys)} events -> train {len(tr_keys)} "
+        f"({n_tr_p} primary + {len(tr_keys) - n_tr_p} extra) / "
+        f"val {len(va_keys)} ({n_va_p} primary + {len(va_keys) - n_va_p} extra) "
+        f"-> {tr.sum()}/{va.sum()}/{te.sum()} chains (train/val/test)")
+    return tr, va, te
+
+
 # ---------------------------------------------------------------- model
 
 def build_model(n_in):
@@ -230,9 +284,38 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     log(f"seed={args.seed} device={device}")
 
-    meta, X, names = load_dump(args.input)
+    # Load input file(s). Multiple files engage the M8 COMBINATION RULE: file[0] is
+    # the primary; extra files drop every event whose evt id appears in the primary.
+    metas, x_parts, src_parts = [], [], []
+    names = prim_evts = None
+    for si, path in enumerate(args.input):
+        meta_i, X_i, names_i = load_dump(path)
+        if si == 0:
+            names = names_i
+            prim_evts = np.unique(meta_i["evt"])
+            log(f"input[0] PRIMARY {path}: {len(X_i)} chains over {len(prim_evts)} events")
+        else:
+            assert names_i == names, f"feature_spec mismatch: {path}"
+            evts_i = np.unique(meta_i["evt"])
+            keep = ~np.isin(meta_i["evt"], prim_evts)
+            kept_evts = np.unique(meta_i["evt"][keep])
+            log(f"input[{si}] EXTRA {path}: {len(X_i)} chains over {len(evts_i)} events; "
+                f"combination rule drops {len(evts_i) - len(kept_evts)} overlap events -> "
+                f"keep {int(keep.sum())} chains over {len(kept_evts)} events")
+            meta_i = {k: v[keep] for k, v in meta_i.items()}
+            X_i = X_i[keep]
+        metas.append(meta_i)
+        x_parts.append(X_i)
+        src_parts.append(np.full(len(X_i), si, dtype=np.int8))
+    if len(args.input) == 1:
+        meta, X, src = metas[0], x_parts[0], None
+    else:
+        meta = {k: np.concatenate([m[k] for m in metas]) for k in META_BRANCHES}
+        X = np.concatenate(x_parts)
+        src = np.concatenate(src_parts)
+    del metas, x_parts, src_parts
     n_all = len(X)
-    log(f"loaded {n_all} chains x {X.shape[1]} features from {args.input}")
+    log(f"loaded {n_all} chains x {X.shape[1]} features from {len(args.input)} file(s)")
 
     degenerate = data_quality_report(X, names)
 
@@ -240,7 +323,10 @@ def main():
     if not args.no_feature_clip:
         conditioning = apply_conditioning(X, names, CONDITIONING_SPEC)
 
-    tr, va, te = event_split(meta, args.train_frac, args.val_frac, rng)
+    if src is None:
+        tr, va, te = event_split(meta, args.train_frac, args.val_frac, rng)
+    else:
+        tr, va, te = combined_event_split(meta, src, args, rng)
 
     # ---- standardization from TRAIN rows ----
     mu = X[tr].mean(axis=0, dtype=np.float64).astype(np.float32)
@@ -314,8 +400,20 @@ def main():
     gen = torch.Generator(device="cpu").manual_seed(args.seed)
     best_sel, best_state, best_epoch, bad = -1.0, None, -1, 0
     best_meta = {}
+    start_epoch = 1
+    if args.state_file and os.path.exists(args.state_file):
+        st = torch.load(args.state_file, map_location="cpu", weights_only=False)
+        model.load_state_dict(st["model"])
+        model.to(device)
+        opt.load_state_dict(st["opt"])
+        gen.set_state(st["gen"])
+        best_sel, best_epoch, bad = st["best_sel"], st["best_epoch"], st["bad"]
+        best_state, best_meta = st["best_state"], st["best_meta"]
+        start_epoch = st["epoch"] + 1
+        log(f"RESUMED from {args.state_file}: next epoch {start_epoch}, "
+            f"best sel {best_sel:.5f} @ epoch {best_epoch}, bad={bad}")
     n_tr = len(Xtr)
-    for epoch in range(1, args.epochs + 1):
+    for epoch in range(start_epoch, args.epochs + 1):
         model.train()
         perm = torch.randperm(n_tr, generator=gen)
         tot_loss = 0.0
@@ -343,6 +441,7 @@ def main():
             sel = auc
             epoch_meta = {"val_auc": float(auc)}
             log(f"epoch {epoch:3d} train_loss={tot_loss / n_tr:.5f} val_auc={auc:.5f}")
+        stop = False
         if sel > best_sel:
             best_sel, best_epoch, bad = sel, epoch, 0
             best_meta = epoch_meta
@@ -351,7 +450,22 @@ def main():
             bad += 1
             if bad >= args.patience:
                 log(f"early stop at epoch {epoch} (best sel metric {best_sel:.5f} @ epoch {best_epoch})")
-                break
+                stop = True
+        if args.state_file:
+            tmp = args.state_file + ".tmp"
+            torch.save({"model": {k: v.cpu() for k, v in model.state_dict().items()},
+                        "opt": opt.state_dict(), "gen": gen.get_state(),
+                        "best_sel": best_sel, "best_epoch": best_epoch, "bad": bad,
+                        "best_state": best_state, "best_meta": best_meta,
+                        "epoch": epoch}, tmp)
+            os.replace(tmp, args.state_file)
+        if stop:
+            break
+        if (args.wall_limit_sec > 0 and time.time() - T0 > args.wall_limit_sec
+                and epoch < args.epochs):
+            log(f"wall limit {args.wall_limit_sec:.0f}s reached after epoch {epoch}; "
+                f"state saved to {args.state_file} -> exit(3), rerun same command to resume")
+            sys.exit(3)
     best_auc = best_meta.get("val_auc", best_sel)
     log(f"best checkpoint: epoch {best_epoch} select_metric={args.select_metric} "
         f"sel={best_sel:.5f} meta={best_meta}")
@@ -379,7 +493,9 @@ def main():
                                   "displaced_weight": args.displaced_weight,
                                   "displaced_weight_mid": args.displaced_weight_mid,
                                   "displaced_weight_hi": args.displaced_weight_hi,
-                                  "select_metric": args.select_metric}}, fh, indent=1)
+                                  "select_metric": args.select_metric,
+                                  "inputs": args.input,
+                                  "pool_train_frac": args.pool_train_frac}}, fh, indent=1)
     log(f"saved {args.out_model} and {args.out_norm}")
 
     # ---- TEST evaluation: overall + per nLayers (4/5/6+) + prompt/displaced ----
