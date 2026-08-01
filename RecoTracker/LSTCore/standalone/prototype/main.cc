@@ -176,7 +176,18 @@ void usage(const char* prog) {
                "              tolerate in K9 arbitration, hybrid mode (default 0.3)\n"
                "  -P          keep pixel-consumed chains in K9 (default: chains containing a\n"
                "              t3_partOfPT5/pT3 member are dropped in hybrid mode)\n"
-               "  -G <0|1|2|3>  chain gate (hybrid mode, default 1): 1 = K9 acceptance score per\n"
+               "  -G <0..6>   chain gate (hybrid mode, default 1). ANGLE-1 -G 6 = 3-CLASS gate\n"
+               "              (fake/prompt-true/displaced-true softmax over 17 inputs = the 16\n"
+               "              ChainFeatures + the chain dcaXY), kill-only, LEGACY ordering:\n"
+               "              nLayers<=4 killed if mX < -M4; 5+ with dca < -X killed if\n"
+               "              mP < -MP; 5+ with dca >= -X killed if mD < -MD; either 5+ kill\n"
+               "              is vetoed when mX >= -MR. mP/mD/mX = prompt/displaced/max logit\n"
+               "              minus fake logit. Exempt masks (-U4/-U5/-U6) as in -G 5.\n"
+               "  -M4 -M5 -M6 -MD -M4D -MR  -G 6 margin thresholds (defaults -1e9 .. +1e9 =\n"
+               "              no kill). -M4 IP T4-class (mX), -M5/-M6 IP 5+/6+ (mP), -MD\n"
+               "              exempt 5+ (mD), -M4D exempt T4-class (mD), -MR mX OR-rescue.\n"
+               "              -MP is an alias setting both -M5 and -M6.\n"
+               "  -G <0|1|2|3>  1 = K9 acceptance score per\n"
                "              chain is the chain-gate MLP LOGIT (ChainInference over the\n"
                "              ChainFeatures.h vector; thetaChain4/5/6 cut on that scale and\n"
                "              arbitration order uses it too); 0 = legacy K6 sum-logit score\n"
@@ -202,6 +213,12 @@ void usage(const char* prog) {
                "              exempt (legacy, -U4) branch only if dcaXY >= max(-X, -Z); T4s\n"
                "              with dca in [-X, -Z) are gate-cut like IP chains (-T4). The\n"
                "              LST-style displaced-only length-4 restriction (plan 10.5)\n"
+               "  -V4/-V5/-V6 <theta>  a2 exempt-branch GATE-SCALE kill (-G 5 only,\n"
+               "              defaults -1e9 = no-op): an exempt (dca >= -X) chain is ALSO\n"
+               "              killed when its chain-gate logit is below this. Additive to\n"
+               "              -U4/-U5/-U6 (legacy scale); ordering stays legacy for everyone\n"
+               "              (the -G 5 order-preserving form). Targets the M9 residual-fake\n"
+               "              localization: ~85%% of it lives in the exempt 5+ branch\n"
                "  -U4/-U5/-U6 <theta>  M9 exempt-branch thresholds (defaults 6/0/0): dca-exempt\n"
                "              chains in -G 3/-G 4 keep the LEGACY sum-logit score, where the\n"
                "              gate-scale -T thresholds are nearly no-ops; their per-length\n"
@@ -313,6 +330,17 @@ int main(int argc, char** argv) {
                                   // (default 6 = the pre-gate r5-winner legacy T4 threshold)
   float thetaExempt5 = 0.0f;      // -U5: M9 exempt-branch threshold, nLayers == 5
   float thetaExempt6 = 0.0f;      // -U6: M9 exempt-branch threshold, nLayers >= 6
+  // a2 (fan-out angle 2): ADDITIONAL gate-scale kill for the EXEMPT branch in -G 5.
+  // M9 localized ~85% of the residual fake in the exempt (dca >= -X) 5+ branch, which
+  // -G 5 leaves entirely to the legacy -U thresholds -- the gate never touches it. With
+  // a gate whose exempt-5+ discrimination is strong enough (a2: displaced AUC 0.836 vs
+  // 0.818 for the 16-feature gate), a gate-scale kill there is exactly the
+  // "fake-specific kill" the saturated K9 claim responds to. Ordering is UNCHANGED
+  // (legacy for everyone, the mandatory -G 5 form); this is a pure additional cut.
+  // Defaults -1e9 = no-op, so -G 5 stays bit-identical unless -V* is passed.
+  float thetaVeto4 = -1e9f;       // -V4: exempt-branch GATE-scale kill, nLayers <= 4
+  float thetaVeto5 = -1e9f;       // -V5: exempt-branch GATE-scale kill, nLayers == 5
+  float thetaVeto6 = -1e9f;       // -V6: exempt-branch GATE-scale kill, nLayers >= 6
   float maxClaimedFrac = 0.3f;    // -F: K9 max already-claimed-MD fraction (hybrid mode)
   bool dropPixelConsumed = true;  // -P clears it: K9 pixel-consumed chain drop (hybrid mode)
   int chainGateMode = 1;          // -G: 0 = legacy K6 sum-logit score, 1 = gate logit for ALL
@@ -331,9 +359,39 @@ int main(int argc, char** argv) {
   float demotePenalty = 1e6f;     // -Y: M9 -A 3 failed-attach demotion (default = reject)
   float t4ExemptDcaMin = 0.0f;    // -Z: M9 -G 5 exempt-T4 dca floor (0 = no-op; T4 exempt
                                   // iff dca >= max(dcaSplit, t4ExemptDcaMin))
+  // ANGLE-1 -G 6 (3-class gate) kill thresholds on the softmax-logit MARGIN scale
+  // (mP = prompt - fake, mD = displaced - fake, mX = max(prompt,displaced) - fake).
+  // Defaults -1e9 = "never kill" so -G 6 with no -M flags is the legacy -G 0 pipeline
+  // plus the exempt masks.
+  float m3Theta4 = -1e9f;   // -M4: IP T4-class (nLayers <= 4) kill iff mX < m3Theta4
+  float m3Theta5 = -1e9f;   // -M5: IP nLayers == 5 kill iff mP < m3Theta5 (M12: the -G 6
+                            // analogue of -G 5's -T5, which is per-length; a single 5+
+                            // threshold cannot reproduce the c5 acceptance shape)
+  float m3Theta6 = -1e9f;   // -M6: IP nLayers >= 6 kill iff mP < m3Theta6 (analogue of -T6)
+  float m3ThetaP = -1e9f;   // -MP: convenience alias -- sets BOTH -M5 and -M6 (a1 compat)
+  float m3ThetaD = -1e9f;   // -MD: exempt 5+ (dca >= dcaSplit) kill iff mD < m3ThetaD
+  float m3Theta4D = -1e9f;  // -M4D: exempt T4-class (nLayers <= 4 AND dca >= max(-X,-Z))
+                            // kill iff mD < m3Theta4D -- the LST-style DISPLACED-ORIENTED
+                            // length-4 acceptance (plan 10.5 per-length care). Default
+                            // -1e9 = no kill (the branch is then governed by -U4 alone,
+                            // so -U4 1e9 reproduces the v1j closed-exempt-T4 shape).
+  float m3ThetaR = 1e9f;    // -MR: OR-rescue on mX for BOTH 5+ branches -- a chain that
+                            // would be killed survives if mX >= m3ThetaR (1e9 = disabled;
+                            // set -MP/-MD to +1e9 and -MR to t for a pure-mX 5+ gate)
   constexpr float kGateKill = 1e9f;    // -G 5: score subtraction for IP chains failing the gate cut
   constexpr float kNoCutTheta = -1e5f; // -G 5: internal K9 base threshold (live chains always pass;
                                        // killed (-1e9) and -A 3-demoted (-1e6) chains always fail)
+  float fakeOrderAlpha = 0.0f;    // -B: A8 fake-aware K9 ordering. Claim order key becomes
+                                  // chains.score - alpha * max(0, -gateLogit): chains the
+                                  // chain gate calls fake-suspect claim LATER, thresholds
+                                  // untouched (no cross-scale inversion). 0 = legacy order.
+  int hitLevelClaim = 0;          // -H: A8 claim universe. 0 = MDs (legacy), 1 = HITS --
+                                  // duplicate MD objects on the same hits make MD-disjoint
+                                  // chains that are hit-identical; only the hit map sees them.
+  float braidFrac = 0.0f;         // -W: A8 braid suppression. A candidate that covers >=
+                                  // braidFrac of an ALREADY-ACCEPTED chain's MDs is killed
+                                  // outright instead of passing the candidate-relative -F
+                                  // test. 0 = off (bit-exact legacy).
   float dcaAttachMax = 1.0f;      // -D: M7c IP-compatibility gate (attach eligibility + K7-lite)
   int k7Lite = 1;                 // -K: M7c K7-lite kinematic dedup on/off (-A 2 only)
   float k7DR = 0.03f;             // -R: K7-lite dR window
@@ -361,6 +419,26 @@ int main(int argc, char** argv) {
       dst = &thetaExempt5;
     else if (s == "-U6")
       dst = &thetaExempt6;
+    else if (s == "-V4")
+      dst = &thetaVeto4;
+    else if (s == "-V5")
+      dst = &thetaVeto5;
+    else if (s == "-V6")
+      dst = &thetaVeto6;
+    else if (s == "-M4")
+      dst = &m3Theta4;
+    else if (s == "-M4D")
+      dst = &m3Theta4D;
+    else if (s == "-M5")
+      dst = &m3Theta5;
+    else if (s == "-M6")
+      dst = &m3Theta6;
+    else if (s == "-MP")
+      dst = &m3ThetaP;
+    else if (s == "-MD")
+      dst = &m3ThetaD;
+    else if (s == "-MR")
+      dst = &m3ThetaR;
     if (dst == nullptr) {
       args.push_back(argv[a]);
       continue;
@@ -375,7 +453,16 @@ int main(int argc, char** argv) {
   int nArgs = static_cast<int>(args.size());
 
   int opt;
-  while ((opt = getopt(nArgs, args.data(), "i:t:o:n:m:l:e:L:T:F:G:A:a:D:K:R:S:X:Y:Z:Ph")) != -1) {
+  // -MP is a convenience alias for "-M5 v -M6 v" (a1's single IP-5+ threshold). An
+  // explicit -M5/-M6 always wins over it.
+  if (m3ThetaP > -1e9f) {
+    if (m3Theta5 <= -1e9f)
+      m3Theta5 = m3ThetaP;
+    if (m3Theta6 <= -1e9f)
+      m3Theta6 = m3ThetaP;
+  }
+
+  while ((opt = getopt(nArgs, args.data(), "i:t:o:n:m:l:e:L:T:F:G:A:a:B:W:H:D:K:R:S:X:Y:Z:Ph")) != -1) {
     switch (opt) {
       case 'i':
         lstPath = optarg;
@@ -412,8 +499,8 @@ int main(int argc, char** argv) {
         break;
       case 'G':
         chainGateMode = std::atoi(optarg);
-        if (chainGateMode < 0 || chainGateMode > 5) {
-          std::fprintf(stderr, "Error: -G expects 0, 1, 2, 3, 4, or 5.\n");
+        if (chainGateMode < 0 || chainGateMode > 6) {
+          std::fprintf(stderr, "Error: -G expects 0, 1, 2, 3, 4, 5, or 6.\n");
           return 1;
         }
         break;
@@ -426,6 +513,19 @@ int main(int argc, char** argv) {
         break;
       case 'a':
         thetaAttach = static_cast<float>(std::atof(optarg));
+        break;
+      case 'B':
+        fakeOrderAlpha = static_cast<float>(std::atof(optarg));
+        break;
+      case 'W':
+        braidFrac = static_cast<float>(std::atof(optarg));
+        break;
+      case 'H':
+        hitLevelClaim = std::atoi(optarg);
+        if (hitLevelClaim < 0 || hitLevelClaim > 1) {
+          std::fprintf(stderr, "Error: -H expects 0 or 1.\n");
+          return 1;
+        }
         break;
       case 'X':
         dcaSplit = static_cast<float>(std::atof(optarg));
@@ -553,6 +653,8 @@ int main(int argc, char** argv) {
     constexpr int kMaxLayBin = 12;  // chains top out at 7 distinct layers (M3); headroom
     long long layAll[kMaxLayBin + 1] = {};
     long long layTrue[kMaxLayBin + 1] = {};
+    // M12 flip matrix: [old label][new label] over all dumped chains.
+    long long flip[2][2] = {{0, 0}, {0, 0}};
     double totInferMs = 0.0, totWeldMs = 0.0, totFeatMs = 0.0;
 
     for (long long i = 0; i < nRun; ++i) {
@@ -581,7 +683,13 @@ int main(int argc, char** argv) {
       T3SimSets t3sims;
       buildT3SimSets(ev, t3sims);
       ChainLabels labels;
-      labelChains(ev, chains, t3sims, labels);
+      // M12 LABEL RETARGET: the dumped `label` is the HARNESS coverage rule (production
+      // matcher over the chain's full hit list, best fraction strictly > 0.75); the old
+      // >=2/3-MD-intersection label rides along as `label_old` for the flip matrix.
+      // The chain's transverse DCA (k8ChainDcaXY -- the SAME function -G 3/4/5/6 use at
+      // inference time) is computed inside the writer and dumped as `dcaXY`, so the
+      // 3-class gate's dca input is train/serve identical by construction.
+      labelChainsHarness(ev, trk, chains, t3sims, labels);
       const auto t3 = std::chrono::steady_clock::now();
       chainWriter.fillEvent(ev, chains, cf, labels);
 
@@ -594,6 +702,8 @@ int main(int argc, char** argv) {
           ++nTrue;
           ++layTrue[lb];
         }
+        const int lo = labels.labelOld.empty() ? 0 : (labels.labelOld[c] == 1 ? 1 : 0);
+        ++flip[lo][labels.label[c] == 1 ? 1 : 0];
       }
       const double inferMs = msBetween(t0, t1);
       const double weldMs = msBetween(t1, t2);
@@ -622,6 +732,18 @@ int main(int argc, char** argv) {
       std::printf("    nLayers%s%2d : %10lld %10lld  %.4f\n", b == kMaxLayBin ? ">=" : " =", b, layAll[b], layTrue[b],
                   static_cast<double>(layTrue[b]) / static_cast<double>(layAll[b]));
     }
+    // M12: old (>=2/3-MD intersection) vs new (harness coverage > 0.75) label flip matrix.
+    const double flipTot = static_cast<double>(flip[0][0] + flip[0][1] + flip[1][0] + flip[1][1]);
+    std::printf("  LABEL FLIP MATRIX (rows = old >=2/3-MD rule, cols = new harness > 0.75 rule):\n");
+    std::printf("               new=0        new=1\n");
+    for (int o = 0; o < 2; ++o)
+      std::printf("    old=%d  %11lld  %11lld   (%.4f / %.4f of all)\n", o, flip[o][0], flip[o][1],
+                  flipTot > 0 ? flip[o][0] / flipTot : 0.0, flipTot > 0 ? flip[o][1] / flipTot : 0.0);
+    std::printf("    demoted (old 1 -> new 0) = %lld (%.4f of old-true); promoted (old 0 -> new 1) = %lld\n",
+                flip[1][0], (flip[1][0] + flip[1][1]) > 0 ? static_cast<double>(flip[1][0]) /
+                                                                static_cast<double>(flip[1][0] + flip[1][1])
+                                                          : 0.0,
+                flip[0][1]);
     std::printf("  time mean/evt infer=%.3f weld=%.3f feat+label=%.3f ms\n", totInferMs / nEvD, totWeldMs / nEvD,
                 totFeatMs / nEvD);
     std::printf("  wrote %s\n", outPath.c_str());
@@ -1022,7 +1144,17 @@ int main(int argc, char** argv) {
           thetaAttach, attachHeadAvailable() ? "trained" : "sentinel", apDefaults.prefDTanL, apDefaults.prefDPhi,
           dcaSplit, static_cast<double>(demotePenalty));
     }
-    if (chainGateMode == 3)
+    if (chainGateMode == 6)
+      std::printf("gate (-G 6, 3-class fake/prompt/displaced, head=%s): dcaSplit=%.3f cm;"
+                  " ordering legacy for ALL (kill-only); IP T4-class killed if mX < %.4g;"
+                  " exempt T4-class killed if mD < %.4g;"
+                  " IP nL=5 killed if mP < %.4g; IP nL>=6 killed if mP < %.4g;"
+                  " exempt 5+ killed if mD < %.4g;"
+                  " OR-rescue mX >= %.4g; exempt-T4 dca floor Z=%.3f cm;"
+                  " exempt-branch legacy thresholds U4/5/6=%.3f/%.3f/%.3f\n",
+                  chainGate3Available() ? "trained" : "sentinel", dcaSplit, m3Theta4, m3Theta4D, m3Theta5, m3Theta6,
+                  m3ThetaD, m3ThetaR, t4ExemptDcaMin, thetaExempt4, thetaExempt5, thetaExempt6);
+    else if (chainGateMode == 3)
       std::printf("gate (-G 3, M9 DCA split): dcaSplit=%.3f cm (gate logit below, legacy score at/above);"
                   " exempt-branch thresholds U4/5/6=%.3f/%.3f/%.3f (legacy scale)\n",
                   dcaSplit, thetaExempt4, thetaExempt5, thetaExempt6);
@@ -1035,9 +1167,15 @@ int main(int argc, char** argv) {
       std::printf("gate (-G 5, M9 order-preserving DCA split): dcaSplit=%.3f cm; ordering legacy for ALL;"
                   " IP chains killed if gate logit < T4/5/6=%.3f/%.3f/%.3f;"
                   " exempt thresholds U4/5/6=%.3f/%.3f/%.3f (legacy scale);"
-                  " exempt-T4 dca floor Z=%.3f cm\n",
+                  " exempt-T4 dca floor Z=%.3f cm;"
+                  " exempt gate-scale kill V4/5/6=%.3g/%.3g/%.3g\n",
                   dcaSplit, thetaChain4, thetaChain5, thetaChain6, thetaExempt4, thetaExempt5, thetaExempt6,
-                  t4ExemptDcaMin);
+                  t4ExemptDcaMin, thetaVeto4, thetaVeto5, thetaVeto6);
+    if (fakeOrderAlpha > 0.f || braidFrac > 0.f || hitLevelClaim)
+      std::printf("K9 arbitration (A8): claim=%s fakeOrderAlpha=%.2f (order key = score - alpha*max(0,-gateLogit);"
+                  " thresholds still on score) braidFrac=%.2f (kill candidate covering >= braidFrac of an"
+                  " already-accepted chain's claim items)\n",
+                  hitLevelClaim ? "HIT" : "MD", fakeOrderAlpha, braidFrac);
     OutputWriter writer(outPath, label);
 
     // M7c dca-distribution study hook: PROTO_DCA_DUMP=<path> writes one line per
@@ -1124,6 +1262,59 @@ int main(int argc, char** argv) {
         computeChainFeatures(ev, g, chains, scores, cfHyb);
         runChainInference(cfHyb, gateLogit);
         if (chainGateMode >= 1) {
+        if (chainGateMode == 6) {
+          // ANGLE-1 -G 6: THREE-CLASS gate (fake / prompt-true / displaced-true), the
+          // LST t3dnn/t4dnn shape, with the chain's transverse DCA as a 17th INPUT
+          // instead of only as a hard branch axis. ORDERING STAYS LEGACY for every
+          // chain (the M9 cross-scale-inversion lesson): the gate is a KILL only.
+          // Branch rules (kill => score -= kGateKill, K9 base threshold kNoCutTheta):
+          //   nLayers <= 4  : kill iff mX < -M4                       (T4-class)
+          //   5+, dca <  -X : kill iff mP < -MP (unless mX >= -MR)    (IP-compatible)
+          //   5+, dca >= -X : kill iff mD < -MD (unless mX >= -MR)    (exempt/large-DCA,
+          //                   the M9 residual-fake home)
+          // where mP = promptLogit - fakeLogit, mD = displacedLogit - fakeLogit,
+          // mX = max(promptLogit, displacedLogit) - fakeLogit.
+          // Exempt masks (-> the -U4/-U5/-U6 legacy-scale thresholds) are set exactly as
+          // in -G 5: 5+ chains with dca >= -X, and T4-class chains with
+          // dca >= max(-X, -Z). So -U4 1e9 still closes the exempt-T4 branch (the v1j
+          // shape) and -U4 0 opens it under the 3-class T4 kill.
+          const std::size_t nC = gateLogit.size();
+          std::vector<float> dcaAll(nC);
+          for (std::size_t c = 0; c < nC; ++c)
+            dcaAll[c] = chainDca(static_cast<int>(c));
+          std::vector<float> z3;
+          runChainInference3(cfHyb, dcaAll, z3);
+          exemptMask.assign(nC, 0);
+          for (std::size_t c = 0; c < nC; ++c) {
+            const float* z = &z3[3 * c];
+            const float mP = z[1] - z[0];
+            const float mD = z[2] - z[0];
+            const float mX = std::max(z[1], z[2]) - z[0];
+            const int nL = chains.nLayers[c];
+            if (nL <= 4) {
+              if (dcaAll[c] >= std::max(dcaSplit, t4ExemptDcaMin)) {
+                // Exempt (large-DCA) T4-class: displaced-oriented acceptance on mD.
+                if (mD < m3Theta4D)
+                  chains.score[c] -= kGateKill;
+                exemptMask[c] = 1;
+              } else if (mX < m3Theta4) {
+                chains.score[c] -= kGateKill;
+              }
+            } else if (dcaAll[c] < dcaSplit) {
+              // IP-compatible 5+: per-length threshold, the -G 6 analogue of -T5/-T6.
+              const float thr = nL >= 6 ? m3Theta6 : m3Theta5;
+              if (mP < thr && mX < m3ThetaR)
+                chains.score[c] -= kGateKill;
+            } else {
+              // Exempt (large-DCA) 5+: the M9/M10 residual-fake home. -MD is the -G 6
+              // analogue of -G 5's a2 -V5/-V6 gate-scale kill; -U5/-U6 still apply on
+              // the legacy scale through the exempt mask.
+              if (mD < m3ThetaD && mX < m3ThetaR)
+                chains.score[c] -= kGateKill;
+              exemptMask[c] = 1;
+            }
+          }
+        } else {
           if (chainGateMode >= 3)
             exemptMask.assign(gateLogit.size(), 0);
           for (std::size_t c = 0; c < gateLogit.size(); ++c) {
@@ -1142,6 +1333,11 @@ int main(int argc, char** argv) {
                   chains.score[c] -= kGateKill;
               } else {
                 exemptMask[c] = 1;
+                // a2: optional gate-scale kill on the exempt branch (-V4/-V5/-V6).
+                // Additive to the legacy -U cut; ordering untouched. -1e9 = no-op.
+                const float vthr = nL >= 6 ? thetaVeto6 : (nL == 5 ? thetaVeto5 : thetaVeto4);
+                if (gateLogit[c] < vthr)
+                  chains.score[c] -= kGateKill;
               }
               continue;
             }
@@ -1154,6 +1350,7 @@ int main(int argc, char** argv) {
             else if (chainGateMode >= 3)
               exemptMask[c] = 1;
           }
+          }
         }
       }
       const auto t2 = std::chrono::steady_clock::now();
@@ -1162,9 +1359,9 @@ int main(int argc, char** argv) {
       // -G 5: the gate cut was already applied to chains.score (kill), so K9's base
       // per-length threshold must be a no-op for live chains while still rejecting
       // killed / -A 3-demoted ones.
-      ap.thetaChain4 = chainGateMode == 5 ? kNoCutTheta : thetaChain4;
-      ap.thetaChain5 = chainGateMode == 5 ? kNoCutTheta : thetaChain5;
-      ap.thetaChain6 = chainGateMode == 5 ? kNoCutTheta : thetaChain6;
+      ap.thetaChain4 = chainGateMode >= 5 ? kNoCutTheta : thetaChain4;
+      ap.thetaChain5 = chainGateMode >= 5 ? kNoCutTheta : thetaChain5;
+      ap.thetaChain6 = chainGateMode >= 5 ? kNoCutTheta : thetaChain6;
       ap.thetaAlt4 = thetaExempt4;
       ap.thetaAlt5 = thetaExempt5;
       ap.thetaAlt6 = thetaExempt6;
@@ -1261,6 +1458,21 @@ int main(int argc, char** argv) {
       // the exact -A 0 call (bit-identical accepted set by construction), pass 2 lets
       // attached-but-pixdropped chains claim only what pass 1 left free. The accepted
       // list is pass 1 followed by pass 2 (nPass1 marks the boundary).
+      // A8 (-B / -W): fake-specific ORDERING + braid suppression, the only two axes M9
+      // found still able to move FR once the claim volume saturated. -B builds a separate
+      // ordering key (score minus a gate-suspicion penalty) so fake-suspect chains claim
+      // LAST while every acceptance threshold keeps cutting on chains.score; -W adds the
+      // owner-relative braid kill inside the greedy walk. Both default to legacy.
+      std::vector<float> orderKeyVec;
+      if (fakeOrderAlpha > 0.f && gateLogit.size() == chains.score.size()) {
+        orderKeyVec.resize(chains.score.size());
+        for (std::size_t c = 0; c < orderKeyVec.size(); ++c)
+          orderKeyVec[c] = chains.score[c] - fakeOrderAlpha * std::max(0.f, -gateLogit[c]);
+        ap.orderKey = &orderKeyVec;
+      }
+      ap.braidFrac = braidFrac;
+      ap.hitLevelClaim = hitLevelClaim != 0;
+
       std::vector<int> accepted;
       std::size_t nPass1 = 0;
       if (attachMode == 2) {

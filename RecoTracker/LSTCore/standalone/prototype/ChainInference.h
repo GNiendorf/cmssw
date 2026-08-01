@@ -23,4 +23,35 @@ float chainGateLogit(const float* f);
 // Fills out[c] = chainGateLogit(chain c) for every chain in cf.
 void runChainInference(const ChainFeatures& cf, std::vector<float>& out);
 
+// ---------------------------------------------------------------------------------
+// ANGLE-1 3-CLASS chain gate (chain3_mlp_weights.h, namespace chain3mlp; same
+// implementation pattern, separate generated header so the 2-class path -- and every
+// -G 0..5 config -- stays byte-identical).
+//
+// Inputs: a SUBSET of the ChainFeatures columns plus the chain's transverse DCA to the
+// origin (k8ChainDcaXY -- the SAME function the -X score split uses, and the same
+// quantity dumped as the training `dcaXY` branch, so train/infer are identical by
+// construction). Which columns, and in which order, is baked into the generated header
+// as chain3mlp::kSrcCol (-1 = the dca argument), so the model may drop columns (M12
+// drops maxBridgeChi2) without touching this code.
+//
+// Outputs: THREE raw softmax logits (no softmax applied):
+//   out3[0] fake, out3[1] prompt-true (simVxy < 1 cm), out3[2] displaced-true.
+// Decisions use margins (softmax is monotone in them, so these are log-odds ratios):
+//   mP = out3[1] - out3[0]   IP-compatible branch discriminator
+//   mD = out3[2] - out3[0]   exempt / large-DCA branch discriminator
+//   mX = max(out3[1], out3[2]) - out3[0]   T4-class discriminator
+
+// True iff a trained 3-class header is compiled in (a sentinel header exports zeros).
+bool chainGate3Available();
+
+// Raw 3 logits for ONE chain from its full kChainFeat feature row + its dcaXY.
+void chainGate3Logits(const float* f, float dcaXY, float* out3);
+
+// Number of network inputs (== chain3mlp::kInput); exposed for the parity tool.
+int chainGate3NumInputs();
+
+// Fills out3[3*c + k] for every chain in cf; dca[c] = k8ChainDcaXY(chain c).
+void runChainInference3(const ChainFeatures& cf, const std::vector<float>& dca, std::vector<float>& out3);
+
 #endif

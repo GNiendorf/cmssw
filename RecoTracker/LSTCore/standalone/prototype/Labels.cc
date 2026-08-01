@@ -25,6 +25,8 @@
 #include <cmath>
 #include <cstddef>
 
+#include "Matching.h"
+
 void buildT3SimSets(const LSTEventData& ev, T3SimSets& out) {
   const std::size_t nMD = ev.md_simIdxAll.size();
   const std::size_t nT3 = ev.t3_lsIdx0.size();
@@ -141,6 +143,67 @@ void labelChains(const LSTEventData& ev, const Chains& chains, const T3SimSets& 
       out.simVxy[c] = std::sqrt(ev.sim_vx[best] * ev.sim_vx[best] + ev.sim_vy[best] * ev.sim_vy[best]);
     } else {
       out.simIdx[c] = common.front();  // pileup full-row index; kinematics stay -999
+    }
+  }
+}
+
+// -------------------------------------------------------------------------------------
+// M12 label retarget: harness coverage rule (see Labels.h for the rationale).
+
+void labelChainsHarness(const LSTEventData& ev,
+                        const TrkEventData& trk,
+                        const Chains& chains,
+                        const T3SimSets& t3sims,
+                        ChainLabels& out) {
+  // Old rule first: it fills label/simIdx/simPt/simVxy, which we then move to labelOld
+  // and overwrite with the harness result.
+  labelChains(ev, chains, t3sims, out);
+  const int nChains = chains.offsets.empty() ? 0 : static_cast<int>(chains.offsets.size()) - 1;
+  out.labelOld.assign(out.label.begin(), out.label.end());
+  out.matchFrac.assign(nChains, -1.f);
+
+  const int nAccepted = static_cast<int>(ev.sim_pt.size());
+  std::vector<unsigned int> hitIdxs;
+  std::vector<proto::HitType> hitTypes;
+  for (int c = 0; c < nChains; ++c) {
+    // Hit list == k10AssembleChainTCs': per member MD in K6 order, anchor then other,
+    // all Phase2OT (chains are pure outer-tracker objects).
+    const int mb = chains.mdOffsets[c];
+    const int me = chains.mdOffsets[c + 1];
+    hitIdxs.clear();
+    hitTypes.clear();
+    for (int k = mb; k < me; ++k) {
+      const int md = chains.mdItems[k];
+      hitIdxs.push_back(static_cast<unsigned int>(ev.md_anchorHitIdx[md]));
+      hitIdxs.push_back(static_cast<unsigned int>(ev.md_otherHitIdx[md]));
+      hitTypes.push_back(proto::HitType::Phase2OT);
+      hitTypes.push_back(proto::HitType::Phase2OT);
+    }
+    out.label[c] = 0;
+    out.simIdx[c] = -1;
+    out.simPt[c] = -999.f;
+    out.simVxy[c] = -999.f;
+    if (hitIdxs.empty())
+      continue;
+
+    float pmatched = 0.f;
+    auto [simidx, simfrac] = proto::matchedSimTrkIdxsAndFracs(
+        hitIdxs, hitTypes, trk.simhit_simTrkIdx, trk.ph2_simHitIdx, trk.pix_simHitIdx, false, 0.75f, &pmatched);
+    out.matchFrac[c] = pmatched;
+    if (simidx.empty())
+      continue;  // no sim above 0.75 -> harness FAKE
+
+    out.label[c] = 1;
+    out.simIdx[c] = simidx.front();  // highest fraction (matcher sorts desc)
+    // Kinematics from the first ACCEPTED sim among the matches (pileup rows have none).
+    for (std::size_t i = 0; i < simidx.size(); ++i) {
+      const int s = simidx[i];
+      if (s >= 0 && s < nAccepted) {
+        out.simIdx[c] = s;
+        out.simPt[c] = ev.sim_pt[s];
+        out.simVxy[c] = std::sqrt(ev.sim_vx[s] * ev.sim_vx[s] + ev.sim_vy[s] * ev.sim_vy[s]);
+        break;
+      }
     }
   }
 }

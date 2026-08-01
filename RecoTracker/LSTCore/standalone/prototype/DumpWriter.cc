@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <stdexcept>
 
+#include "PixelAttach.h"       // k8ChainDcaXY (a2: chain dump dcaXY meta branch)
 #include "PixelAttachPairs.h"  // kAttachFeat + kAttachFeatNames (PairDumpWriter)
 
 #include "TFile.h"
@@ -198,11 +199,21 @@ public:
     tree_->SetAutoFlush(-30000000);
 
     tree_->Branch("evt", &evt_, "evt/l");
+    // M12: `label` is now the HARNESS coverage rule (production matcher over the chain's
+    // full hit list, best fraction strictly > 0.75 -- labelChainsHarness). `label_old` is
+    // the pre-M12 >=2/3-MD-intersection rule, kept for the flip matrix / ablation, and
+    // `matchFrac` is the raw best hit fraction (pmatched) behind the new label.
     tree_->Branch("label", &label_, "label/I");
+    tree_->Branch("label_old", &labelOld_, "label_old/I");
+    tree_->Branch("matchFrac", &matchFrac_, "matchFrac/F");
     tree_->Branch("simIdx", &simIdx_, "simIdx/I");
     tree_->Branch("simVxy", &simVxy_, "simVxy/F");
     tree_->Branch("simPt", &simPt_, "simPt/F");
     tree_->Branch("nLayers", &nLayers_, "nLayers/I");
+    // a2: transverse DCA of the chain's full-fit circle to the origin (k8ChainDcaXY --
+    // the SAME quantity the -G 3/4/5 modes split on). Meta only, NOT a gate input; it
+    // exists so the training loop can report AUC per -G 5 BRANCH (dca < -X vs >= -X).
+    tree_->Branch("dcaXY", &dcaXY_, "dcaXY/F");
     char name[16], leaf[16];
     for (int i = 0; i < kChainFeat; ++i) {
       std::snprintf(name, sizeof(name), "cf_%02d", i);
@@ -228,10 +239,13 @@ public:
     evt_ = ev.evt;
     for (std::size_t c = 0; c < nChains; ++c) {
       label_ = static_cast<Int_t>(labels.label[c]);
+      labelOld_ = labels.labelOld.empty() ? -1 : static_cast<Int_t>(labels.labelOld[c]);
+      matchFrac_ = labels.matchFrac.empty() ? -1.f : labels.matchFrac[c];
       simIdx_ = labels.simIdx[c];
       simVxy_ = labels.simVxy[c];
       simPt_ = labels.simPt[c];
       nLayers_ = chains.nLayers[c];
+      dcaXY_ = k8ChainDcaXY(ev, chains, static_cast<int>(c));
       const float* src = &cf.f[c * kChainFeat];
       for (int i = 0; i < kChainFeat; ++i)
         cf_[i] = src[i];
@@ -264,10 +278,13 @@ private:
 
   ULong64_t evt_ = 0;
   Int_t label_ = 0;
+  Int_t labelOld_ = -1;
+  Float_t matchFrac_ = -1.f;
   Int_t simIdx_ = -1;
   Float_t simVxy_ = -999.f;
   Float_t simPt_ = -999.f;
   Int_t nLayers_ = 0;
+  Float_t dcaXY_ = -999.f;
   Float_t cf_[kChainFeat] = {};
 };
 

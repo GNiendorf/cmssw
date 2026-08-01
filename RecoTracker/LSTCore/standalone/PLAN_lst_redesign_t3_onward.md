@@ -1093,6 +1093,126 @@ acceptable to hit the bar first and refine later. Expect this to take care and i
   precise: (a) large-DCA 5+ discriminator [fake], (b) displaced T4 discriminator
   [displaced upside], (c) formation margin [dxy tail].
 
+- **2026-08-01 M11 — 9-ANGLE FAN-OUT + JUDGE (Opus; all claims disk-verified):**
+  - **COMPOSED WINNER c5** (a2's 25-feature gate + a8's fake-aware K9 ordering
+    [score - 10*max(0,-gateLogit)] + hit-level claim + exempt-5+ kill -V5 -1.35, on the
+    -G 5 substrate): **fake 0.0795 (-29% vs v1j 0.1122), EVERY reachable floor passed** —
+    dxy[1,5) 0.4946 / dxy[5,10) 0.2281 AT baseline, all vxy above, lengths pass, eff
+    0.8179. Composition SUPER-ADDITIVE on displaced (c0 zero-kill: dxy .5000/.2351 both
+    ABOVE baseline at fake 0.106). Only dxy[10,30) fails (formation-side; now confirmed
+    by 9 independent angles; best-anywhere 0.0278 via -e -2 at fake 0.17).
+  - Angle results: a1 3-class+dca gate: disp AUC .820->.853, exempt-T4 dial -M4D traces
+    the M9 w1 frontier continuously; g1 config = first-ever dxy[1,5)+[5,10) floors
+    cleared (fake .100, small len fail). a2 features (+worst-fit-residuals + member-T3
+    DNN aggregates): disp AUC +.013, fake .0764 solo. a5 K4-context: +.031 displaced /
+    +.039 E2 edge AUC, control-proven 100% context - REAL but needs gate co-retrain.
+    a7 edge capacity: NOT the limit (+.005). a6 WP tables: honest negative (thresholds
+    are not the blocker). a4 weld depth dead (confirms M10); braid retention needs K7.
+    a8 fake-aware ordering: raises displaced AND cuts fake (composes). a9: 3-class
+    objective +.016; GBDT ceiling .866 on exempt-5+ disp axis; T4 branch scorer-capped
+    at .79.
+  - **Blockers measured: IP branch exhausted (c8 zero gain); exempt-5+ kill saturates
+    ~.067-.075; root cause = separation AUC ladder .818->.836->.850->.866(GBDT ceiling)
+    PLUS the M10 label bug (c5's chain FR ~.27 vs label-limited floor .1235 - gate not
+    yet label-limited, room in both fixes).**
+  - **NEXT EXPERIMENT (judge-specified, M12): label retarget to harness coverage rule +
+    re-dump (v3 logits + dca) + 3-CLASS GATE ON 26 INPUTS (a1's 17 + a2's 9, minus
+    bridge-chi2) + drop into c5 + rescan -V5. Predicted: fake .065-.070 with dxy floors
+    held.** Then a5 context integration WITH gate co-retrain as the following round.
+- **2026-08-01 M12 DONE — FAN-OUT MERGED INTO THE MAIN TREE + LABEL RETARGET + 25-INPUT
+  3-CLASS GATE; NEW WINNER m12_w7 (fake .0614, EVERY reachable floor passed).** The
+  judge's predicted landing zone (fake .065-.070 with the dxy floors held) was BEATEN.
+  - **MERGE (prototype/ is now the permanent tree; a8+a2+a1 all live, -G 0..6 coexist).**
+    From composed: a8 `Stages.h`/`K9K10.cc` (fake-aware order key `-B`, hit-level claim
+    `-H`, owner-relative braid kill `-W`) + a2's 25-column `ChainFeatures` + a2 `-V4/5/6`.
+    From a1: 3-class `ChainInference`, `-G 6` + margin thresholds, `train_chain3.py`,
+    `export_chain3_weights.py`. Two regression gates, both BIT-EXACT on 20 events
+    (23/23 branches): (1) `-G 5` v1j config with the OLD 16-feature weights reproduces
+    the pre-merge binary; (2) after the a2 25-column swap, the merged binary reproduces
+    fanout/composed's c5 exactly. NEW: `-M5`/`-M6` (per-length IP margins; a1's single
+    `-MP` cannot express c5's `-T5`/`-T6` shape, `-MP` kept as an alias), and generated
+    headers now carry `kSrcCol[]` so a model can DROP ChainFeatures columns with no C++
+    edit (M12 drops maxBridgeChi2).
+  - **LABEL RETARGET (`labelChainsHarness`): the dumped `label` is now the production
+    matcher (`proto::matchedSimTrkIdxsAndFracs`) over the chain's full hit list (== the
+    k10 TC hit list), true iff best fraction > 0.75.** Cost: +16 ms/evt (NOT prohibitive;
+    the MD-ownership proxy was not needed). `label_old` + `matchFrac` ride along.
+    FLIP MATRIX (300 evt, 1.427M chains): old1->new0 **152347 = 15.0% of old-true
+    demoted**; old0->new1 5242 (0.5%); true fraction .776 -> .609. Per length the demoted
+    fraction is concentrated at nL=4 (trueFrac .43 -> .36).
+  - **Re-dumps with live v3 edge weights + dcaXY + 25 features + new labels:** 300 evt
+    (1.427M chains, 1m55s) and 498 evt (2.379M, 5m56s). M8 combination rule; frozen
+    test-60 preserved.
+  - **GATE (25 inputs = 24 cf columns + dcaXY; the judge's "26" counts pre-drop):** test
+    AUCs mP .9662 / mD **.9406** / mX .9645; exempt-5+ disp .9002, nL=4 disp .9372.
+    **Ladder honesty check (control retrain on `label_old`, everything else identical):
+    displaced AUC .9364 — so of the .853(a1) -> .9406 jump, ~.083 is the a2 features +
+    LIVE v3 edge logits + 649-evt data and only ~.004 is the label change.** The label
+    fix pays in train/serve AGREEMENT (FR), not in AUC. Golden-value parity
+    (`tools/chain3_parity.cc` vs `chain3_parity.py`, 1000 chains): **max |dLogit| =
+    2.4e-06**, argmax agreement 1.000 (5c discipline, mandatory, done).
+  - **SCALE FINDING: the judge's `-V5` grid is on the 2-class logit scale and does NOT
+    transfer to the 3-class margin scale** (c5's -V5 -1.35 = 17.4% exempt-5+ kill = mD
+    -3.60, not -1.35; the raw grid would have killed 45-65% of the branch). All -G 6
+    thresholds were therefore set by EQUAL-KILL-RATE matching per cell (`m12_calibrate.py`):
+    c5's -T4 2 / -T5 1 / -T6 0 -> **-M4 1.4950 / -M5 0.8974 / -M6 -0.6054**.
+  - **mX BEATS mD ON THE EXEMPT-5+ BRANCH** (that branch is 98% prompt-true even at
+    dca >= 0.5): at every matched kill rate mX kills more fakes AND fewer trues than both
+    mD and the 2-class logit (17.4%: 69.6k/2.8k vs mD 61.8k/10.7k vs z2 67.0k/5.4k).
+    So the exempt-5+ kill is run as `-MD 1e9 -MR t` (pure mX). Branch AUCs, new labels:
+    mX .9262 / z2 .9085 / mP .9281 / mD .8400.
+  - **THE DECISIVE NEW LEVER: REOPEN THE EXEMPT-T4 BRANCH.** c5/v1j closed it (`-U4 1e9`).
+    The 3-class gate's nL=4 displaced AUC is now .937 (a1's was .799), so `-U4 0 -M4D t`
+    admits a high-purity displaced-T4 slice (at mD >= 0: 11.7k survivors, 80% true, 385
+    with vxy>=10). This is the M9(5) "displaced-capable T4-class discriminator unlocks
+    the w1/z frontier" prediction, now delivered: it restores dxy at ~zero fake cost and
+    lets the exempt-5+ kill be pushed much harder.
+  - **SCAN (300 evt, 19 A/Bs).** Exempt-T4 CLOSED (k-family, exempt-5+ mX only) saturates
+    at fake .078-.084: k3 (-MR -2.468) fake .0845 dxy .4989/.2246 is the last floor-passer;
+    k4-k6 buy fake with 1 sim/step out of the 285-sim dxy[5,10) band. Exempt-T4 OPEN
+    (w-family) moves the whole frontier: **w7 = `-MR -0.800 -M4D -0.5 -U4 0` -> fake
+    .0614** with dxy[1,5) .5150 (+.0161 ABOVE base), dxy[5,10) .2316 (+.0035 ABOVE base),
+    vxy +.030/+.071/+.047, eff .8180, lengths +.023/+.060/+.811 in barrel/transition/
+    endcap. **Winner rule: every reachable band and every length region >= baseline.**
+    w8 (fake .0636) is the same shape with better dxy; w11 (`-MR 0.2 -M4D -2.0`, fake
+    .0597, dxy .5225/.2421/.0278) is better on EVERY eff/fake/dup axis but pays barrel
+    -.047 / transition -.051 in track length -> REJECTED on the length rule, kept as the
+    "if a small length payment is allowed" alternative. w12 is past the optimum
+    (fake back up to .0622, vxy falling).
+  - **TEST-60 (frozen, out-of-sample; new `m12_filter_evts.C` + identity-mode baseline,
+    verified bit-identical to base300_hists): w7 beats baseline on EVERY eff band**
+    (vxy +.032/+.092/+.044, dxy +.020/+.037, eta regions all up) with lengths positive
+    in all three regions. Not a 300-event tuning artifact.
+  - **diag_dups on w7: genuine chain-chain dup pairs = 2111 = 1.8% of all dup pairs;
+    87.3% are the chain-vs-pixel hybrid artifact** (vanishes at real integration), 10.8%
+    are baseline's own pix-pix. Aggregate dup .3305-.3343 across the w family.
+  - dxy[10,30) remains the ONLY failing band (.0214 at w7, best-anywhere .0278 at w11 --
+    which now MATCHES M11's best-anywhere value at fake .060 instead of .17). Confirmed
+    formation-side (theta_edge / welding margin), unchanged by every acceptance lever.
+  - Files: `prototype/{main,K9K10,Labels,DumpWriter,ChainFeatures,ChainInference}.{cc,h}`,
+    `Stages.h`, `chain3_mlp_weights.h`, `chain_mlp_weights.h` (a2 25-in),
+    `train_chain{,3}.py`, `export_chain3_weights.py`, `chain3_parity.py`,
+    `tools/chain3_parity.cc`, `m12_calibrate.py`, `m12_filter_evts.C`;
+    dumps `chains_m12_{300,498}evt.root`; models `chain3_mlp_m12.pt`;
+    A/Bs `ab_m12_{k0..k6,w1..w12}.*`.
+
+- **2026-08-01 QUEUED (maintainer insight, round 2): DEDUP-AS-FAKE-KILLER.** LST's dup
+  cleaning doubled as a LOCAL TOURNAMENT: within its eta/phi ~0.1 windows (+ embedding),
+  nearby candidates competed and the loser (disproportionately a fake shadowing a real
+  track) was discarded — a fake-suppression mechanism our MD-claim arbitration does NOT
+  replicate (it only runs tournaments among hit-SHARING candidates). M10's
+  "fakes-less-dR-adjacent" finding was measured at dR<0.02 only — NOT at LST's native
+  ~0.1 scale. Round-2 recon: shadow-fake yield curve (fraction of surviving fakes with a
+  higher-gate-scored TC within dR {0.02,0.05,0.1,0.2} + loose pT compat, split by the
+  victim's displaced margin). If fat: fan-out angle = K7 as a CLASS-AWARE kinematic
+  tournament (lower-scored chains near a stronger TC die UNLESS their displaced margin
+  marks them as genuine secondaries — an exemption LST's dedup could never make).
+  **JET CAVEAT (maintainer): the same LST mechanism KILLED jet-core efficiency** (cores
+  are dR 0.03-0.05, inside the 0.1 windows — rank-based kills execute real close
+  tracks; the original D-2 diagnosis). Constraint if built: the kill must be ABSOLUTE,
+  never rank-only — (near a stronger TC) AND (victim's own gate margin fake-like in
+  absolute terms); two healthy-margin core tracks never qualify. If recon shows the
+  yield only exists via rank-based kills, DROP the lever (C1 jets outrank it).
 - **2026-08-01 M10 FORENSICS (verified replicas, harness denominator recovered — READ
   THIS BEFORE ANY FURTHER TUNING; it retires several levers and quantifies the rest):**
   - **FAKES: 97.8% of fake chain TCs are 5+-layer (T4-class solved, FR 0.088); barrel

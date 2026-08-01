@@ -5,6 +5,7 @@
 #include <cstddef>
 
 #include "chain_mlp_weights.h"
+#include "chain3_mlp_weights.h"
 
 // Same implementation pattern as EdgeInference.cc / production src/alpaka/NeuralNetwork.h:
 // fixed-size unrolled linear_layer / relu_activation templates over constexpr weight
@@ -85,4 +86,66 @@ void runChainInference(const ChainFeatures& cf, std::vector<float>& out) {
   out.assign(nChains, 0.f);
   for (std::size_t c = 0; c < nChains; ++c)
     out[c] = chainGateLogit(&cf.f[c * kChainFeat]);
+}
+
+// ---------------------------------------------------------------------------------
+// ANGLE-1 3-class gate. Same pattern, separate weight namespace (chain3mlp) so the
+// 2-class path above is untouched. Input vector = the kChainFeat ChainFeatures columns
+// followed by the chain's transverse DCA (k8ChainDcaXY).
+
+namespace {
+
+inline float preprocess3(float x, int i) {
+  if (chain3mlp::kLog10p1[i])
+    x = std::log10(1.f + x);
+  x = std::min(std::max(x, chain3mlp::kClipLo[i]), chain3mlp::kClipHi[i]);
+  return (x - chain3mlp::kFeatMean[i]) / chain3mlp::kFeatStd[i];
+}
+
+}  // namespace
+
+bool chainGate3Available() {
+  // A sentinel (untrained) header exports an all-zero output layer; a trained one
+  // never does.
+  for (int o = 0; o < chain3mlp::kOutput; ++o) {
+    if (chain3mlp::bias_out[o] != 0.f)
+      return true;
+    for (int j = 0; j < chain3mlp::kHidden; ++j)
+      if (chain3mlp::wgt_out[j][o] != 0.f)
+        return true;
+  }
+  return false;
+}
+
+int chainGate3NumInputs() { return chain3mlp::kInput; }
+
+void chainGate3Logits(const float* f, float dcaXY, float* out3) {
+  static_assert(chain3mlp::kOutput == 3, "chain3 gate must have 3 outputs");
+
+  // Gather: input i reads ChainFeatures column kSrcCol[i], or the dca argument (-1).
+  float x[chain3mlp::kInput];
+  for (int i = 0; i < chain3mlp::kInput; ++i) {
+    const int col = chain3mlp::kSrcCol[i];
+    x[i] = preprocess3(col < 0 ? dcaXY : f[col], i);
+  }
+
+  float x1[chain3mlp::kHidden];
+  float x2[chain3mlp::kHidden];
+
+  linear_layer<chain3mlp::kInput, chain3mlp::kHidden>(x, x1, chain3mlp::wgt_l1, chain3mlp::bias_l1);
+  relu_activation<chain3mlp::kHidden>(x1);
+  linear_layer<chain3mlp::kHidden, chain3mlp::kHidden>(x1, x2, chain3mlp::wgt_l2, chain3mlp::bias_l2);
+  relu_activation<chain3mlp::kHidden>(x2);
+  // Output layer: 3 units, NO softmax -- K9 thresholds on logit MARGINS.
+  float out[chain3mlp::kOutput];
+  linear_layer<chain3mlp::kHidden, chain3mlp::kOutput>(x2, out, chain3mlp::wgt_out, chain3mlp::bias_out);
+  for (int o = 0; o < chain3mlp::kOutput; ++o)
+    out3[o] = out[o];
+}
+
+void runChainInference3(const ChainFeatures& cf, const std::vector<float>& dca, std::vector<float>& out3) {
+  const std::size_t nChains = cf.f.size() / kChainFeat;
+  out3.assign(nChains * 3, 0.f);
+  for (std::size_t c = 0; c < nChains; ++c)
+    chainGate3Logits(&cf.f[c * kChainFeat], c < dca.size() ? dca[c] : 0.f, &out3[c * 3]);
 }

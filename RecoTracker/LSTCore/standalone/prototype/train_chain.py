@@ -45,7 +45,7 @@ import numpy as np
 
 T0 = time.time()
 
-N_CHAIN_FEAT = 16
+N_CHAIN_FEAT = 25  # a2: extended contract (16 frozen M6 slots + 9 a2 additions)
 
 
 def log(msg):
@@ -85,6 +85,17 @@ def parse_args():
                         "val fakes")
     p.add_argument("--no-feature-clip", action="store_true",
                    help="disable feature conditioning (debug)")
+    p.add_argument("--hidden", type=int, default=32,
+                   help="hidden width (a2 gate capacity axis; M6-M9 gates used 24)")
+    p.add_argument("--n-input", type=int, default=0,
+                   help="a2 CONTROL: use only the FIRST N feature columns (0 = all). "
+                        "--n-input 16 reproduces the M6-M9 16-feature gate on exactly "
+                        "the same rows/split, which is the honest ablation baseline "
+                        "for the 9 a2 additions.")
+    p.add_argument("--dca-split", type=float, default=0.5,
+                   help="a2 report: -G 5 branch boundary for the per-branch AUC table")
+    p.add_argument("--no-perm-importance", action="store_true")
+    p.add_argument("--out-report", default="", help="a2: json summary of the test report")
     p.add_argument("--batch-size", type=int, default=16384)
     p.add_argument("--lr", type=float, default=1e-3)
     p.add_argument("--train-frac", type=float, default=0.6)
@@ -103,7 +114,7 @@ def parse_args():
 
 # ---------------------------------------------------------------- data loading
 
-META_BRANCHES = ["evt", "label", "simVxy", "simPt", "nLayers"]
+META_BRANCHES = ["evt", "label", "simVxy", "simPt", "nLayers", "dcaXY"]
 
 
 def load_dump(path):
@@ -166,6 +177,13 @@ CONDITIONING_SPEC = [
     {"feature": "cf_maxJunctionDegProduct", "op": "log10_1p"},
     {"feature": "cf_fitKappa", "op": "clip", "lo": -1.0, "hi": 1.0},
     {"feature": "cf_dKappaFitVsMedianT3", "op": "clip", "lo": -2.0, "hi": 2.0},
+    # a2 additions: the three heavy-tailed residual/chi2 columns get the same
+    # log10(1+x) treatment as their mean-valued cousins (cf_05/cf_06). The five
+    # t3dnn score columns are already probabilities in [0,1] and cf_18 (edge-logit
+    # std) is bounded by the logit scale -- both left raw.
+    {"feature": "cf_maxXyResid", "op": "log10_1p"},
+    {"feature": "cf_maxRzResid", "op": "log10_1p"},
+    {"feature": "cf_maxBridgeChi2", "op": "log10_1p"},
 ]
 
 
@@ -240,11 +258,11 @@ def combined_event_split(meta, src, args, rng):
 
 # ---------------------------------------------------------------- model
 
-def build_model(n_in):
+def build_model(n_in, n_hid=32):
     import torch.nn as nn
-    return nn.Sequential(nn.Linear(n_in, 24), nn.ReLU(),
-                         nn.Linear(24, 24), nn.ReLU(),
-                         nn.Linear(24, 1))
+    return nn.Sequential(nn.Linear(n_in, n_hid), nn.ReLU(),
+                         nn.Linear(n_hid, n_hid), nn.ReLU(),
+                         nn.Linear(n_hid, 1))
 
 
 def batched_scores(model, X_t, device, bs=1 << 20):
@@ -323,6 +341,16 @@ def main():
     if not args.no_feature_clip:
         conditioning = apply_conditioning(X, names, CONDITIONING_SPEC)
 
+    # a2 CONTROL knob: restrict to the first N columns (slots 0-15 are the frozen M6
+    # contract, so --n-input 16 IS the pre-a2 gate on identical rows and split).
+    if args.n_input and args.n_input < X.shape[1]:
+        keep = args.n_input
+        dropped = names[keep:]
+        X = np.ascontiguousarray(X[:, :keep])
+        names = names[:keep]
+        conditioning = [c for c in conditioning if c["feature"] in names]
+        log(f"--n-input {keep}: dropped {len(dropped)} columns {dropped}")
+
     if src is None:
         tr, va, te = event_split(meta, args.train_frac, args.val_frac, rng)
     else:
@@ -383,7 +411,7 @@ def main():
     if device.type == "cuda":
         Xtr, ytr, wtr = Xtr.to(device), ytr.to(device), wtr.to(device)
 
-    model = build_model(X.shape[1]).to(device)
+    model = build_model(X.shape[1], args.hidden).to(device)
     opt = torch.optim.Adam(model.parameters(), lr=args.lr)
     # Elementwise loss * per-sample weight, then mean (identical to plain mean
     # reduction when all weights are 1).
@@ -473,7 +501,8 @@ def main():
     model.to(device)
 
     # ---- save model + normalization ----
-    torch.save({"state_dict": best_state, "arch": [X.shape[1], 24, 24, 1],
+    torch.save({"state_dict": best_state,
+                "arch": [X.shape[1], args.hidden, args.hidden, 1],
                 "feature_names": names, "seed": args.seed,
                 "conditioning": conditioning,
                 "best_epoch": best_epoch, "best_val_auc": float(best_auc),
@@ -494,6 +523,7 @@ def main():
                                   "displaced_weight_mid": args.displaced_weight_mid,
                                   "displaced_weight_hi": args.displaced_weight_hi,
                                   "select_metric": args.select_metric,
+                                  "hidden": args.hidden, "n_input": args.n_input,
                                   "inputs": args.input,
                                   "pool_train_frac": args.pool_train_frac}}, fh, indent=1)
     log(f"saved {args.out_model} and {args.out_norm}")
@@ -523,6 +553,83 @@ def main():
         q = np.quantile(s_te[m], [0.05, 0.25, 0.5, 0.75, 0.95])
         print(f"  test {tag} logit quantiles 5/25/50/75/95%: "
               + " ".join(f"{v:+.2f}" for v in q))
+
+    # ---- a2: PER -G 5 BRANCH evaluation ------------------------------------------
+    # The M9 residual fake is localized (~85%) in the EXEMPT (dcaXY >= dcaSplit)
+    # 5+-layer branch, and the best-displaced w1/z-configs live in the exempt T4
+    # branch. Those are the two cells that must move, so they get their own AUCs.
+    dca_te = meta["dcaXY"][te]
+    XS = args.dca_split
+    print(f"\n=== a2 per-branch AUC (dcaSplit = {XS} cm; branch = the -G 5 split) ===")
+    branch = {}
+    for bname, bmask in (("IP dca<%g" % XS, dca_te < XS), ("EXEMPT dca>=%g" % XS, dca_te >= XS)):
+        for lname, lmask in (("L4", nl_te <= 4), ("L5+", nl_te >= 5), ("Lall", np.ones(len(nl_te), bool))):
+            m = bmask & lmask
+            print(f"-- {bname} {lname}: n={int(m.sum())}")
+            branch[f"{bname}|{lname}|all"] = eval_block("all-true vs fake", s_te[is_true & m], s_te[is_fake & m])
+            branch[f"{bname}|{lname}|prompt"] = eval_block(
+                "prompt vxy<1", s_te[is_true & m & (vxy_te < 1)], s_te[is_fake & m])
+            branch[f"{bname}|{lname}|disp1"] = eval_block(
+                "displaced vxy>=1", s_te[is_true & m & (vxy_te >= 1)], s_te[is_fake & m])
+            branch[f"{bname}|{lname}|disp5"] = eval_block(
+                "displaced vxy>=5", s_te[is_true & m & (vxy_te >= 5)], s_te[is_fake & m])
+    res["branch"] = branch
+
+    # ---- a2: PERMUTATION IMPORTANCE ----------------------------------------------
+    # Shuffle one STANDARDIZED test column at a time (fixed rng) and record the AUC
+    # drop, overall and in the two branch cells that matter. Reported sorted by the
+    # exempt-5+ displaced drop -- the M9 representational target.
+    if not args.no_perm_importance:
+        log("permutation importance on TEST rows ...")
+        prng = np.random.default_rng(args.seed + 1)
+        Xte_np = np.ascontiguousarray(Xs[te])
+        base_all = res["all"]["auc"]
+        ex5 = (dca_te >= XS) & (nl_te >= 5)
+        ip4 = (dca_te < XS) & (nl_te <= 4)
+
+        def cell_auc(scores, m, true_extra=None):
+            tm = is_true & m if true_extra is None else is_true & m & true_extra
+            fm = is_fake & m
+            if tm.sum() == 0 or fm.sum() == 0:
+                return None
+            yy = np.concatenate([np.ones(int(tm.sum())), np.zeros(int(fm.sum()))])
+            ss = np.concatenate([scores[tm], scores[fm]])
+            return float(roc_auc_score(yy, ss))
+
+        base_ex5_all = cell_auc(s_te, ex5)
+        base_ex5_disp = cell_auc(s_te, ex5, vxy_te >= 1)
+        base_ip4_all = cell_auc(s_te, ip4)
+        rows = []
+        perm_idx = prng.permutation(len(Xte_np))
+        for j, nm in enumerate(names):
+            Xp = Xte_np.copy()
+            Xp[:, j] = Xte_np[perm_idx, j]
+            sp = batched_scores(model, torch.tensor(Xp), device)
+            rows.append((nm,
+                         base_all - roc_auc_score(np.concatenate([np.ones(int(is_true.sum())),
+                                                                  np.zeros(int(is_fake.sum()))]),
+                                                  np.concatenate([sp[is_true], sp[is_fake]])),
+                         (base_ex5_all - cell_auc(sp, ex5)) if base_ex5_all else 0.0,
+                         (base_ex5_disp - cell_auc(sp, ex5, vxy_te >= 1)) if base_ex5_disp else 0.0,
+                         (base_ip4_all - cell_auc(sp, ip4)) if base_ip4_all else 0.0))
+            del Xp
+        print(f"\n=== a2 permutation importance (AUC DROP when the column is shuffled) ===")
+        print(f"  baselines: all={base_all:.5f} exempt5+_all={base_ex5_all:.5f} "
+              f"exempt5+_disp={base_ex5_disp:.5f} ip_L4_all={base_ip4_all:.5f}")
+        print(f"  {'feature':>24} {'dAUC_all':>10} {'dAUC_ex5':>10} {'dAUC_ex5disp':>13} {'dAUC_ipL4':>10}")
+        for nm, d0, d1, d2, d3 in sorted(rows, key=lambda r: -r[3]):
+            print(f"  {nm:>24} {d0:>10.5f} {d1:>10.5f} {d2:>13.5f} {d3:>10.5f}")
+        res["perm_importance"] = [{"feature": nm, "dAUC_all": d0, "dAUC_exempt5": d1,
+                                   "dAUC_exempt5_disp": d2, "dAUC_ip_L4": d3}
+                                  for nm, d0, d1, d2, d3 in rows]
+
+    if args.out_report:
+        with open(args.out_report, "w") as fh:
+            json.dump({"model": args.out_model, "n_input": X.shape[1],
+                       "hidden": args.hidden, "best_epoch": best_epoch,
+                       "best_sel": float(best_sel), "best_val_meta": best_meta,
+                       "test": res, "inputs": args.input, "dca_split": XS}, fh, indent=1)
+        log(f"wrote {args.out_report}")
 
     log("done")
 

@@ -21,7 +21,16 @@ const char* const kChainFeatNames[kChainFeat] = {"nNodes",
                                                  "nPS",
                                                  "nBarrel",
                                                  "maxJunctionDegProduct",
-                                                 "chargeConsistency"};
+                                                 "chargeConsistency",
+                                                 "maxXyResid",
+                                                 "maxRzResid",
+                                                 "stdEdgeLogit",
+                                                 "maxBridgeChi2",
+                                                 "minT3FakeScore",
+                                                 "maxT3FakeScore",
+                                                 "meanT3PromptScore",
+                                                 "minT3DisplacedScore",
+                                                 "meanT3DisplacedScore"};
 
 namespace {
 
@@ -51,6 +60,47 @@ inline float t3RotSign(const LSTEventData& ev, int t) {
   const float c12y = ev.md_anchor_y[m2] - ev.md_anchor_y[m1];
   const float cross = c01x * c12y - c01y * c12x;
   return (cross >= 0.f) ? 1.f : -1.f;
+}
+
+// a2 feature 19 helper: Kasa algebraic circle fit over n <= 6 anchor hits, returning
+// chi2/hit = sum (dist - R)^2 / n in cm^2. Numerically IDENTICAL to the full-chain fit
+// block below (same centering, same normal equations, same degeneracy guard), just over
+// a sub-list. Degenerate (n < 3 or collinear) -> 0, matching the feature-5 convention.
+inline double kasaChi2PerHit(const double* x, const double* y, int n) {
+  if (n < 3)
+    return 0.0;
+  double xbar = 0.0, ybar = 0.0;
+  for (int k = 0; k < n; ++k) {
+    xbar += x[k];
+    ybar += y[k];
+  }
+  xbar /= n;
+  ybar /= n;
+  double Suu = 0.0, Svv = 0.0, Suv = 0.0, Suw = 0.0, Svw = 0.0, Sw = 0.0;
+  for (int k = 0; k < n; ++k) {
+    const double u = x[k] - xbar, v = y[k] - ybar;
+    const double w = u * u + v * v;
+    Suu += u * u;
+    Svv += v * v;
+    Suv += u * v;
+    Suw += u * w;
+    Svw += v * w;
+    Sw += w;
+  }
+  const double det = Suu * Svv - Suv * Suv;
+  const double scale = Suu + Svv;
+  if (!(det > 1e-12 * scale * scale))
+    return 0.0;
+  const double uc = (Svv * (0.5 * Suw) - Suv * (0.5 * Svw)) / det;
+  const double vc = (Suu * (0.5 * Svw) - Suv * (0.5 * Suw)) / det;
+  const double R = std::sqrt(std::max(uc * uc + vc * vc + Sw / n, 0.0));
+  double chi2 = 0.0;
+  for (int k = 0; k < n; ++k) {
+    const double du = (x[k] - xbar) - uc, dv = (y[k] - ybar) - vc;
+    const double resid = std::sqrt(du * du + dv * dv) - R;
+    chi2 += resid * resid;
+  }
+  return chi2 / n;
 }
 
 // LOWER median (sorted element (n-1)/2) -- the K10 convention. Mutates v.
@@ -84,18 +134,26 @@ void computeChainFeatures(const LSTEventData& ev,
     if (nNodes < 1 || nMD < 1)
       continue;  // unreachable by the K6 contract (>= 2 nodes, >= 4 MDs); row stays 0
 
-    // --- 2-4: member weld-edge logit aggregates ------------------------------------
+    // --- 2-4, 18: member weld-edge logit aggregates ---------------------------------
     float sumL = 0.f, minL = 0.f;
+    double sumL2 = 0.0;
     if (nE > 0) {
       minL = scores.logOdds[chains.edgeItems[eb]];
       for (int k = eb; k < ee; ++k) {
         const float lo = scores.logOdds[chains.edgeItems[k]];
         sumL += lo;
+        sumL2 += static_cast<double>(lo) * static_cast<double>(lo);
         if (lo < minL)
           minL = lo;
       }
     }
     const float meanL = nE > 0 ? sumL / static_cast<float>(nE) : 0.f;
+    // Population std of the weld-edge logits (0 for a single weld).
+    float stdL = 0.f;
+    if (nE > 1) {
+      const double var = sumL2 / nE - static_cast<double>(meanL) * static_cast<double>(meanL);
+      stdL = static_cast<float>(std::sqrt(std::max(var, 0.0)));
+    }
 
     // --- gather anchor hits (innermost-first mdItems order) ------------------------
     hx.resize(nMD);
@@ -108,10 +166,10 @@ void computeChainFeatures(const LSTEventData& ev,
       hz[k] = ev.md_anchor_z[md];
     }
 
-    // --- 5, 7: Kasa algebraic circle fit (xy) over all anchor hits -----------------
+    // --- 5, 7, 16: Kasa algebraic circle fit (xy) over all anchor hits -------------
     // Centered coordinates u = x - xbar, v = y - ybar, w = u^2 + v^2; solve
     //   [Suu Suv; Suv Svv] [uc; vc] = 0.5 [Suw; Svw],  R^2 = uc^2 + vc^2 + Sw/n.
-    double fitChi2PerHit = 0.0, fitKappa = 0.0;
+    double fitChi2PerHit = 0.0, fitKappa = 0.0, maxXyResid = 0.0;
     if (nMD >= 3) {
       double xbar = 0.0, ybar = 0.0;
       for (int k = 0; k < nMD; ++k) {
@@ -142,6 +200,7 @@ void computeChainFeatures(const LSTEventData& ev,
           const double du = (hx[k] - xbar) - uc, dv = (hy[k] - ybar) - vc;
           const double resid = std::sqrt(du * du + dv * dv) - R;
           chi2 += resid * resid;
+          maxXyResid = std::max(maxXyResid, std::fabs(resid));
         }
         fitChi2PerHit = chi2 / nMD;
         // Chain rotation sign: majority rotation = sign of the summed triplet crosses
@@ -157,8 +216,8 @@ void computeChainFeatures(const LSTEventData& ev,
       }
     }
 
-    // --- 6: rz straight-line fit z vs s (s = cumulative xy chord length) -----------
-    double rzChi2PerHit = 0.0;
+    // --- 6, 17: rz straight-line fit z vs s (s = cumulative xy chord length) -------
+    double rzChi2PerHit = 0.0, maxRzResid = 0.0;
     {
       sArc.resize(nMD);
       double s = 0.0;
@@ -188,20 +247,37 @@ void computeChainFeatures(const LSTEventData& ev,
         for (int k = 0; k < nMD; ++k) {
           const double r = hz[k] - a - b * sArc[k];
           chi2 += r * r;
+          maxRzResid = std::max(maxRzResid, std::fabs(r));
         }
         rzChi2PerHit = chi2 / nMD;
       }
     }
 
-    // --- 8, 9, 15: member-T3 aggregates --------------------------------------------
+    // --- 8, 9, 15, 20-24: member-T3 aggregates --------------------------------------
     scratch.clear();
     int nPos = 0, nNeg = 0;
+    // a2 20-24: upstream t3dnn 3-class outputs, never consumed by the M6-M9 gate.
+    float minFakeT3 = 0.f, maxFakeT3 = 0.f, minDispT3 = 0.f;
+    double sumPromptT3 = 0.0, sumDispT3 = 0.0;
     for (int k = ib; k < ie; ++k) {
       const int t = chains.items[k];
       const float rs = t3RotSign(ev, t);
       (rs >= 0.f ? nPos : nNeg) += 1;
       scratch.push_back(rs / std::max(cleanRadius(ev.t3_radius[t]), kEps));
+      const float fs = ev.t3_fakeScore[t], ps = ev.t3_promptScore[t], ds = ev.t3_displacedScore[t];
+      if (k == ib) {
+        minFakeT3 = maxFakeT3 = fs;
+        minDispT3 = ds;
+      } else {
+        minFakeT3 = std::min(minFakeT3, fs);
+        maxFakeT3 = std::max(maxFakeT3, fs);
+        minDispT3 = std::min(minDispT3, ds);
+      }
+      sumPromptT3 += ps;
+      sumDispT3 += ds;
     }
+    const float meanPromptT3 = static_cast<float>(sumPromptT3 / nNodes);
+    const float meanDispT3 = static_cast<float>(sumDispT3 / nNodes);
     const float medianKappaT3 = lowerMedian(scratch);
     const float dKappaFitVsMedianT3 = static_cast<float>(fitKappa) - medianKappaT3;
 
@@ -245,6 +321,37 @@ void computeChainFeatures(const LSTEventData& ev,
       maxDegProd = std::max(maxDegProd, degIn * degOut);
     }
 
+    // --- 19: bridge-circle chi2 over CONSECUTIVE member-T3 pairs --------------------
+    // Union of the two T3s' MD anchor hits in chain order (E1 weld -> 5 distinct MDs,
+    // E2 weld -> 4); dedup preserves order. Isolates each weld's own circle
+    // consistency, which the global fit (feature 5) can absorb.
+    double maxBridgeChi2 = 0.0;
+    {
+      double bx[6], by[6];
+      int bmd[6];
+      for (int k = ib; k + 1 < ie; ++k) {
+        const int ti = chains.items[k], to = chains.items[k + 1];
+        const int src[6] = {ev.t3_md0[ti], ev.t3_md1[ti], ev.t3_md2[ti],
+                            ev.t3_md0[to], ev.t3_md1[to], ev.t3_md2[to]};
+        int n = 0;
+        for (int q = 0; q < 6; ++q) {
+          bool dup = false;
+          for (int p = 0; p < n; ++p)
+            if (bmd[p] == src[q]) {
+              dup = true;
+              break;
+            }
+          if (dup)
+            continue;
+          bmd[n] = src[q];
+          bx[n] = ev.md_anchor_x[src[q]];
+          by[n] = ev.md_anchor_y[src[q]];
+          ++n;
+        }
+        maxBridgeChi2 = std::max(maxBridgeChi2, kasaChi2PerHit(bx, by, n));
+      }
+    }
+
     // --- store (order = the frozen contract in ChainFeatures.h) --------------------
     float* f = &out.f[static_cast<std::size_t>(c) * kChainFeat];
     f[0] = static_cast<float>(nNodes);
@@ -263,6 +370,15 @@ void computeChainFeatures(const LSTEventData& ev,
     f[13] = static_cast<float>(nBarrel);
     f[14] = static_cast<float>(maxDegProd);
     f[15] = chargeConsistency;
+    f[16] = static_cast<float>(maxXyResid);
+    f[17] = static_cast<float>(maxRzResid);
+    f[18] = stdL;
+    f[19] = static_cast<float>(maxBridgeChi2);
+    f[20] = minFakeT3;
+    f[21] = maxFakeT3;
+    f[22] = meanPromptT3;
+    f[23] = minDispT3;
+    f[24] = meanDispT3;
   }
 
   sanitize(out.f);

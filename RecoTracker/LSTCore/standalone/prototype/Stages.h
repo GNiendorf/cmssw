@@ -114,6 +114,22 @@ struct ArbitrationParams {
   const std::vector<char>* altThreshold = nullptr;  // per-chain: 1 = use thetaAlt*
   float maxClaimedFrac = 0.3f; // max fraction of already-claimed MDs tolerated
   bool dropPixelConsumed = true;
+  // A8 (fake-aware ordering, -B): K9's best-first ORDER key. nullptr = order by
+  // chains.score (legacy, bit-exact). When set (size nChains) the greedy walk visits
+  // chains by orderKey desc / index asc, while ACCEPTANCE thresholds still cut on
+  // chains.score -- the M9 "only fake-specific ordering/kills move FR" lesson applied on
+  // the ordering axis WITHOUT the cross-scale inversion (thresholds never see the key).
+  const std::vector<float>* orderKey = nullptr;
+  // A8 (braid suppression, -W): kill a candidate outright when it overlaps an
+  // ALREADY-ACCEPTED chain by >= braidFrac of THAT ACCEPTED chain's MDs (owner-relative,
+  // as opposed to the candidate-relative maxClaimedFrac test). Targets the genuine
+  // welder-braid duplicates: a long sibling can swallow a short accepted chain whole
+  // while its own claimed fraction stays under F. 0 = off (bit-exact legacy).
+  float braidFrac = 0.f;
+  // A8 (-H 1): run the claim (and the braid test) on HIT indices instead of MD indices.
+  // Genuine chain-chain duplicates are built from DIFFERENT T3/MD objects sitting on the
+  // same hits, so an MD-level claim map cannot see them at all; the hit-level map can.
+  bool hitLevelClaim = false;
 
   float thetaFor(int nLayers) const {
     return nLayers >= 6 ? thetaChain6 : (nLayers == 5 ? thetaChain5 : thetaChain4);

@@ -68,29 +68,98 @@ void k9Arbitrate(const LSTEventData& ev,
     order.push_back(c);
   }
 
-  // 2) Deterministic best-first order: score desc, chain index asc on ties.
-  std::sort(order.begin(), order.end(), [&chains](int a, int b) {
-    if (chains.score[a] != chains.score[b])
-      return chains.score[a] > chains.score[b];
+  // 2) Deterministic best-first order: key desc, chain index asc on ties. The key is
+  //    chains.score unless the caller supplied a separate ordering key (A8 -B: legacy
+  //    score minus a fake-suspicion penalty; thresholds still cut on chains.score).
+  const std::vector<float>* keyVec = &chains.score;
+  if (params.orderKey != nullptr && params.orderKey->size() == chains.score.size())
+    keyVec = params.orderKey;
+  const std::vector<float>& key = *keyVec;
+  std::sort(order.begin(), order.end(), [&key](int a, int b) {
+    if (key[a] != key[b])
+      return key[a] > key[b];
     return a < b;
   });
 
   // 3) Greedy accept: a chain survives iff the fraction of its MDs already claimed by
   //    better chains is <= maxClaimedFrac; survivors claim all their MDs.
-  std::vector<char> claimed(nMD, 0);
+  //    owner[md] = index of the accepted chain that claimed md, -1 = free (the A8 braid
+  //    rule needs the owner identity, not just the claimed bit; owner >= 0 is exactly the
+  //    old claimed flag).
+  //    -H 1 switches the claim universe from MDs to HITS: a per-chain hit list (anchor +
+  //    other hit of every member MD, deduped) is built once and the identical greedy runs
+  //    on it. MD-level and hit-level differ exactly where duplicate MD objects sit on the
+  //    same hits -- the genuine chain-chain braid population.
+  std::vector<int> chainKeyOff, chainKeyItems;  // -H 1 only: per-chain deduped hit list
+  int nKeyUniverse = nMD;
+  if (params.hitLevelClaim) {
+    int maxHit = -1;
+    for (int i = 0; i < nMD; ++i)
+      maxHit = std::max(maxHit, std::max(ev.md_anchorHitIdx[i], ev.md_otherHitIdx[i]));
+    nKeyUniverse = maxHit + 1;
+    chainKeyOff.assign(nChains + 1, 0);
+    chainKeyItems.reserve(static_cast<std::size_t>(chains.mdItems.size()) * 2);
+    std::vector<int> scratch;
+    for (int c = 0; c < nChains; ++c) {
+      scratch.clear();
+      for (int k = chains.mdOffsets[c]; k < chains.mdOffsets[c + 1]; ++k) {
+        const int md = chains.mdItems[k];
+        scratch.push_back(ev.md_anchorHitIdx[md]);
+        scratch.push_back(ev.md_otherHitIdx[md]);
+      }
+      std::sort(scratch.begin(), scratch.end());
+      scratch.erase(std::unique(scratch.begin(), scratch.end()), scratch.end());
+      chainKeyItems.insert(chainKeyItems.end(), scratch.begin(), scratch.end());
+      chainKeyOff[c + 1] = static_cast<int>(chainKeyItems.size());
+    }
+  }
+  const std::vector<int>& keyOff = params.hitLevelClaim ? chainKeyOff : chains.mdOffsets;
+  const std::vector<int>& keyItems = params.hitLevelClaim ? chainKeyItems : chains.mdItems;
+
+  std::vector<int> owner(nKeyUniverse, -1);
+  const bool braid = params.braidFrac > 0.f;
+  // Owner-overlap tally, allocated once: cnt[c] valid only for c in touched.
+  std::vector<int> cnt;
+  std::vector<int> touched;
+  if (braid) {
+    cnt.assign(nChains, 0);
+    touched.reserve(32);
+  }
   for (int c : order) {
-    const int b = chains.mdOffsets[c];
-    const int e = chains.mdOffsets[c + 1];
+    const int b = keyOff[c];
+    const int e = keyOff[c + 1];
     const int total = e - b;
     int nClaimed = 0;
     for (int k = b; k < e; ++k)
-      nClaimed += claimed[chains.mdItems[k]];
+      nClaimed += (owner[keyItems[k]] >= 0) ? 1 : 0;
     // total >= 4 for any welded chain (2 T3s sharing an LS); guard div anyway.
     const float frac = (total > 0) ? static_cast<float>(nClaimed) / static_cast<float>(total) : 0.f;
     if (frac > params.maxClaimedFrac)
       continue;
+    if (braid && nClaimed > 0) {
+      // Owner-relative overlap: does this candidate swallow >= braidFrac of any single
+      // already-accepted chain? If so it is a welder-braid sibling, not a new track.
+      touched.clear();
+      for (int k = b; k < e; ++k) {
+        const int o = owner[keyItems[k]];
+        if (o < 0)
+          continue;
+        if (cnt[o] == 0)
+          touched.push_back(o);
+        ++cnt[o];
+      }
+      bool killed = false;
+      for (int o : touched) {
+        const int oTot = keyOff[o + 1] - keyOff[o];
+        if (oTot > 0 && static_cast<float>(cnt[o]) >= params.braidFrac * static_cast<float>(oTot))
+          killed = true;
+        cnt[o] = 0;
+      }
+      if (killed)
+        continue;
+    }
     for (int k = b; k < e; ++k)
-      claimed[chains.mdItems[k]] = 1;
+      owner[keyItems[k]] = c;
     acceptedChains.push_back(c);
   }
 }

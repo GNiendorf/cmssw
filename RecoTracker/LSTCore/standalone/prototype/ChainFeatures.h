@@ -6,7 +6,12 @@
 // PRE-arbitration), aggregating the member edge log-odds with full-length fit residuals
 // and detector-category counts.
 //
-// FROZEN CONTRACT (kChainFeat = 16 floats per chain, row-major [c * kChainFeat + i]):
+// FANOUT ANGLE a2 (gate capacity + features): the contract is EXTENDED from 16 to 25
+// floats. Slots 0-15 are BIT-IDENTICAL to the frozen M6 contract (same code, same order);
+// slots 16-24 are the a2 additions documented after slot 15. Any 16-input model stays
+// valid on the first 16 columns, so the 16-feature control retrain is exact.
+//
+// FROZEN CONTRACT (kChainFeat = 25 floats per chain, row-major [c * kChainFeat + i]):
 //   0 nNodes             : number of member T3 nodes (K6 contract: >= 2)
 //   1 nLayers            : chains.nLayers[c] = distinct md_layer count over the MD set
 //   2 sumEdgeLogit       : sum of member weld-edge MLP logits (log-odds; K6's edgeSum)
@@ -48,6 +53,47 @@
 //                          rotSign (rotSign as in Features.h node f[0]: sign of z of
 //                          cross(c01, c12) over anchor hits, collinear counts +1).
 //
+// ---- a2 additions (16-24) ------------------------------------------------------------
+//  16 maxXyResid         : max_i |dist(hit_i, center) - R| over the SAME full-chain
+//                          circle fit that produces feature 5 (cm, NOT squared, NOT
+//                          divided by nHits). Feature 5 is a mean over hits and is
+//                          dominated by the bulk; a single-layer outlier (the signature
+//                          of a mis-welded braid whose other hits still lie on a circle)
+//                          is invisible there and maximal here -- the "max per-layer
+//                          xy-fit residual". 0 when the fit is degenerate (same guard
+//                          as feature 5).
+//  17 maxRzResid         : max_i |z_i - a - b*s_i| over the SAME rz line fit that
+//                          produces feature 6 (cm, NOT squared, NOT averaged). Same
+//                          worst-hit logic in the rz view. 0 when degenerate.
+//  18 stdEdgeLogit       : POPULATION std (divide by nEdges) of the member weld-edge
+//                          logits. Features 2-4 give sum/min/mean; the spread separates
+//                          "uniformly mediocre" chains (all edges ~2) from "one bad
+//                          weld" chains (edges 6, 6, -1) at equal mean. 0 if nEdges < 2.
+//  19 maxBridgeChi2      : BRIDGE-CIRCLE chi2. For each CONSECUTIVE member-T3 pair
+//                          (k, k+1) along the chain, take the UNION of the two T3s' MD
+//                          anchor hits in chain order (5 distinct MDs for an E1 weld,
+//                          4 for an E2 weld), run the identical Kasa circle fit, and
+//                          form chi2/hit = sum (dist - R)^2 / nHits (cm^2). The feature
+//                          is the MAX over pairs. Feature 5 fits ALL hits at once, so a
+//                          locally inconsistent junction can be absorbed by the global
+//                          fit; the per-bridge fit isolates each weld's own circle
+//                          consistency -- the chain-level analogue of the production
+//                          T5 inner/outer-radius agreement cut. 0 if nNodes < 2 or every
+//                          bridge fit is degenerate.
+//  20 minT3FakeScore     : min over member T3s of ev.t3_fakeScore (upstream t3dnn).
+//  21 maxT3FakeScore     : max over member T3s of ev.t3_fakeScore -- the weakest link,
+//                          the same "worst member" logic as minEdgeLogit.
+//  22 meanT3PromptScore  : mean over member T3s of ev.t3_promptScore.
+//  23 minT3DisplacedScore: min over member T3s of ev.t3_displacedScore.
+//  24 meanT3DisplacedScore: mean over member T3s of ev.t3_displacedScore.
+//                          (20-24 rationale: the production t3dnn is a 3-class head
+//                          [prompt, displaced, fake] and its DISPLACED output is the one
+//                          piece of displaced-specific discrimination already computed
+//                          upstream for free. The M6-M9 gate never consumed prompt or
+//                          displaced -- only fakeScore reached the EDGE net as node
+//                          f[12] -- so the chain gate has been blind to it. Non-finite
+//                          scores map to 0 by the final sanitize pass.)
+//
 // Rotation convention for feature 7: chain rotSign = sign of the SUM over consecutive
 // anchor-hit triplets (innermost-first mdItems order) of the z component of
 // cross(h_{k+1}-h_k, h_{k+2}-h_{k+1}) -- the majority rotation over the whole chain;
@@ -72,7 +118,7 @@
 #include "EventData.h"
 #include "Stages.h"
 
-constexpr int kChainFeat = 16;
+constexpr int kChainFeat = 25;
 
 // Ordered names for the feature_spec TNamed (defined in ChainFeatures.cc; MUST stay in
 // sync with the contract above).

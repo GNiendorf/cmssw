@@ -47,11 +47,43 @@ void labelEdges(const LSTEventData& ev, const ChainGraph& g, const T3SimSets& t3
 // intersection pick the highest sim_pt; a pileup-only match keeps label 1 with
 // simIdx = the smallest full-row index and kinematics -999.
 struct ChainLabels {
-  std::vector<int8_t> label;    // 1 = all members share a sim, 0 otherwise
+  std::vector<int8_t> label;    // 1 = TRUE chain (see labelChains / labelChainsHarness)
   std::vector<int> simIdx;      // FULL tracking-ntuple sim row (see EdgeLabels), -1 if label 0
   std::vector<float> simPt, simVxy;  // accepted-sim kinematics, -999 otherwise
+  // ---- M12 additions (populated only by labelChainsHarness) ----------------------------
+  std::vector<int8_t> labelOld;   // the pre-M12 >=2/3-MD-intersection label, kept for the
+                                  // flip matrix / ablation. Empty after plain labelChains().
+  std::vector<float> matchFrac;   // best hit-level match fraction from the production
+                                  // matcher (pmatched), -1 when no hits. Empty after
+                                  // plain labelChains().
 };
 
 void labelChains(const LSTEventData& ev, const Chains& chains, const T3SimSets& t3sims, ChainLabels& out);
+
+// -------------------------------------------------------------------------------------
+// M12 LABEL RETARGET (plan 10.4c M10 "label bug", judge-specified fix).
+//
+// The labelChains() rule above is an OBJECT-level proxy: a chain is true when one sim is
+// >=2/3-MD-matched to every member T3. M10 measured that 23.4% of accepted HARNESS-FAKE
+// chain TCs carry that label (two T3s each keeping 2/3 MDs + a shared middle = 3/5 = 60%
+// hit coverage), which floors the chain-slice FR of a perfect classifier at 0.1235.
+//
+// labelChainsHarness() replaces it with EXACTLY the rule the scoring harness applies to
+// the assembled TC: run the production matcher (proto::matchedSimTrkIdxsAndFracs, the
+// verbatim trkCore port already used by OutputWriter) over the chain's FULL hit list --
+// per member MD, in K6 order, the anchor hit then the other hit, all Phase2OT, exactly
+// k10AssembleChainTCs' list -- and call the chain TRUE iff some sim's hit fraction is
+// STRICTLY > 0.75. Train and serve then agree on what "fake" means.
+//
+// simIdx/simPt/simVxy follow the labelChains convention: kinematics exist only for
+// ACCEPTED sims (full row < ev.sim_pt.size()), so among the matched sims (already sorted
+// by fraction desc) the first ACCEPTED one supplies them; a pileup-only match keeps
+// label 1 with simIdx = the top-fraction full row and -999 kinematics.
+// labelOld is filled from labelChains() on the same chains for the flip matrix.
+void labelChainsHarness(const LSTEventData& ev,
+                        const TrkEventData& trk,
+                        const Chains& chains,
+                        const T3SimSets& t3sims,
+                        ChainLabels& out);
 
 #endif
