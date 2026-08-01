@@ -32,6 +32,21 @@
 //                  blind SEED-FAMILY suppression (kept-baseline pT5/pT3/pLS rows whose
 //                  own pLS shares >= 2 pixel hits with any attached pLS are dropped,
 //                  mirroring production pixelHitsOverlapAny).
+//                  M7c refinements (all -A 2 only, all sim-blind): (a) IP-compatibility
+//                  gate on attach ELIGIBILITY -- only chains whose full-fit circle has
+//                  transverse DCA to the origin < dcaMax (-D) may attach (pass-2
+//                  candidacy AND in-place upgrade); displaced chains keep their bare
+//                  deliveries (fixes the M7b upgrade dilution: wrong pLS on displaced
+//                  chains poisoned the >0.75 match). (b) KINEMATIC SUPPRESSION GUARD --
+//                  a family-suppressed row is actually dropped only if it is
+//                  kinematically compatible with the attaching chain+pLS TC
+//                  (dR < -S AND pt ratio < 2; fixes the M7b suppression collateral:
+//                  seed-sharing rows of DIFFERENT tracks were dropped). (c) K7-LITE
+//                  kinematic dedup (-K 1, default) -- after attach + suppression, bare
+//                  (non-attached) chain TCs that are IP-compatible (-D) and
+//                  kinematically match a KEPT baseline type-7 row (dR < -R, pt ratio
+//                  < 2) are dropped as redundant re-deliveries of pixel-delivered
+//                  tracks; the dca gate protects displaced chains from qualifying.
 //   chaindump(M6): graph + features + MLP inference + K6 welding (same -e/-L knobs as
 //                  hybrid, r5 shape = -e 0 -L 0.5), then EVERY welded chain
 //                  PRE-arbitration is written to a flat TTree "chains" (one entry per
@@ -112,12 +127,35 @@ void usage(const char* prog) {
                "              seed-family suppression drops kept-baseline pT5/pT3/pLS rows\n"
                "              whose pLS shares >= 2 pixel hits with any attached pLS\n"
                "  -a <theta>  thetaAttach: attach-head logit threshold for K8 (default 0.0;\n"
-               "              only used with -A 1/2)\n",
+               "              only used with -A 1/2)\n"
+               "  -D <cm>     dcaMax (M7c, -A 2 only, default 1.0): IP-compatibility gate --\n"
+               "              transverse DCA of the chain's full-fit circle to the origin must\n"
+               "              be < dcaMax for the chain to be attach-ELIGIBLE (pass-2 candidacy\n"
+               "              and in-place upgrade) and for K7-lite to consider dropping it\n"
+               "  -K <0|1>    K7-lite kinematic dedup (M7c, -A 2 only, default 1): after attach\n"
+               "              + suppression, drop bare (non-attached) chain TCs that are\n"
+               "              IP-compatible (-D) and kinematically match a KEPT baseline type-7\n"
+               "              row (dR < -R, pt ratio < 2)\n"
+               "  -R <dR>     K7-lite dR window (M7c, default 0.03)\n"
+               "  -S <dR>     suppression-guard dR window (M7c, -A 2 only, default 0.05): a\n"
+               "              family-suppressed row is actually dropped only if\n"
+               "              dR(row, attaching chain+pLS TC) < -S and pt ratio < 2; rows\n"
+               "              failing the test survive\n",
                prog);
 }
 
 double msBetween(std::chrono::steady_clock::time_point a, std::chrono::steady_clock::time_point b) {
   return std::chrono::duration<double, std::milli>(b - a).count();
+}
+
+// M7c kinematic tests (suppression guard / K7-lite): wrap a phi difference to (-pi, pi].
+float wrapDPhi(float d) {
+  constexpr float kPi = 3.14159265358979323846f;
+  while (d > kPi)
+    d -= 2.f * kPi;
+  while (d < -kPi)
+    d += 2.f * kPi;
+  return d;
 }
 
 // Chain node-count histogram bins: 2, 3, 4, 5+ (K6 chains have >= 2 nodes by contract).
@@ -180,6 +218,11 @@ int main(int argc, char** argv) {
                                   // subordinate two-pass claim + seed-family suppression
                                   // (default 0 so the -A-less regression path is untouched)
   float thetaAttach = 0.0f;       // -a: attach-head logit threshold (hybrid -A 1)
+  float dcaAttachMax = 1.0f;      // -D: M7c IP-compatibility gate (attach eligibility + K7-lite)
+  int k7Lite = 1;                 // -K: M7c K7-lite kinematic dedup on/off (-A 2 only)
+  float k7DR = 0.03f;             // -R: K7-lite dR window
+  float suppDR = 0.05f;           // -S: suppression-guard dR window
+  constexpr float kKinPtRatioMax = 2.0f;  // shared pt-ratio window for -S guard and K7-lite
 
   // Pre-scan for the multi-char flags -T4/-T5/-T6 (getopt cannot express them: "-T4"
   // would parse as -T with value "4"); consume flag+value pairs here and hand the
@@ -209,7 +252,7 @@ int main(int argc, char** argv) {
   int nArgs = static_cast<int>(args.size());
 
   int opt;
-  while ((opt = getopt(nArgs, args.data(), "i:t:o:n:m:l:e:L:T:F:G:A:a:Ph")) != -1) {
+  while ((opt = getopt(nArgs, args.data(), "i:t:o:n:m:l:e:L:T:F:G:A:a:D:K:R:S:Ph")) != -1) {
     switch (opt) {
       case 'i':
         lstPath = optarg;
@@ -260,6 +303,22 @@ int main(int argc, char** argv) {
         break;
       case 'a':
         thetaAttach = static_cast<float>(std::atof(optarg));
+        break;
+      case 'D':
+        dcaAttachMax = static_cast<float>(std::atof(optarg));
+        break;
+      case 'K':
+        k7Lite = std::atoi(optarg);
+        if (k7Lite < 0 || k7Lite > 1) {
+          std::fprintf(stderr, "Error: -K expects 0 or 1.\n");
+          return 1;
+        }
+        break;
+      case 'R':
+        k7DR = static_cast<float>(std::atof(optarg));
+        break;
+      case 'S':
+        suppDR = static_cast<float>(std::atof(optarg));
         break;
       case 'h':
         usage(argv[0]);
@@ -775,8 +834,26 @@ int main(int argc, char** argv) {
           " upgrade in place to type 7; seed-family suppression drops kept-baseline"
           " pT5/pT3/pLS rows sharing >= 2 pixel hits with any attached pLS)\n",
           thetaAttach, attachHeadAvailable() ? "trained" : "sentinel", apDefaults.prefDTanL, apDefaults.prefDPhi);
+      std::printf(
+          "attach M7c: dcaMax=%.3f cm (IP gate on attach eligibility + K7-lite),"
+          " suppression guard dR<%.3f ptRatio<%.1f, K7-lite=%s (dR<%.3f ptRatio<%.1f,"
+          " bare IP-compatible chains vs kept type-7 rows)\n",
+          dcaAttachMax, suppDR, kKinPtRatioMax, k7Lite ? "on" : "off", k7DR, kKinPtRatioMax);
     }
     OutputWriter writer(outPath, label);
+
+    // M7c dca-distribution study hook: PROTO_DCA_DUMP=<path> writes one line per
+    // pass-1-accepted chain (nLayers, dcaXY, chain label, matched sim vxy, sim pt;
+    // labelChains truth, -999 kinematics for pileup-only/unmatched). Off by default;
+    // truth is used for the offline justification report only, never for decisions.
+    std::FILE* dcaDump = nullptr;
+    if (const char* dcaPath = std::getenv("PROTO_DCA_DUMP")) {
+      dcaDump = std::fopen(dcaPath, "w");
+      if (dcaDump)
+        std::fprintf(dcaDump, "# nLayers dcaXY label simVxy simPt\n");
+      else
+        std::fprintf(stderr, "WARNING: cannot open PROTO_DCA_DUMP path %s\n", dcaPath);
+    }
 
     long long totPixKept = 0;
     long long totChainsIn = 0, totAfterTheta = 0, totAfterPixDrop = 0, totAfterClaim = 0;
@@ -784,6 +861,7 @@ int main(int argc, char** argv) {
     long long totAttached = 0, totPixSuppressed = 0, totPairsPref = 0, totPairsScored = 0;
     long long totPass2Cand = 0, totPass2Acc = 0, totUpgraded = 0;
     long long totSuppByType[3] = {0, 0, 0};  // {pT5 rows, pT3 rows, pLS rows} (-A 2)
+    long long totDcaBlocked = 0, totK7Dropped = 0, totGuardKept = 0;  // M7c (-A 2)
     double totInferMs = 0.0, totWeldMs = 0.0, totArbMs = 0.0, totFillMs = 0.0, totAttachMs = 0.0;
 
     for (long long i = 0; i < nRun; ++i) {
@@ -846,16 +924,39 @@ int main(int argc, char** argv) {
       // chains to type 7 in place and (b) qualifies attached-but-pixdropped chains for
       // the subordinate pass 2. In both modes a chain that attached but produced no TC
       // triggers NO suppression (its pLS keeps its baseline rows; no fallback).
+      // M7c per-chain transverse DCA (lazy, memoized): the IP-compatibility gate for
+      // attach eligibility and K7-lite. -1 = not yet computed (dca is always >= 0).
+      std::vector<float> dcaCache;
+      auto chainDca = [&](int c) -> float {
+        if (dcaCache.empty())
+          dcaCache.assign(chains.score.size(), -1.f);
+        if (dcaCache[c] < 0.f)
+          dcaCache[c] = k8ChainDcaXY(ev, chains, c);
+        return dcaCache[c];
+      };
+
       Attachments att;
       std::vector<int> thetaPass;
       std::vector<char> attachBypass;
       std::vector<int> chainAttachPls;  // per-chain: attached pLS row or -1
       double attachMs = 0.0;
+      long long nDcaBlocked = 0;
       if (attachMode) {
         const int nChainsAll = static_cast<int>(chains.score.size());
-        for (int c = 0; c < nChainsAll; ++c)
-          if (chains.score[c] >= ap.thetaFor(chains.nLayers[c]))
-            thetaPass.push_back(c);
+        for (int c = 0; c < nChainsAll; ++c) {
+          if (chains.score[c] < ap.thetaFor(chains.nLayers[c]))
+            continue;
+          // M7c (a): IP-compatibility gate on attach ELIGIBILITY (-A 2 only). Chains
+          // whose full-fit circle misses the origin by >= dcaMax never bid for a pLS:
+          // no in-place upgrade, no pass-2 candidacy, no suppression -- displaced
+          // chains keep their bare deliveries (the M7b upgrade-dilution fix). Gate
+          // evaluated only for the K8 scope (nLayers >= 5; shorter chains never bid).
+          if (attachMode == 2 && chains.nLayers[c] >= 5 && chainDca(c) >= dcaAttachMax) {
+            ++nDcaBlocked;
+            continue;
+          }
+          thetaPass.push_back(c);
+        }
         AttachParams apar;
         apar.thetaAttach = thetaAttach;
         const auto ta0 = std::chrono::steady_clock::now();
@@ -891,6 +992,20 @@ int main(int argc, char** argv) {
       std::vector<ChainTC> chainTCs;
       k10AssembleChainTCs(ev, chains, accepted, chainTCs);
       const auto t3 = std::chrono::steady_clock::now();
+
+      // M7c dca study dump (PROTO_DCA_DUMP): pass-1-accepted chains only -- at
+      // -a 999 (nothing attaches) that set is exactly the h4b delivery set.
+      if (dcaDump != nullptr) {
+        T3SimSets t3simsDca;
+        buildT3SimSets(ev, t3simsDca);
+        ChainLabels clDca;
+        labelChains(ev, chains, t3simsDca, clDca);
+        for (std::size_t ai = 0; ai < nPass1; ++ai) {
+          const int c = accepted[ai];
+          std::fprintf(dcaDump, "%d %.5f %d %.3f %.3f\n", chains.nLayers[c], chainDca(c),
+                       static_cast<int>(clDca.label[c]), clDca.simVxy[c], clDca.simPt[c]);
+        }
+      }
 
       // Funnel counts for the report: replicate K9's two pre-claim gates (theta gate,
       // then pixel-consumed drop) so the per-stage attrition is visible per event.
@@ -955,10 +1070,19 @@ int main(int argc, char** argv) {
 
       std::vector<OutTC> outTCs;
       outTCs.reserve(chainTCs.size());
+      std::vector<int> outTCChain;  // per outTC: source chain index (K7-lite dca lookup)
+      outTCChain.reserve(chainTCs.size());
       std::vector<char> plsSuppressed;
+      // M7c (b): per-pLS kinematics of the attaching chain+pLS TC (valid where
+      // plsSuppressed != 0; family members inherit their anchor's reference).
+      std::vector<float> attachRefPt, attachRefEta, attachRefPhi;
       long long nAttached = 0, nUpgraded = 0;
-      if (attachMode)
+      if (attachMode) {
         plsSuppressed.assign(ev.pLS_pt.size(), 0);
+        attachRefPt.assign(ev.pLS_pt.size(), 0.f);
+        attachRefEta.assign(ev.pLS_pt.size(), 0.f);
+        attachRefPhi.assign(ev.pLS_pt.size(), 0.f);
+      }
       {
         std::vector<int> pixHits;
         std::size_t tcPos = 0;
@@ -981,6 +1105,9 @@ int main(int argc, char** argv) {
             plsSuppressed[p] = 1;
             otc.type = 7;           // pT5-class: chain + attached pLS
             otc.pt = ev.pLS_pt[p];  // pLS ptIn (pixel pt is better measured)
+            attachRefPt[p] = otc.pt;
+            attachRefEta[p] = otc.eta;
+            attachRefPhi[p] = otc.phi;
             plsPixelHits(p, pixHits);
             for (int hi : pixHits) {
               otc.hitIdxs.push_back(static_cast<unsigned int>(hi));
@@ -992,6 +1119,7 @@ int main(int argc, char** argv) {
             otc.hitTypes.push_back(proto::HitType::Phase2OT);
           }
           outTCs.push_back(std::move(otc));
+          outTCChain.push_back(c);
         }
       }
 
@@ -1023,29 +1151,126 @@ int main(int argc, char** argv) {
             if (static_cast<int>(pixHits.size()) < 2)
               continue;
             cnt.clear();
-            bool inFamily = false;
+            int anchorP = -1;  // the attached pLS whose shared-hit count reached 2 first
             for (int h : pixHits) {
               const auto it = hit2att.find(h);
               if (it == hit2att.end())
                 continue;
               for (int p : it->second)
                 if (++cnt[p] >= 2) {
-                  inFamily = true;
+                  anchorP = p;
                   break;
                 }
-              if (inFamily)
+              if (anchorP >= 0)
                 break;
             }
-            if (inFamily)
+            if (anchorP >= 0) {
               plsSuppressed[q] = 1;
+              // M7c (b): family members inherit the anchor's attaching-TC kinematics
+              // for the row-level suppression guard below.
+              attachRefPt[q] = attachRefPt[anchorP];
+              attachRefEta[q] = attachRefEta[anchorP];
+              attachRefPhi[q] = attachRefPhi[anchorP];
+            }
           }
+        }
+      }
+
+      // M7c (b): resolve the pLS family mask to a per-ROW drop mask WITH the kinematic
+      // suppression guard: a family row is actually dropped only if it is kinematically
+      // compatible with the attaching chain+pLS TC (dR < suppDR AND pt ratio <
+      // kKinPtRatioMax). Rows failing the test describe a DIFFERENT track sharing the
+      // pixel seed (the M7b 193-lost-prompt-sims collateral) and survive.
+      std::vector<char> rowSuppressed;
+      long long nGuardKept = 0;  // family rows saved by the guard
+      if (attachMode == 2) {
+        rowSuppressed.assign(ev.tc_type.size(), 0);
+        for (std::size_t in_idx = 0; in_idx < ev.tc_type.size(); ++in_idx) {
+          const int type = ev.tc_type[in_idx];
+          int pls = -1;
+          if (type == 7 && in_idx < ev.tc_pt5Idx.size()) {
+            const int i5 = ev.tc_pt5Idx[in_idx];
+            if (i5 >= 0 && i5 < static_cast<int>(ev.pT5_plsIdx.size()))
+              pls = ev.pT5_plsIdx[i5];
+          } else if (type == 5 && in_idx < ev.tc_pt3Idx.size()) {
+            const int i3 = ev.tc_pt3Idx[in_idx];
+            if (i3 >= 0 && i3 < static_cast<int>(ev.pT3_plsIdx.size()))
+              pls = ev.pT3_plsIdx[i3];
+          } else if (type == 8 && in_idx < ev.tc_plsIdx.size()) {
+            pls = ev.tc_plsIdx[in_idx];
+          }
+          if (pls < 0 || pls >= static_cast<int>(plsSuppressed.size()) || !plsSuppressed[pls])
+            continue;
+          const float dEta = ev.tc_eta[in_idx] - attachRefEta[pls];
+          const float dPhi = wrapDPhi(ev.tc_phi[in_idx] - attachRefPhi[pls]);
+          const float dR = std::sqrt(dEta * dEta + dPhi * dPhi);
+          const float ptRow = ev.tc_pt[in_idx], ptRef = attachRefPt[pls];
+          const float ptHi = std::max(ptRow, ptRef), ptLo = std::max(std::min(ptRow, ptRef), 1e-6f);
+          if (dR < suppDR && ptHi < kKinPtRatioMax * ptLo)
+            rowSuppressed[in_idx] = 1;
+          else
+            ++nGuardKept;
+        }
+      }
+
+      // M7c (c): K7-LITE kinematic dedup. AFTER attach + suppression, drop bare
+      // (non-attached, type != 7) chain TCs that are IP-compatible (same dca gate as
+      // attach eligibility) AND kinematically match a KEPT baseline type-7 row
+      // (dR < k7DR AND pt ratio < kKinPtRatioMax) -- redundant re-deliveries of
+      // pixel-delivered tracks (the M7b dup-floor diagnosis: 92% of remaining dup
+      // partners were pT5 rows). The dca gate keeps displaced chains untouchable.
+      long long nK7Dropped = 0;
+      if (attachMode == 2 && k7Lite) {
+        std::vector<float> t7pt, t7eta, t7phi;
+        for (std::size_t in_idx = 0; in_idx < ev.tc_type.size(); ++in_idx) {
+          if (ev.tc_type[in_idx] != 7)
+            continue;
+          if (!rowSuppressed.empty() && rowSuppressed[in_idx])
+            continue;  // suppressed rows are not "kept"
+          t7pt.push_back(ev.tc_pt[in_idx]);
+          t7eta.push_back(ev.tc_eta[in_idx]);
+          t7phi.push_back(ev.tc_phi[in_idx]);
+        }
+        if (!t7pt.empty()) {
+          std::vector<OutTC> keptTCs;
+          keptTCs.reserve(outTCs.size());
+          std::vector<int> keptChain;
+          keptChain.reserve(outTCChain.size());
+          for (std::size_t j = 0; j < outTCs.size(); ++j) {
+            bool drop = false;
+            if (outTCs[j].type != 7 && chainDca(outTCChain[j]) < dcaAttachMax) {
+              const float pt = outTCs[j].pt, eta = outTCs[j].eta, phi = outTCs[j].phi;
+              for (std::size_t r = 0; r < t7pt.size(); ++r) {
+                const float dEta = eta - t7eta[r];
+                if (std::fabs(dEta) >= k7DR)
+                  continue;
+                const float dPhi = wrapDPhi(phi - t7phi[r]);
+                if (dEta * dEta + dPhi * dPhi >= k7DR * k7DR)
+                  continue;
+                const float ptHi = std::max(pt, t7pt[r]), ptLo = std::max(std::min(pt, t7pt[r]), 1e-6f);
+                if (ptHi < kKinPtRatioMax * ptLo) {
+                  drop = true;
+                  break;
+                }
+              }
+            }
+            if (drop) {
+              ++nK7Dropped;
+            } else {
+              keptTCs.push_back(std::move(outTCs[j]));
+              keptChain.push_back(outTCChain[j]);
+            }
+          }
+          outTCs.swap(keptTCs);
+          outTCChain.swap(keptChain);
         }
       }
 
       int nPixSuppressed = 0;
       int nSuppByType[3] = {0, 0, 0};  // {pT5 rows, pT3 rows, pLS rows}
-      writer.fillEventHybrid(ev, trk, outTCs, attachMode ? &plsSuppressed : nullptr, &nPixSuppressed,
-                             attachMode == 2, attachMode == 2 ? nSuppByType : nullptr);
+      writer.fillEventHybrid(ev, trk, outTCs, attachMode == 1 ? &plsSuppressed : nullptr, &nPixSuppressed,
+                             attachMode == 2, attachMode == 2 ? nSuppByType : nullptr,
+                             attachMode == 2 ? &rowSuppressed : nullptr);
       const auto t4 = std::chrono::steady_clock::now();
 
       const double inferMs = msBetween(t0, t1);
@@ -1059,14 +1284,19 @@ int main(int argc, char** argv) {
         // claim= is the PASS-1 count (bit-identical to -A 0 by construction); p2= is
         // subordinate pass-2 accepted/candidates; upg= attached pass-1 chains upgraded
         // in place to type 7; attach= all TCs with a pLS (upgrades + pass-2);
-        // pixSupp= seed-family-suppressed kept-baseline rows [pT5/pT3/pLS].
+        // pixSupp= seed-family-suppressed kept-baseline rows [pT5/pT3/pLS];
+        // dcaBlk= theta-passing 5+-layer chains blocked from attach by the M7c IP
+        // gate; guardKept= family rows saved by the kinematic suppression guard;
+        // k7drop= bare chain TCs removed by K7-lite.
         std::printf(
             "evt %lld (run %u lumi %u event %llu): pixKept=%lld chains=%lld -> theta=%lld ->"
             " pixdrop=%lld -> claim=%lld p2=%lld/%lld | chainTC=%zu (T5c=%lld T4c=%lld upg=%lld"
-            " attach=%lld pixSupp=%d[%d/%d/%d]) | infer=%.3f weld=%.3f attach=%.3f arb=%.3f fill=%.3f ms\n",
+            " attach=%lld pixSupp=%d[%d/%d/%d] dcaBlk=%lld guardKept=%lld k7drop=%lld)"
+            " | infer=%.3f weld=%.3f attach=%.3f arb=%.3f fill=%.3f ms\n",
             i, ev.run, ev.lumi, ev.evt, nPixKept, nChainsIn, nAfterTheta, nAfterPixDrop, nAfterClaim, nPass2Acc,
             nPass2Cand, chainTCs.size(), nT5c, nT4c, nUpgraded, nAttached, nPixSuppressed, nSuppByType[0],
-            nSuppByType[1], nSuppByType[2], inferMs, weldMs, attachMs, arbMs, fillMs);
+            nSuppByType[1], nSuppByType[2], nDcaBlocked, nGuardKept, nK7Dropped, inferMs, weldMs, attachMs, arbMs,
+            fillMs);
       } else if (attachMode == 1) {
         // T5c/T4c stay the nLayers-class counts (attached chains are counted inside
         // T5c AND in attach=; their output tc_type is 7). pixSupp = kept-baseline rows
@@ -1099,6 +1329,9 @@ int main(int argc, char** argv) {
       totPass2Cand += nPass2Cand;
       totPass2Acc += nPass2Acc;
       totUpgraded += nUpgraded;
+      totDcaBlocked += nDcaBlocked;
+      totGuardKept += nGuardKept;
+      totK7Dropped += nK7Dropped;
       for (int t = 0; t < 3; ++t)
         totSuppByType[t] += nSuppByType[t];
       totPairsPref += att.nPairsPrefiltered;
@@ -1110,6 +1343,8 @@ int main(int argc, char** argv) {
       totFillMs += fillMs;
     }
     writer.writeAndClose();
+    if (dcaDump != nullptr)
+      std::fclose(dcaDump);
 
     const double nEvD = nRun > 0 ? static_cast<double>(nRun) : 1.0;
     std::printf("hybrid summary: %lld events (thetaEdge=%.3f lambdaLen=%.3f thetaChain4/5/6=%.3f/%.3f/%.3f"
@@ -1133,14 +1368,19 @@ int main(int argc, char** argv) {
                   " | pairs prefiltered=%lld scored=%lld (thetaAttach=%.3f head=%s)\n",
                   totAttached, totAttached / nEvD, totPixSuppressed, totPixSuppressed / nEvD, totPairsPref,
                   totPairsScored, thetaAttach, attachHeadAvailable() ? "trained" : "sentinel");
-      if (attachMode == 2)
+      if (attachMode == 2) {
         std::printf("  M7b breakdown   pass1 upgrades=%lld mean=%.1f | pass2 TCs=%lld mean=%.1f"
                     " | suppressed rows by type pT5=%lld pT3=%lld pLS=%lld\n",
                     totUpgraded, totUpgraded / nEvD, totPass2Acc, totPass2Acc / nEvD, totSuppByType[0],
                     totSuppByType[1], totSuppByType[2]);
-      std::printf("  output TCs/evt  mean=%.1f (pixel kept %.1f - suppressed %.1f + chain %.1f)\n",
-                  (totPixKept - totPixSuppressed + totChainTCs) / nEvD, totPixKept / nEvD, totPixSuppressed / nEvD,
-                  totChainTCs / nEvD);
+        std::printf("  M7c breakdown   dca-blocked chains=%lld mean=%.1f (dcaMax=%.2f) | guard-kept rows=%lld"
+                    " mean=%.1f (dR<%.3f) | K7-lite drops=%lld mean=%.1f (%s, dR<%.3f)\n",
+                    totDcaBlocked, totDcaBlocked / nEvD, dcaAttachMax, totGuardKept, totGuardKept / nEvD, suppDR,
+                    totK7Dropped, totK7Dropped / nEvD, k7Lite ? "on" : "off", k7DR);
+      }
+      std::printf("  output TCs/evt  mean=%.1f (pixel kept %.1f - suppressed %.1f + chain %.1f - k7 %.1f)\n",
+                  (totPixKept - totPixSuppressed + totChainTCs - totK7Dropped) / nEvD, totPixKept / nEvD,
+                  totPixSuppressed / nEvD, totChainTCs / nEvD, totK7Dropped / nEvD);
       std::printf("  time mean/evt   infer=%.3f weld=%.3f attach=%.3f arb+asm=%.3f fill=%.3f ms\n", totInferMs / nEvD,
                   totWeldMs / nEvD, totAttachMs / nEvD, totArbMs / nEvD, totFillMs / nEvD);
     } else {

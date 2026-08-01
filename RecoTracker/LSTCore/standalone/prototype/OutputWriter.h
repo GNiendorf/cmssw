@@ -62,13 +62,20 @@ public:
   // nSuppressedOut (optional) receives the dropped-row count; nSuppressedByType
   // (optional, int[3]) the per-type breakdown {type 7, type 5, type 8}.
   // nullptr mask = legacy behavior (bit-exact).
+  //
+  // M7c (hybrid -A 2): suppressRowMask (optional, size = input tc count, 1 = drop this
+  // kept-baseline ROW) takes PRECEDENCE over suppressPlsRows when non-null -- the
+  // caller has already resolved pLS families to rows AND applied the kinematic
+  // suppression guard, so the writer just obeys the per-row verdict (counting per type
+  // as before). An all-zero mask is bit-identical to no suppression.
   void fillEventHybrid(const LSTEventData& ev,
                        const TrkEventData& trk,
                        const std::vector<OutTC>& chainTCs,
                        const std::vector<char>* suppressPlsRows = nullptr,
                        int* nSuppressedOut = nullptr,
                        bool suppressPT3Rows = false,
-                       int* nSuppressedByType = nullptr);
+                       int* nSuppressedByType = nullptr,
+                       const std::vector<char>* suppressRowMask = nullptr);
 
   void writeAndClose();
 

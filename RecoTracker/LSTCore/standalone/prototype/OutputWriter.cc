@@ -173,7 +173,8 @@ public:
                        const std::vector<char>* suppressPlsRows,
                        int* nSuppressedOut,
                        bool suppressPT3Rows,
-                       int* nSuppressedByType) {
+                       int* nSuppressedByType,
+                       const std::vector<char>* suppressRowMask) {
     fillSimAndIdentity(ev);
     int nSuppressed = 0;
     int nSuppByType[3] = {0, 0, 0};  // {type 7, type 5, type 8}
@@ -201,7 +202,15 @@ public:
       const int type = ev.tc_type[in_idx];
       if (type != 7 && type != 5 && type != 8)  // keep pT5 / pT3 / pLS only
         continue;
-      if (suppressPlsRows != nullptr) {
+      if (suppressRowMask != nullptr) {
+        // M7c (-A 2): the caller resolved families to rows and applied the kinematic
+        // suppression guard already; obey the per-row verdict.
+        if (in_idx < suppressRowMask->size() && (*suppressRowMask)[in_idx] != 0) {
+          ++nSuppressed;
+          ++nSuppByType[type == 7 ? 0 : (type == 5 ? 1 : 2)];
+          continue;
+        }
+      } else if (suppressPlsRows != nullptr) {
         // K8 structural crossclean (M7): a chain+pLS type-7 TC replaced this pixel
         // seed's baseline delivery -- drop the pT5/pLS rows whose pLS is masked.
         // pT3 (type 5) rows join only under suppressPT3Rows (M7b -A 2 seed-family
@@ -404,8 +413,10 @@ void OutputWriter::fillEventHybrid(const LSTEventData& ev,
                                    const std::vector<char>* suppressPlsRows,
                                    int* nSuppressedOut,
                                    bool suppressPT3Rows,
-                                   int* nSuppressedByType) {
-  impl_->fillEventHybrid(ev, trk, chainTCs, suppressPlsRows, nSuppressedOut, suppressPT3Rows, nSuppressedByType);
+                                   int* nSuppressedByType,
+                                   const std::vector<char>* suppressRowMask) {
+  impl_->fillEventHybrid(
+      ev, trk, chainTCs, suppressPlsRows, nSuppressedOut, suppressPT3Rows, nSuppressedByType, suppressRowMask);
 }
 
 void OutputWriter::writeAndClose() { impl_->writeAndClose(); }

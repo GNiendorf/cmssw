@@ -399,6 +399,56 @@ bool k8ProbePairWindows(const LSTEventData& ev,
   return evalPair(pls, cp, params, true, nullptr, absDTanL, absDPhi);
 }
 
+float k8ChainDcaXY(const LSTEventData& ev, const Chains& chains, int c) {
+  const int mb = chains.mdOffsets[c], me = chains.mdOffsets[c + 1];
+  const int nMD = me - mb;
+  if (nMD < 2)
+    return 1e9f;  // unreachable by the K6 contract; never IP-compatible
+
+  // Kasa circle fit, EXACTLY the ChainFeatures.cc algorithm (incl. the radius,
+  // R^2 = uc^2 + vc^2 + Sw/n, which makeChainPreGeom does not need and omits).
+  if (nMD >= 3) {
+    double xbar = 0.0, ybar = 0.0;
+    for (int k = mb; k < me; ++k) {
+      xbar += ev.md_anchor_x[chains.mdItems[k]];
+      ybar += ev.md_anchor_y[chains.mdItems[k]];
+    }
+    xbar /= nMD;
+    ybar /= nMD;
+    double Suu = 0.0, Svv = 0.0, Suv = 0.0, Suw = 0.0, Svw = 0.0, Sw = 0.0;
+    for (int k = mb; k < me; ++k) {
+      const double u = ev.md_anchor_x[chains.mdItems[k]] - xbar;
+      const double v = ev.md_anchor_y[chains.mdItems[k]] - ybar;
+      const double w = u * u + v * v;
+      Suu += u * u;
+      Svv += v * v;
+      Suv += u * v;
+      Suw += u * w;
+      Svw += v * w;
+      Sw += w;
+    }
+    const double det = Suu * Svv - Suv * Suv;
+    const double scale = Suu + Svv;
+    if (det > 1e-12 * scale * scale) {
+      const double uc = (Svv * (0.5 * Suw) - Suv * (0.5 * Svw)) / det;
+      const double vc = (Suu * (0.5 * Svw) - Suv * (0.5 * Suw)) / det;
+      const double cx = xbar + uc, cy = ybar + vc;
+      const double R = std::sqrt(std::max(uc * uc + vc * vc + Sw / nMD, 0.0));
+      return static_cast<float>(std::fabs(std::sqrt(cx * cx + cy * cy) - R));
+    }
+  }
+
+  // Degenerate (collinear) fit: straight-line limit -- perpendicular distance from the
+  // origin to the line through the innermost and outermost anchor hits.
+  const int m0 = chains.mdItems[mb], m1 = chains.mdItems[me - 1];
+  const double x1 = ev.md_anchor_x[m0], y1 = ev.md_anchor_y[m0];
+  const double x2 = ev.md_anchor_x[m1], y2 = ev.md_anchor_y[m1];
+  const double len = std::sqrt((x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1));
+  if (len < 1e-9)
+    return 1e9f;
+  return static_cast<float>(std::fabs(x1 * y2 - x2 * y1) / len);
+}
+
 void k8AttachPixels(const LSTEventData& ev,
                     const Chains& chains,
                     const std::vector<int>& acceptedChains,

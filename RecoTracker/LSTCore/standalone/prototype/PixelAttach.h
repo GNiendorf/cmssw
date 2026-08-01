@@ -63,4 +63,14 @@ void k8AttachPixels(const LSTEventData& ev,
                     const AttachParams& params,
                     Attachments& out);
 
+// M7c (a): transverse DCA of the chain's full-fit circle to the origin,
+// |dist(center, origin) - R|, from EXACTLY the ChainFeatures.cc Kasa fit over the
+// chain's MD anchor hits (double accumulation, same degeneracy guard, R^2 = uc^2 +
+// vc^2 + Sw/n). Degenerate (collinear) fit falls back to the straight-line limit:
+// perpendicular distance from the origin to the line through the innermost and
+// outermost anchor hits. Chains with < 2 MDs (unreachable by the K6 contract) return
+// 1e9 (never IP-compatible). Used as the IP-compatibility gate on attach ELIGIBILITY
+// and by the K7-lite kinematic dedup (both -A 2 only).
+float k8ChainDcaXY(const LSTEventData& ev, const Chains& chains, int c);
+
 #endif
