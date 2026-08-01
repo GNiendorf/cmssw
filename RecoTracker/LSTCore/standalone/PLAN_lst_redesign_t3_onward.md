@@ -1337,3 +1337,46 @@ vs vxy/dxy, FR, DR vs baseline from the same events) -> next iteration. Agents d
 every iteration is scored by the production-identical harness. Training loop shares the same
 binary (10.3). Parity on PU200 = the P1 gate; then P2 (Alpaka port); dense-jet adaptation is a
 LATER separate pass (same prototype, jet-enriched ntuple) once the machinery exists.
+
+---
+
+## 11. Road to P2 (agreed with maintainer, 2026-08-01 — the forward sequence)
+
+**Now -> hybrid convergence (1-2 rounds):**
+1. M14 quick-wins ladder (threshold frontier; expected anchor ~0.051-0.055 fake, all
+   bands >= baseline, displaced up via -M4D).
+2. Structural fan-out: claim-universe unification (hybrid rehearsal of the final design's
+   single K9 arbitration over ALL candidates incl. pixel-side hits), terminal trim (the
+   fake->efficiency converter for one-wrong-arm chains), 3-class edge head cascade
+   (formation-side displaced), length-normalized claim, gate co-retrain. Target fake
+   ~0.045-0.050 with displaced climbing.
+3. Optional polish round if the structural results open headroom.
+
+**PRE-P2 WRAP (the gate; do ALL of these before any kernel work):**
+- Final anchor + full standard plot set (+ dup-corrected diagnostic set).
+- Formal P1 verdict vs the section-7 kill criteria (status: eff/displaced/lengths/
+  genuine-dup PASSED; chain-vs-t5dnn K1 PASSED; E-count calibration PASSED; K2
+  reinterpreted per the ROC-study stage-mismatch note; FAKE PARITY is the open item).
+- Characterization pass: per-stage timings, ops counts, buffer sizes/event (the numbers
+  GPU work is judged against), memory profile incl. jet-sizing extrapolation.
+- Code hygiene: freeze the winning config, prune dead experiments from prototype/,
+  document stage contracts, final commit tag.
+
+**P2 — staged Alpaka integration (the big push):**
+- Stage 1: K1/K2/edge-NN/K6/gate/K9/K10 as kernels behind a flag; chains emitted into
+  the EXISTING T5/T4 SoAs (downstream untouched); prototype = bit-level CPU parity
+  reference per kernel; weights = the same generated headers. Agent shape: per-kernel
+  port agents + parity verifiers + MTV A/B judge.
+- Stage 2: the physics kinks the prototype could not validate — atomic welding/claim
+  race semantics, CPU-vs-GPU score parity, ROCm wavefront, full CMSSW workflow gates
+  (hit residuals + downstream MVA distributions, not just MTV; wf 24834.703/.704).
+- Stage 3: timing optimization campaign vs the 1.9 ms/evt GPU baseline — occupancy,
+  fusion, layouts, the TIERED EDGE SCORER (jet insurance), stream behavior. The most
+  agent-hungry phase: build+benchmark cycles in isolated trees, judged by wall time
+  with bit-parity as the guard rail.
+- Stage 4: K8 attach natively replacing the superbin machinery (dup artifact floor and
+  redundant chain volume die HERE), then deletion of the ~25 retired kernels (P4),
+  t3dnn swap (P5), module-map displaced addendum (P6).
+- DISCIPLINE carried over from the offline campaign: recon-first every stage (port,
+  measure, fan out on measurements — never optimize during the port); regression gates
+  everywhere; commit at every milestone.
