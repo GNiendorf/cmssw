@@ -199,6 +199,7 @@ public:
 
     tree_->Branch("evt", &evt_, "evt/l");
     tree_->Branch("label", &label_, "label/I");
+    tree_->Branch("simIdx", &simIdx_, "simIdx/I");
     tree_->Branch("simVxy", &simVxy_, "simVxy/F");
     tree_->Branch("simPt", &simPt_, "simPt/F");
     tree_->Branch("nLayers", &nLayers_, "nLayers/I");
@@ -227,6 +228,7 @@ public:
     evt_ = ev.evt;
     for (std::size_t c = 0; c < nChains; ++c) {
       label_ = static_cast<Int_t>(labels.label[c]);
+      simIdx_ = labels.simIdx[c];
       simVxy_ = labels.simVxy[c];
       simPt_ = labels.simPt[c];
       nLayers_ = chains.nLayers[c];
@@ -262,6 +264,7 @@ private:
 
   ULong64_t evt_ = 0;
   Int_t label_ = 0;
+  Int_t simIdx_ = -1;
   Float_t simVxy_ = -999.f;
   Float_t simPt_ = -999.f;
   Int_t nLayers_ = 0;

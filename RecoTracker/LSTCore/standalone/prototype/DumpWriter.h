@@ -44,8 +44,9 @@ private:
 // CHAIN (pre-arbitration, post-K6), for the chain-gate classifier loop:
 //   cf_00..cf_15 (Float, kChainFeat, order = the frozen ChainFeatures.h contract)
 //   label (Int 0/1, labelChains: 1 iff ALL member T3s share a sim -- braid variants of
-//   a real track all label 1), simVxy/simPt (Float, accepted sims only, -999 otherwise),
-//   nLayers (Int), evt (ULong64)
+//   a real track all label 1), simIdx (Int, labelChains convention: FULL tracking-ntuple
+//   sim row, < nAccepted indexes the LST ntuple sim block directly; -1 if label 0),
+//   simVxy/simPt (Float, accepted sims only, -999 otherwise), nLayers (Int), evt (ULong64)
 // A TNamed "feature_spec" records the ordered cf feature names.
 class ChainDumpWriterImpl;
 
