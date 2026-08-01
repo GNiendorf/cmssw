@@ -1,0 +1,64 @@
+#ifndef PROTOTYPE_OUTPUTWRITER_H
+#define PROTOTYPE_OUTPUTWRITER_H
+
+// Writes a self-contained ROOT file impersonating the LST ntuple so the production
+// efficiency harness runs UNCHANGED (plan 10.4):
+//   - TTree named "tree", per-event std::vector branches
+//   - sim_pt/eta/phi/pca_dxy/pca_dz/pdgId/q/vx/vy/vz copied from the input event
+//   - tc_pt/eta/phi (float), tc_type/isFake/isDuplicate/nhitOT (int), sim_tcIdx (int)
+//   - three TNamed: code_tag_data, gitdiff, input (helper.cc exits without them)
+//   - run/lumi/evt passthrough (harmless extras; harness reads branches by name)
+// Do NOT write a branch named t5_pt (its mere presence flips do_lower_level).
+
+#include <memory>
+#include <string>
+#include <vector>
+
+#include "EventData.h"
+#include "Matching.h"
+
+// A prototype track candidate with its full hit list, for exact hit-level matching.
+struct OutTC {
+  float pt = 0, eta = 0, phi = 0;
+  int type = 4;    // LSTObjType convention: 7=pT5, 5=pT3, 4=T5, 8=pLS, 9=T4
+  int nhitOT = 0;  // number of OT hits (tc_nhitOT; harness reads it unconditionally)
+  std::vector<unsigned int> hitIdxs;  // ph2 rows for OT hits, pix rows for pixel hits
+  std::vector<proto::HitType> hitTypes;
+};
+
+class OutputWriterImpl;
+
+class OutputWriter {
+public:
+  // inputLabel goes into the "input" TNamed (e.g. "PU200RelVal").
+  OutputWriter(const std::string& outPath, const std::string& inputLabel);
+  ~OutputWriter();
+
+  // M0 identity mode: copy the input event's tc_* and sim_tcIdx verbatim (no matching).
+  void fillEventIdentity(const LSTEventData& ev);
+
+  // Real mode: compute tc_isFake/tc_isDuplicate/sim_tcIdx from the TCs' hit lists with the
+  // ported production matching (strict >0.75; duplicates counted against the FULL sim list
+  // incl. pileup; sim_tcIdx = best-fraction TC per accepted sim, mirroring the writer).
+  void fillEvent(const LSTEventData& ev, const TrkEventData& trk, const std::vector<OutTC>& tcs);
+
+  // HYBRID mode (the M4 A/B): output = kept BASELINE pixel TCs (input rows with tc_type in
+  // {7 pT5, 5 pT3, 8 pLS}, matching taken from the input's tc_simIdxAll/Frac branches —
+  // requires those fields in LSTEventData) + the prototype's chain TCs (matching computed
+  // from hit lists via the ported matcher). Baseline T5/T4-type rows (tc_type 4/9) are
+  // REPLACED by the chains. sim_tcIdx / tc_isDuplicate are computed over the MERGED set
+  // with production semantics (full-sim-list accumulation, strict >0.75, best-fraction).
+  // Also fills the diagnostics branches tc_simIdxAll (per-TC full-sim-list match rows)
+  // and tc_isChain (1 = chain TC, 0 = kept baseline row) — harness-invisible extras for
+  // offline duplicate decomposition.
+  void fillEventHybrid(const LSTEventData& ev,
+                       const TrkEventData& trk,
+                       const std::vector<OutTC>& chainTCs);
+
+  void writeAndClose();
+
+private:
+  std::unique_ptr<OutputWriterImpl> impl_;
+};
+
+#endif

@@ -1,0 +1,8 @@
+# Large/derived artifacts stay out of git; code, scripts, generated weight headers,
+# small model files, and A/B metric jsons are committed as the record.
+*.root
+*.log
+bin/
+*.o
+__pycache__/
+*.bak
