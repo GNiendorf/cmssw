@@ -95,6 +95,72 @@ void k9Arbitrate(const LSTEventData& ev,
   }
 }
 
+void k9ArbitrateTwoPass(const LSTEventData& ev,
+                        const Chains& chains,
+                        const ArbitrationParams& params,
+                        const std::vector<int>& attachedPls,
+                        std::vector<int>& acceptedPass1,
+                        std::vector<int>& acceptedPass2) {
+  // Pass 1: the legacy call itself (no bypass) -- -A 0 identity by construction.
+  k9Arbitrate(ev, chains, params, acceptedPass1, nullptr);
+  acceptedPass2.clear();
+
+  const int nChains = static_cast<int>(chains.score.size());
+  const int nMD = static_cast<int>(ev.md_anchorHitIdx.size());
+  const int nT3 = static_cast<int>(ev.t3_lsIdx0.size());
+  const bool havePixFlags = static_cast<int>(ev.t3_partOfPT5.size()) == nT3 &&
+                            static_cast<int>(ev.t3_partOfPT3.size()) == nT3;
+  // Without the pixel drop nothing was pixdropped, so pass 2 has no candidates.
+  if (!params.dropPixelConsumed || !havePixFlags)
+    return;
+
+  // Rebuild the post-pass-1 claimed-MD map (claiming all accepted chains' MDs gives
+  // exactly the map k9Arbitrate ended with).
+  std::vector<char> claimed(nMD, 0);
+  for (int c : acceptedPass1)
+    for (int k = chains.mdOffsets[c]; k < chains.mdOffsets[c + 1]; ++k)
+      claimed[chains.mdItems[k]] = 1;
+
+  // Pass-2 candidates: attached, theta-passing, dropped in pass 1 by partOfPT5 ONLY.
+  std::vector<int> order;
+  for (int c = 0; c < nChains; ++c) {
+    if (c >= static_cast<int>(attachedPls.size()) || attachedPls[c] < 0)
+      continue;
+    if (chains.score[c] < params.thetaFor(chains.nLayers[c]))
+      continue;
+    bool hasPT5 = false, hasPT3 = false;
+    for (int k = chains.offsets[c]; k < chains.offsets[c + 1] && !hasPT3; ++k) {
+      const int t3 = chains.items[k];
+      hasPT5 = hasPT5 || ev.t3_partOfPT5[t3];
+      hasPT3 = ev.t3_partOfPT3[t3];
+    }
+    if (!hasPT5 || hasPT3)
+      continue;  // not pixdropped, or dropped by the still-respected partOfPT3 half
+    order.push_back(c);
+  }
+
+  // Same deterministic greedy as pass 1, continuing on the pass-1 claim map.
+  std::sort(order.begin(), order.end(), [&chains](int a, int b) {
+    if (chains.score[a] != chains.score[b])
+      return chains.score[a] > chains.score[b];
+    return a < b;
+  });
+  for (int c : order) {
+    const int b = chains.mdOffsets[c];
+    const int e = chains.mdOffsets[c + 1];
+    const int total = e - b;
+    int nClaimed = 0;
+    for (int k = b; k < e; ++k)
+      nClaimed += claimed[chains.mdItems[k]];
+    const float frac = (total > 0) ? static_cast<float>(nClaimed) / static_cast<float>(total) : 0.f;
+    if (frac > params.maxClaimedFrac)
+      continue;
+    for (int k = b; k < e; ++k)
+      claimed[chains.mdItems[k]] = 1;
+    acceptedPass2.push_back(c);
+  }
+}
+
 void k10AssembleChainTCs(const LSTEventData& ev,
                          const Chains& chains,
                          const std::vector<int>& acceptedChains,

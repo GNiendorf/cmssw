@@ -171,9 +171,12 @@ public:
                        const TrkEventData& trk,
                        const std::vector<OutTC>& chainTCs,
                        const std::vector<char>* suppressPlsRows,
-                       int* nSuppressedOut) {
+                       int* nSuppressedOut,
+                       bool suppressPT3Rows,
+                       int* nSuppressedByType) {
     fillSimAndIdentity(ev);
     int nSuppressed = 0;
+    int nSuppByType[3] = {0, 0, 0};  // {type 7, type 5, type 8}
 
     const size_t n_total_simtrk = std::max(trk.sim_pt.size(), trk.simFullToAccepted.size());
     std::vector<std::vector<int>> sim_tcIdxAll(n_total_simtrk);
@@ -200,18 +203,24 @@ public:
         continue;
       if (suppressPlsRows != nullptr) {
         // K8 structural crossclean (M7): a chain+pLS type-7 TC replaced this pixel
-        // seed's baseline delivery -- drop the pT5/pLS rows of the attached pLS.
-        // pT3 rows are never dropped in v1.
+        // seed's baseline delivery -- drop the pT5/pLS rows whose pLS is masked.
+        // pT3 (type 5) rows join only under suppressPT3Rows (M7b -A 2 seed-family
+        // suppression); -A 1 keeps them untouched (rejected-v1 reference behavior).
         int pls = -1;
         if (type == 7 && in_idx < ev.tc_pt5Idx.size()) {
           const int i5 = ev.tc_pt5Idx[in_idx];
           if (i5 >= 0 && i5 < static_cast<int>(ev.pT5_plsIdx.size()))
             pls = ev.pT5_plsIdx[i5];
+        } else if (type == 5 && suppressPT3Rows && in_idx < ev.tc_pt3Idx.size()) {
+          const int i3 = ev.tc_pt3Idx[in_idx];
+          if (i3 >= 0 && i3 < static_cast<int>(ev.pT3_plsIdx.size()))
+            pls = ev.pT3_plsIdx[i3];
         } else if (type == 8 && in_idx < ev.tc_plsIdx.size()) {
           pls = ev.tc_plsIdx[in_idx];
         }
         if (pls >= 0 && pls < static_cast<int>(suppressPlsRows->size()) && (*suppressPlsRows)[pls] != 0) {
           ++nSuppressed;
+          ++nSuppByType[type == 7 ? 0 : (type == 5 ? 1 : 2)];
           continue;
         }
       }
@@ -294,6 +303,9 @@ public:
 
     if (nSuppressedOut != nullptr)
       *nSuppressedOut = nSuppressed;
+    if (nSuppressedByType != nullptr)
+      for (int t = 0; t < 3; ++t)
+        nSuppressedByType[t] = nSuppByType[t];
     tree_->Fill();
   }
 
@@ -390,8 +402,10 @@ void OutputWriter::fillEventHybrid(const LSTEventData& ev,
                                    const TrkEventData& trk,
                                    const std::vector<OutTC>& chainTCs,
                                    const std::vector<char>* suppressPlsRows,
-                                   int* nSuppressedOut) {
-  impl_->fillEventHybrid(ev, trk, chainTCs, suppressPlsRows, nSuppressedOut);
+                                   int* nSuppressedOut,
+                                   bool suppressPT3Rows,
+                                   int* nSuppressedByType) {
+  impl_->fillEventHybrid(ev, trk, chainTCs, suppressPlsRows, nSuppressedOut, suppressPT3Rows, nSuppressedByType);
 }
 
 void OutputWriter::writeAndClose() { impl_->writeAndClose(); }

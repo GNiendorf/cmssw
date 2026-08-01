@@ -120,6 +120,29 @@ void k9Arbitrate(const LSTEventData& ev,
                  std::vector<int>& acceptedChains,
                  const std::vector<char>* bypassPT5Drop = nullptr);
 
+// K9 two-pass (M7b, hybrid -A 2): SUBORDINATE claim for K8-attached chains. The v1 (-A 1)
+// bypass re-admitted ~550 prompt chains/evt into the ONE shared MD claim, which evicted
+// displaced chains (vxy[10,30) regressed monotonically with attach count). The fix is
+// structural ordering:
+//   Pass 1 = EXACTLY the legacy pipeline (theta gate -> pixel-consumed drop WITHOUT any
+//   bypass -> greedy claim). Implemented as a call to k9Arbitrate(..., nullptr), so the
+//   accepted set is bit-identical to -A 0 BY CONSTRUCTION, whatever K8 decided.
+//   Pass 2 = chains that ATTACHED a pLS (attachedPls[c] >= 0) and were dropped in pass 1
+//   SOLELY by the partOfPT5 half of the pixel drop (chains with a partOfPT3 member still
+//   drop -- the v1 rule; chains that survived the pixdrop but lost the pass-1 claim get
+//   no retry: the final claim map is a superset of what they failed against). Candidates
+//   run the same greedy claim (score desc, index asc; same maxClaimedFrac) starting from
+//   the claimed-MD map LEFT BY pass 1, which keeps evolving as pass-2 chains accept --
+//   so pass-2 chains arbitrate among themselves but can NEVER evict a pass-1 chain.
+// acceptedPass2 is disjoint from acceptedPass1; the caller turns pass-2 acceptances into
+// type-7 TCs (pixel hits + OT hits) and upgrades attached pass-1 chains in place.
+void k9ArbitrateTwoPass(const LSTEventData& ev,
+                        const Chains& chains,
+                        const ArbitrationParams& params,
+                        const std::vector<int>& attachedPls,  // per-chain pLS row or -1
+                        std::vector<int>& acceptedPass1,
+                        std::vector<int>& acceptedPass2);
+
 // K10 (prototype v1): accepted chains -> OutTC-ready records.
 //   type: nLayers >= 5 -> 4 (T5-class), nLayers == 4 -> 9 (T4-class); nLayers < 4 dropped.
 //   pt = median of member t3_pt; eta/phi = innermost member's t3_eta / t3_phi;

@@ -53,16 +53,22 @@ public:
   // offline duplicate decomposition.
   //
   // K8 attach suppression (M7, hybrid -A 1): suppressPlsRows (optional, size nPls,
-  // 1 = this pLS was attached to an accepted chain) DROPS kept-baseline rows that
-  // deliver that pixel seed: tc_type 7 rows whose pT5_plsIdx[tc_pt5Idx] is a suppressed
-  // pLS and tc_type 8 rows whose tc_plsIdx is a suppressed pLS. pT3 (type 5) rows are
-  // untouched in v1. nSuppressedOut (optional) receives the dropped-row count.
-  // nullptr = legacy behavior (bit-exact).
+  // 1 = suppressed pLS) DROPS kept-baseline rows that deliver that pixel seed:
+  // tc_type 7 rows whose pT5_plsIdx[tc_pt5Idx] is a suppressed pLS and tc_type 8 rows
+  // whose tc_plsIdx is a suppressed pLS. With suppressPT3Rows (M7b, hybrid -A 2) also
+  // tc_type 5 rows whose pT3_plsIdx[tc_pt3Idx] is a suppressed pLS -- the seed-family
+  // extension (the MASK semantics are the caller's: -A 1 marks only the attached pLS
+  // itself; -A 2 marks every pLS sharing >= 2 pixel hits with an attached pLS).
+  // nSuppressedOut (optional) receives the dropped-row count; nSuppressedByType
+  // (optional, int[3]) the per-type breakdown {type 7, type 5, type 8}.
+  // nullptr mask = legacy behavior (bit-exact).
   void fillEventHybrid(const LSTEventData& ev,
                        const TrkEventData& trk,
                        const std::vector<OutTC>& chainTCs,
                        const std::vector<char>* suppressPlsRows = nullptr,
-                       int* nSuppressedOut = nullptr);
+                       int* nSuppressedOut = nullptr,
+                       bool suppressPT3Rows = false,
+                       int* nSuppressedByType = nullptr);
 
   void writeAndClose();
 

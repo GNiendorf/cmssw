@@ -16,11 +16,22 @@
 //                  hit-claim arbitration + K10 TC assembly; output file = kept baseline
 //                  pixel TCs (pT5/pT3/pLS) + the prototype chain TCs, written through
 //                  OutputWriter::fillEventHybrid for the unchanged efficiency harness.
-//                  -A 1 (M7) adds K8 pixel attach: after the theta gate and BEFORE the
-//                  pixel-consumed drop, accepted 5+-layer chains bid for pLS seeds via
-//                  the trained attach head (threshold -a); attached chains bypass the
-//                  partOfPT5 drop, become type-7 (pT5-class) TCs (pixel hits + OT hits,
-//                  pt = pLS ptIn), and their pLS's baseline pT5/pLS rows are suppressed.
+//                  -A 1 (M7, REJECTED v1, kept for reference) adds K8 pixel attach:
+//                  after the theta gate and BEFORE the pixel-consumed drop, 5+-layer
+//                  chains bid for pLS seeds via the trained attach head (threshold -a);
+//                  attached chains bypass the partOfPT5 drop, become type-7 (pT5-class)
+//                  TCs (pixel hits + OT hits, pt = pLS ptIn), and their pLS's baseline
+//                  pT5/pLS rows are suppressed. Rejected: the bypass floods the ONE
+//                  shared MD claim with re-admitted prompt chains which EVICT displaced
+//                  chains, and own-row suppression leaves the dup floor unchanged.
+//                  -A 2 (M7b) is the corrected integration: SUBORDINATE TWO-PASS claim
+//                  (pass 1 = exactly the -A 0 pipeline, bit-identical accepted set by
+//                  construction; pass 2 = attached chains pixdropped in pass 1 claim
+//                  only against the post-pass-1 MD map -- they can never evict a pass-1
+//                  chain) + attached pass-1 chains upgraded in place to type 7 + sim-
+//                  blind SEED-FAMILY suppression (kept-baseline pT5/pT3/pLS rows whose
+//                  own pLS shares >= 2 pixel hits with any attached pLS are dropped,
+//                  mirroring production pixelHitsOverlapAny).
 //   chaindump(M6): graph + features + MLP inference + K6 welding (same -e/-L knobs as
 //                  hybrid, r5 shape = -e 0 -L 0.5), then EVERY welded chain
 //                  PRE-arbitration is written to a flat TTree "chains" (one entry per
@@ -91,12 +102,17 @@ void usage(const char* prog) {
                "              arbitration order uses it too); 0 = legacy K6 sum-logit score\n"
                "              (regression path); 2 = split: gate logit for nLayers <= 4 only\n"
                "              (thetaChain4 on the gate scale), legacy score for nLayers >= 5\n"
-               "  -A <0|1>    hybrid mode (default 0): 1 = run K8 pixel attach after the theta\n"
-               "              gate and BEFORE the pixel-consumed drop; attached chains become\n"
-               "              type-7 (pT5-class) TCs, bypass the partOfPT5 drop, and suppress\n"
-               "              their pLS's baseline pT5/pLS rows in the output\n"
+               "  -A <0|1|2>  hybrid mode (default 0): 1 = K8 pixel attach v1 (REJECTED,\n"
+               "              reference): attached chains bypass the partOfPT5 drop, become\n"
+               "              type-7 TCs, own pT5/pLS rows suppressed. 2 = M7b subordinate\n"
+               "              two-pass claim: pass 1 is exactly the -A 0 pipeline (no bypass);\n"
+               "              attached chains pixdropped in pass 1 claim only against the\n"
+               "              post-pass-1 MD map (never evicting pass-1 chains) and become\n"
+               "              type-7 TCs; attached pass-1 chains upgrade in place to type 7;\n"
+               "              seed-family suppression drops kept-baseline pT5/pT3/pLS rows\n"
+               "              whose pLS shares >= 2 pixel hits with any attached pLS\n"
                "  -a <theta>  thetaAttach: attach-head logit threshold for K8 (default 0.0;\n"
-               "              only used with -A 1)\n",
+               "              only used with -A 1/2)\n",
                prog);
 }
 
@@ -160,8 +176,9 @@ int main(int argc, char** argv) {
   int chainGateMode = 1;          // -G: 0 = legacy K6 sum-logit score, 1 = gate logit for ALL
                                   // chains, 2 = split: gate logit for nLayers <= 4 only,
                                   // legacy score for nLayers >= 5 (hybrid mode)
-  int attachMode = 0;             // -A: 1 = K8 pixel attach in hybrid mode (default 0 so the
-                                  // -A-less regression path is untouched)
+  int attachMode = 0;             // -A: 1 = K8 pixel attach v1 (rejected, reference), 2 = M7b
+                                  // subordinate two-pass claim + seed-family suppression
+                                  // (default 0 so the -A-less regression path is untouched)
   float thetaAttach = 0.0f;       // -a: attach-head logit threshold (hybrid -A 1)
 
   // Pre-scan for the multi-char flags -T4/-T5/-T6 (getopt cannot express them: "-T4"
@@ -236,8 +253,8 @@ int main(int argc, char** argv) {
         break;
       case 'A':
         attachMode = std::atoi(optarg);
-        if (attachMode < 0 || attachMode > 1) {
-          std::fprintf(stderr, "Error: -A expects 0 or 1.\n");
+        if (attachMode < 0 || attachMode > 2) {
+          std::fprintf(stderr, "Error: -A expects 0, 1, or 2.\n");
           return 1;
         }
         break;
@@ -739,7 +756,7 @@ int main(int argc, char** argv) {
         " maxClaimedFrac=%.3f dropPixelConsumed=%s chainGateMode=%d kWeldSweeps=%d\n",
         thetaEdge, lambdaLen, thetaChain4, thetaChain5, thetaChain6, maxClaimedFrac,
         dropPixelConsumed ? "on" : "off", chainGateMode, kWeldSweeps);
-    if (attachMode) {
+    if (attachMode == 1) {
       AttachParams apDefaults;
       std::printf(
           "attach (-A 1): thetaAttach=%.3f attachHead=%s prefDTanL=%.3f prefDPhi=%.3f"
@@ -748,6 +765,16 @@ int main(int argc, char** argv) {
           " pt = pLS ptIn + the pLS pixel hits prepended, and suppress their pLS's"
           " baseline pT5/pLS rows; pT3 rows untouched)\n",
           thetaAttach, attachHeadAvailable() ? "trained" : "sentinel", apDefaults.prefDTanL, apDefaults.prefDPhi);
+    } else if (attachMode == 2) {
+      AttachParams apDefaults;
+      std::printf(
+          "attach (-A 2, M7b): thetaAttach=%.3f attachHead=%s prefDTanL=%.3f prefDPhi=%.3f"
+          " (subordinate two-pass claim: pass 1 = exact -A 0 pipeline, no bypass;"
+          " pass 2 = attached chains pixdropped by partOfPT5 claim against the"
+          " post-pass-1 MD map only, becoming type-7 TCs; attached pass-1 chains"
+          " upgrade in place to type 7; seed-family suppression drops kept-baseline"
+          " pT5/pT3/pLS rows sharing >= 2 pixel hits with any attached pLS)\n",
+          thetaAttach, attachHeadAvailable() ? "trained" : "sentinel", apDefaults.prefDTanL, apDefaults.prefDPhi);
     }
     OutputWriter writer(outPath, label);
 
@@ -755,6 +782,8 @@ int main(int argc, char** argv) {
     long long totChainsIn = 0, totAfterTheta = 0, totAfterPixDrop = 0, totAfterClaim = 0;
     long long totChainTCs = 0, totT5c = 0, totT4c = 0;
     long long totAttached = 0, totPixSuppressed = 0, totPairsPref = 0, totPairsScored = 0;
+    long long totPass2Cand = 0, totPass2Acc = 0, totUpgraded = 0;
+    long long totSuppByType[3] = {0, 0, 0};  // {pT5 rows, pT3 rows, pLS rows} (-A 2)
     double totInferMs = 0.0, totWeldMs = 0.0, totArbMs = 0.0, totFillMs = 0.0, totAttachMs = 0.0;
 
     for (long long i = 0; i < nRun; ++i) {
@@ -807,16 +836,16 @@ int main(int argc, char** argv) {
       ap.maxClaimedFrac = maxClaimedFrac;
       ap.dropPixelConsumed = dropPixelConsumed;
 
-      // K8 pixel attach (-A 1). PIPELINE ORDER (task 1c, documented): the attach
-      // decision is made BEFORE the pixel-consumed drop -- a chain that wins a pLS IS
-      // the pT5 replacement for that pixel seed, so the partOfPT5 crossclean (which
-      // exists only because those tracks were delivered by kept baseline pixel TCs)
-      // must not kill it. Concretely: theta gate -> K8 over the theta-passing chains
-      // (K8 itself considers only nLayers >= 5) -> pixdrop with a per-chain partOfPT5
-      // bypass for attached chains (partOfPT3 still drops; pT3 rows untouched in v1)
-      // -> MD-claim arbitration. A chain that attached but then loses the claim
-      // produces no TC and triggers NO suppression (its pLS keeps its baseline rows;
-      // v1 accepts that the pLS was contended away from other chains -- no fallback).
+      // K8 pixel attach (-A 1 and -A 2): the attach decision is made over ALL
+      // theta-passing chains BEFORE any pixel-consumed drop or claim (K8 itself
+      // considers only nLayers >= 5; one chain per pLS, contention by logit).
+      // -A 1 (rejected v1): pixdrop with a per-chain partOfPT5 bypass for attached
+      // chains -> single MD-claim arbitration (the bypass floods the claim; kept as
+      // reference). -A 2 (M7b): NO bypass anywhere -- pass 1 of the two-pass claim is
+      // the exact -A 0 pipeline; attachment only (a) upgrades attached pass-1-accepted
+      // chains to type 7 in place and (b) qualifies attached-but-pixdropped chains for
+      // the subordinate pass 2. In both modes a chain that attached but produced no TC
+      // triggers NO suppression (its pLS keeps its baseline rows; no fallback).
       Attachments att;
       std::vector<int> thetaPass;
       std::vector<char> attachBypass;
@@ -843,8 +872,22 @@ int main(int argc, char** argv) {
         }
       }
 
+      // Arbitration. -A 0: legacy. -A 1: single pass with the (rejected) partOfPT5
+      // bypass for attached chains. -A 2 (M7b): subordinate two-pass claim -- pass 1 is
+      // the exact -A 0 call (bit-identical accepted set by construction), pass 2 lets
+      // attached-but-pixdropped chains claim only what pass 1 left free. The accepted
+      // list is pass 1 followed by pass 2 (nPass1 marks the boundary).
       std::vector<int> accepted;
-      k9Arbitrate(ev, chains, ap, accepted, attachMode ? &attachBypass : nullptr);
+      std::size_t nPass1 = 0;
+      if (attachMode == 2) {
+        std::vector<int> acceptedP2;
+        k9ArbitrateTwoPass(ev, chains, ap, chainAttachPls, accepted, acceptedP2);
+        nPass1 = accepted.size();
+        accepted.insert(accepted.end(), acceptedP2.begin(), acceptedP2.end());
+      } else {
+        k9Arbitrate(ev, chains, ap, accepted, attachMode == 1 ? &attachBypass : nullptr);
+        nPass1 = accepted.size();
+      }
       std::vector<ChainTC> chainTCs;
       k10AssembleChainTCs(ev, chains, accepted, chainTCs);
       const auto t3 = std::chrono::steady_clock::now();
@@ -855,25 +898,29 @@ int main(int argc, char** argv) {
       const int nT3 = static_cast<int>(ev.t3_lsIdx0.size());
       const bool havePixFlags = static_cast<int>(ev.t3_partOfPT5.size()) == nT3 &&
                                 static_cast<int>(ev.t3_partOfPT3.size()) == nT3;
-      long long nAfterTheta = 0, nAfterPixDrop = 0;
+      long long nAfterTheta = 0, nAfterPixDrop = 0, nPass2Cand = 0;
       for (long long c = 0; c < nChainsIn; ++c) {
         if (chains.score[c] < ap.thetaFor(chains.nLayers[c]))
           continue;
         ++nAfterTheta;
-        bool consumed = false;
+        bool hasPT5 = false, hasPT3 = false;
         if (dropPixelConsumed && havePixFlags) {
-          // Mirror of the K9 attach bypass (-A 1): attached chains skip the partOfPT5
-          // half of the drop but still respect partOfPT3.
-          const bool bypassPT5 = attachMode && attachBypass[c] != 0;
-          for (int k = chains.offsets[c]; k < chains.offsets[c + 1] && !consumed; ++k) {
+          for (int k = chains.offsets[c]; k < chains.offsets[c + 1] && !hasPT3; ++k) {
             const int t3n = chains.items[k];
-            consumed = (ev.t3_partOfPT5[t3n] && !bypassPT5) || ev.t3_partOfPT3[t3n];
+            hasPT5 = hasPT5 || ev.t3_partOfPT5[t3n];
+            hasPT3 = ev.t3_partOfPT3[t3n];
           }
         }
-        if (!consumed)
+        // Mirror of the K9 attach bypass (-A 1 ONLY): attached chains skip the partOfPT5
+        // half of the drop but still respect partOfPT3. -A 2 pass 1 has NO bypass.
+        const bool bypassPT5 = attachMode == 1 && attachBypass[c] != 0;
+        if (!((hasPT5 && !bypassPT5) || hasPT3))
           ++nAfterPixDrop;
+        else if (attachMode == 2 && chainAttachPls[c] >= 0 && hasPT5 && !hasPT3)
+          ++nPass2Cand;  // mirror of the k9ArbitrateTwoPass pass-2 candidate predicate
       }
-      const long long nAfterClaim = static_cast<long long>(accepted.size());
+      const long long nAfterClaim = static_cast<long long>(nPass1);
+      const long long nPass2Acc = static_cast<long long>(accepted.size() - nPass1);
 
       long long nT5c = 0, nT4c = 0;
       for (const ChainTC& ctc : chainTCs)
@@ -893,15 +940,30 @@ int main(int argc, char** argv) {
       //   the chain's. Its pLS's baseline pT5/pLS rows are dropped in fillEventHybrid.
       // The chainTCs/accepted lockstep below relies on the K10 contract (accepted order,
       // skipping nLayers < 4).
+      // Helper: pixel hit rows of a pLS (seedIdx -> trk see_hitIdx, Pixel-type entries).
+      auto plsPixelHits = [&](int p, std::vector<int>& hits) {
+        hits.clear();
+        const int seed = ev.pLS_seedIdx[p];
+        if (seed < 0 || seed >= static_cast<int>(trk.see_hitIdx.size()))
+          return;
+        const auto& hIdx = trk.see_hitIdx[seed];
+        const auto& hTyp = trk.see_hitType[seed];
+        for (std::size_t h = 0; h < hIdx.size() && h < hTyp.size(); ++h)
+          if (hTyp[h] == static_cast<int>(proto::HitType::Pixel))
+            hits.push_back(hIdx[h]);
+      };
+
       std::vector<OutTC> outTCs;
       outTCs.reserve(chainTCs.size());
       std::vector<char> plsSuppressed;
-      long long nAttached = 0;
+      long long nAttached = 0, nUpgraded = 0;
       if (attachMode)
         plsSuppressed.assign(ev.pLS_pt.size(), 0);
       {
+        std::vector<int> pixHits;
         std::size_t tcPos = 0;
-        for (int c : accepted) {
+        for (std::size_t ai = 0; ai < accepted.size(); ++ai) {
+          const int c = accepted[ai];
           if (chains.nLayers[c] < 4)
             continue;  // K10 dropped it; keep the lockstep aligned
           ChainTC& ctc = chainTCs[tcPos++];
@@ -914,19 +976,15 @@ int main(int argc, char** argv) {
           const int p = attachMode ? chainAttachPls[c] : -1;
           if (p >= 0) {
             ++nAttached;
+            if (attachMode == 2 && ai < nPass1)
+              ++nUpgraded;  // pass-1-accepted chain upgraded in place (no claim change)
             plsSuppressed[p] = 1;
             otc.type = 7;           // pT5-class: chain + attached pLS
             otc.pt = ev.pLS_pt[p];  // pLS ptIn (pixel pt is better measured)
-            const int seed = ev.pLS_seedIdx[p];
-            if (seed >= 0 && seed < static_cast<int>(trk.see_hitIdx.size())) {
-              const auto& hIdx = trk.see_hitIdx[seed];
-              const auto& hTyp = trk.see_hitType[seed];
-              for (std::size_t h = 0; h < hIdx.size() && h < hTyp.size(); ++h) {
-                if (hTyp[h] == static_cast<int>(proto::HitType::Pixel)) {
-                  otc.hitIdxs.push_back(static_cast<unsigned int>(hIdx[h]));
-                  otc.hitTypes.push_back(proto::HitType::Pixel);
-                }
-              }
+            plsPixelHits(p, pixHits);
+            for (int hi : pixHits) {
+              otc.hitIdxs.push_back(static_cast<unsigned int>(hi));
+              otc.hitTypes.push_back(proto::HitType::Pixel);
             }
           }
           for (unsigned int hi : ctc.hitIdxs) {
@@ -936,8 +994,58 @@ int main(int argc, char** argv) {
           outTCs.push_back(std::move(otc));
         }
       }
+
+      // M7b SEED-FAMILY suppression mask (-A 2 only; sim-blind, mirrors production
+      // pixelHitsOverlapAny): expand the attached-pLS mark set to every pLS sharing
+      // >= 2 pixel hit rows with any attached pLS. The attached pLS themselves are
+      // family members trivially (full self-overlap), so this is a strict superset of
+      // the v1 own-pLS mask. The writer then drops kept-baseline rows of ANY pixel
+      // type (7, 5, AND 8) whose own pLS is in the family -- the M7 diagnosis (b):
+      // own-row-only suppression left the same sims' OTHER pixel deliveries
+      // (pLS-duplicate seeds, pT3 partners) alive, so the dup floor never drained.
+      if (attachMode == 2) {
+        std::unordered_map<int, std::vector<int>> hit2att;  // pixel hit row -> attached pLS
+        std::vector<int> pixHits;
+        const int nPls = static_cast<int>(ev.pLS_pt.size());
+        for (int p = 0; p < nPls; ++p) {
+          if (!plsSuppressed[p])
+            continue;
+          plsPixelHits(p, pixHits);
+          for (int h : pixHits)
+            hit2att[h].push_back(p);
+        }
+        if (!hit2att.empty()) {
+          std::unordered_map<int, int> cnt;  // attached pLS -> shared-hit count with q
+          for (int q = 0; q < nPls; ++q) {
+            if (plsSuppressed[q])
+              continue;
+            plsPixelHits(q, pixHits);
+            if (static_cast<int>(pixHits.size()) < 2)
+              continue;
+            cnt.clear();
+            bool inFamily = false;
+            for (int h : pixHits) {
+              const auto it = hit2att.find(h);
+              if (it == hit2att.end())
+                continue;
+              for (int p : it->second)
+                if (++cnt[p] >= 2) {
+                  inFamily = true;
+                  break;
+                }
+              if (inFamily)
+                break;
+            }
+            if (inFamily)
+              plsSuppressed[q] = 1;
+          }
+        }
+      }
+
       int nPixSuppressed = 0;
-      writer.fillEventHybrid(ev, trk, outTCs, attachMode ? &plsSuppressed : nullptr, &nPixSuppressed);
+      int nSuppByType[3] = {0, 0, 0};  // {pT5 rows, pT3 rows, pLS rows}
+      writer.fillEventHybrid(ev, trk, outTCs, attachMode ? &plsSuppressed : nullptr, &nPixSuppressed,
+                             attachMode == 2, attachMode == 2 ? nSuppByType : nullptr);
       const auto t4 = std::chrono::steady_clock::now();
 
       const double inferMs = msBetween(t0, t1);
@@ -947,7 +1055,19 @@ int main(int argc, char** argv) {
       const double arbMs = msBetween(t2, t3) - attachMs;
       const double fillMs = msBetween(t3, t4);
 
-      if (attachMode) {
+      if (attachMode == 2) {
+        // claim= is the PASS-1 count (bit-identical to -A 0 by construction); p2= is
+        // subordinate pass-2 accepted/candidates; upg= attached pass-1 chains upgraded
+        // in place to type 7; attach= all TCs with a pLS (upgrades + pass-2);
+        // pixSupp= seed-family-suppressed kept-baseline rows [pT5/pT3/pLS].
+        std::printf(
+            "evt %lld (run %u lumi %u event %llu): pixKept=%lld chains=%lld -> theta=%lld ->"
+            " pixdrop=%lld -> claim=%lld p2=%lld/%lld | chainTC=%zu (T5c=%lld T4c=%lld upg=%lld"
+            " attach=%lld pixSupp=%d[%d/%d/%d]) | infer=%.3f weld=%.3f attach=%.3f arb=%.3f fill=%.3f ms\n",
+            i, ev.run, ev.lumi, ev.evt, nPixKept, nChainsIn, nAfterTheta, nAfterPixDrop, nAfterClaim, nPass2Acc,
+            nPass2Cand, chainTCs.size(), nT5c, nT4c, nUpgraded, nAttached, nPixSuppressed, nSuppByType[0],
+            nSuppByType[1], nSuppByType[2], inferMs, weldMs, attachMs, arbMs, fillMs);
+      } else if (attachMode == 1) {
         // T5c/T4c stay the nLayers-class counts (attached chains are counted inside
         // T5c AND in attach=; their output tc_type is 7). pixSupp = kept-baseline rows
         // dropped by the K8 suppression (pixKept still counts pre-suppression rows).
@@ -976,6 +1096,11 @@ int main(int argc, char** argv) {
       totT4c += nT4c;
       totAttached += nAttached;
       totPixSuppressed += nPixSuppressed;
+      totPass2Cand += nPass2Cand;
+      totPass2Acc += nPass2Acc;
+      totUpgraded += nUpgraded;
+      for (int t = 0; t < 3; ++t)
+        totSuppByType[t] += nSuppByType[t];
       totPairsPref += att.nPairsPrefiltered;
       totPairsScored += att.nPairsScored;
       totInferMs += inferMs;
@@ -991,17 +1116,28 @@ int main(int argc, char** argv) {
                 " maxClaimedFrac=%.3f dropPixelConsumed=%s)\n",
                 nRun, thetaEdge, lambdaLen, thetaChain4, thetaChain5, thetaChain6, maxClaimedFrac,
                 dropPixelConsumed ? "on" : "off");
+    const long long totAcceptedAll = totAfterClaim + totPass2Acc;
     std::printf("  pixel TCs kept  total=%lld mean=%.1f\n", totPixKept, totPixKept / nEvD);
-    std::printf("  chain funnel    in=%lld -> theta=%lld -> pixdrop=%lld -> claim=%lld\n", totChainsIn, totAfterTheta,
-                totAfterPixDrop, totAfterClaim);
+    if (attachMode == 2)
+      std::printf("  chain funnel    in=%lld -> theta=%lld -> pixdrop=%lld -> claim(pass1)=%lld"
+                  " | pass2 cand=%lld accepted=%lld\n",
+                  totChainsIn, totAfterTheta, totAfterPixDrop, totAfterClaim, totPass2Cand, totPass2Acc);
+    else
+      std::printf("  chain funnel    in=%lld -> theta=%lld -> pixdrop=%lld -> claim=%lld\n", totChainsIn, totAfterTheta,
+                  totAfterPixDrop, totAfterClaim);
     std::printf("  chain TCs       total=%lld mean=%.1f (T5-class=%lld T4-class=%lld; %lld accepted chains"
                 " below 4 layers dropped by K10)\n",
-                totChainTCs, totChainTCs / nEvD, totT5c, totT4c, totAfterClaim - totChainTCs);
+                totChainTCs, totChainTCs / nEvD, totT5c, totT4c, totAcceptedAll - totChainTCs);
     if (attachMode) {
       std::printf("  K8 attach       attached=%lld mean=%.1f | baseline pixel rows suppressed=%lld mean=%.1f"
                   " | pairs prefiltered=%lld scored=%lld (thetaAttach=%.3f head=%s)\n",
                   totAttached, totAttached / nEvD, totPixSuppressed, totPixSuppressed / nEvD, totPairsPref,
                   totPairsScored, thetaAttach, attachHeadAvailable() ? "trained" : "sentinel");
+      if (attachMode == 2)
+        std::printf("  M7b breakdown   pass1 upgrades=%lld mean=%.1f | pass2 TCs=%lld mean=%.1f"
+                    " | suppressed rows by type pT5=%lld pT3=%lld pLS=%lld\n",
+                    totUpgraded, totUpgraded / nEvD, totPass2Acc, totPass2Acc / nEvD, totSuppByType[0],
+                    totSuppByType[1], totSuppByType[2]);
       std::printf("  output TCs/evt  mean=%.1f (pixel kept %.1f - suppressed %.1f + chain %.1f)\n",
                   (totPixKept - totPixSuppressed + totChainTCs) / nEvD, totPixKept / nEvD, totPixSuppressed / nEvD,
                   totChainTCs / nEvD);
