@@ -466,6 +466,12 @@ bug, not an architecture problem.
   the same idea as t3dnn/t4dnn's separate prompt/displaced WP tables, done with real statistics.
   Granularity: t5dnn-style 2 pT x 10 eta; not t4dnn-style 2x25 dual tables from 2-10 tracks/bin.
   The chain-level WP is what P1's kill criterion tests (edge gate loose per §5a).
+  **CONTINGENCY, not mandate (maintainer, 2026-08-01): tables only if needed.** The learned
+  module-category features may keep chain-slice eff-vs-eta/pT flat enough that per-length
+  scalars suffice (true so far at loose thresholds, but the aggregate is pixel-masked and
+  cuts are loose — weak evidence). Decision rule: measure CHAIN-SLICE eff curves vs eta/pT
+  at each candidate final operating point; generate tables only where material
+  nonuniformity appears; keep scalars where flat.
 - **Consistency with inference, enforced:** feature builders shared between the ntuple dump and
   training (one code path); golden-value parity test Python vs C++ (absent today); pair/gate
   coordinates = the SAME quantities the kernels use (the embed bug class); norm constants emitted
@@ -957,7 +963,86 @@ prove while chains have NO pixel matching (pixel TCs carried verbatim from basel
   where its discrimination is strong (T4-class), harmful where weak (displaced 5+).
   Active tree: v2_noweight edge weights + v2 chain gate + -G 2. Artifacts ab_h4b.*.
 
+- **2026-08-01 M7 — K8 PIXEL ATTACH v1 (head excellent; integration v1 rejected, fix in
+  flight):** prefilter true-pair eff 0.9991 (circle propagation + tanL/phi windows);
+  27M-pair dump; attach head 18->24->24->1 test AUC 0.99851 (displaced 0.99700), logit
+  medians true +6.8 / fake -15.2, parity 1.1e-5. Attached type-7 slice FR 0.0213 (~
+  baseline pT5 0.0145); aggregate fake 0.1158 -> 0.0811 monotone in attach. REJECTED
+  because: (a) partOfPT5 bypass re-admitted ~550 prompt chains/evt that EVICTED displaced
+  chains in the MD claim (vxy[10,30) -0.06; ordering problem, not a WP problem — the
+  thetaAttach axis is saturated at the head's margin); (b) own-row-only suppression left
+  the chain-vs-pixel dup floor unchanged (same sims delivered by pLS-duplicate seeds +
+  pT3 partners). ALSO: pLS_simIdxAll VERIFIED to be FULL sim rows (EventData comment was
+  wrong, corrected); attach scoring costs 363 ms/evt at theta-pass level in the
+  prototype — grid prefilter needed before production, non-blocking offline.
+  M7b (in flight): subordinate two-pass claim (pass 1 == h4b identically; attached
+  re-admits claim only leftovers — displaced bands protected BY CONSTRUCTION) +
+  seed-family suppression (>=2 shared pixel hits, mirroring pixelHitsOverlapAny).
+
+- **2026-08-01 M7b/M7c — ATTACH INTEGRATION CLOSED FOR THE HYBRID PHASE (h4b stays
+  winner; -A default 0; machinery banked for P2):** M7b's subordinate two-pass claim
+  (pass 1 == h4b bit-identically) + seed-family suppression produced the first real dup
+  drop (0.317 -> 0.257) with zero eviction; M7c's dca gate + kinematic guards + K7-lite
+  beat M7b on every eff band (best w6: dup 0.301, dxy[1,5) restored) but vxy bands stayed
+  ~-0.01. **Measured physics finding: displaced chains at vxy < 10 cm have PROMPT-LIKE
+  dca (median ~0.4 cm) — IP geometry cannot gate attach eligibility for them**; the
+  residual dilution (~38 sims) needs attach-side displaced awareness (chain-gate score
+  as eligibility feature / attach abstain class), and the suppression collateral (~70)
+  has no clean dR operating point (same-track vs different-track seed families overlap).
+  BOTH are hybrid-seam artifacts: at real integration pT5s are built FROM chains (no
+  kept-baseline rows to collide with), so further hybrid iterations are polishing a seam
+  that vanishes. Banked for P2: attach head (AUC 0.99851, parity 1.1e-5), two-pass claim,
+  suppression machinery, dca tool, and the lesson that attach eligibility should consume
+  the chain-gate displaced score. Prototype attach scoring cost 363 ms/evt — grid
+  prefilter required at production.
+
+- **2026-08-01 P1 ROC STUDY (the original kill criteria, measured): K1 PASS / K2 FAIL
+  with structural localization.** On frozen identical T3s, held-out events, per-sim-track
+  counting (dedup-aware): **K1: chain gate reaches fake = 0.63x the production t5dnn at
+  equal prompt sim-eff (legacy score 0.93x) — the central discrimination bet is WON.**
+  K2 (>=1.5x displaced at equal fake) fails, but thresholdless welded chains reach only
+  1.04x the T5 collection's displaced coverage — no scorer can pass; with the M3 oracle
+  (~100% formable), the displaced formation loss localizes to thetaEdge pruning +
+  mutual-best welding margin on displaced edges. NOTE the stage mismatch in K2-as-written:
+  at TC level (what matters) the hybrid already beats FULL LST on every vxy band —
+  chains lose less downstream than T5s. The formation-margin fix = displaced-capable
+  edge weights (1000-evt retrain queued) and/or welding fallback depth. AUCs: gate 0.911
+  (prompt 0.912 / disp 0.820) vs t5dnn 0.828 (WP-truncated, stated).
+
+- **2026-08-01 QUEUED — attach-as-evidence mode (-A 3; maintainer physics point):** pLS
+  matching is LST's fake-annihilator (T3 FR huge -> pT3 FR near zero via pixel match +
+  cuts + pt3dnn); M7 measured the same for chains (attach evidence: fake 0.116 -> 0.081,
+  attached-slice FR 0.021). M7's rejections were TC-bookkeeping artifacts, NOT the veto
+  mechanism. Harvest safely in the hybrid: attach outcome becomes an INPUT to chain
+  ACCEPTANCE only — for IP-compatible chains (dca < 0.5, prompt-claiming), failed attach
+  condemns (the pT3 logic inverted); displaced chains (large dca, pLS absence expected)
+  exempt; NO type upgrade, NO suppression, NO hit-list change -> no dilution/collateral.
+  Implement after the M8 verdict; at P2 this merges into the full attach design.
+
 ### 10.5 The iteration loop
+
+- **2026-08-01 M8 — v3 RETRAIN ON COMBINED DATA (649 evts); NEW ANCHOR m8_h4b:**
+  leak-proof multi-input training (frozen test-60 preserved; v2 splits reproduced to 10
+  digits as verification). Edge v3: displaced AUC +0.008 (0.871/0.872); gate v3:
+  +0.005-0.007 (0.822/0.803) with 2.5x displaced training chains. **m8_h4b (v3 weights,
+  same -G 2 config) beats h4b on EVERY eff band on the clean test-60** (vxy[10,30) 0.678
+  vs base 0.639) and passes the winner rule on all-300; lengths pass. **Full gate (-G 1)
+  no longer bleeds the vxy curve — fake 0.0547-0.0587 at g1/g2 — but still zeroes the
+  large-dxy secondaries (dxy[5,10) 0.151 vs base 0.228, dxy[10,30) -> 0), so g-configs
+  stay rejected.** KEY NEGATIVE: displaced data volume is SATURATING (2.5x data ->
+  +0.005 AUC) — the remaining displaced-gate gap is representational, confirming the
+  maintainer's iterate-within-ttbar directive. M9 queued: -G 3 DCA-split gate (gate only
+  IP-compatible chains; exempt the large-DCA secondaries) + -A 3 attach-as-evidence.
+  Trainers gained exact checkpoint/resume (--state-file/--wall-limit-sec).
+
+**Displaced-gun enrichment is NOT the fix for current gaps (maintainer, 2026-08-01):** the
+production t5dnn was trained on ttbar ONLY and achieves its displaced discrimination from
+the same sample we use (the t4dnn was not ttbar-only, but T4s contribute almost no ttbar
+displaced eff — a tiny blip at vxy ~30-40). The displaced secondaries ARE in ttbar; if our
+networks cannot match the t5dnn from the same events, the deficiency is ours (features,
+training, welding, acceptance shaping) and must be fixed by ITERATION WITHIN TTBAR, not by
+changing the sample. Enrichment remains a later-phase idea only. Expectation: LST took
+years of care — beating it on fake/dup will take real effort and many careful iterations.
 
 **Tuning priority (maintainer, 2026-07-31) — applies to EVERY cut/WP/threshold decision:**
 1. **Efficiency (overall AND displaced) — dominant by a large degree.** When a cut trades
@@ -987,6 +1072,77 @@ nLayers at minimum (theta_chain(4) >> theta_chain(5) > theta_chain(6+)), the dis
 version of the lambda_len prior; and if 4-layer chains cannot reach LST T4 quality on score
 alone, LST-style restrictions (e.g. displaced-oriented acceptance for length-4) are
 acceptable to hit the bar first and refine later. Expect this to take care and iterations.
+
+- **2026-08-01 M9 — ORDER-PRESERVING DCA SPLIT (-G 5); WINNER v1j; frontier fully mapped
+  (21 A/Bs):** winner m9_v1j (-G 5 -X 0.5 -T4 2 -T5 1 -U4 1e9 -L 0.5 -F 0.3): passes
+  every REACHABLE baseline floor, fake 0.1122, dup 0.3095, held out-of-sample.
+  STRUCTURAL DISCOVERIES: (1) cross-scale ordering inversion — mixing score scales in
+  K9 ordering lets legacy-scored fakes evict gate-scored trues; the gate must act as a
+  KILL only, ordering stays on one scale (-G 5 form). (2) **The K9 claim is SATURATED:
+  claim volume is conserved (~226k/300evt) — acceptance cuts backfill; only
+  fake-specific ordering/kills move FR.** (3) Residual fake is LOCALIZED: ~85% lives in
+  the exempt (dca>=0.5) 5+-layer branch — needs a displaced-capable discriminator for
+  large-DCA 5+ chains (the representational target, now branch-specific). (4)
+  Attach-as-evidence (-A 3): measured DEAD (zero fake gain, displaced cost — the
+  vxy<10-displaced-are-IP-classified hole; machinery banked). (5) **POSITIVE: the open
+  exempt-T4 branch (w1/z-configs) delivers the BEST DISPLACED CURVES EVER RECORDED (vxy
+  .813/.738/.687, dxy .527/.256, all far above baseline) at fake/length cost — a
+  displaced-capable T4-class discriminator unlocks them.** (6) dxy[10,30) baseline
+  floor is UNREACHABLE acceptance-side (ceiling 0.0256 at thresholdless flood) —
+  formation-side deficit (theta_edge/welding), confirming P1. Fan-out targets are now
+  precise: (a) large-DCA 5+ discriminator [fake], (b) displaced T4 discriminator
+  [displaced upside], (c) formation margin [dxy tail].
+
+- **2026-08-01 M10 FORENSICS (verified replicas, harness denominator recovered — READ
+  THIS BEFORE ANY FURTHER TUNING; it retires several levers and quantifies the rest):**
+  - **FAKES: 97.8% of fake chain TCs are 5+-layer (T4-class solved, FR 0.088); barrel
+    problem (FR 0.44); the (nNodes=2, nLayers=5) cell alone carries 59.4% of all fakes.**
+    Composition: 38% pure-junk-T3 chains, 35% one-junk-arm, only 3% cross-sim welds.
+  - **LABEL BUG (the single most consequential finding): 23.4% of accepted fakes are
+    LABEL-1 under Labels.h's >=2/3-MD rule** (two T3s each keeping 2/3 MDs + shared
+    middle = 3/5 = 60% coverage, harness-fake but trained as TRUE). A perfect classifier
+    of the current label floors chain-slice FR at 0.1235. FIX: retarget chain labels to
+    the harness coverage rule (~2-line change + re-dump); measured: AUC 0.914->0.921,
+    rej@99% 0.339->0.406. ALSO: chain dumps carry v2_noweight edge logits while
+    production is v3 (train/serve mismatch, 3.4% edge sign flips) — re-dump.
+  - **THE FAKE FIX, quantified end-to-end: TC-truth-trained gate on the 5+ path with 5
+    missing features (max member t3_fakeScore AUC 0.856, min member t3_promptScore
+    0.828, chain-fit dcaXY 0.750, radius spread, |eta|), applied PRE-CLAIM (freed MDs
+    re-claimed): FR 0.364->0.313 at 0.0% displaced cost (p>=0.05); ->0.276 at -1.3%;
+    ->0.226 at -3.0%. GBDT on same info: AUC 0.928 vs legacy 0.833.** dcaXY works as a
+    FEATURE (medians: true 0.42 / displaced-true 0.82-1.1 / junk 1.5-2.3), not a split.
+  - **DISPLACED: THE BOTTLENECK IS THE MD-CLAIM (K9), NOT welding/edges/formation.**
+    Claim-off recovers +0.082 at vxy[10,30); **F=0.4 alone: +0.033/+0.016/+0.002 with
+    dup +0.008 (priority-2 cheap!) and fake +0.020 — AND it puts dxy[1,5) ABOVE baseline
+    (0.5064 vs 0.4989): the M5 dxy regression was largely an ARBITRATION artifact.** F
+    was only ever swept DOWN; at 5 MDs the knob is binary (0.2-0.5 = no-op zone, which
+    explains M5's flat F scans). The deeper fix: length-normalized claim tolerance and/or
+    DE-LENGTHED ordering (losers are PURE 5-MD displaced chains starved by the
+    length-monotone score) — the largest unexplored axis (+0.13 potential at [10,30)
+    via purity/braid retention: the pure sibling exists in 57-85% of failed-match cases).
+  - **RETIRED WITH MEASUREMENT (stop spending iterations):** global negative thetaEdge
+    (+0.005 for +0.059 fake, negative at vxy[5,10) — evicts real chains); weld
+    depth/sweeps (12 sims total, 0 fragmentation; competitor is a FAKE edge 100% of
+    cases); extra edge relations (0/116 rescued); pixdrop changes; junction-degree
+    gating (displaced-hostile: -6.5% displaced at 4.5% rejection); jet-special handling;
+    kinematic dR/pt fake arbitration (fakes are LESS dR-adjacent than trues); further
+    T4-class work. Formation floor (160/117/227 per band) is an MD/LS/T3-builder
+    question, out of chain-pipeline scope.
+  - Fakes and dup flags are DISJOINT populations; braid arbitration must be MD-level.
+
+**WINNER RULE = LST-BASELINE FLOORS AS TARGET, not self-anchor ratchet (maintainer,
+2026-08-01):** LST itself applies a much TIGHTER cut to bare pLS-less T5s before TC
+addition (tightCutFlag; same idea for T4s via their WP tables) and PAYS displaced
+efficiency for it — so spending our surplus displaced headroom on fake reduction is
+legitimate. Default pass rule: every efficiency band (overall, vxy, dxy, eta regions) >=
+the LST baseline value (- 0.005 noise) AND length >= baseline per region; among passers
+minimize dup-above-floor, then fake. Do NOT ratchet against our own best-so-far.
+**Nuance (maintainer): the floors are the TARGET, not an absolute law** — if the frontier
+genuinely forces it after options are exhausted, a small efficiency payment to bring FR
+in line is acceptable; judgment applies. The mission: a better LST — ideally better
+efficiency (displaced above all) AT low fake and dup rates. Design consequence: two-tier
+chain acceptance mirrors LST (bare chains face the tight gate WP; pixel-anchored loose
+at P2).
 
 **Judge ALL of these as curves, never single numbers (maintainer, 2026-07-31):** efficiency,
 fake rate, and duplicate rate all have non-trivial shapes vs pT and eta (and vxy for
