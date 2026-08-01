@@ -1196,6 +1196,63 @@ acceptable to hit the bar first and refine later. Expect this to take care and i
     dumps `chains_m12_{300,498}evt.root`; models `chain3_mlp_m12.pt`;
     A/Bs `ab_m12_{k0..k6,w1..w12}.*`.
 
+- **2026-08-01 M13 RECON TRIO (w7 anchor; all replicas harness-verified):**
+  - **Decomposition: chain slice contributes 0.0378 of the 0.0614; pixel 0.0236 (NOT a
+    0.031 floor — perfect chain gate lands at aggregate 0.0245, far below baseline).**
+    Reframing: at LST-equal bare-OT volume our score-ranked chains have FR 0.0061 vs
+    LST's 0.1871 — 31x purer; the fake "problem" is a volume choice. Label-limited floor
+    RETIRED: exactly 0 (label == harness by construction now); but 31.8% of surviving
+    fakes are still label_old==1 — the retarget is load-bearing.
+  - **Residual fake anatomy: 66% is "contaminated" (one wrong arm on a real track,
+    matchFrac 0.5-0.75)** — these survive because K9 arbitrates chains vs chains ONLY;
+    pixel TCs' OT hits are invisible to the claim (48.9% of fake chains sit on a pixel
+    TC's hits). Fix = extend the claim universe to kept-pixel-TC hits (HIT-overlap, not
+    dR — jet-safe). T4 branches saturated; **5+ branches UNDER-CUT (thresholds were
+    equal-kill-calibrated, never frontier-optimized): IP@mX>=1.5 alone -> fake 0.0551
+    with EVERY band >= baseline (one A/B). The -MR rescue owns 73.9% of residual fakes;
+    branch-aware MR -> ~0.0528.** Only 0.39% of chain TCs are sole sim-providers (71%
+    of trues are dups) -> kills cost far less eff than TC counts suggest; oracle:
+    perfect displaced protection converts the whole 1.35x gap at ~zero eff cost.
+  - **DISPLACED: dxy[10,30) DEMOTED as a campaign target** (12-sim, 2.5sigma,
+    test-60-invisible; 386/468 lost sims sit at vxy ~118 cm, unreachable by anyone) —
+    close it as a BY-PRODUCT. Ranked levers: #1 -M4D -1.5 (only lever with a
+    true>fake chain ledger; one A/B; +19 dxy[1,5) sims); #2 the 3-CLASS EDGE HEAD
+    (only route to the 160-sim formation pool; proven distinct feature direction:
+    displaced-true edges sit BETWEEN prompt-true and fake on the curvature-consistency
+    block — the prompt boundary cuts through them); #3 claim redesign (140-sim pool);
+    #4 welder purity/K7 trim (220 sims, biggest, untouched by any acceptance lever);
+    DROP IP-5+ threshold work (measured dead).
+  - **SHADOW/TOURNAMENT: RESOLVED WITHOUT the tournament** — shadow fakes are killable
+    by ABSOLUTE mX floors alone (post-claim, jet-blind, no proximity anywhere): IP-5+
+    mX floor = 85 fakes per lost sim, best rate in the study. Maintainer's
+    no-proximity preference fully honored; tournament closed.
+- **2026-08-01 JET SIZING (maintainer question): a 40M-edge jet event.** Memory:
+  production design stores only theta-passing edges (~12-16 B; rejects never
+  materialized) -> 50-200 MB at 10-30% pass; exact-count allocation + 5b ceiling with
+  deterministic gate-tightening/ranked trim handles the tail (never a crash/race).
+  Prototype materializes features (~70 B/edge -> ~2.8 GB) - fine offline, batch jets.
+  Timing: everything is LINEAR in E, flat load balance; edge MLP dominates (~4.7
+  kFLOP/edge -> ~5-10 ms GPU for the event, ~360x typical). Relief valve (already
+  maintainer-endorsed as "a timing thing"): TIERED edge scoring - ~100-FLOP first-stage
+  screen distilled from measured feature importances, full MLP on survivors (40M ->
+  ~5-10M -> ~1-2 ms) + per-event adaptive theta (= the 5b overflow mechanism). No
+  structural change needed; tune on the jet sample.
+- **2026-08-01 JET-SAFETY AUDIT (maintainer question, post-M12): NO deltaR/proximity
+  cuts anywhere in the active TC path** (edges topological; arbitration hit-identity +
+  absolute margins; K7-lite/tournament off/unbuilt; attach windows are same-track
+  propagation, and banked). Watchlist for the jet phase: (1) density/degree features in
+  edge+gate nets = potential LEARNED anti-density prior from ttbar training — ablation
+  knobs required when jets arrive; (2) exclusive hit ownership lacks the blind-spot-#1
+  <=2-way sharing exemption (merged 2S clusters/conversions/boosted-tau) — softened by
+  F=0.3 slack + T3-duplicate redundancy, but the exemption is UNIMPLEMENTED and should
+  be built by the jet phase; (3) all thresholds/classifiers ttbar-tuned (planned
+  jet-phase retune).
+- **2026-08-01 MAINTAINER CALIBRATION (post-M12): DUAL objective for round 2.** Fake
+  ~0.06 is approaching acceptability but is still a significant jump vs baseline
+  (+35% relative) — continued fake reduction toward ~0.05 remains a live goal ALONGSIDE
+  the displaced-recovery push (dxy[10,30) pools: purity/braid ~161 sims, 3-class-edge
+  formation ~48 sims; plus general displaced squeeze). Both, not either. w11-style small
+  length trades stay available if they buy displaced.
 - **2026-08-01 QUEUED (maintainer insight, round 2): DEDUP-AS-FAKE-KILLER.** LST's dup
   cleaning doubled as a LOCAL TOURNAMENT: within its eta/phi ~0.1 windows (+ embedding),
   nearby candidates competed and the loser (disproportionately a fake shadowing a real
@@ -1213,6 +1270,9 @@ acceptable to hit the bar first and refine later. Expect this to take care and i
   never rank-only — (near a stronger TC) AND (victim's own gate margin fake-like in
   absolute terms); two healthy-margin core tracks never qualify. If recon shows the
   yield only exists via rank-based kills, DROP the lever (C1 jets outrank it).
+  **DEMOTED to last resort (maintainer, post-M12): if margin-based levers reach the fake
+  target, skip the tournament entirely — keeping the pipeline free of ANY proximity-based
+  cleaning is worth more for jet generalizability than its marginal fake yield.**
 - **2026-08-01 M10 FORENSICS (verified replicas, harness denominator recovered — READ
   THIS BEFORE ANY FURTHER TUNING; it retires several levers and quantifies the rest):**
   - **FAKES: 97.8% of fake chain TCs are 5+-layer (T4-class solved, FR 0.088); barrel
