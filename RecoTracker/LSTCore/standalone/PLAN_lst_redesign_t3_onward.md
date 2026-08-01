@@ -1417,6 +1417,24 @@ LATER separate pass (same prototype, jet-enriched ntuple) once the machinery exi
   reinterpreted per the ROC-study stage-mismatch note; FAKE PARITY is the open item).
 - Characterization pass: per-stage timings, ops counts, buffer sizes/event (the numbers
   GPU work is judged against), memory profile incl. jet-sizing extrapolation.
+- **PIXEL-REPLACEMENT VALIDATION (maintainer concern, 2026-08-01 — REQUIRED before P2):**
+  the attach HEAD is validated as a classifier (AUC 0.9985, prefilter 0.9991, attached
+  FR 0.021, parity) but attach as the DELIVERY path is NOT: every winner runs attach
+  off with baseline pixel TCs carried. Must run offline: (a) replacement A/B — attached
+  chains REPLACE carried type-7 rows; per-type pT5-class efficiency contribution must be
+  >= baseline's (joint chain-exists x attach-fires efficiency, never yet measured);
+  (b) the pT3 GAP — RESOLVED AS DESIGN (maintainer decision 2026-08-01): build ONE
+  GENERAL pLS->OT attach, not per-type machinery — one helix-propagation candidate
+  finder (target-agnostic: kills BOTH superbin maps), one pair head over {chains, bare
+  T3s} with target-side features unified + layer/node count as categorical inputs, ONE
+  contention rule (one pLS one owner across all target types, resolved by logit =
+  evidence ordering), TC class = label from target layer count with per-class margins
+  (3-layer objects tightest, per the per-length principle), suppression = contention
+  bookkeeping (replaces CrossCleanpT3/pT5/pLS + plsembdnn entirely; retain only the
+  upstream pLS seed dup-clean). Option-B (retain LST pT3 code) rejected: it recreates
+  the measured hybrid-seam pathologies permanently. M16 = validate the general attach
+  offline via replacement A/Bs per delivery class; (c) pLS dup-clean/suppress parity
+  is then subsumed by the contention rule's A/B.
 - Code hygiene: freeze the winning config, prune dead experiments from prototype/,
   document stage contracts, final commit tag.
 
