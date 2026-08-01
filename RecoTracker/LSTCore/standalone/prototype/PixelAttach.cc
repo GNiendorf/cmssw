@@ -460,6 +460,7 @@ void k8AttachPixels(const LSTEventData& ev,
   const float negInf = -std::numeric_limits<float>::infinity();
   out.plsRow.assign(nAcc, -1);
   out.logit.assign(nAcc, negInf);
+  out.bestLogit.assign(nAcc, negInf);
   out.nPairsPrefiltered = 0;
   out.nPairsScored = 0;
 
@@ -473,6 +474,8 @@ void k8AttachPixels(const LSTEventData& ev,
   for (const AttachPair& pr : pairs) {
     const float lo = attachLogit(pr.f);
     ++out.nPairsScored;
+    if (lo > out.bestLogit[pr.chainPos])
+      out.bestLogit[pr.chainPos] = lo;  // pre-theta, pre-contention (-A 3 evidence)
     if (lo < params.thetaAttach)
       continue;
     if (out.plsRow[pr.chainPos] < 0 || lo > out.logit[pr.chainPos]) {

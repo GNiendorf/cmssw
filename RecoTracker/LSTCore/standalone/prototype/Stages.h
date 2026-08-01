@@ -102,11 +102,26 @@ struct ArbitrationParams {
   float thetaChain4 = 0.f;     // nLayers <= 4 (T4-class)
   float thetaChain5 = 0.f;     // nLayers == 5 (T5-class)
   float thetaChain6 = 0.f;     // nLayers >= 6
+  // M9 (-G 3/-G 4 -U4/-U5/-U6): the DCA-split gate scores chains on TWO scales -- gate
+  // logit for IP-compatible chains, legacy sum-logit for dca-exempt ones -- so ONE
+  // threshold set cannot serve both (a gate-scale T4=2 is nearly a no-op on the legacy
+  // scale: the m9_v1 exempt-T4 fake flood). Chains flagged in altThreshold use the
+  // thetaAlt* set (legacy scale); everyone else uses thetaChain*. nullptr = legacy
+  // behavior, bit-exact for -G 0/1/2 and every pre-M9 caller.
+  float thetaAlt4 = 0.f;       // exempt nLayers <= 4
+  float thetaAlt5 = 0.f;       // exempt nLayers == 5
+  float thetaAlt6 = 0.f;       // exempt nLayers >= 6
+  const std::vector<char>* altThreshold = nullptr;  // per-chain: 1 = use thetaAlt*
   float maxClaimedFrac = 0.3f; // max fraction of already-claimed MDs tolerated
   bool dropPixelConsumed = true;
 
   float thetaFor(int nLayers) const {
     return nLayers >= 6 ? thetaChain6 : (nLayers == 5 ? thetaChain5 : thetaChain4);
+  }
+  float thetaForChain(int chain, int nLayers) const {
+    if (altThreshold != nullptr && chain < static_cast<int>(altThreshold->size()) && (*altThreshold)[chain])
+      return nLayers >= 6 ? thetaAlt6 : (nLayers == 5 ? thetaAlt5 : thetaAlt4);
+    return thetaFor(nLayers);
   }
 };
 // bypassPT5Drop (optional, size nChains; M7 K8 attach): chains flagged 1 skip the

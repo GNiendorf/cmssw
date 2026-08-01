@@ -50,7 +50,7 @@ void k9Arbitrate(const LSTEventData& ev,
   std::vector<int> order;
   order.reserve(nChains);
   for (int c = 0; c < nChains; ++c) {
-    if (chains.score[c] < params.thetaFor(chains.nLayers[c]))
+    if (chains.score[c] < params.thetaForChain(c, chains.nLayers[c]))
       continue;
     if (params.dropPixelConsumed && havePixFlags) {
       // K8 attach bypass (M7): an attached chain skips the partOfPT5 half of the drop
@@ -126,7 +126,7 @@ void k9ArbitrateTwoPass(const LSTEventData& ev,
   for (int c = 0; c < nChains; ++c) {
     if (c >= static_cast<int>(attachedPls.size()) || attachedPls[c] < 0)
       continue;
-    if (chains.score[c] < params.thetaFor(chains.nLayers[c]))
+    if (chains.score[c] < params.thetaForChain(c, chains.nLayers[c]))
       continue;
     bool hasPT5 = false, hasPT3 = false;
     for (int k = chains.offsets[c]; k < chains.offsets[c + 1] && !hasPT3; ++k) {

@@ -49,6 +49,12 @@ struct Attachments {
   // and the pair-head logit for it (-inf if none).
   std::vector<int> plsRow;
   std::vector<float> logit;
+  // Best scored-pair logit per chain position BEFORE the thetaAttach cut and BEFORE pLS
+  // contention (-inf if the chain had no prefiltered pair at all). This is the M9 -A 3
+  // attach-as-EVIDENCE quantity: "failed attach" there means NO pair above thetaAttach
+  // (bestLogit < thetaAttach), NOT losing the one-chain-per-pLS contention -- a chain
+  // that found a compatible pLS but lost exclusivity still has pixel evidence.
+  std::vector<float> bestLogit;
   long long nPairsPrefiltered = 0, nPairsScored = 0;
 };
 
