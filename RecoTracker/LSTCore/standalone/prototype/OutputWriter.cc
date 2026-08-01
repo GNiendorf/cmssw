@@ -167,8 +167,13 @@ public:
   // only the sim->tc direction is truncated to the first n_accepted_simtrk rows before
   // writing. So baseline per-TC (simIdx, frac) pairs can be accumulated into the
   // full-sim-list map below without any remapping, exactly like chain-TC matches.
-  void fillEventHybrid(const LSTEventData& ev, const TrkEventData& trk, const std::vector<OutTC>& chainTCs) {
+  void fillEventHybrid(const LSTEventData& ev,
+                       const TrkEventData& trk,
+                       const std::vector<OutTC>& chainTCs,
+                       const std::vector<char>* suppressPlsRows,
+                       int* nSuppressedOut) {
     fillSimAndIdentity(ev);
+    int nSuppressed = 0;
 
     const size_t n_total_simtrk = std::max(trk.sim_pt.size(), trk.simFullToAccepted.size());
     std::vector<std::vector<int>> sim_tcIdxAll(n_total_simtrk);
@@ -193,6 +198,23 @@ public:
       const int type = ev.tc_type[in_idx];
       if (type != 7 && type != 5 && type != 8)  // keep pT5 / pT3 / pLS only
         continue;
+      if (suppressPlsRows != nullptr) {
+        // K8 structural crossclean (M7): a chain+pLS type-7 TC replaced this pixel
+        // seed's baseline delivery -- drop the pT5/pLS rows of the attached pLS.
+        // pT3 rows are never dropped in v1.
+        int pls = -1;
+        if (type == 7 && in_idx < ev.tc_pt5Idx.size()) {
+          const int i5 = ev.tc_pt5Idx[in_idx];
+          if (i5 >= 0 && i5 < static_cast<int>(ev.pT5_plsIdx.size()))
+            pls = ev.pT5_plsIdx[i5];
+        } else if (type == 8 && in_idx < ev.tc_plsIdx.size()) {
+          pls = ev.tc_plsIdx[in_idx];
+        }
+        if (pls >= 0 && pls < static_cast<int>(suppressPlsRows->size()) && (*suppressPlsRows)[pls] != 0) {
+          ++nSuppressed;
+          continue;
+        }
+      }
       tc_pt_.push_back(ev.tc_pt[in_idx]);
       tc_eta_.push_back(ev.tc_eta[in_idx]);
       tc_phi_.push_back(ev.tc_phi[in_idx]);
@@ -270,6 +292,8 @@ public:
         sim_tcIdx_[a] = -999;
     }
 
+    if (nSuppressedOut != nullptr)
+      *nSuppressedOut = nSuppressed;
     tree_->Fill();
   }
 
@@ -364,8 +388,10 @@ void OutputWriter::fillEvent(const LSTEventData& ev, const TrkEventData& trk, co
 
 void OutputWriter::fillEventHybrid(const LSTEventData& ev,
                                    const TrkEventData& trk,
-                                   const std::vector<OutTC>& chainTCs) {
-  impl_->fillEventHybrid(ev, trk, chainTCs);
+                                   const std::vector<OutTC>& chainTCs,
+                                   const std::vector<char>* suppressPlsRows,
+                                   int* nSuppressedOut) {
+  impl_->fillEventHybrid(ev, trk, chainTCs, suppressPlsRows, nSuppressedOut);
 }
 
 void OutputWriter::writeAndClose() { impl_->writeAndClose(); }

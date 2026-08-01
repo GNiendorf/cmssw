@@ -20,6 +20,14 @@ NO displaced weighting (deliberate M7 deviation from train_chain.py): displaced 
 pairs are RARE because displaced tracks have no pLS -- that is physically correct.
 Their count is reported; forcing a weight on O(1e3) rows of 27M would only add noise.
 
+CHUNKED RUNS (operational, not a training-discipline change): the 27M-pair dump makes a
+full run exceed the 10-minute foreground shell budget, so the trainer checkpoints model
++ optimizer + permutation-generator state after EVERY epoch (--state) and caches the
+conditioned/standardized split arrays (--cache). When wall time exceeds
+--time-budget-s it prints PAUSED and exits 0; re-invoking the identical command resumes
+at the next epoch with the exact state (bitwise-identical schedule) an uninterrupted
+run would have had. On completion it prints TRAINING COMPLETE.
+
 Conditioning (v2-edge lesson: heavy-tailed columns must be tamed BEFORE
 standardization or they cripple their own slots; measured on the 300-evt dump):
   af_01 ptErrRel          -> log10_1p      (right tail to 74, bulk at 2e-3)
@@ -38,6 +46,7 @@ Outputs:
 import argparse
 import copy
 import json
+import os
 import time
 
 import numpy as np
@@ -66,6 +75,13 @@ def parse_args():
     p.add_argument("--lr", type=float, default=1e-3)
     p.add_argument("--train-frac", type=float, default=0.6)
     p.add_argument("--val-frac", type=float, default=0.2)
+    p.add_argument("--cache", default=None,
+                   help="npz path: conditioned+standardized split arrays (written on the "
+                        "first run, loaded by resume runs; delete to rebuild from --input)")
+    p.add_argument("--state", default=None,
+                   help="checkpoint path for chunked runs (model+opt+RNG, saved every epoch)")
+    p.add_argument("--time-budget-s", type=float, default=None,
+                   help="pause (exit 0, resumable via --state) once wall time exceeds this")
     return p.parse_args()
 
 
@@ -171,6 +187,77 @@ def event_split(meta, train_frac, val_frac, rng):
     return tr, va, te
 
 
+def build_cache(args, rng):
+    """First run: ROOT dump -> quality report -> conditioning -> split ->
+    standardization -> npz cache of everything later stages need."""
+    meta, X, names = load_dump(args.input)
+    n_all = len(X)
+    log(f"loaded {n_all} pairs x {X.shape[1]} features from {args.input}")
+
+    degenerate = data_quality_report(X, names)
+
+    conditioning = []
+    if not args.no_feature_clip:
+        conditioning = apply_conditioning(X, names, CONDITIONING_SPEC)
+
+    # Displaced accounting (NO weighting -- see the module docstring): true pairs by
+    # sim stratum. Pileup-sim true pairs carry simVxy = simPt = -999 (main.cc pairdump).
+    is_true_all = meta["label"] == 1
+    acc_true = is_true_all & (meta["simPt"] > -998.0)
+    pileup_true = is_true_all & ~acc_true
+    disp_true = acc_true & (meta["simVxy"] >= 1.0)
+    n_disp_true = int(disp_true.sum())
+    log(f"true-pair strata: total={int(is_true_all.sum())} "
+        f"accepted-sim={int(acc_true.sum())} (displaced vxy>=1: {n_disp_true}, "
+        f"vxy>=5: {int((acc_true & (meta['simVxy'] >= 5.0)).sum())}) "
+        f"pileup-sim={int(pileup_true.sum())} -- displaced true pairs are rare because "
+        "displaced tracks have no pLS (physically correct); no weighting applied")
+
+    tr, va, te = event_split(meta, args.train_frac, args.val_frac, rng)
+
+    # ---- standardization from TRAIN rows (in-place: X becomes Xs) ----
+    mu = X[tr].mean(axis=0, dtype=np.float64).astype(np.float32)
+    sd = X[tr].std(axis=0, dtype=np.float64).astype(np.float32)
+    sd[sd < 1e-8] = 1.0
+    X -= mu
+    X /= sd
+
+    y = is_true_all.astype(np.float32)
+    cache = {
+        "Xtr": X[tr], "ytr": y[tr],
+        "Xva": X[va], "yva": y[va],
+        "Xte": X[te],
+        "lab_te": meta["label"][te].astype(np.int32),
+        "vxy_te": meta["simVxy"][te].astype(np.float32),
+        "pt_te": meta["simPt"][te].astype(np.float32),
+        "nl_te": meta["chainNLayers"][te].astype(np.int32),
+        "mu": mu, "sd": sd,
+        "meta_json": np.bytes_(json.dumps({
+            "names": names, "conditioning": conditioning, "degenerate": degenerate,
+            "n_all": int(n_all), "n_true_displaced_total": n_disp_true,
+            "input": args.input, "seed": args.seed,
+            "train_frac": args.train_frac, "val_frac": args.val_frac,
+            "feature_clip": not args.no_feature_clip})),
+    }
+    if args.cache:
+        np.savez(args.cache, **cache)
+        log(f"wrote cache {args.cache} ({os.path.getsize(args.cache) / 1e9:.2f} GB)")
+    return cache
+
+
+def load_cache(path, args):
+    z = np.load(path)
+    cache = {k: z[k] for k in z.files}
+    mj = json.loads(bytes(cache["meta_json"]).decode())
+    assert mj["seed"] == args.seed and mj["input"] == args.input, \
+        "cache was built with different seed/input -- delete it to rebuild"
+    assert mj["feature_clip"] == (not args.no_feature_clip), \
+        "cache was built with different conditioning -- delete it to rebuild"
+    log(f"loaded cache {path}: train/val/test = "
+        f"{len(cache['Xtr'])}/{len(cache['Xva'])}/{len(cache['Xte'])} pairs")
+    return cache
+
+
 # ---------------------------------------------------------------- model
 
 def build_model(n_in):
@@ -217,60 +304,48 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     log(f"seed={args.seed} device={device}")
 
-    meta, X, names = load_dump(args.input)
-    n_all = len(X)
-    log(f"loaded {n_all} pairs x {X.shape[1]} features from {args.input}")
+    if args.cache and os.path.exists(args.cache):
+        cache = load_cache(args.cache, args)
+    else:
+        cache = build_cache(args, rng)
+    mj = json.loads(bytes(cache["meta_json"]).decode())
+    names, conditioning, degenerate = mj["names"], mj["conditioning"], mj["degenerate"]
 
-    degenerate = data_quality_report(X, names)
-
-    conditioning = []
-    if not args.no_feature_clip:
-        conditioning = apply_conditioning(X, names, CONDITIONING_SPEC)
-
-    # Displaced accounting (NO weighting -- see the module docstring): true pairs by
-    # sim stratum. Pileup-sim true pairs carry simVxy = simPt = -999 (main.cc pairdump).
-    is_true_all = meta["label"] == 1
-    acc_true = is_true_all & (meta["simPt"] > -998.0)
-    pileup_true = is_true_all & ~acc_true
-    disp_true = acc_true & (meta["simVxy"] >= 1.0)
-    log(f"true-pair strata: total={int(is_true_all.sum())} "
-        f"accepted-sim={int(acc_true.sum())} (displaced vxy>=1: {int(disp_true.sum())}, "
-        f"vxy>=5: {int((acc_true & (meta['simVxy'] >= 5.0)).sum())}) "
-        f"pileup-sim={int(pileup_true.sum())} -- displaced true pairs are rare because "
-        "displaced tracks have no pLS (physically correct); no weighting applied")
-
-    tr, va, te = event_split(meta, args.train_frac, args.val_frac, rng)
-
-    # ---- standardization from TRAIN rows (in-place: X becomes Xs) ----
-    mu = X[tr].mean(axis=0, dtype=np.float64).astype(np.float32)
-    sd = X[tr].std(axis=0, dtype=np.float64).astype(np.float32)
-    sd[sd < 1e-8] = 1.0
-    X -= mu
-    X /= sd
-    Xs = X
-
-    y = is_true_all.astype(np.float32)
-    n_pos, n_neg = int(y[tr].sum()), int((1 - y[tr]).sum())
+    n_pos, n_neg = int(cache["ytr"].sum()), int((1 - cache["ytr"]).sum())
     pos_weight = n_neg / max(n_pos, 1)
     log(f"train: {n_pos} true / {n_neg} fake -> pos_weight={pos_weight:.4f}")
 
-    Xtr = torch.tensor(np.ascontiguousarray(Xs[tr]))
-    ytr = torch.tensor(np.ascontiguousarray(y[tr]))
-    Xva = torch.tensor(np.ascontiguousarray(Xs[va]))
-    yva_np = y[va]
+    Xtr = torch.tensor(np.ascontiguousarray(cache["Xtr"]))
+    ytr = torch.tensor(np.ascontiguousarray(cache["ytr"]))
+    Xva = torch.tensor(np.ascontiguousarray(cache["Xva"]))
+    yva_np = cache["yva"]
     if device.type == "cuda":
         Xtr, ytr = Xtr.to(device), ytr.to(device)
 
-    model = build_model(X.shape[1]).to(device)
+    model = build_model(N_ATTACH_FEAT).to(device)
     opt = torch.optim.Adam(model.parameters(), lr=args.lr)
     crit = torch.nn.BCEWithLogitsLoss(pos_weight=torch.tensor(pos_weight, device=device))
+    gen = torch.Generator(device="cpu").manual_seed(args.seed)
+
+    # ---- resume (chunked runs; see the module docstring) ----
+    start_epoch, best_auc, best_state, best_epoch, bad = 1, -1.0, None, -1, 0
+    if args.state and os.path.exists(args.state):
+        st = torch.load(args.state, map_location="cpu", weights_only=False)
+        model.load_state_dict(st["model"])
+        model.to(device)
+        opt.load_state_dict(st["opt"])
+        gen.set_state(st["gen_state"])
+        start_epoch = st["epoch"] + 1
+        best_auc, best_state = st["best_auc"], st["best_state"]
+        best_epoch, bad = st["best_epoch"], st["bad"]
+        log(f"resumed {args.state}: next epoch {start_epoch} "
+            f"(best val AUC {best_auc:.5f} @ epoch {best_epoch}, bad={bad})")
 
     from sklearn.metrics import roc_auc_score
 
-    gen = torch.Generator(device="cpu").manual_seed(args.seed)
-    best_auc, best_state, best_epoch, bad = -1.0, None, -1, 0
+    finished = start_epoch > args.epochs or (0 < args.patience <= bad)
     n_tr = len(Xtr)
-    for epoch in range(1, args.epochs + 1):
+    for epoch in range(start_epoch, args.epochs + 1):
         model.train()
         perm = torch.randperm(n_tr, generator=gen)
         tot_loss = 0.0
@@ -292,15 +367,29 @@ def main():
             best_state = copy.deepcopy({k: v.cpu() for k, v in model.state_dict().items()})
         else:
             bad += 1
-            if bad >= args.patience:
-                log(f"early stop at epoch {epoch} (best val AUC {best_auc:.5f} @ epoch {best_epoch})")
-                break
+        if args.state:
+            torch.save({"model": {k: v.cpu() for k, v in model.state_dict().items()},
+                        "opt": opt.state_dict(), "gen_state": gen.get_state(),
+                        "epoch": epoch, "best_auc": best_auc, "best_state": best_state,
+                        "best_epoch": best_epoch, "bad": bad}, args.state)
+        if bad >= args.patience:
+            log(f"early stop at epoch {epoch} (best val AUC {best_auc:.5f} @ epoch {best_epoch})")
+            finished = True
+            break
+        if epoch == args.epochs:
+            finished = True
+            break
+        if args.time_budget_s is not None and time.time() - T0 > args.time_budget_s:
+            log(f"PAUSED after epoch {epoch} (time budget {args.time_budget_s:.0f}s; "
+                f"re-run the same command to resume from {args.state})")
+            return
     log(f"best checkpoint: epoch {best_epoch} val_auc={best_auc:.5f}")
+    assert finished and best_state is not None
     model.load_state_dict(best_state)
     model.to(device)
 
     # ---- save model + normalization ----
-    torch.save({"state_dict": best_state, "arch": [X.shape[1], 24, 24, 1],
+    torch.save({"state_dict": best_state, "arch": [N_ATTACH_FEAT, 24, 24, 1],
                 "feature_names": names, "seed": args.seed,
                 "conditioning": conditioning,
                 "best_epoch": best_epoch, "best_val_auc": float(best_auc)}, args.out_model)
@@ -309,23 +398,23 @@ def main():
                    # C++ inference: apply "conditioning" ops IN ORDER to the raw
                    # features FIRST, then x_std = (x - mean) / std.
                    "conditioning": conditioning,
-                   "mean": mu.tolist(), "std": sd.tolist(),
+                   "mean": cache["mu"].tolist(), "std": cache["sd"].tolist(),
                    "seed": args.seed, "degenerate_columns": degenerate,
                    "displaced_weighting": {"rule": "none (M7: displaced true pairs are "
                                                    "physically rare -- displaced tracks have no pLS)",
-                                           "n_true_displaced_total": int(disp_true.sum())},
+                                           "n_true_displaced_total": mj["n_true_displaced_total"]},
                    "train_args": {"epochs": args.epochs, "patience": args.patience,
                                   "batch_size": args.batch_size, "lr": args.lr,
                                   "feature_clip": not args.no_feature_clip}}, fh, indent=1)
     log(f"saved {args.out_model} and {args.out_norm}")
 
     # ---- TEST evaluation: overall + per chainNLayers (5/6+) + prompt/displaced ----
-    Xte = torch.tensor(np.ascontiguousarray(Xs[te]))
+    Xte = torch.tensor(np.ascontiguousarray(cache["Xte"]))
     s_te = batched_scores(model, Xte, device)
-    lab_te = meta["label"][te]
-    vxy_te = meta["simVxy"][te]
-    pt_te = meta["simPt"][te]
-    nl_te = meta["chainNLayers"][te]
+    lab_te = cache["lab_te"]
+    vxy_te = cache["vxy_te"]
+    pt_te = cache["pt_te"]
+    nl_te = cache["nl_te"]
     is_true = lab_te == 1
     is_fake = ~is_true
     acc_te = is_true & (pt_te > -998.0)
@@ -348,7 +437,7 @@ def main():
         print(f"  test {tag} logit quantiles 5/25/50/75/95%: "
               + " ".join(f"{v:+.2f}" for v in q))
 
-    log("done")
+    log("TRAINING COMPLETE")
 
 
 if __name__ == "__main__":

@@ -31,7 +31,8 @@ void warnNoPixFlags() {
 void k9Arbitrate(const LSTEventData& ev,
                  const Chains& chains,
                  const ArbitrationParams& params,
-                 std::vector<int>& acceptedChains) {
+                 std::vector<int>& acceptedChains,
+                 const std::vector<char>* bypassPT5Drop) {
   acceptedChains.clear();
   const int nChains = static_cast<int>(chains.score.size());
   const int nMD = static_cast<int>(ev.md_anchorHitIdx.size());
@@ -52,10 +53,14 @@ void k9Arbitrate(const LSTEventData& ev,
     if (chains.score[c] < params.thetaFor(chains.nLayers[c]))
       continue;
     if (params.dropPixelConsumed && havePixFlags) {
+      // K8 attach bypass (M7): an attached chain skips the partOfPT5 half of the drop
+      // (it replaces the baseline pT5 delivery) but still respects partOfPT3.
+      const bool bypassPT5 = bypassPT5Drop != nullptr && c < static_cast<int>(bypassPT5Drop->size()) &&
+                             (*bypassPT5Drop)[c] != 0;
       bool consumed = false;
       for (int k = chains.offsets[c]; k < chains.offsets[c + 1] && !consumed; ++k) {
         const int t3 = chains.items[k];
-        consumed = ev.t3_partOfPT5[t3] || ev.t3_partOfPT3[t3];
+        consumed = (ev.t3_partOfPT5[t3] && !bypassPT5) || ev.t3_partOfPT3[t3];
       }
       if (consumed)
         continue;

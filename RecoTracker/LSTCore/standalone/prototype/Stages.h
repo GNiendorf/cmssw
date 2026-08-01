@@ -109,10 +109,16 @@ struct ArbitrationParams {
     return nLayers >= 6 ? thetaChain6 : (nLayers == 5 ? thetaChain5 : thetaChain4);
   }
 };
+// bypassPT5Drop (optional, size nChains; M7 K8 attach): chains flagged 1 skip the
+// partOfPT5 HALF of the pixel-consumed drop -- a K8-attached chain IS the pT5
+// replacement for its pixel seed, so the crossclean that exists only because the track
+// was delivered by a kept baseline pixel TC must not kill it. The partOfPT3 half still
+// drops (pT3 rows are untouched by attach in v1). nullptr = legacy behavior (bit-exact).
 void k9Arbitrate(const LSTEventData& ev,
                  const Chains& chains,
                  const ArbitrationParams& params,
-                 std::vector<int>& acceptedChains);
+                 std::vector<int>& acceptedChains,
+                 const std::vector<char>* bypassPT5Drop = nullptr);
 
 // K10 (prototype v1): accepted chains -> OutTC-ready records.
 //   type: nLayers >= 5 -> 4 (T5-class), nLayers == 4 -> 9 (T4-class); nLayers < 4 dropped.

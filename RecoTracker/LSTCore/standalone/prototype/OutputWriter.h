@@ -51,9 +51,18 @@ public:
   // Also fills the diagnostics branches tc_simIdxAll (per-TC full-sim-list match rows)
   // and tc_isChain (1 = chain TC, 0 = kept baseline row) — harness-invisible extras for
   // offline duplicate decomposition.
+  //
+  // K8 attach suppression (M7, hybrid -A 1): suppressPlsRows (optional, size nPls,
+  // 1 = this pLS was attached to an accepted chain) DROPS kept-baseline rows that
+  // deliver that pixel seed: tc_type 7 rows whose pT5_plsIdx[tc_pt5Idx] is a suppressed
+  // pLS and tc_type 8 rows whose tc_plsIdx is a suppressed pLS. pT3 (type 5) rows are
+  // untouched in v1. nSuppressedOut (optional) receives the dropped-row count.
+  // nullptr = legacy behavior (bit-exact).
   void fillEventHybrid(const LSTEventData& ev,
                        const TrkEventData& trk,
-                       const std::vector<OutTC>& chainTCs);
+                       const std::vector<OutTC>& chainTCs,
+                       const std::vector<char>* suppressPlsRows = nullptr,
+                       int* nSuppressedOut = nullptr);
 
   void writeAndClose();
 

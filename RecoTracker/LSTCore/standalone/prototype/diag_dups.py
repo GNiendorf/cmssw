@@ -77,9 +77,14 @@ def main():
     th = fh.Get("tree")
     hb = branch_names(th)
 
-    exact = "tc_simIdxAll" in hb and "tc_simIdxAllFrac" in hb
+    # EXACT needs only tc_simIdxAll: the hybrid writer stores ONLY >0.75 matches there
+    # (accumulate() pushes the already-thresholded matcher output), so the Frac branch
+    # (absent in hybrid outputs) adds nothing; when present it is still applied.
+    exact = "tc_simIdxAll" in hb
+    have_frac = "tc_simIdxAllFrac" in hb
     if exact:
-        print(f"[diag_dups] MODE: EXACT (tc_simIdxAll present) on {args.hybrid}")
+        print(f"[diag_dups] MODE: EXACT (tc_simIdxAll present%s) on {args.hybrid}"
+              % ("" if have_frac else "; no Frac branch -- rows are pre-thresholded >0.75"))
     else:
         missing = [b for b in ("tc_simIdxAll", "tc_isChain", "tc_simIdx") if b not in hb]
         print(f"[diag_dups] MODE: DEGRADED - hybrid file lacks {missing}.")
@@ -113,9 +118,22 @@ def main():
     n_sim_chpix = 0      # accepted sims: best TC chain AND >=1 pixel matcher
     n_sim_chonly = 0     # accepted sims: best TC chain, no pixel matcher
 
+    # M7 attach-aware classification: with -A 1 attached chains are written as tc_type 7
+    # (pT5-class) but carry tc_isChain == 1. When the branch exists, chain/pix
+    # classification uses tc_isChain (identical to the type-based rule on pre-attach
+    # files, where tc_isChain == 1 iff tc_type in (4, 9)).
+    use_ischain = exact and "tc_isChain" in hb
+    if use_ischain:
+        print("[diag_dups] chain/pix classification: tc_isChain (attach-aware)")
+    n_dup_chain_cls = 0
+    n_dup_pix_cls = 0
+
     if exact:
-        need = ["tc_type", "tc_isDuplicate", "tc_isFake", "tc_nhitOT",
-                "tc_simIdxAll", "tc_simIdxAllFrac"]
+        need = ["tc_type", "tc_isDuplicate", "tc_isFake", "tc_nhitOT", "tc_simIdxAll"]
+        if have_frac:
+            need.append("tc_simIdxAllFrac")
+        if use_ischain:
+            need.append("tc_isChain")
         th.SetBranchStatus("*", 0)
         for b in need:
             th.SetBranchStatus(b, 1)
@@ -124,19 +142,31 @@ def main():
             ttype = list(th.tc_type)
             tdup = list(th.tc_isDuplicate)
             tlen = list(th.tc_nhitOT)
+            if use_ischain:
+                ischain = [bool(v) for v in th.tc_isChain]
+            else:
+                ischain = [ty in CHAIN_TYPES for ty in ttype]
             n_tc_tot += len(ttype)
             for t, ty in enumerate(ttype):
                 tc_by_type[ty] += 1
                 if tdup[t]:
                     n_dup_tot += 1
                     dup_by_type[ty] += 1
-            # sim -> matched TCs (frac > MATCH_FRAC)
+                    if ischain[t]:
+                        n_dup_chain_cls += 1
+                    else:
+                        n_dup_pix_cls += 1
+            # sim -> matched TCs (frac > MATCH_FRAC; hybrid files store only such rows)
             sim2tc = defaultdict(list)
             for t in range(len(ttype)):
                 sims = th.tc_simIdxAll[t]
-                fracs = th.tc_simIdxAllFrac[t]
-                for s, f in zip(sims, fracs):
-                    if f > MATCH_FRAC:
+                if have_frac:
+                    fracs = th.tc_simIdxAllFrac[t]
+                    for s, f in zip(sims, fracs):
+                        if f > MATCH_FRAC:
+                            sim2tc[int(s)].append(t)
+                else:
+                    for s in sims:
                         sim2tc[int(s)].append(t)
             pairs = set()
             for s, tcs in sim2tc.items():
@@ -147,8 +177,8 @@ def main():
                         pairs.add((min(tcs[i], tcs[j]), max(tcs[i], tcs[j])))
             partner_kind = defaultdict(set)
             for a, b in pairs:
-                ca = ttype[a] in CHAIN_TYPES
-                cb = ttype[b] in CHAIN_TYPES
+                ca = ischain[a]
+                cb = ischain[b]
                 if ca and cb:
                     pair_counts["chain-chain"] += 1
                     if tlen[a] == tlen[b]:
@@ -169,7 +199,7 @@ def main():
             for t in range(len(ttype)):
                 if not tdup[t]:
                     continue
-                me = "chain" if ttype[t] in CHAIN_TYPES else "pix"
+                me = "chain" if ischain[t] else "pix"
                 pk = partner_kind.get(t, set())
                 dup_tc_class[(me, tuple(sorted(pk)))] += 1
     else:
@@ -319,10 +349,16 @@ def main():
         f"type{ty}={tc_by_type[ty]}" for ty in (4, 9, 7, 5, 8)))
     print("dup TC counts by type  : " + "  ".join(
         f"type{ty}={dup_by_type[ty]} ({dup_by_type[ty] * fdup:.1f}%)" for ty in (4, 9, 7, 5, 8)))
-    n_dup_chain = sum(dup_by_type[t] for t in CHAIN_TYPES)
-    n_dup_pix = sum(dup_by_type[t] for t in PIX_TYPES)
-    print(f"dup TCs: chain(4/9)={n_dup_chain} ({n_dup_chain * fdup:.1f}%)  "
-          f"pixel(7/5/8)={n_dup_pix} ({n_dup_pix * fdup:.1f}%)")
+    if use_ischain:
+        n_dup_chain = n_dup_chain_cls
+        n_dup_pix = n_dup_pix_cls
+        print(f"dup TCs (by tc_isChain): chain={n_dup_chain} ({n_dup_chain * fdup:.1f}%)  "
+              f"pixel={n_dup_pix} ({n_dup_pix * fdup:.1f}%)")
+    else:
+        n_dup_chain = sum(dup_by_type[t] for t in CHAIN_TYPES)
+        n_dup_pix = sum(dup_by_type[t] for t in PIX_TYPES)
+        print(f"dup TCs: chain(4/9)={n_dup_chain} ({n_dup_chain * fdup:.1f}%)  "
+              f"pixel(7/5/8)={n_dup_pix} ({n_dup_pix * fdup:.1f}%)")
 
     if exact:
         tot_pairs = sum(pair_counts.values())

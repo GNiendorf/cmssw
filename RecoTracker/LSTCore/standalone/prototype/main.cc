@@ -16,6 +16,11 @@
 //                  hit-claim arbitration + K10 TC assembly; output file = kept baseline
 //                  pixel TCs (pT5/pT3/pLS) + the prototype chain TCs, written through
 //                  OutputWriter::fillEventHybrid for the unchanged efficiency harness.
+//                  -A 1 (M7) adds K8 pixel attach: after the theta gate and BEFORE the
+//                  pixel-consumed drop, accepted 5+-layer chains bid for pLS seeds via
+//                  the trained attach head (threshold -a); attached chains bypass the
+//                  partOfPT5 drop, become type-7 (pT5-class) TCs (pixel hits + OT hits,
+//                  pt = pLS ptIn), and their pLS's baseline pT5/pLS rows are suppressed.
 //   chaindump(M6): graph + features + MLP inference + K6 welding (same -e/-L knobs as
 //                  hybrid, r5 shape = -e 0 -L 0.5), then EVERY welded chain
 //                  PRE-arbitration is written to a flat TTree "chains" (one entry per
@@ -85,7 +90,13 @@ void usage(const char* prog) {
                "              ChainFeatures.h vector; thetaChain4/5/6 cut on that scale and\n"
                "              arbitration order uses it too); 0 = legacy K6 sum-logit score\n"
                "              (regression path); 2 = split: gate logit for nLayers <= 4 only\n"
-               "              (thetaChain4 on the gate scale), legacy score for nLayers >= 5\n",
+               "              (thetaChain4 on the gate scale), legacy score for nLayers >= 5\n"
+               "  -A <0|1>    hybrid mode (default 0): 1 = run K8 pixel attach after the theta\n"
+               "              gate and BEFORE the pixel-consumed drop; attached chains become\n"
+               "              type-7 (pT5-class) TCs, bypass the partOfPT5 drop, and suppress\n"
+               "              their pLS's baseline pT5/pLS rows in the output\n"
+               "  -a <theta>  thetaAttach: attach-head logit threshold for K8 (default 0.0;\n"
+               "              only used with -A 1)\n",
                prog);
 }
 
@@ -149,6 +160,9 @@ int main(int argc, char** argv) {
   int chainGateMode = 1;          // -G: 0 = legacy K6 sum-logit score, 1 = gate logit for ALL
                                   // chains, 2 = split: gate logit for nLayers <= 4 only,
                                   // legacy score for nLayers >= 5 (hybrid mode)
+  int attachMode = 0;             // -A: 1 = K8 pixel attach in hybrid mode (default 0 so the
+                                  // -A-less regression path is untouched)
+  float thetaAttach = 0.0f;       // -a: attach-head logit threshold (hybrid -A 1)
 
   // Pre-scan for the multi-char flags -T4/-T5/-T6 (getopt cannot express them: "-T4"
   // would parse as -T with value "4"); consume flag+value pairs here and hand the
@@ -178,7 +192,7 @@ int main(int argc, char** argv) {
   int nArgs = static_cast<int>(args.size());
 
   int opt;
-  while ((opt = getopt(nArgs, args.data(), "i:t:o:n:m:l:e:L:T:F:G:Ph")) != -1) {
+  while ((opt = getopt(nArgs, args.data(), "i:t:o:n:m:l:e:L:T:F:G:A:a:Ph")) != -1) {
     switch (opt) {
       case 'i':
         lstPath = optarg;
@@ -219,6 +233,16 @@ int main(int argc, char** argv) {
           std::fprintf(stderr, "Error: -G expects 0, 1, or 2.\n");
           return 1;
         }
+        break;
+      case 'A':
+        attachMode = std::atoi(optarg);
+        if (attachMode < 0 || attachMode > 1) {
+          std::fprintf(stderr, "Error: -A expects 0 or 1.\n");
+          return 1;
+        }
+        break;
+      case 'a':
+        thetaAttach = static_cast<float>(std::atof(optarg));
         break;
       case 'h':
         usage(argv[0]);
@@ -715,12 +739,23 @@ int main(int argc, char** argv) {
         " maxClaimedFrac=%.3f dropPixelConsumed=%s chainGateMode=%d kWeldSweeps=%d\n",
         thetaEdge, lambdaLen, thetaChain4, thetaChain5, thetaChain6, maxClaimedFrac,
         dropPixelConsumed ? "on" : "off", chainGateMode, kWeldSweeps);
+    if (attachMode) {
+      AttachParams apDefaults;
+      std::printf(
+          "attach (-A 1): thetaAttach=%.3f attachHead=%s prefDTanL=%.3f prefDPhi=%.3f"
+          " (K8 runs after the theta gate and BEFORE the pixel-consumed drop; attached"
+          " chains bypass partOfPT5, still respect partOfPT3, become type-7 TCs with"
+          " pt = pLS ptIn + the pLS pixel hits prepended, and suppress their pLS's"
+          " baseline pT5/pLS rows; pT3 rows untouched)\n",
+          thetaAttach, attachHeadAvailable() ? "trained" : "sentinel", apDefaults.prefDTanL, apDefaults.prefDPhi);
+    }
     OutputWriter writer(outPath, label);
 
     long long totPixKept = 0;
     long long totChainsIn = 0, totAfterTheta = 0, totAfterPixDrop = 0, totAfterClaim = 0;
     long long totChainTCs = 0, totT5c = 0, totT4c = 0;
-    double totInferMs = 0.0, totWeldMs = 0.0, totArbMs = 0.0, totFillMs = 0.0;
+    long long totAttached = 0, totPixSuppressed = 0, totPairsPref = 0, totPairsScored = 0;
+    double totInferMs = 0.0, totWeldMs = 0.0, totArbMs = 0.0, totFillMs = 0.0, totAttachMs = 0.0;
 
     for (long long i = 0; i < nRun; ++i) {
       if (!reader.loadEntry(i, ev, trk)) {
@@ -751,14 +786,17 @@ int main(int argc, char** argv) {
       // K6 sum-logit score (thetaChain5/6 on the legacy scale, 0 = structural no-op) --
       // ordering mixes the two scales, which sinks short chains to the end of the
       // claim order (long legacy scores dominate the gate logit range).
-      if (chainGateMode >= 1) {
-        ChainFeatures cfHyb;
+      // With -A 1, ChainFeatures + gate logits are computed regardless of -G because
+      // attach feature 11 is ALWAYS the gate logit (the pairdump training convention).
+      ChainFeatures cfHyb;
+      std::vector<float> gateLogit;
+      if (chainGateMode >= 1 || attachMode) {
         computeChainFeatures(ev, g, chains, scores, cfHyb);
-        std::vector<float> gateLogit;
         runChainInference(cfHyb, gateLogit);
-        for (std::size_t c = 0; c < gateLogit.size(); ++c)
-          if (chainGateMode == 1 || chains.nLayers[c] <= 4)
-            chains.score[c] = gateLogit[c];
+        if (chainGateMode >= 1)
+          for (std::size_t c = 0; c < gateLogit.size(); ++c)
+            if (chainGateMode == 1 || chains.nLayers[c] <= 4)
+              chains.score[c] = gateLogit[c];
       }
       const auto t2 = std::chrono::steady_clock::now();
 
@@ -768,8 +806,45 @@ int main(int argc, char** argv) {
       ap.thetaChain6 = thetaChain6;
       ap.maxClaimedFrac = maxClaimedFrac;
       ap.dropPixelConsumed = dropPixelConsumed;
+
+      // K8 pixel attach (-A 1). PIPELINE ORDER (task 1c, documented): the attach
+      // decision is made BEFORE the pixel-consumed drop -- a chain that wins a pLS IS
+      // the pT5 replacement for that pixel seed, so the partOfPT5 crossclean (which
+      // exists only because those tracks were delivered by kept baseline pixel TCs)
+      // must not kill it. Concretely: theta gate -> K8 over the theta-passing chains
+      // (K8 itself considers only nLayers >= 5) -> pixdrop with a per-chain partOfPT5
+      // bypass for attached chains (partOfPT3 still drops; pT3 rows untouched in v1)
+      // -> MD-claim arbitration. A chain that attached but then loses the claim
+      // produces no TC and triggers NO suppression (its pLS keeps its baseline rows;
+      // v1 accepts that the pLS was contended away from other chains -- no fallback).
+      Attachments att;
+      std::vector<int> thetaPass;
+      std::vector<char> attachBypass;
+      std::vector<int> chainAttachPls;  // per-chain: attached pLS row or -1
+      double attachMs = 0.0;
+      if (attachMode) {
+        const int nChainsAll = static_cast<int>(chains.score.size());
+        for (int c = 0; c < nChainsAll; ++c)
+          if (chains.score[c] >= ap.thetaFor(chains.nLayers[c]))
+            thetaPass.push_back(c);
+        AttachParams apar;
+        apar.thetaAttach = thetaAttach;
+        const auto ta0 = std::chrono::steady_clock::now();
+        k8AttachPixels(ev, chains, thetaPass, cfHyb, gateLogit, apar, att);
+        const auto ta1 = std::chrono::steady_clock::now();
+        attachMs = msBetween(ta0, ta1);
+        attachBypass.assign(nChainsAll, 0);
+        chainAttachPls.assign(nChainsAll, -1);
+        for (std::size_t pos = 0; pos < thetaPass.size(); ++pos) {
+          if (att.plsRow[pos] >= 0) {
+            attachBypass[thetaPass[pos]] = 1;
+            chainAttachPls[thetaPass[pos]] = att.plsRow[pos];
+          }
+        }
+      }
+
       std::vector<int> accepted;
-      k9Arbitrate(ev, chains, ap, accepted);
+      k9Arbitrate(ev, chains, ap, accepted, attachMode ? &attachBypass : nullptr);
       std::vector<ChainTC> chainTCs;
       k10AssembleChainTCs(ev, chains, accepted, chainTCs);
       const auto t3 = std::chrono::steady_clock::now();
@@ -787,9 +862,12 @@ int main(int argc, char** argv) {
         ++nAfterTheta;
         bool consumed = false;
         if (dropPixelConsumed && havePixFlags) {
+          // Mirror of the K9 attach bypass (-A 1): attached chains skip the partOfPT5
+          // half of the drop but still respect partOfPT3.
+          const bool bypassPT5 = attachMode && attachBypass[c] != 0;
           for (int k = chains.offsets[c]; k < chains.offsets[c + 1] && !consumed; ++k) {
             const int t3n = chains.items[k];
-            consumed = ev.t3_partOfPT5[t3n] || ev.t3_partOfPT3[t3n];
+            consumed = (ev.t3_partOfPT5[t3n] && !bypassPT5) || ev.t3_partOfPT3[t3n];
           }
         }
         if (!consumed)
@@ -806,34 +884,87 @@ int main(int argc, char** argv) {
         if (t == 7 || t == 5 || t == 8)
           ++nPixKept;
 
-      // ChainTC -> OutTC: chains are pure outer-tracker objects, every hit is a ph2 row.
+      // ChainTC -> OutTC: bare chains are pure outer-tracker objects, every hit a ph2
+      // row. With -A 1, a chain with a K8 attachment becomes a type-7 (pT5-class) TC:
+      //   hit list = the pLS's PIXEL hits (pix rows via pLS_seedIdx -> trk.see_hitIdx,
+      //   entries with see_hitType == Pixel) followed by the chain's OT hits;
+      //   nhitOT stays the OT count; pt = the pLS ptIn (the pixel-seed pt is better
+      //   measured than the chain's median T3 pt -- documented v1 choice); eta/phi stay
+      //   the chain's. Its pLS's baseline pT5/pLS rows are dropped in fillEventHybrid.
+      // The chainTCs/accepted lockstep below relies on the K10 contract (accepted order,
+      // skipping nLayers < 4).
       std::vector<OutTC> outTCs;
       outTCs.reserve(chainTCs.size());
-      for (ChainTC& ctc : chainTCs) {
-        OutTC otc;
-        otc.pt = ctc.pt;
-        otc.eta = ctc.eta;
-        otc.phi = ctc.phi;
-        otc.type = ctc.type;
-        otc.nhitOT = ctc.nhitOT;
-        otc.hitTypes.assign(ctc.hitIdxs.size(), proto::HitType::Phase2OT);
-        otc.hitIdxs = std::move(ctc.hitIdxs);
-        outTCs.push_back(std::move(otc));
+      std::vector<char> plsSuppressed;
+      long long nAttached = 0;
+      if (attachMode)
+        plsSuppressed.assign(ev.pLS_pt.size(), 0);
+      {
+        std::size_t tcPos = 0;
+        for (int c : accepted) {
+          if (chains.nLayers[c] < 4)
+            continue;  // K10 dropped it; keep the lockstep aligned
+          ChainTC& ctc = chainTCs[tcPos++];
+          OutTC otc;
+          otc.pt = ctc.pt;
+          otc.eta = ctc.eta;
+          otc.phi = ctc.phi;
+          otc.type = ctc.type;
+          otc.nhitOT = ctc.nhitOT;
+          const int p = attachMode ? chainAttachPls[c] : -1;
+          if (p >= 0) {
+            ++nAttached;
+            plsSuppressed[p] = 1;
+            otc.type = 7;           // pT5-class: chain + attached pLS
+            otc.pt = ev.pLS_pt[p];  // pLS ptIn (pixel pt is better measured)
+            const int seed = ev.pLS_seedIdx[p];
+            if (seed >= 0 && seed < static_cast<int>(trk.see_hitIdx.size())) {
+              const auto& hIdx = trk.see_hitIdx[seed];
+              const auto& hTyp = trk.see_hitType[seed];
+              for (std::size_t h = 0; h < hIdx.size() && h < hTyp.size(); ++h) {
+                if (hTyp[h] == static_cast<int>(proto::HitType::Pixel)) {
+                  otc.hitIdxs.push_back(static_cast<unsigned int>(hIdx[h]));
+                  otc.hitTypes.push_back(proto::HitType::Pixel);
+                }
+              }
+            }
+          }
+          for (unsigned int hi : ctc.hitIdxs) {
+            otc.hitIdxs.push_back(hi);
+            otc.hitTypes.push_back(proto::HitType::Phase2OT);
+          }
+          outTCs.push_back(std::move(otc));
+        }
       }
-      writer.fillEventHybrid(ev, trk, outTCs);
+      int nPixSuppressed = 0;
+      writer.fillEventHybrid(ev, trk, outTCs, attachMode ? &plsSuppressed : nullptr, &nPixSuppressed);
       const auto t4 = std::chrono::steady_clock::now();
 
       const double inferMs = msBetween(t0, t1);
       const double weldMs = msBetween(t1, t2);
-      const double arbMs = msBetween(t2, t3);
+      // The K8 attach call sits inside the t2..t3 window; report it separately so the
+      // arb bucket keeps meaning K9+K10 only.
+      const double arbMs = msBetween(t2, t3) - attachMs;
       const double fillMs = msBetween(t3, t4);
 
-      std::printf(
-          "evt %lld (run %u lumi %u event %llu): pixKept=%lld chains=%lld -> theta=%lld ->"
-          " pixdrop=%lld -> claim=%lld | chainTC=%zu (T5c=%lld T4c=%lld)"
-          " | infer=%.3f weld=%.3f arb=%.3f fill=%.3f ms\n",
-          i, ev.run, ev.lumi, ev.evt, nPixKept, nChainsIn, nAfterTheta, nAfterPixDrop, nAfterClaim, chainTCs.size(),
-          nT5c, nT4c, inferMs, weldMs, arbMs, fillMs);
+      if (attachMode) {
+        // T5c/T4c stay the nLayers-class counts (attached chains are counted inside
+        // T5c AND in attach=; their output tc_type is 7). pixSupp = kept-baseline rows
+        // dropped by the K8 suppression (pixKept still counts pre-suppression rows).
+        std::printf(
+            "evt %lld (run %u lumi %u event %llu): pixKept=%lld chains=%lld -> theta=%lld ->"
+            " pixdrop=%lld -> claim=%lld | chainTC=%zu (T5c=%lld T4c=%lld attach=%lld pixSupp=%d)"
+            " | infer=%.3f weld=%.3f attach=%.3f arb=%.3f fill=%.3f ms\n",
+            i, ev.run, ev.lumi, ev.evt, nPixKept, nChainsIn, nAfterTheta, nAfterPixDrop, nAfterClaim, chainTCs.size(),
+            nT5c, nT4c, nAttached, nPixSuppressed, inferMs, weldMs, attachMs, arbMs, fillMs);
+      } else {
+        std::printf(
+            "evt %lld (run %u lumi %u event %llu): pixKept=%lld chains=%lld -> theta=%lld ->"
+            " pixdrop=%lld -> claim=%lld | chainTC=%zu (T5c=%lld T4c=%lld)"
+            " | infer=%.3f weld=%.3f arb=%.3f fill=%.3f ms\n",
+            i, ev.run, ev.lumi, ev.evt, nPixKept, nChainsIn, nAfterTheta, nAfterPixDrop, nAfterClaim, chainTCs.size(),
+            nT5c, nT4c, inferMs, weldMs, arbMs, fillMs);
+      }
 
       totPixKept += nPixKept;
       totChainsIn += nChainsIn;
@@ -843,8 +974,13 @@ int main(int argc, char** argv) {
       totChainTCs += static_cast<long long>(chainTCs.size());
       totT5c += nT5c;
       totT4c += nT4c;
+      totAttached += nAttached;
+      totPixSuppressed += nPixSuppressed;
+      totPairsPref += att.nPairsPrefiltered;
+      totPairsScored += att.nPairsScored;
       totInferMs += inferMs;
       totWeldMs += weldMs;
+      totAttachMs += attachMs;
       totArbMs += arbMs;
       totFillMs += fillMs;
     }
@@ -861,10 +997,22 @@ int main(int argc, char** argv) {
     std::printf("  chain TCs       total=%lld mean=%.1f (T5-class=%lld T4-class=%lld; %lld accepted chains"
                 " below 4 layers dropped by K10)\n",
                 totChainTCs, totChainTCs / nEvD, totT5c, totT4c, totAfterClaim - totChainTCs);
-    std::printf("  output TCs/evt  mean=%.1f (pixel %.1f + chain %.1f)\n", (totPixKept + totChainTCs) / nEvD,
-                totPixKept / nEvD, totChainTCs / nEvD);
-    std::printf("  time mean/evt   infer=%.3f weld=%.3f arb+asm=%.3f fill=%.3f ms\n", totInferMs / nEvD,
-                totWeldMs / nEvD, totArbMs / nEvD, totFillMs / nEvD);
+    if (attachMode) {
+      std::printf("  K8 attach       attached=%lld mean=%.1f | baseline pixel rows suppressed=%lld mean=%.1f"
+                  " | pairs prefiltered=%lld scored=%lld (thetaAttach=%.3f head=%s)\n",
+                  totAttached, totAttached / nEvD, totPixSuppressed, totPixSuppressed / nEvD, totPairsPref,
+                  totPairsScored, thetaAttach, attachHeadAvailable() ? "trained" : "sentinel");
+      std::printf("  output TCs/evt  mean=%.1f (pixel kept %.1f - suppressed %.1f + chain %.1f)\n",
+                  (totPixKept - totPixSuppressed + totChainTCs) / nEvD, totPixKept / nEvD, totPixSuppressed / nEvD,
+                  totChainTCs / nEvD);
+      std::printf("  time mean/evt   infer=%.3f weld=%.3f attach=%.3f arb+asm=%.3f fill=%.3f ms\n", totInferMs / nEvD,
+                  totWeldMs / nEvD, totAttachMs / nEvD, totArbMs / nEvD, totFillMs / nEvD);
+    } else {
+      std::printf("  output TCs/evt  mean=%.1f (pixel %.1f + chain %.1f)\n", (totPixKept + totChainTCs) / nEvD,
+                  totPixKept / nEvD, totChainTCs / nEvD);
+      std::printf("  time mean/evt   infer=%.3f weld=%.3f arb+asm=%.3f fill=%.3f ms\n", totInferMs / nEvD,
+                  totWeldMs / nEvD, totArbMs / nEvD, totFillMs / nEvD);
+    }
     std::printf("  wrote %s\n", outPath.c_str());
     return 0;
   }

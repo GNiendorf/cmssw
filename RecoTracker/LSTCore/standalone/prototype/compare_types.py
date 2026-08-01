@@ -121,13 +121,22 @@ def frac(num, den):
     return (num / den) if den else None
 
 
-def compute(arr, nevents):
-    """Per-slice metric dict for one file."""
+def compute(arr, nevents, use_ischain=False):
+    """Per-slice metric dict for one file.
+
+    use_ischain (M7 attach): when the file carries tc_isChain, the chain-slice /
+    pixel-slice composites are defined by tc_isChain (1 / 0) instead of tc_type, so
+    K8-attached chains (written as tc_type 7, tc_isChain 1) land in the chain slice
+    and the (suppressed) kept-baseline rows in the pixel slice. Per-type slices stay
+    tc_type-based: the "pT5 (7)" row then MIXES baseline pT5 rows and attached chains.
+    """
     tc_cut = (arr["tc_pt"] > TC_PT_CUT) & (abs(arr["tc_eta"]) < TC_ETA_CUT)
 
     # sim -> type of best-matched TC (None where unmatched); safe on empty-TC events.
     matched = arr["sim_tcIdx"] >= 0
     ptype = ak.fill_none(arr["tc_type"][ak.mask(arr["sim_tcIdx"], matched)], -1)
+    ich = arr["tc_isChain"] if use_ischain else None
+    pich = ak.fill_none(ich[ak.mask(arr["sim_tcIdx"], matched)], -1) if use_ischain else None
 
     vxy = np.sqrt(arr["sim_vx"] ** 2 + arr["sim_vy"] ** 2)
     sim_base = ((arr["sim_pt"] > SIM_PT_CUT) & (abs(arr["sim_eta"]) < SIM_ETA_CUT)
@@ -138,7 +147,13 @@ def compute(arr, nevents):
 
     out = {"denom": {label: int(ak.sum(sel)) for label, sel in sim_sels.items()}}
     for label, types in SLICES:
-        m = tc_cut & type_mask(arr["tc_type"], types)
+        if use_ischain and label.startswith("chain-slice"):
+            m_type = ich == 1
+        elif use_ischain and label.startswith("pixel-slice"):
+            m_type = ich == 0
+        else:
+            m_type = type_mask(arr["tc_type"], types)
+        m = tc_cut & m_type
         n = int(ak.sum(m))
         s = {
             "nTC": n,
@@ -147,7 +162,14 @@ def compute(arr, nevents):
             "DR": frac(int(ak.sum(arr["tc_isDuplicate"][m])), n),
             "mean_nhitOT": frac(float(ak.sum(arr["tc_nhitOT"][m])), n),
         }
-        pm = type_mask(ptype, types) if types is not None else (ptype >= 0)
+        if use_ischain and label.startswith("chain-slice"):
+            pm = pich == 1
+        elif use_ischain and label.startswith("pixel-slice"):
+            pm = pich == 0
+        elif types is not None:
+            pm = type_mask(ptype, types)
+        else:
+            pm = ptype >= 0
         for sel_label, sel in sim_sels.items():
             numer = int(ak.sum(sel & matched & pm))
             s["effN " + sel_label] = numer
@@ -156,51 +178,99 @@ def compute(arr, nevents):
     return out
 
 
-def pixel_identity_check(proto, base):
-    """Elementwise pixel-slice (7/5/8, NO plot cuts) identity check; returns dict."""
+def pixel_identity_check(proto, base, proto_has_chain=False):
+    """Pixel-slice (7/5/8, NO plot cuts) identity check; returns dict.
+
+    Pre-attach files: kept rows must equal base rows elementwise (mode "verbatim").
+    M7 attach files (tc_isChain present): kept rows = tc_isChain==0 rows, which are an
+    ORDERED SUBSET of base pixel rows (K8 suppression drops the pT5/pLS rows of
+    attached pLS). The check then verifies the subsequence embedding on exact equality
+    of (type, pt, eta, phi, isFake, nhitOT) per event (mode "subset"); dup gained/lost
+    is computed over the embedded pairs.
+    """
     res = {"ok": True}
     pm = type_mask(proto["tc_type"], (7, 5, 8))
+    if proto_has_chain:
+        pm = pm & (proto["tc_isChain"] == 0)  # exclude K8-attached chains written as type 7
     bm = type_mask(base["tc_type"], (7, 5, 8))
     ncp = ak.num(proto["tc_pt"][pm])
     ncb = ak.num(base["tc_pt"][bm])
     res["n_pixel_proto"] = int(ak.sum(ncp))
     res["n_pixel_base"] = int(ak.sum(ncb))
-    bad_evts = int(ak.sum(ncp != ncb))
-    res["events_with_count_mismatch"] = bad_evts
-    if bad_evts:
+    res["events_with_count_mismatch"] = int(ak.sum(ncp != ncb))
+    grown = int(ak.sum(ncp > ncb))
+    if grown:
         res["ok"] = False
-        loud(["PIXEL-SLICE COUNT MISMATCH: %d event(s) have different numbers of" % bad_evts,
-              "pixel (7/5/8) rows in proto vs base. Pixel rows are supposed to be",
-              "carried VERBATIM -- this is a bug in the hybrid writer or input skew.",
-              "Elementwise kinematic check skipped."])
+        loud(["PIXEL-SLICE COUNT MISMATCH: %d event(s) have MORE kept pixel rows in" % grown,
+              "proto than base. Kept rows are a (possibly suppressed) subset of base",
+              "pixel rows -- growth is a bug. Elementwise check skipped."])
         return res
+
+    subset_mode = res["events_with_count_mismatch"] > 0
+    res["mode"] = "subset" if subset_mode else "verbatim"
+    res["suppressed_rows"] = res["n_pixel_base"] - res["n_pixel_proto"]
 
     def flat(arr, mask, b):
         return ak.to_numpy(ak.flatten(arr[b][mask]))
 
-    # Exact-copy fields: any difference at all is a bug.
-    for b in ("tc_type", "tc_isFake", "tc_nhitOT"):
-        nbad = int(np.sum(flat(proto, pm, b) != flat(base, bm, b)))
-        res["mismatch_" + b] = nbad
-        if nbad:
-            res["ok"] = False
-    for b in ("tc_pt", "tc_eta", "tc_phi"):
-        d = np.abs(flat(proto, pm, b) - flat(base, bm, b))
-        res["maxabsdiff_" + b] = float(d.max()) if d.size else 0.0
-        if d.size and d.max() != 0.0:
-            res["ok"] = False
+    if not subset_mode:
+        # Exact-copy fields: any difference at all is a bug.
+        for b in ("tc_type", "tc_isFake", "tc_nhitOT"):
+            nbad = int(np.sum(flat(proto, pm, b) != flat(base, bm, b)))
+            res["mismatch_" + b] = nbad
+            if nbad:
+                res["ok"] = False
+        for b in ("tc_pt", "tc_eta", "tc_phi"):
+            d = np.abs(flat(proto, pm, b) - flat(base, bm, b))
+            res["maxabsdiff_" + b] = float(d.max()) if d.size else 0.0
+            if d.size and d.max() != 0.0:
+                res["ok"] = False
+        if not res["ok"]:
+            loud(["PIXEL-SLICE CONTENT MISMATCH (see pixel-check block below):",
+                  "kinematics / tc_type / tc_isFake / tc_nhitOT of pixel rows differ",
+                  "between proto and base. These are copied verbatim by the hybrid",
+                  "writer; ONLY tc_isDuplicate may legitimately change. BUG."])
+        pd = flat(proto, pm, "tc_isDuplicate")
+        bd = flat(base, bm, "tc_isDuplicate")
+        res["pixel_dup_gained"] = int(np.sum((pd == 1) & (bd == 0)))
+        res["pixel_dup_lost"] = int(np.sum((pd == 0) & (bd == 1)))
+        return res
 
-    if not res["ok"]:
-        loud(["PIXEL-SLICE CONTENT MISMATCH (see pixel-check block below):",
-              "kinematics / tc_type / tc_isFake / tc_nhitOT of pixel rows differ",
-              "between proto and base. These are copied verbatim by the hybrid",
-              "writer; ONLY tc_isDuplicate may legitimately change. BUG."])
-
-    # Legitimate difference: dup flags recomputed over the merged TC set.
-    pd = flat(proto, pm, "tc_isDuplicate")
-    bd = flat(base, bm, "tc_isDuplicate")
-    res["pixel_dup_gained"] = int(np.sum((pd == 1) & (bd == 0)))
-    res["pixel_dup_lost"] = int(np.sum((pd == 0) & (bd == 1)))
+    # Subset mode: greedy two-pointer subsequence embedding per event on exact field
+    # equality (fields are verbatim copies, so float comparison is exact).
+    fields = ["tc_type", "tc_pt", "tc_eta", "tc_phi", "tc_isFake", "tc_nhitOT"]
+    bad_events = 0
+    dup_gained = dup_lost = 0
+    nev = len(proto["tc_pt"])
+    for ie in range(nev):
+        pv = [np.asarray(proto[f][ie][pm[ie]]) for f in fields]
+        bv = [np.asarray(base[f][ie][bm[ie]]) for f in fields]
+        pdup = np.asarray(proto["tc_isDuplicate"][ie][pm[ie]])
+        bdup = np.asarray(base["tc_isDuplicate"][ie][bm[ie]])
+        nb = len(bv[0])
+        j = 0
+        ok_evt = True
+        for k in range(len(pv[0])):
+            while j < nb and not all(pv[f][k] == bv[f][j] for f in range(len(fields))):
+                j += 1
+            if j >= nb:
+                ok_evt = False
+                break
+            if pdup[k] and not bdup[j]:
+                dup_gained += 1
+            elif bdup[j] and not pdup[k]:
+                dup_lost += 1
+            j += 1
+        if not ok_evt:
+            bad_events += 1
+    res["subset_embed_failures"] = bad_events
+    res["pixel_dup_gained"] = dup_gained
+    res["pixel_dup_lost"] = dup_lost
+    if bad_events:
+        res["ok"] = False
+        loud(["PIXEL-SLICE SUBSET MISMATCH: %d event(s) where the kept pixel rows are" % bad_events,
+              "NOT an ordered subsequence of the base pixel rows (exact-field match).",
+              "Kept rows must be base rows minus the K8-suppressed ones. BUG."])
     return res
 
 
@@ -253,16 +323,23 @@ def main():
               "The sim block is copied from the input -- eff comparison is suspect."])
 
     if proto_has_chain:
-        n49 = int(ak.sum(type_mask(proto["tc_type"], (4, 9))))
-        nch = int(ak.sum(proto["tc_isChain"] == 1))
-        if n49 != nch:
-            warn("proto: n(type 4/9)=%d != n(tc_isChain==1)=%d -- slice/type skew" % (n49, nch))
+        # Coherence: isChain==1 rows must be types 4/9 (bare chains) or 7 (K8-attached
+        # chains); isChain==0 rows must be kept baseline pixel types 7/5/8.
+        bad_ch = int(ak.sum((proto["tc_isChain"] == 1) & ~type_mask(proto["tc_type"], (4, 9, 7))))
+        bad_px = int(ak.sum((proto["tc_isChain"] == 0) & ~type_mask(proto["tc_type"], (7, 5, 8))))
+        if bad_ch or bad_px:
+            warn("proto: tc_isChain/tc_type skew: %d chain rows outside types 4/9/7, "
+                 "%d baseline rows outside types 7/5/8" % (bad_ch, bad_px))
+        n_att = int(ak.sum((proto["tc_isChain"] == 1) & type_mask(proto["tc_type"], (7,))))
+        if n_att:
+            print("NOTE: %d K8-attached chain TCs (tc_type 7, tc_isChain 1); chain-/pixel-slice"
+                  " composites use tc_isChain, per-type slices stay tc_type-based" % n_att)
     else:
         warn("proto has no tc_isChain branch (older file); chain slice = types 4+9 by construction")
 
-    pm = compute(proto, nev_p)
+    pm = compute(proto, nev_p, use_ischain=proto_has_chain)
     bm = compute(base, nev_b)
-    pix = pixel_identity_check(proto, base)
+    pix = pixel_identity_check(proto, base, proto_has_chain)
 
     print("Per-type A/B compare")
     print("  proto: %s  (%d events)" % (args.proto, nev_p))
@@ -289,9 +366,14 @@ def main():
         print("-" * len(header))
 
     print()
-    print("Pixel-slice sanity check (types 7/5/8, no plot cuts, elementwise in input order):")
+    print("Pixel-slice sanity check (types 7/5/8, no plot cuts, mode: %s):" % pix.get("mode", "verbatim"))
     print("  rows: proto %d, base %d; events with count mismatch: %d"
           % (pix["n_pixel_proto"], pix["n_pixel_base"], pix.get("events_with_count_mismatch", -1)))
+    if pix.get("mode") == "subset":
+        print("  K8-suppressed rows : %d (kept rows are base rows minus the attached pLS's"
+              % pix.get("suppressed_rows", -1))
+        print("                       pT5/pLS rows); subsequence-embedding failures: %d"
+              % pix.get("subset_embed_failures", -1))
     if "mismatch_tc_type" in pix:
         print("  exact-copy fields  : mismatches type=%d isFake=%d nhitOT=%d"
               % (pix["mismatch_tc_type"], pix["mismatch_tc_isFake"], pix["mismatch_tc_nhitOT"]))
@@ -303,8 +385,10 @@ def main():
         print("                       dup flags are recomputed over the merged pixel+chain TC set,")
         print("                       so chain TCs sharing a sim with a pixel TC add dup flags;")
         print("                       counts/kinematics/tc_isFake CANNOT legitimately change.)")
-    print("  verdict: %s" % ("OK -- pixel slice carried verbatim (only dup flags moved)"
-                             if pix["ok"] else "*** MISMATCH -- SEE FLAGS ABOVE ***"))
+    ok_msg = ("OK -- kept pixel rows are an exact subset of base (K8 suppression; only dup flags moved)"
+              if pix.get("mode") == "subset"
+              else "OK -- pixel slice carried verbatim (only dup flags moved)")
+    print("  verdict: %s" % (ok_msg if pix["ok"] else "*** MISMATCH -- SEE FLAGS ABOVE ***"))
 
     if args.json:
         payload = {
