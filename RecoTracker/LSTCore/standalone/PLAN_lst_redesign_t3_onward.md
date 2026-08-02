@@ -1675,3 +1675,31 @@ edge types inside the existing chain formalism, not LS nodes.
     |eta|+tanLambda+barrelFrac (and/or dcaXY significance instead of raw distance) and
     retrain the 3-class head; band deltas should then collapse toward zero. Instrument
     kept: harness-invisible tc_dbg* branches (branch code, composition, margins, dca).
+  - **m17 (third gate retrain) — MEASURED NULL, M16b path (1) CLOSED, and the M16b
+    framing CORRECTED:** the welded-chain population is MODE-INDEPENDENT; -RT5 1 changes
+    only post-gate crossclean/claim (pixdrop 289221 -> 712478). The gate's training
+    population was ~96% unchanged — "gate scoring a 6x different population" was wrong;
+    the 6x is downstream. Retrains m17a/m17b: all AUC deltas <= +-0.005 (noise);
+    equal-kill recalibration + 24-config descent moves eff at most +0.14 pt in-sample,
+    and the in-sample winner (m17_w7) LOSES dxy[1,5)/[5,10) on the frozen test-60
+    (300-evt artifact; same frontier, marginal prompt shift). Composition therefore
+    stays on the CANONICAL m12 head (d170f174) + anchor margins; m17_w7's global
+    margin moves (-M4D -2.5 -MR -1.0 -MRI -1.0 -W 1e9) conflict with transition's g3
+    band deltas and are at most a late descent variation. NOTE: m17's "-OK/-B ordering
+    axis exhausted" was measured with the STALE 2-class penalty and is SUPERSEDED by
+    okredesign's -BK 1 -BT 5 (+170 sims same day). Equal-kill recalibrated thresholds
+    banked: -M4 3.7901 -C25 1.931 (~3k fewer true kills at matched volume).
+    **CEILING PROBES (the real yield): m17_d11 (gate kills off AND claim off) = eff
+    .8197 / vxy01 .8526 / dxy01 .8507 — ABOVE LST on all three: the welded graph
+    CONTAINS the prompt tracks; formation contributes 0 to the residual gap.** d10
+    (gate off, claim on) = .8050. The residual is a JOINT claim+gate effect (~1.5 pt
+    claim, ~0.35 pt gate; either alone yields 0.1-0.4 pt). Post-BK headroom to the
+    ceiling ~1 pt; candidate structural probe = capped 2-way hit-ownership exemption
+    (blind-spot #1) — related but NOT identical to claimshare's falsified fraction
+    loosening; one composed A/B (-BK + -FS + -DD) justified before any build-out.
+    **TRACK-LENGTH CAVEAT (new binding constraint): replacement mode fails the length
+    rule in barrel (-.11 to -.25 hits mean nhitOT; -BK worsens it: quality-major
+    ordering prefers shorter chains). Composition descent must track per-region
+    nhitOT; -BT 3 and a length tie-breaker among near-equal quality are the levers.**
+    Chain-pix residual dups are vs kept pLS rows (own no OT hits, unreachable by -PU;
+    the pix-pix half of dup pairs is LST's own, invariant).
