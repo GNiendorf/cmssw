@@ -109,6 +109,23 @@ struct LSTEventData {
   // pLS row it consumed (into pLS_* above). Row spaces match tc_pt5Idx / tc_pt3Idx.
   std::vector<int> pT5_plsIdx;
   std::vector<int> pT3_plsIdx;
+
+  // B1 (claim-universe unification, -PU): the OUTER-TRACKER hit content of the baseline
+  // pixel TCs, needed to pre-claim their hits before K9 arbitrates the chains.
+  // INDEX SPACE (verified 2026-08-01 on LSTNtuple_PU200RelVal_300evt.root, evts 0/1):
+  // t5_hitIndices and pT3_otHitIndices are TRACKING-NTUPLE ph2 ROWS -- the SAME space as
+  // md_anchorHitIdx / md_otherHitIdx (write_lst_ntuple.cc pushes hitsBase.idxs() into
+  // md_anchorHitIdx and the quintuplet/pixelTriplet hitIndices() SoA fields carry the
+  // identical translated rows). Cross-check: routing pT5 -> pT5_t5Idx -> t5_t3Idx0/1 ->
+  // t3 -> ls -> md -> md_anchorHitIdx/md_otherHitIdx reproduces t5_hitIndices EXACTLY for
+  // every nLayers == 5 T5, and t5_hitIndices additionally carries the ExtendT5FromDupT5
+  // layer-6/7 hits that the T3 route cannot see (t5_nLayers takes values 5, 6 and 7).
+  // Therefore the hit branches (not the T3 route) are the exact mapping and are used.
+  // pT3_otHitIndices matched the T3 route exactly (pT3 is never extended).
+  // Type-8 (bare pLS) TCs have NO outer-tracker hits, so they contribute nothing.
+  std::vector<int> pT5_t5Idx;                       // per pT5 row -> t5 row
+  std::vector<std::vector<int>> t5_hitIndices;      // per t5 row -> 2*nLayers ph2 rows
+  std::vector<std::vector<int>> pT3_otHitIndices;   // per pT3 row -> 6 ph2 rows
 };
 
 // Aligned tracking-ntuple truth for exact hit-level sim matching (plan 10.4).

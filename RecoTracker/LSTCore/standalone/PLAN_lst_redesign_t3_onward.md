@@ -1284,6 +1284,74 @@ acceptable to hit the bar first and refine later. Expect this to take care and i
     (large-DCA 5+), and only a displaced-capable discriminator for that branch moves it
     further. dxy[10,30) unchanged at .0235-.0278 by every acceptance lever (formation-side,
     as established).
+- **2026-08-01 M15 DONE — STRUCTURAL FAN-OUT MERGED INTO THE MAIN TREE; THE DUP ARTIFACT
+  AND THE FAKE GAP BOTH CLOSE. FINAL PRE-P2 ANCHOR m15_f2; MIN-FAKE ALTERNATIVE m15_f4
+  IS THE FIRST CONFIG EVER TO BEAT LST ON FAKE *AND* EVERY EFFICIENCY BAND *AND* LENGTHS.**
+  - **MERGE (prototype/ remains the permanent tree).** From `fanout2/composed2` (the judged
+    M15 winner tree): `EventData.h`, `NtupleReader.cc`, `Stages.h`, `K9K10.cc`, `main.cc`
+    + new `Trim.{cc,h}`; composed2 was a strict superset of prototype, so the copy is the
+    merge. New flags now live: **B1 `-PU 0|1|2`** (claim-universe unification: pre-claim the
+    kept baseline pixel TCs' OT hits -- type 7 -> pT5_t5Idx -> t5_hitIndices, type 5 ->
+    pT3_otHitIndices -- so chains riding on a pixel-delivered track's hits face the same -F
+    test; 2 = pixel owners also join the -W braid test), **B4 `-FC`/`-FCX`** (absolute claim
+    tolerance in MD units, OR'd with or replacing the -F fraction) and **`-OK 0..3`**
+    (de-lengthed / length-normalized K9 ORDER key; thresholds still on chains.score, the M9
+    rule), **B2 `-TR/-TT/-TL/-TP/-TA`** + `trimdump` mode (terminal trim, default OFF).
+    Then the C1 `-C25`/`-C25D` hunks from `fanout2/c1_cell25/main.cc` were resolved onto the
+    merged `main.cc` (3 of 8 hunks needed hand-merging against B4's flag table, the B1 stats
+    block and the B2 summary block). **THREE REGRESSION GATES, ALL CLEAN:** (a) the m14_j1
+    anchor flags on the new binary reproduce `ab_m14_j1.root` BIT-EXACT (20 evt, 23/23
+    branches); (b) the x19 config reproduces composed2's `ab_x19.json` on all 29 metrics
+    (300 evt) and its diag (501 genuine braids) exactly; (c) `-C25 -1e9` is bit-exact inert.
+  - **THE DUP ARTIFACT IS GONE.** `-PU 2` pre-claims 10.1k pixel-owned hit slots/evt and
+    kills 554 chains/evt on the -F test that previously rode free on a kept pixel TC's hits.
+    Aggregate dup **0.3143 (m14_j1) -> 0.0603** vs baseline 0.0513; diag_dups genuine
+    chain-chain pairs **2111 (w7) -> 1610 (j1) -> 487**; chain-pix share 86.7% -> 29.5%;
+    pix-pix invariant at 12433. M12's "vanishes at real integration" prediction is now
+    measured, not assumed -- the hybrid seam was the artifact and the unified claim removes
+    it offline.
+  - **C1 RECALIBRATED UNDER -PU (7 A/Bs, 300 evt).** The `(nNodes=2, nLayers=5)` cell kill
+    transfers, with re-derived thresholds. **`-C25` SATURATES: 1.5 / 2.0 / 3.0 at
+    `-C25D -1.2` give fake .0436/.0435/.0435** (same shape as the old anchor). **`-C25D` is
+    the dial**, monotone and every point floor-legal: off .0480 -> -3.0 .0465 -> -2.0 .0447
+    -> -1.2 .0435 -> -0.8 .0424 -> -0.6 .0420, with the displaced cost per fake unit rising
+    sharply below -1.2 (dxy[1,5) .5397/.5386/.5343/.5247/.5236). Knee = **`-C25 2.0
+    -C25D -2.0`**: -.0033 fake for -.0011 dxy[1,5) (essentially free), the descent base.
+  - **MINI-DESCENT (c3 shape, 15 A/Bs: 6 OAT from the knee + 9 combination/tie-break).**
+    `-MRI 0.5` is already optimal (0.25 and 1.0 both lose displaced). `-MR` is the live
+    displaced dial: -1.0/-1.2/-1.5/-1.8/-2.0 -> fake .0437/.0447/.0463/.0480/.0493 with
+    displaced climbing monotonically (dxy[5,10) .2386/.2456/.2491/.2526/.2526, dxy[1,5)
+    .5354/.5386/.5386/.5397/.5429). **`-M4D -1.0` is LENGTH-ILLEGAL on this anchor**
+    (barrel -.004) and **`-M4` HAS SATURATED as the M14 length rescue** (3.5 -> 4.5 buys
+    only +.001 barrel) -- but `-M4 4.5` turns out to be a **DUP lever**: -.0030 dup at
+    +.0001 fake and -2 sims of vxy[5,10).
+  - **WINNER m15_f2** (max displaced surplus subject to all floors strict and fake <= x19's
+    .0480) = `-m hybrid -e 0 -L 0.5 -F 0.3 -G 6 -X 0.5 -M4 3.5 -M5 1e9 -M6 1e9 -M4D -0.75
+    -MD 1e9 -MR -1.800 -MRI 0.5 -U4 0 -U5 0 -U6 0 -B 10 -H 1 -W 0.50 -FC 1 -PU 2 -C25 2.0
+    -C25D -2.0`: **fake .0480, dup .0603, eff .8168, vxy .8501/.7972/.7129/.6912, dxy
+    .8426/.5397/.2526/.0235, lengths +.005/+.041/+.058, 487 genuine braids.** Beats x19 on
+    displaced (dxy[5,10) +.0070, vxy[10,30) +.0017) at equal fake and lower dup.
+    TEST-60 (frozen): every band above baseline (vxy +.002/+.029/+.055/+.061, dxy
+    +.008/+.059/+.074), lengths +.009/+.033/+.056, fake .0456 vs base .0435 -- and it beats
+    x19 out-of-sample too (displaced surplus .2775 vs .2594). Not a 300-event artifact.
+  - **MIN-FAKE ALTERNATIVE m15_f4** (`-C25D -0.6 -M4 4.5 -MRI 1.0 -MR -1.000 -M4D -0.60`,
+    rest as f2): **fake .0407 vs LST .0455 -- BELOW BASELINE IN EVERY ETA REGION (barrel
+    .0306 vs .0437), with FEWER TOTAL TCs than baseline (610155 vs 610581)**, dup .0566,
+    eff .8161, vxy .8495/.7915/.7003/.6724, dxy .8412/.5161/.2351/.0214, lengths
+    +.009/+.040/+.027, 412 genuine braids. Test-60: fake .0386 vs base .0435, all floors
+    held. **This closes the section-7 FAKE PARITY kill criterion** -- the last open P1 item.
+    NOTE FOR THE MAINTAINER CALL: under plan 10.5's literal winner rule (all floors pass ->
+    minimize dup, then fake) **f4 dominates f2** (dup .0566 vs .0603, fake .0407 vs .0480);
+    f2 wins only under priority-1 displaced dominance (surplus .2114 vs .1332). The two are
+    the ends of one continuous `-C25D`/`-MR` frontier and either is a legitimate anchor --
+    f2 = "most displaced at LST-comparable fake", f4 = "better than LST on eff AND fake".
+  - Residual regional watch item: fake is concentrated in the TRANSITION region at the
+    f2 end (.0605 vs base .0459, +.0147) while barrel/endcap are at parity; f4 removes it
+    (.0452 vs .0459). dxy[10,30) unchanged at .0214-.0235 (formation-side, as established).
+  - Files: `prototype/{main.cc,EventData.h,NtupleReader.cc,Stages.h,K9K10.cc,Trim.cc,Trim.h}`;
+    A/Bs `ab_m15_{x19,c25a..c25g,d_*,e_*,f1..f4,g1..g3}.{json,log}`; kept ntuples
+    `ab_m15_{f2,f4,x19}.root`; test-60 `t60_m15_{f2,f4,x19}.*`; diags
+    `diag_m15_{f2,f4,x19}.log`.
 - **2026-08-01 JET SIZING (maintainer question): a 40M-edge jet event.** Memory:
   production design stores only theta-passing edges (~12-16 B; rejects never
   materialized) -> 50-200 MB at 10-30% pass; exact-count allocation + 5b ceiling with
@@ -1401,20 +1469,22 @@ LATER separate pass (same prototype, jet-enriched ntuple) once the machinery exi
 ## 11. Road to P2 (agreed with maintainer, 2026-08-01 — the forward sequence)
 
 **Now -> hybrid convergence (1-2 rounds):**
-1. M14 quick-wins ladder (threshold frontier; expected anchor ~0.051-0.055 fake, all
-   bands >= baseline, displaced up via -M4D).
-2. Structural fan-out: claim-universe unification (hybrid rehearsal of the final design's
-   single K9 arbitration over ALL candidates incl. pixel-side hits), terminal trim (the
-   fake->efficiency converter for one-wrong-arm chains), 3-class edge head cascade
-   (formation-side displaced), length-normalized claim, gate co-retrain. Target fake
-   ~0.045-0.050 with displaced climbing.
+1. ~~M14 quick-wins ladder~~ **DONE (M14, anchor m14_j1 fake .0571).**
+2. ~~Structural fan-out~~ **DONE (M15). Target BEATEN: claim-universe unification (-PU) +
+   B4 claim/ordering + the C1 cell kill land at fake .0480 (m15_f2, max displaced) and
+   .0407 (m15_f4, below LST's .0455 in every eta region) with every band and length above
+   baseline, and they also killed the chain-vs-pixel dup artifact (dup .3143 -> .0603/.0566).
+   NOT yet exercised: terminal trim (-TR, merged, default off, no A/B on the new anchor),
+   3-class edge head cascade, gate co-retrain, -OK de-lengthed ordering.**
 3. Optional polish round if the structural results open headroom.
 
 **PRE-P2 WRAP (the gate; do ALL of these before any kernel work):**
 - Final anchor + full standard plot set (+ dup-corrected diagnostic set).
 - Formal P1 verdict vs the section-7 kill criteria (status: eff/displaced/lengths/
   genuine-dup PASSED; chain-vs-t5dnn K1 PASSED; E-count calibration PASSED; K2
-  reinterpreted per the ROC-study stage-mismatch note; FAKE PARITY is the open item).
+  reinterpreted per the ROC-study stage-mismatch note; **FAKE PARITY now PASSED at M15 --
+  m15_f4 runs fake .0407 vs LST .0455 with every efficiency band and every length region
+  above baseline; the formal write-up of the verdict is what remains**).
 - Characterization pass: per-stage timings, ops counts, buffer sizes/event (the numbers
   GPU work is judged against), memory profile incl. jet-sizing extrapolation.
 - **PIXEL-REPLACEMENT VALIDATION (maintainer concern, 2026-08-01 — REQUIRED before P2):**
@@ -1433,7 +1503,13 @@ LATER separate pass (same prototype, jet-enriched ntuple) once the machinery exi
   bookkeeping (replaces CrossCleanpT3/pT5/pLS + plsembdnn entirely; retain only the
   upstream pLS seed dup-clean). Option-B (retain LST pT3 code) rejected: it recreates
   the measured hybrid-seam pathologies permanently. M16 = validate the general attach
-  offline via replacement A/Bs per delivery class; (c) pLS dup-clean/suppress parity
+  offline via replacement A/Bs per delivery class, **judged INCLUDING displaced strata
+  within each pixel class (eff-vs-vxy of the pT5-class and pT3-class slices): LST's
+  pixel matching is IP-blind at BOTH layers (superbin maps traced from IP-origin
+  helices; pt3dnn has zero displaced concept) while ours propagates the pLS's own
+  measured helix and trains displaced-aware — the low-vxy (1-5 cm)
+  displaced-with-pixel-seed population is a structural upside to CLAIM, not just parity
+  to hold (maintainer point, 2026-08-01)**; (c) pLS dup-clean/suppress parity
   is then subsumed by the contention rule's A/B.
 - Code hygiene: freeze the winning config, prune dead experiments from prototype/,
   document stage contracts, final commit tag.

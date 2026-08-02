@@ -26,6 +26,16 @@ void warnNoPixFlags() {
   }
 }
 
+// B4: the claim-tolerance predicate. maxClaimedItems < 0 reproduces the legacy
+// fractional test EXACTLY (same float comparison, same operand order).
+inline bool claimOk(const ArbitrationParams& params, int nClaimed, float frac) {
+  if (params.maxClaimedItems < 0)
+    return !(frac > params.maxClaimedFrac);
+  if (params.claimCountExclusive)
+    return nClaimed <= params.maxClaimedItems;
+  return (nClaimed <= params.maxClaimedItems) || !(frac > params.maxClaimedFrac);
+}
+
 }  // namespace
 
 void k9Arbitrate(const LSTEventData& ev,
@@ -90,12 +100,21 @@ void k9Arbitrate(const LSTEventData& ev,
   //    other hit of every member MD, deduped) is built once and the identical greedy runs
   //    on it. MD-level and hit-level differ exactly where duplicate MD objects sit on the
   //    same hits -- the genuine chain-chain braid population.
+  // B1 (-PU): pixel owners = the kept baseline pixel TCs' OT hit lists. Empty/nullptr =
+  // legacy (every expression below collapses to the pre-B1 code path bit-exactly).
+  const std::vector<std::vector<int>>* pixOwn =
+      (params.preClaimMode > 0) ? params.preClaimOwners : nullptr;
+  const int nPix = (pixOwn != nullptr) ? static_cast<int>(pixOwn->size()) : 0;
+
   std::vector<int> chainKeyOff, chainKeyItems;  // -H 1 only: per-chain deduped hit list
   int nKeyUniverse = nMD;
   if (params.hitLevelClaim) {
     int maxHit = -1;
     for (int i = 0; i < nMD; ++i)
       maxHit = std::max(maxHit, std::max(ev.md_anchorHitIdx[i], ev.md_otherHitIdx[i]));
+    for (int p = 0; p < nPix; ++p)
+      for (int h : (*pixOwn)[p])
+        maxHit = std::max(maxHit, h);
     nKeyUniverse = maxHit + 1;
     chainKeyOff.assign(nChains + 1, 0);
     chainKeyItems.reserve(static_cast<std::size_t>(chains.mdItems.size()) * 2);
@@ -116,13 +135,64 @@ void k9Arbitrate(const LSTEventData& ev,
   const std::vector<int>& keyOff = params.hitLevelClaim ? chainKeyOff : chains.mdOffsets;
   const std::vector<int>& keyItems = params.hitLevelClaim ? chainKeyItems : chains.mdItems;
 
+  // owner[] encoding: -1 = free, >= 0 = accepted chain index, <= -2 = pixel owner
+  // p == -(owner) - 2 (B1). "claimed" is therefore owner != -1, not owner >= 0.
   std::vector<int> owner(nKeyUniverse, -1);
+
+  // B1: pixel owners claim first, unconditionally, in list order. ownedPix[p] counts the
+  // slots p actually holds (ties among pixel owners go to the earlier row), which is the
+  // exact analogue of a chain's keyOff span: an accepted chain owns ALL of its slots and
+  // never loses one, so the braid denominator stays "slots the owner holds".
+  std::vector<int> ownedPix;
+  if (nPix > 0) {
+    ownedPix.assign(nPix, 0);
+    if (params.hitLevelClaim) {
+      for (int p = 0; p < nPix; ++p) {
+        for (int h : (*pixOwn)[p]) {
+          if (h < 0 || h >= nKeyUniverse || owner[h] != -1)
+            continue;
+          owner[h] = -(p + 2);
+          ++ownedPix[p];
+        }
+      }
+    } else {
+      // MD-level: an MD belongs to pixel owner p iff BOTH of its hits are p's hits.
+      // hitOwner is a scratch map over the ph2 rows the MDs can reference.
+      int maxHit = -1;
+      for (int i = 0; i < nMD; ++i)
+        maxHit = std::max(maxHit, std::max(ev.md_anchorHitIdx[i], ev.md_otherHitIdx[i]));
+      std::vector<int> hitOwner(maxHit + 1, -1);
+      for (int p = 0; p < nPix; ++p)
+        for (int h : (*pixOwn)[p])
+          if (h >= 0 && h <= maxHit && hitOwner[h] == -1)
+            hitOwner[h] = p;
+      for (int m = 0; m < nMD; ++m) {
+        const int ha = ev.md_anchorHitIdx[m];
+        const int hb = ev.md_otherHitIdx[m];
+        if (ha < 0 || hb < 0 || ha > maxHit || hb > maxHit)
+          continue;
+        const int pa = hitOwner[ha];
+        if (pa < 0 || hitOwner[hb] < 0)
+          continue;
+        owner[m] = -(pa + 2);
+        ++ownedPix[pa];
+      }
+    }
+    if (params.stats != nullptr)
+      for (int p = 0; p < nPix; ++p)
+        params.stats->preClaimedSlots += ownedPix[p];
+  }
+  // Braid participation of pixel owners is opt-in (-PU 2); at -PU 1 they only supply
+  // claimed slots to the maxClaimedFrac test.
+  const bool pixBraid = nPix > 0 && params.preClaimMode >= 2;
+
   const bool braid = params.braidFrac > 0.f;
-  // Owner-overlap tally, allocated once: cnt[c] valid only for c in touched.
+  // Owner-overlap tally, allocated once: cnt[slot] valid only for slot in touched.
+  // Slot of owner o: o >= 0 -> o (chain); o <= -2 -> nChains + (-o - 2) (pixel owner).
   std::vector<int> cnt;
   std::vector<int> touched;
   if (braid) {
-    cnt.assign(nChains, 0);
+    cnt.assign(static_cast<std::size_t>(nChains) + static_cast<std::size_t>(nPix), 0);
     touched.reserve(32);
   }
   for (int c : order) {
@@ -130,33 +200,50 @@ void k9Arbitrate(const LSTEventData& ev,
     const int e = keyOff[c + 1];
     const int total = e - b;
     int nClaimed = 0;
-    for (int k = b; k < e; ++k)
-      nClaimed += (owner[keyItems[k]] >= 0) ? 1 : 0;
+    int nPixClaimed = 0;
+    for (int k = b; k < e; ++k) {
+      const int o = owner[keyItems[k]];
+      nClaimed += (o != -1) ? 1 : 0;
+      nPixClaimed += (o <= -2) ? 1 : 0;
+    }
     // total >= 4 for any welded chain (2 T3s sharing an LS); guard div anyway.
     const float frac = (total > 0) ? static_cast<float>(nClaimed) / static_cast<float>(total) : 0.f;
-    if (frac > params.maxClaimedFrac)
+    // COMPOSED (B1 x B4): the pixel-unified claim count feeds the B4 tolerance predicate.
+    // With -FC off this is bit-identical to B1's `frac > maxClaimedFrac` test.
+    if (!claimOk(params, nClaimed, frac)) {
+      if (params.stats != nullptr && nPixClaimed > 0)
+        ++params.stats->killedByPixFrac;
       continue;
+    }
     if (braid && nClaimed > 0) {
       // Owner-relative overlap: does this candidate swallow >= braidFrac of any single
-      // already-accepted chain? If so it is a welder-braid sibling, not a new track.
+      // already-accepted owner? If so it is a welder-braid sibling, not a new track.
       touched.clear();
       for (int k = b; k < e; ++k) {
         const int o = owner[keyItems[k]];
-        if (o < 0)
+        if (o == -1)
           continue;
-        if (cnt[o] == 0)
-          touched.push_back(o);
-        ++cnt[o];
+        if (o <= -2 && !pixBraid)
+          continue;
+        const int slot = (o >= 0) ? o : (nChains + (-o - 2));
+        if (cnt[slot] == 0)
+          touched.push_back(slot);
+        ++cnt[slot];
       }
-      bool killed = false;
-      for (int o : touched) {
-        const int oTot = keyOff[o + 1] - keyOff[o];
-        if (oTot > 0 && static_cast<float>(cnt[o]) >= params.braidFrac * static_cast<float>(oTot))
+      bool killed = false, killedByPix = false;
+      for (int slot : touched) {
+        const int oTot = (slot < nChains) ? (keyOff[slot + 1] - keyOff[slot]) : ownedPix[slot - nChains];
+        if (oTot > 0 && static_cast<float>(cnt[slot]) >= params.braidFrac * static_cast<float>(oTot)) {
           killed = true;
-        cnt[o] = 0;
+          killedByPix = killedByPix || (slot >= nChains);
+        }
+        cnt[slot] = 0;
       }
-      if (killed)
+      if (killed) {
+        if (params.stats != nullptr && killedByPix)
+          ++params.stats->killedByPixBraid;
         continue;
+      }
     }
     for (int k = b; k < e; ++k)
       owner[keyItems[k]] = c;

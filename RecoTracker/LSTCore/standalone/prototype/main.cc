@@ -150,6 +150,7 @@
 #include "PixelAttach.h"
 #include "PixelAttachPairs.h"
 #include "Stages.h"
+#include "Trim.h"
 
 namespace {
 
@@ -174,8 +175,25 @@ void usage(const char* prog) {
                "  -T <theta>  shorthand: set thetaChain4/5/6 all to <theta>\n"
                "  -F <frac>   maxClaimedFrac: max fraction of already-claimed MDs a chain may\n"
                "              tolerate in K9 arbitration, hybrid mode (default 0.3)\n"
+               "  -FC <n>     (B4) absolute K9 claim tolerance in MD units: a chain also passes when\n"
+               "              it has <= floor(n) already-claimed MDs, regardless of its length\n"
+               "              (with -H 1 the budget is 2*floor(n) hits). <0 = off (legacy).\n"
+               "  -FCX <0|1>  (B4) 1 = the -FC count REPLACES the -F fraction; 0 (default) =\n"
+               "              OR with it (loosen-only).\n"
+               "  -OK <0..3>  (B4) K9 ordering-key shape (thresholds stay on chains.score):\n"
+               "              0 legacy score, 1 score - lambdaLen*nLayers (pure sum-logit),\n"
+               "              2 score/nLayers, 3 mean edge logit. The -B fake penalty is\n"
+               "              subtracted after the reshape.\n"
                "  -P          keep pixel-consumed chains in K9 (default: chains containing a\n"
                "              t3_partOfPT5/pT3 member are dropped in hybrid mode)\n"
+               "  -PU <0|1|2> B1 claim-universe unification (default 0 = off, bit-exact legacy).\n"
+               "              1 = PRE-CLAIM the kept baseline pixel TCs' outer-tracker hits\n"
+               "              (type 7 -> pT5_t5Idx -> t5_hitIndices incl. the T5 extension,\n"
+               "              type 5 -> pT3_otHitIndices; type 8 owns no OT hits) before the K9\n"
+               "              greedy walk, so a chain riding on a pixel-delivered track's hits\n"
+               "              faces the same -F maxClaimedFrac test as chain-vs-chain.\n"
+               "              2 = 1 + pixel owners also participate in the -W braid test.\n"
+               "              Defined for -A 0 (attach off) only.\n"
                "  -G <0..6>   chain gate (hybrid mode, default 1). ANGLE-1 -G 6 = 3-CLASS gate\n"
                "              (fake/prompt-true/displaced-true softmax over 17 inputs = the 16\n"
                "              ChainFeatures + the chain dcaXY), kill-only, LEGACY ordering:\n"
@@ -189,6 +207,11 @@ void usage(const char* prog) {
                "              -MP is an alias setting both -M5 and -M6.\n"
                "  -MRI <v>    (M14) IP-5+ mX OR-rescue threshold; the exempt-5+ branch keeps\n"
                "              -MR. Unset = follow -MR (bit-exact legacy).\n"
+               "  -C25 <v>    (M15 angle C1) PER-CELL margin for (nNodes=2,nLayers=5) chains\n"
+               "              only, additive to their branch rule, in BOTH dca branches:\n"
+               "              killed iff mP < -C25 AND mD < -C25D (displaced head respected).\n"
+               "  -C25D <v>   displaced-margin floor of that cell kill; unset = follow -C25\n"
+               "              (then the rule is exactly mX < -C25). -C25 -1e9 = off.\n"
                "  -Q4 -Q5 <v> (M14) POST-CLAIM absolute mX floors on the IP-compatible\n"
                "              T4-class / 5+ branches (-G 6 only, default -1e9 = off). Applied\n"
                "              after K9 arbitration, so removed chains free NO hits and no\n"
@@ -264,7 +287,32 @@ void usage(const char* prog) {
                "  -S <dR>     suppression-guard dR window (M7c, -A 2 only, default 0.05): a\n"
                "              family-suppressed row is actually dropped only if\n"
                "              dR(row, attaching chain+pLS TC) < -S and pt ratio < 2; rows\n"
-               "              failing the test survive\n",
+               "              failing the test survive\n"
+               "  -TR <0|1>   ANGLE B2 TERMINAL TRIM (hybrid mode, default 0 = off, bit-exact\n"
+               "              legacy). After K6 welding and BEFORE the chain gate / DCA split /\n"
+               "              K9 claim, each chain with >= 3 member T3s tests dropping its\n"
+               "              innermost and its outermost T3: the combined full-chain fit\n"
+               "              chi2/hit (xy Kasa circle + rz line, the ChainFeatures 5+6\n"
+               "              arithmetic) is recomputed over the remaining MD union and the end\n"
+               "              with the larger improvement factor is dropped iff that factor\n"
+               "              exceeds -TT and the remainder still has >= 2 T3s and >= -TL\n"
+               "              distinct layers. Trimmed chains are rebuilt exactly as K6 would\n"
+               "              emit them (node/edge/MD lists, nLayers, score = sum of remaining\n"
+               "              weld-edge logits + -L * nLayers), so EVERYTHING downstream --\n"
+               "              ChainFeatures, the 3-class gate, dcaXY, the exempt masks, K9 --\n"
+               "              is recomputed on the trimmed object.\n"
+               "  -TT <fac>   terminal-trim chi2 improvement factor (default 5.0)\n"
+               "  -TL <n>     minimum distinct layers the trimmed remainder must keep\n"
+               "              (default 5; measured -- see main.cc: at 4 the trim is net\n"
+               "              NEGATIVE, at 5 it converts 110-155 fakes per true destroyed)\n"
+               "  -TP <n>     terminal-trim passes (default 1); >1 allows a chain to lose one\n"
+               "              terminal per pass\n"
+               "  -TA <cm^2>  absolute full-chain combined chi2/hit floor for trim eligibility\n"
+               "              (default 0 = off). The CONCENTRATING guard: -TT alone is a pure\n"
+               "              volume knob (conversion purity flat at ~5.7%% for every -TT), so\n"
+               "              it buys fake and pays track length at a fixed rate; -TA restricts\n"
+               "              the trim to chains that genuinely mis-fit (purity 11.9%% at 3.0,\n"
+               "              ~3x the conversions at equal trim volume)\n",
                prog);
 }
 
@@ -400,6 +448,23 @@ int main(int argc, char** argv) {
   // M13 shadow-recon lever (absolute mX floor, jet-blind, no proximity). -1e9 = no-op.
   float q3Floor5 = -1e9f;   // -Q5: post-claim mX floor, IP-compatible (dca < -X) 5+ chains
   float q3Floor4 = -1e9f;   // -Q4: post-claim mX floor, IP-compatible (dca < -X) T4 chains
+  // ANGLE C1 (M15): PER-CELL acceptance margin for the (nNodes == 2, nLayers == 5) cell --
+  // the classic single-shared-MD "T5-shaped" chain. M10 measured that cell alone carries
+  // 59.4% of all fake chain TCs, M13 43% of the residual fakes at the w7/j1 anchor, and it
+  // is also the |dLen| = 2 braid-duplicate driver. Every kill in the tree today is
+  // per-BRANCH (IP / large-DCA) and per-LENGTH, never per-CELL, so the only way to cut this
+  // cell harder is to tighten its whole branch (-MR / -MRI) -- which prices displaced
+  // efficiency on chains that are NOT in the cell (M14: -MRI 2.5 saturates on fake while
+  // vxy[1,5)/[5,10) fall .011/.030; -MR -0.2 costs 1 dxy[5,10) sim and 5 vxy[5,10) sims).
+  // -C25 is an ADDITIONAL 3-class-margin kill applied to that cell ONLY, on the same margin
+  // scale the branch kill uses, in BOTH dca branches, and it RESPECTS THE DISPLACED HEAD:
+  // the chain dies only if BOTH margins fail (mP < -C25 AND mD < -C25D). With -C25D unset
+  // (= -C25) that is exactly an mX floor for the cell; setting -C25D below -C25 spares any
+  // cell chain the gate's displaced head still likes, however bad its prompt margin is.
+  // -1e9 = off => bit-exact anchor.
+  constexpr float kC25Unset = 1e30f;
+  float c25Theta = -1e9f;        // -C25 : cell prompt-margin floor (mP)
+  float c25ThetaD = kC25Unset;   // -C25D: cell displaced-margin floor (mD); unset = follow -C25
   constexpr float kGateKill = 1e9f;    // -G 5: score subtraction for IP chains failing the gate cut
   constexpr float kNoCutTheta = -1e5f; // -G 5: internal K9 base threshold (live chains always pass;
                                        // killed (-1e9) and -A 3-demoted (-1e6) chains always fail)
@@ -414,6 +479,36 @@ int main(int argc, char** argv) {
                                   // braidFrac of an ALREADY-ACCEPTED chain's MDs is killed
                                   // outright instead of passing the candidate-relative -F
                                   // test. 0 = off (bit-exact legacy).
+  int preClaimMode = 0;           // -PU: B1 claim-universe unification. 0 = off (legacy: K9
+                                  // arbitrates chains vs chains only), 1 = pre-claim the kept
+                                  // baseline pixel TCs' OT hits so chains riding on a
+                                  // pixel-delivered track's hits face the same -F test,
+                                  // 2 = 1 + pixel owners also participate in the -W braid test.
+  // B4 (M15 structural): length-normalized claim + de-lengthed ordering. Both default OFF
+  // (bit-exact legacy). See Stages.h ArbitrationParams for the claim semantics.
+  float claimCountMD = -1.f;      // -FC: absolute claim tolerance in MD units (<0 = off).
+                                  // Converted to hit units (x2) when -H 1 is active.
+  float claimCountExcl = 0.f;     // -FCX: 0 = OR with the -F fraction (loosen-only),
+                                  // 1 = the count REPLACES the fraction.
+  float orderKeyMode = 0.f;       // -OK: K9 best-first ORDER key shape (thresholds never
+                                  // see it; the M9 cross-scale-inversion rule).
+                                  //   0 = legacy chains.score  (bit-exact)
+                                  //   1 = de-lengthed: score - lambdaLen*nLayers
+                                  //   2 = length-normalized: score / nLayers
+                                  //   3 = mean edge logit
+  // ANGLE B2 TERMINAL TRIM (Trim.h). Flag-gated, default OFF -> every pre-B2 command line
+  // is bit-exact (the trim call is skipped entirely, chains stay K6's output object).
+  float trimEnable = 0.f;   // -TR: 0 = off (default), 1 = on
+  float trimFactor = 5.0f;  // -TT: chi2/hit improvement factor required to drop a terminal
+  // -TL default 5, NOT 4: the offline trimdump ledger (30 evt, 40288 candidates, harness
+  // matchFrac of every full/drop-inner/drop-outer variant) shows the guard axis is the
+  // REMAINING LAYER COUNT, not -TT. At -TL 4 the trim's true-positive:false-positive ratio
+  // is 0.7-1.3 (NET NEGATIVE below TT ~10). At -TL 5 the same test scores 110-155 F->T
+  // per T->F at every TT in [1,30].
+  float trimMinLay = 5.f;   // -TL: distinct layers the remainder must keep
+  float trimPasses = 1.f;   // -TP: number of trim passes (one terminal per chain per pass)
+  float trimAbsChi2 = 0.f;  // -TA: absolute full-chain chi2/hit floor for trim eligibility
+                            // (the concentrating guard; rationale in Trim.h). 0 = off.
   float dcaAttachMax = 1.0f;      // -D: M7c IP-compatibility gate (attach eligibility + K7-lite)
   int k7Lite = 1;                 // -K: M7c K7-lite kinematic dedup on/off (-A 2 only)
   float k7DR = 0.03f;             // -R: K7-lite dR window
@@ -428,6 +523,21 @@ int main(int argc, char** argv) {
   args.push_back(argv[0]);
   for (int a = 1; a < argc; ++a) {
     const std::string s = argv[a];
+    // B1 -PU is an INT flag; handled before the float table so "-P" (a getopt no-arg
+    // flag) can never swallow it.
+    if (s == "-PU") {
+      if (a + 1 >= argc) {
+        std::fprintf(stderr, "Error: -PU requires a value.\n");
+        usage(argv[0]);
+        return 1;
+      }
+      preClaimMode = std::atoi(argv[++a]);
+      if (preClaimMode < 0 || preClaimMode > 2) {
+        std::fprintf(stderr, "Error: -PU expects 0, 1 or 2.\n");
+        return 1;
+      }
+      continue;
+    }
     float* dst = nullptr;
     if (s == "-T4")
       dst = &thetaChain4;
@@ -467,6 +577,26 @@ int main(int argc, char** argv) {
       dst = &q3Floor5;
     else if (s == "-Q4")
       dst = &q3Floor4;
+    else if (s == "-FCX")
+      dst = &claimCountExcl;
+    else if (s == "-FC")
+      dst = &claimCountMD;
+    else if (s == "-OK")
+      dst = &orderKeyMode;
+    else if (s == "-TR")
+      dst = &trimEnable;
+    else if (s == "-TT")
+      dst = &trimFactor;
+    else if (s == "-TL")
+      dst = &trimMinLay;
+    else if (s == "-TP")
+      dst = &trimPasses;
+    else if (s == "-TA")
+      dst = &trimAbsChi2;
+    else if (s == "-C25D")
+      dst = &c25ThetaD;
+    else if (s == "-C25")
+      dst = &c25Theta;
     if (dst == nullptr) {
       args.push_back(argv[a]);
       continue;
@@ -492,6 +622,9 @@ int main(int argc, char** argv) {
   // M14: -MRI defaults to -MR (bit-exact fallback for every pre-M14 command line).
   if (m3ThetaRI >= kMrUnset)
     m3ThetaRI = m3ThetaR;
+  // M15 angle C1: -C25D defaults to -C25 (then "both margins fail" == "mX < -C25").
+  if (c25ThetaD >= kC25Unset)
+    c25ThetaD = c25Theta;
 
   while ((opt = getopt(nArgs, args.data(), "i:t:o:n:m:l:e:L:T:F:G:A:a:B:W:H:D:K:R:S:X:Y:Z:Ph")) != -1) {
     switch (opt) {
@@ -598,14 +731,15 @@ int main(int argc, char** argv) {
     return 1;
   }
   if (mode != "identity" && mode != "graph" && mode != "dump" && mode != "chains" && mode != "oracle" &&
-      mode != "hybrid" && mode != "chaindump" && mode != "pairdump") {
+      mode != "hybrid" && mode != "chaindump" && mode != "pairdump" && mode != "trimdump") {
     std::fprintf(stderr,
                  "Error: unknown mode '%s' (expected identity, graph, dump, chains, oracle, hybrid, chaindump,"
                  " or pairdump).\n",
                  mode.c_str());
     return 1;
   }
-  if ((mode == "identity" || mode == "dump" || mode == "hybrid" || mode == "chaindump" || mode == "pairdump") &&
+  if ((mode == "identity" || mode == "dump" || mode == "hybrid" || mode == "chaindump" || mode == "pairdump" ||
+       mode == "trimdump") &&
       outPath.empty()) {
     std::fprintf(stderr, "Error: -o is required in %s mode.\n", mode.c_str());
     return 1;
@@ -778,6 +912,71 @@ int main(int argc, char** argv) {
     std::printf("  time mean/evt infer=%.3f weld=%.3f feat+label=%.3f ms\n", totInferMs / nEvD, totWeldMs / nEvD,
                 totFeatMs / nEvD);
     std::printf("  wrote %s\n", outPath.c_str());
+    return 0;
+  }
+
+  if (mode == "trimdump") {
+    // ANGLE B2 offline TT study. Pipeline through K6 EXACTLY as hybrid (-e/-L), then every
+    // chain with >= 3 nodes is expanded into three variants (full / drop-innermost /
+    // drop-outermost) and labelChainsHarness() is run over all of them at once, so the
+    // production matcher's match fraction is measured for the SAME hit list the trimmed TC
+    // would carry. One text line per candidate chain; the -TT working point is chosen
+    // offline from the true-positive (fake -> true) vs false-positive (true -> fake) ledger.
+    std::FILE* tf = std::fopen(outPath.c_str(), "w");
+    if (tf == nullptr) {
+      std::fprintf(stderr, "Error: cannot open %s for writing.\n", outPath.c_str());
+      return 1;
+    }
+    std::fprintf(tf, "# evt chain nNodes nLayF nLayI nLayO xyF rzF xyI rzI xyO rzO mfF mfI mfO\n");
+    long long totChains = 0, totCand = 0;
+    for (long long i = 0; i < nRun; ++i) {
+      if (!reader.loadEntry(i, ev, trk)) {
+        std::fprintf(stderr, "Error: no aligned tracking event for LST entry %lld.\n", i);
+        return 1;
+      }
+      ChainGraph g;
+      k1BuildIncidence(ev, g);
+      k2BuildEdges(ev, g);
+      NodeFeatures nf;
+      computeNodeFeatures(ev, nf);
+      EdgeFeatures ef;
+      computeEdgeFeatures(ev, g, nf, ef);
+      EdgeScores scores;
+      runEdgeInference(g, nf, ef, scores);
+      Chains chains;
+      k6WeldChains(ev, g, scores, thetaEdge, lambdaLen, chains);
+
+      Chains study;
+      std::vector<int> srcChain;
+      std::vector<int8_t> variant;
+      buildTrimStudyChains(ev, chains, scores, lambdaLen, study, srcChain, variant);
+      T3SimSets t3sims;
+      buildT3SimSets(ev, t3sims);
+      ChainLabels sl;
+      labelChainsHarness(ev, trk, study, t3sims, sl);
+
+      const int nStudy = static_cast<int>(srcChain.size());
+      for (int k = 0; k + 2 < nStudy; k += 3) {
+        const int c = srcChain[k];
+        double xy[3], rz[3];
+        for (int v = 0; v < 3; ++v) {
+          const int mb = study.mdOffsets[k + v], me = study.mdOffsets[k + v + 1];
+          chainFitChi2Combined(ev, &study.mdItems[mb], me - mb, &xy[v], &rz[v]);
+        }
+        std::fprintf(tf, "%llu %d %d %d %d %d %.8g %.8g %.8g %.8g %.8g %.8g %.4f %.4f %.4f\n",
+                     static_cast<unsigned long long>(ev.evt), c,
+                     chains.offsets[c + 1] - chains.offsets[c], study.nLayers[k], study.nLayers[k + 1],
+                     study.nLayers[k + 2], xy[0], rz[0], xy[1], rz[1], xy[2], rz[2], sl.matchFrac[k],
+                     sl.matchFrac[k + 1], sl.matchFrac[k + 2]);
+        ++totCand;
+      }
+      totChains += chains.offsets.empty() ? 0 : static_cast<long long>(chains.offsets.size()) - 1;
+      if (i % 10 == 0)
+        std::printf("trimdump evt %lld: chains=%lld candidates(>=3 nodes)=%lld\n", i, totChains, totCand);
+    }
+    std::fclose(tf);
+    std::printf("trimdump summary: %lld events, %lld chains, %lld trim candidates -> %s\n", nRun, totChains, totCand,
+                outPath.c_str());
     return 0;
   }
 
@@ -1183,10 +1382,11 @@ int main(int argc, char** argv) {
                   " exempt 5+ killed if mD < %.4g;"
                   " OR-rescue mX >= %.4g (IP-5+) / %.4g (exempt-5+); exempt-T4 dca floor Z=%.3f cm;"
                   " exempt-branch legacy thresholds U4/5/6=%.3f/%.3f/%.3f;"
-                  " post-claim mX floors Q4=%.4g Q5=%.4g\n",
+                  " post-claim mX floors Q4=%.4g Q5=%.4g;"
+                  " C1 cell (nNodes=2,nLayers=5) kill iff mP < %.4g AND mD < %.4g\n",
                   chainGate3Available() ? "trained" : "sentinel", dcaSplit, m3Theta4, m3Theta4D, m3Theta5, m3Theta6,
                   m3ThetaD, m3ThetaRI, m3ThetaR, t4ExemptDcaMin, thetaExempt4, thetaExempt5, thetaExempt6, q3Floor4,
-                  q3Floor5);
+                  q3Floor5, c25Theta, c25ThetaD);
     else if (chainGateMode == 3)
       std::printf("gate (-G 3, M9 DCA split): dcaSplit=%.3f cm (gate logit below, legacy score at/above);"
                   " exempt-branch thresholds U4/5/6=%.3f/%.3f/%.3f (legacy scale)\n",
@@ -1209,6 +1409,11 @@ int main(int argc, char** argv) {
                   " thresholds still on score) braidFrac=%.2f (kill candidate covering >= braidFrac of an"
                   " already-accepted chain's claim items)\n",
                   hitLevelClaim ? "HIT" : "MD", fakeOrderAlpha, braidFrac);
+    if (claimCountMD >= 0.f || orderKeyMode != 0.f)
+      std::printf("K9 arbitration (B4): claimCount=%d %s (units=%s, -F %.2f still %s) orderKeyMode=%d\n",
+                  static_cast<int>(std::floor(claimCountMD)) * (hitLevelClaim ? 2 : 1),
+                  claimCountMD >= 0.f ? "ON" : "off", hitLevelClaim ? "HIT" : "MD", maxClaimedFrac,
+                  claimCountExcl >= 0.5f ? "DISABLED" : "OR'd", static_cast<int>(std::lround(orderKeyMode)));
     OutputWriter writer(outPath, label);
 
     // M7c dca-distribution study hook: PROTO_DCA_DUMP=<path> writes one line per
@@ -1233,7 +1438,12 @@ int main(int argc, char** argv) {
     long long totDcaBlocked = 0, totK7Dropped = 0, totGuardKept = 0;  // M7c (-A 2)
     long long totDemoted = 0, totEvidenceOk = 0;                      // M9 (-A 3)
     long long nPostClaimKilled = 0;                                   // M14 (-Q4/-Q5)
+    long long nCellSeen = 0, nCellKilled = 0, nCellPreKilled = 0;     // M15 angle C1 (-C25)
+    ArbitrationParams::Stats pixClaimStats;                           // B1 (-PU)
+    long long totPixOwners = 0;                                       // B1 (-PU)
+    TrimStats trimTot;                                                // ANGLE B2 (-TR)
     double totInferMs = 0.0, totWeldMs = 0.0, totArbMs = 0.0, totFillMs = 0.0, totAttachMs = 0.0;
+    double totTrimMs = 0.0;
 
     for (long long i = 0; i < nRun; ++i) {
       if (!reader.loadEntry(i, ev, trk)) {
@@ -1254,6 +1464,19 @@ int main(int argc, char** argv) {
       const auto t1 = std::chrono::steady_clock::now();
       Chains chains;
       k6WeldChains(ev, g, scores, thetaEdge, lambdaLen, chains);
+
+      // ANGLE B2 TERMINAL TRIM (-TR 1): post-weld, PRE-gate, PRE-claim. Contract in Trim.h.
+      // Placed here on purpose -- ChainFeatures, the -G 6 3-class margins, the chain dcaXY
+      // (and therefore the IP/exempt branch assignment), the -U masks and the whole K9 claim
+      // are all computed BELOW this line, so every one of them sees the TRIMMED chain. With
+      // -TR 0 the call is skipped entirely and `chains` is K6's object untouched.
+      if (trimEnable != 0.f) {
+        const auto tt0 = std::chrono::steady_clock::now();
+        for (int pass = 0; pass < static_cast<int>(trimPasses); ++pass)
+          k6TrimTerminals(ev, scores, lambdaLen, trimFactor, static_cast<int>(trimMinLay), trimAbsChi2, chains,
+                          nullptr, trimTot);
+        totTrimMs += msBetween(tt0, std::chrono::steady_clock::now());
+      }
 
       // Chain gate (-G 1, default): the K9 acceptance score per chain becomes the
       // chain-gate MLP LOGIT (plan 5a hard gate) -- thetaChain4/5/6 cut on that scale
@@ -1356,6 +1579,22 @@ int main(int argc, char** argv) {
                 chains.score[c] -= kGateKill;
               exemptMask[c] = 1;
             }
+            // ANGLE C1 (M15) -C25/-C25D: extra margin for the (nNodes == 2, nLayers == 5)
+            // CELL only, applied on top of whichever branch rule already ran (IP or exempt)
+            // and on the same 3-class margin scale. Displaced head respected: kill only
+            // when BOTH heads fail. Never re-kills an already-killed chain (counters and
+            // the K9 order key stay honest).
+            if (c25Theta > -1e9f && nL == 5 && (chains.offsets[c + 1] - chains.offsets[c]) == 2) {
+              ++nCellSeen;
+              if (chains.score[c] > -0.5f * kGateKill) {
+                if (mP < c25Theta && mD < c25ThetaD) {
+                  chains.score[c] -= kGateKill;
+                  ++nCellKilled;
+                }
+              } else {
+                ++nCellPreKilled;
+              }
+            }
           }
         } else {
           if (chainGateMode >= 3)
@@ -1411,6 +1650,14 @@ int main(int argc, char** argv) {
       if (!exemptMask.empty())
         ap.altThreshold = &exemptMask;
       ap.maxClaimedFrac = maxClaimedFrac;
+      // B4 (-FC/-FCX): absolute claim tolerance. -FC is expressed in MD units for
+      // physics readability ("allow N already-claimed MDs"); with -H 1 the claim
+      // universe is HITS and each MD contributes 2 of them, so the budget doubles.
+      if (claimCountMD >= 0.f) {
+        const int nMDbudget = static_cast<int>(std::floor(claimCountMD));
+        ap.maxClaimedItems = hitLevelClaim ? 2 * nMDbudget : nMDbudget;
+        ap.claimCountExclusive = claimCountExcl >= 0.5f;
+      }
       ap.dropPixelConsumed = dropPixelConsumed;
 
       // K8 pixel attach (-A 1 and -A 2): the attach decision is made over ALL
@@ -1506,15 +1753,77 @@ int main(int argc, char** argv) {
       // ordering key (score minus a gate-suspicion penalty) so fake-suspect chains claim
       // LAST while every acceptance threshold keeps cutting on chains.score; -W adds the
       // owner-relative braid kill inside the greedy walk. Both default to legacy.
+      // B4 (-OK): DE-LENGTHED ordering. chains.score = sum(edge logits) +
+      // lambdaLen*nLayers is monotone in length twice over (more edges AND the explicit
+      // prior), so in the greedy claim a long chain always walks ahead of a short one of
+      // equal per-edge quality -- the M10 forensics population "pure 5-MD displaced
+      // chains starved by the length-monotone score". -OK reshapes ONLY the ordering key;
+      // every acceptance threshold still cuts on chains.score (M9 lesson).
+      const int okMode = static_cast<int>(std::lround(orderKeyMode));
       std::vector<float> orderKeyVec;
-      if (fakeOrderAlpha > 0.f && gateLogit.size() == chains.score.size()) {
+      const bool haveGateKey = gateLogit.size() == chains.score.size();
+      const bool wantPenalty = fakeOrderAlpha > 0.f && haveGateKey;
+      if (wantPenalty || okMode != 0) {
         orderKeyVec.resize(chains.score.size());
-        for (std::size_t c = 0; c < orderKeyVec.size(); ++c)
-          orderKeyVec[c] = chains.score[c] - fakeOrderAlpha * std::max(0.f, -gateLogit[c]);
+        for (std::size_t c = 0; c < orderKeyVec.size(); ++c) {
+          float base = chains.score[c];
+          const float nL = static_cast<float>(std::max(1, chains.nLayers[c]));
+          if (okMode == 1) {
+            base -= lambdaLen * nL;
+          } else if (okMode == 2) {
+            base /= nL;
+          } else if (okMode == 3) {
+            const int nEdges = std::max(1, chains.offsets[c + 1] - chains.offsets[c] - 1);
+            base = (base - lambdaLen * nL) / static_cast<float>(nEdges);
+          }
+          orderKeyVec[c] = base - (wantPenalty ? fakeOrderAlpha * std::max(0.f, -gateLogit[c]) : 0.f);
+        }
         ap.orderKey = &orderKeyVec;
       }
       ap.braidFrac = braidFrac;
       ap.hitLevelClaim = hitLevelClaim != 0;
+
+      // B1 (-PU): CLAIM-UNIVERSE UNIFICATION. The hybrid keeps every baseline pixel TC
+      // verbatim, but K9 arbitrates chains against chains ONLY -- a chain sitting on a
+      // kept pT5's / pT3's outer-tracker hits pays nothing for it. M13 measured the cost:
+      // 48.9% of surviving fake chains sit on a pixel TC's hits and 66% of the residual
+      // fake is "contaminated" (one wrong arm on a real, pixel-delivered track), plus the
+      // whole chain-vs-pixel dup artifact. Here the kept pixel TCs' OT hits are
+      // PRE-CLAIMED, so those chains face the same maxClaimedFrac (-PU 2 also: braid)
+      // rules as chain-vs-chain. Displaced chains are unaffected by construction: they
+      // have no pLS partner, hence no pixel TC to collide with (verified by the vxy/dxy
+      // bands in the A/B).
+      // Owners are the KEPT baseline pixel rows: type 7 -> pT5_t5Idx -> t5_hitIndices
+      // (which INCLUDES the ExtendT5FromDupT5 layer-6/7 hits the T3 route cannot reach),
+      // type 5 -> pT3_otHitIndices, type 8 -> no OT hits at all. Both branches are ph2
+      // rows, the same space as md_anchorHitIdx/md_otherHitIdx (see EventData.h).
+      // Attach modes rewrite which pixel rows survive; -PU is defined for -A 0 only.
+      std::vector<std::vector<int>> pixOwnerHits;
+      if (preClaimMode > 0) {
+        const std::size_t nTCb = ev.tc_type.size();
+        pixOwnerHits.reserve(nTCb);
+        for (std::size_t it = 0; it < nTCb; ++it) {
+          const int ty = ev.tc_type[it];
+          if (ty == 7) {
+            const int p5 = (it < ev.tc_pt5Idx.size()) ? ev.tc_pt5Idx[it] : -999;
+            if (p5 < 0 || p5 >= static_cast<int>(ev.pT5_t5Idx.size()))
+              continue;
+            const int t5 = ev.pT5_t5Idx[p5];
+            if (t5 < 0 || t5 >= static_cast<int>(ev.t5_hitIndices.size()))
+              continue;
+            pixOwnerHits.push_back(ev.t5_hitIndices[t5]);
+          } else if (ty == 5) {
+            const int p3 = (it < ev.tc_pt3Idx.size()) ? ev.tc_pt3Idx[it] : -999;
+            if (p3 < 0 || p3 >= static_cast<int>(ev.pT3_otHitIndices.size()))
+              continue;
+            pixOwnerHits.push_back(ev.pT3_otHitIndices[p3]);
+          }
+        }
+        ap.preClaimOwners = &pixOwnerHits;
+        ap.preClaimMode = preClaimMode;
+        ap.stats = &pixClaimStats;
+        totPixOwners += static_cast<long long>(pixOwnerHits.size());
+      }
 
       std::vector<int> accepted;
       std::size_t nPass1 = 0;
@@ -1925,6 +2234,13 @@ int main(int argc, char** argv) {
                 dropPixelConsumed ? "on" : "off");
     const long long totAcceptedAll = totAfterClaim + totPass2Acc;
     std::printf("  pixel TCs kept  total=%lld mean=%.1f\n", totPixKept, totPixKept / nEvD);
+    if (preClaimMode > 0)
+      std::printf("  B1 claim-univ   mode=%d owners=%lld mean=%.1f | pre-claimed slots=%lld"
+                  " mean=%.1f | killed by pixel: frac=%lld mean=%.1f braid=%lld mean=%.1f\n",
+                  preClaimMode, totPixOwners, totPixOwners / nEvD, pixClaimStats.preClaimedSlots,
+                  pixClaimStats.preClaimedSlots / nEvD, pixClaimStats.killedByPixFrac,
+                  pixClaimStats.killedByPixFrac / nEvD, pixClaimStats.killedByPixBraid,
+                  pixClaimStats.killedByPixBraid / nEvD);
     if (attachMode == 2)
       std::printf("  chain funnel    in=%lld -> theta=%lld -> pixdrop=%lld -> claim(pass1)=%lld"
                   " | pass2 cand=%lld accepted=%lld\n",
@@ -1938,6 +2254,22 @@ int main(int argc, char** argv) {
     if (nPostClaimKilled > 0)
       std::printf("  post-claim kill total=%lld mean=%.1f (-Q4 %.4g / -Q5 %.4g on mX; no backfill)\n",
                   nPostClaimKilled, nPostClaimKilled / nEvD, q3Floor4, q3Floor5);
+    if (nCellSeen > 0)
+      std::printf("  C1 cell (2n,5L) seen=%lld mean=%.1f | already killed by branch=%lld (%.1f%%)"
+                  " | killed by -C25 %.4g / -C25D %.4g = %lld (%.1f%% of cell, %.1f%% of branch survivors)\n",
+                  nCellSeen, nCellSeen / nEvD, nCellPreKilled, 100.0 * nCellPreKilled / nCellSeen, c25Theta, c25ThetaD,
+                  nCellKilled, 100.0 * nCellKilled / nCellSeen,
+                  nCellSeen > nCellPreKilled ? 100.0 * nCellKilled / (nCellSeen - nCellPreKilled) : 0.0);
+    if (trimEnable != 0.f)
+      std::printf("  B2 terminal trim examined=%lld (%.1f/evt) trimmed inner=%lld outer=%lld total=%lld"
+                  " (%.1f/evt, %.4f of examined) | -TT %.4g -TL %d -TP %d -TA %.4g | %.3f ms/evt\n",
+                  trimTot.nExamined, trimTot.nExamined / nEvD, trimTot.nTrimInner, trimTot.nTrimOuter,
+                  trimTot.nTrimInner + trimTot.nTrimOuter, (trimTot.nTrimInner + trimTot.nTrimOuter) / nEvD,
+                  trimTot.nExamined > 0 ? static_cast<double>(trimTot.nTrimInner + trimTot.nTrimOuter) /
+                                              static_cast<double>(trimTot.nExamined)
+                                        : 0.0,
+                  trimFactor, static_cast<int>(trimMinLay), static_cast<int>(trimPasses), trimAbsChi2,
+                  totTrimMs / nEvD);
     if (attachMode) {
       std::printf("  K8 attach       attached=%lld mean=%.1f | baseline pixel rows suppressed=%lld mean=%.1f"
                   " | pairs prefiltered=%lld scored=%lld (thetaAttach=%.3f head=%s)\n",

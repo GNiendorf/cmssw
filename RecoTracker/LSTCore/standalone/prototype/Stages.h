@@ -113,6 +113,20 @@ struct ArbitrationParams {
   float thetaAlt6 = 0.f;       // exempt nLayers >= 6
   const std::vector<char>* altThreshold = nullptr;  // per-chain: 1 = use thetaAlt*
   float maxClaimedFrac = 0.3f; // max fraction of already-claimed MDs tolerated
+  // B4 (-FC / -FCX): LENGTH-NORMALIZED claim tolerance. The fractional test is
+  // length-monotone in the WRONG direction for short displaced chains: at F=0.3 a 5-MD
+  // chain dies at 2 shared MDs (0.4 > 0.3) while a 7-MD chain survives 2 -- the M10
+  // forensics "losers are PURE 5-MD displaced chains starved by the claim" population.
+  // maxClaimedItems >= 0 turns on an ABSOLUTE tolerance in claim-universe items (hits
+  // when hitLevelClaim, MDs otherwise; main.cc does the MD->hit x2 conversion):
+  //   claimCountExclusive == false (default): accept iff nClaimed <= maxClaimedItems OR
+  //     frac <= maxClaimedFrac  -- a pure LOOSENING that only binds on short chains
+  //     (for long chains the fraction is already the looser of the two).
+  //   claimCountExclusive == true: the count REPLACES the fraction entirely (tightens
+  //     long chains as well).
+  // maxClaimedItems < 0 = off => bit-exact legacy fractional test.
+  int maxClaimedItems = -1;
+  bool claimCountExclusive = false;
   bool dropPixelConsumed = true;
   // A8 (fake-aware ordering, -B): K9's best-first ORDER key. nullptr = order by
   // chains.score (legacy, bit-exact). When set (size nChains) the greedy walk visits
@@ -130,6 +144,31 @@ struct ArbitrationParams {
   // Genuine chain-chain duplicates are built from DIFFERENT T3/MD objects sitting on the
   // same hits, so an MD-level claim map cannot see them at all; the hit-level map can.
   bool hitLevelClaim = false;
+  // B1 (claim-universe unification, -PU): the KEPT baseline pixel TCs' outer-tracker hits
+  // are PRE-CLAIMED before the greedy walk, so a chain riding on a pixel-delivered track's
+  // hits faces exactly the same maxClaimedFrac (and, at mode 2, braid) rules it would face
+  // against another chain. Today K9 arbitrates chains vs chains ONLY, which is why 48.9%
+  // of surviving fake chains sit on a kept pixel TC's hits (M13 recon) and why the
+  // chain-vs-pixel dup artifact cannot be removed by any chain-side lever.
+  // preClaimOwners[p] = the ph2 hit rows of pixel owner p (type-7 pT5 -> t5_hitIndices,
+  // type-5 pT3 -> pT3_otHitIndices; type-8 pLS TCs own no OT hits). Pixel owners claim
+  // FIRST and unconditionally (they are carried verbatim into the output in hybrid mode),
+  // in list order, first-come-first-served among themselves.
+  //   preClaimMode 0 = off (nullptr semantics, bit-exact legacy)
+  //                1 = pre-claim; pixel owners participate in the maxClaimedFrac test
+  //                2 = 1 + pixel owners also participate in the owner-relative braid test
+  // At MD-level claim (-H 0) an MD is pixel-owned iff BOTH of its hits are pixel hits --
+  // the exact "this MD sits on the pixel TC's hits" statement, which also catches
+  // duplicate MD objects built from the same hit pair.
+  const std::vector<std::vector<int>>* preClaimOwners = nullptr;
+  int preClaimMode = 0;
+  // Optional diagnostics sink (B1): filled by k9Arbitrate, never read by it. nullptr = off.
+  struct Stats {
+    long long preClaimedSlots = 0;  // universe slots owned by pixel owners at walk start
+    long long killedByPixFrac = 0;  // candidates failing maxClaimedFrac WITH >=1 pixel slot
+    long long killedByPixBraid = 0; // candidates braid-killed by a PIXEL owner (mode 2)
+  };
+  Stats* stats = nullptr;
 
   float thetaFor(int nLayers) const {
     return nLayers >= 6 ? thetaChain6 : (nLayers == 5 ? thetaChain5 : thetaChain4);

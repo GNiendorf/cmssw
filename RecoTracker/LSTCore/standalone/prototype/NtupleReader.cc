@@ -74,11 +74,13 @@ std::vector<std::string> resolveTrkFiles(const std::string& path) {
   X(md_anchorHitIdx) X(md_otherHitIdx) X(md_type) X(md_layer) X(md_detId)        \
   X(ls_mdIdx0) X(ls_mdIdx1) X(t3_lsIdx0) X(t3_lsIdx1)                            \
   X(pLS_charge) X(pLS_nhit) X(pLS_seedIdx) X(pLS_isFake) X(pLS_isDuplicate)      \
-  X(pT5_plsIdx) X(pT3_plsIdx)
+  X(pT5_plsIdx) X(pT3_plsIdx) X(pT5_t5Idx)
 
 #define LST_VB(X) X(md_isPLS) X(ls_isPLS) X(pLS_isQuad) X(t3_partOfPT5) X(t3_partOfPT3)
 
-#define LST_VVI(X) X(t3_matched_simIdx) X(pLS_simIdxAll) X(md_simIdxAll) X(tc_simIdxAll)
+#define LST_VVI(X) \
+  X(t3_matched_simIdx) X(pLS_simIdxAll) X(md_simIdxAll) X(tc_simIdxAll) \
+  X(t5_hitIndices) X(pT3_otHitIndices)
 
 #define LST_VVF(X) X(md_simIdxAllFrac) X(tc_simIdxAllFrac)
 
