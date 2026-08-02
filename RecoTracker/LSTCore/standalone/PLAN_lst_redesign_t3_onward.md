@@ -1528,7 +1528,10 @@ LATER separate pass (same prototype, jet-enriched ntuple) once the machinery exi
   and re-baseline (symmetric shift: pLS-pLS dup cell grows - already 49% of our dup
   budget - and the bare-pLS universe expands, raising the attach-contention lever's
   weight). Any config we ship must run the SAME two CheckHitspLS sites with the SAME
-  flag values as the target workflow.
+  flag values as the target workflow. **MAINTAINER (2026-08-02): target-config choice
+  DEFERRED — current work targets the pT 0.8 OFFLINE config and that is what we
+  benchmark (HLT runs 0.9; a low-pT 0.6 config exists offline-only). Cross-threshold
+  generalization (0.6/0.9) is a far-later check, after the algorithm settles.**
 - Code hygiene: freeze the winning config, prune dead experiments from prototype/,
   document stage contracts, final commit tag.
 
