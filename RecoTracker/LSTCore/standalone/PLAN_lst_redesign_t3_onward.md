@@ -1731,7 +1731,19 @@ edge types inside the existing chain formalism, not LS nodes.
     value, pure dup, worth ~-.0072 dup); the fix is a pLS<->chain CONTENTION rule =
     the M16 attach machinery with finite -a + suppression (-a 999 keeps it inert now)
     — ATTACH REVIVED AS A DUP LEVER (was rejected at M16b on efficiency grounds; must
-    be re-judged on the full triple in composition). Root cause in one line: bare
+    be re-judged on the full triple in composition). **MAINTAINER PHYSICS POINT
+    (2026-08-02, judging protocol for the attach A/B): pLS-OT matching errors are
+    metric-coupled — recall failures (true pLS + true chain unconnected) pay in DUP;
+    precision failures pay in EFF and FR at once (wrong/fake pLS prepends wrong pixel
+    hits -> combined hit fraction can drop below 0.75, flipping the TC from eff to
+    fake, while suppression can kill a real track's only delivery). Therefore the
+    composition A/B must instrument the ATTACH CONFUSION MATRIX (each decision
+    classified by sim truth of both sides: same-sim / cross-sim / true-fake /
+    fake-any / missed-true-pair) so each operating point's trade is attributed to a
+    cell, not just observed in aggregates. M16b's "attach aggregate-negative" was
+    measured WITHOUT the dup credit on the ledger; the optimum lies between inert
+    (-a 999) and M16b's point, and the matrix decides whether the g1 head suffices
+    or needs a retrain with better pair features.** Root cause in one line: bare
     chains have 4x the internal dup rate of pT5s (.0380 vs .0096) because the pixel
     seed gives pT5 a unique per-track identity the bare-chain path lacks. Zero-cost
     lever shipped: -FCX 1 -FCE 1 (strict claim count for IP-compatible chains only,
