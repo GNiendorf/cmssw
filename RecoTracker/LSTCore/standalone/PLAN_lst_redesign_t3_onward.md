@@ -1602,3 +1602,53 @@ edge types inside the existing chain formalism, not LS nodes.
   gate is scoring a 6x different population with stale training), (2) recon the lost
   prompt sims (attach-with-REMATCH if match-fails dominate). -RPS rejected again
   (eff-dominant rule). pT3 class unchanged (grid-blocked).
+- **2026-08-02 M17 RECON (fanout3/m16 m16r_*, ablation-measured classification of the
+  398 lost prompt sims in ctl_noatt; harness denominators reproduced exactly):**
+  (a) formation/purity 33 (8.3%) | (b) gate 68 (17.1%; 27 IP-T4 kills median deficit
+  0.88, 24 IP-5+ median 0.32 — SHALLOW) | (c) claim 263 (66.1%) | (e) joint 34 (8.5%).
+  **LOAD-BEARING: the K9 order key's fake-penalty gateLogit comes from the STALE 2-class
+  a2 head (runChainInference), not the 3-class gate — the 263-sim class (c) belongs to
+  the ORDER KEY, and the 3-class retrain caps at 68.** Claim thresholds provably cannot
+  reach (c): every loosening axis net-negative or dup-explosive (-F 0.5 dup .1218;
+  claim-off dup .6062) = M9 claim-conservation law. **Attach-with-REMATCH FALSIFIED**:
+  every (a)-class prompt sim HAS a covering chain; rescuable-by-pLS-fraction = 18/33,
+  but 17 are nLayers=4 chains outside the attach universe (PixelAttach nLayers>=5);
+  reach as built = 1 sim. Attach is for class semantics, not efficiency. Free find:
+  under -RT5 1 the -PU pre-claim still reserves hits for already-dropped pixel rows
+  (-PU 0 = +11 prompt sims, cost unmeasured). Confirmed by m17 agent: third 3-class
+  retrain descent (ab_m17_d1-d8) moves <= +0.1 pt — as the cap predicted.
+- **2026-08-02 M17 FAN-OUT (6 agents, fanout4/): first verdicts.**
+  - **claimshare — FALSIFIED with a conservation ledger:** post-K9 shared-hit keep-best
+    dedup (-DD k, -DDF frac; hit-set only, NO proximity — jet-safe by construction)
+    works as theorized (99.5% of removals are same-sim copies; certified no-op at the
+    anchor) BUT -F 0.5 gains only ~96 sims while adding ~35k dup / ~8k fake TCs, and
+    removing the dups removes ~85-95 sims with them — populations inseparable by
+    shared-hit count BY CONSTRUCTION (a chain admitted only by looser claim overlaps
+    accepted chains whether it carries a new sim or a copy). No Pareto point on the
+    31-config grid. KEEPERS: **-FS subordinate share pass strictly dominates raising -F**
+    (reruns only pass-1 rejects on the frozen owner map; anchor accepted set
+    bit-identical); FS0.5+DD4 = only all-bands-non-negative point (fails rates, filed);
+    dedup k=3 eats displaced floors — any future dedup ships k>=4 + fraction guard.
+  - **okredesign — THE M17 LEVER FOUND: `-BK 1 -BT 5` (zero training).** Order-key
+    penalty switched from the stale 2-class head to the RESIDENT m12 3-class head's
+    kill-margin mX with hinge at 5 (naive hinge-0 drop-in recovers only 17 sims because
+    -G 6 already guarantees mX >= 0.5 for survivors — the hinge makes the head engage
+    the contending population). INDEPENDENTLY RE-VERIFIED from raw hists: eff .8017 ->
+    **.8096**, vxy[0,1) .8344 -> **.8425** (+170 of the 263 class-(c) sims = 65%), ALL
+    displaced bands UP (vxy[1,5) +.0113, [5,10) +.0127, [10,30) +.0188, dxy[1,5)
+    +.0172), fake .0536 -> **.0480** (-2716 fake TCs), dup .0643 -> .0660 (declared
+    trade: quality-major ordering leaves free hits for second same-sim chains; -BT 3
+    buys most back for 17 sims). vs LST now: eff -.0040, vxy01 -.0048, fake +.0025,
+    dup +.0147, displaced +.023/+.073/+.086/+.060. Negative controls: matchFrac
+    regressor (Spearman .831) tops eff (+187) but strictly outside the rate frontier;
+    m17b-retrain plug-in within noise of m12 plug-in (ranking-head quality NOT binding
+    — predicts limited ceiling for the straight a2 retrain); nLayers-major composite
+    WORST tested (-61). Alpha nearly flat above 5; -W is a cliff at ~0.32 (below costs
+    exactly 3 dxy[5,10) sims), -W 0.20 reaches fake .0430/dup .0578 but breaks that
+    floor — not offerable.
+  - OPERATIONAL: m17 agent retrained chain3_mlp_weights.h IN-PLACE in fanout3/m16 at
+    09:02; all 6 fanout4 agents copied after that -> torn resident head (symptom:
+    294881 TCs / fake .0467 vs canonical 301078 / .0536). Caught by the mandatory
+    bit-identity reproduction gate; canonical header = prototype/chain3_mlp_weights.h
+    (md5 d170f174...); fix broadcast to all agents. LESSON: fan-out source trees must
+    be immutable snapshots, or agents must md5-pin the weight headers at copy time.
