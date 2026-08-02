@@ -1652,3 +1652,26 @@ edge types inside the existing chain formalism, not LS nodes.
     bit-identity reproduction gate; canonical header = prototype/chain3_mlp_weights.h
     (md5 d170f174...); fix broadcast to all agents. LESSON: fan-out source trees must
     be immutable snapshots, or agents must md5-pin the weight headers at copy time.
+  - **transition — MECHANISM FOUND: the band excess is a dcaXY-resolution Simpson
+    effect, ~87% tunable.** Chain-fit dcaXY resolution collapses across the
+    barrel/endcap crossing (true-prompt p50: 0.034-0.043 cm pure barrel -> 0.372 cm at
+    |eta| 1.4-1.6, tracking the barrel-MD mixing fraction exactly; recovers to 0.093 in
+    pure-PS endcap), so the barrel-calibrated -X 0.5 dca split misroutes 48.7% of band
+    5+ chains (46.0% of TRUE ones) onto the displaced-EXEMPT branch, judged at mX >=
+    -1.8 instead of >= 0.5. Per-branch band fake rates are BETTER than barrel (pure
+    mix effect); exempt-branch band fakes separate cleanly (fake mX p50 0.04 vs true
+    p10 0.63). Band levers (-Z*: additive per-band threshold deltas keyed on K10 eta;
+    defaults bit-identical): winner g3 (-ZR 1.55 -ZM4 -1.0 -ZM4D 99 -ZBA 20) takes
+    transition fake .0765 -> .0529 (vs LST .0459; excess +.0307 -> +.0070) and GLOBAL
+    fake .0536 -> .0499 with transition eff HELD (+.0005) and global eff +.0001; costs
+    dup +.0004 and 1-3 sims in each displaced floor band (floors have <1-sim headroom;
+    all still far above LST). Loss anatomy: 83.1% of band lost sims were LST
+    pT5-only deliveries; loss bimodal in pT (0.9-1.1 GeV and >5 GeV), NOT the 1.1-1.7
+    GeV soft-pT bulk. Free efficiency find: -ZR 1.3 kills 549 true band chains yet
+    RAISES band eff (freed hit claims re-won by real chains); -ZM4 -1.0 is +.0010
+    effTr fake-neutral. STRUCTURAL RESIDUAL (queued for next training round):
+    ChainFeatures carries no eta/tanLambda/barrel-MD FRACTION — the gate is blind to
+    the band while its dcaXY input changes meaning ~10x across it. Fix = add
+    |eta|+tanLambda+barrelFrac (and/or dcaXY significance instead of raw distance) and
+    retrain the 3-class head; band deltas should then collapse toward zero. Instrument
+    kept: harness-invisible tc_dbg* branches (branch code, composition, margins, dca).
