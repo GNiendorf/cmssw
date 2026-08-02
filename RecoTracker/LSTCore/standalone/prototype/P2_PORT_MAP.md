@@ -544,7 +544,16 @@ vxy[10,30) 98×); attach stage wall time (target ≤ 10 ms CPU, ≤ 0.1 ms GPU);
 (−.0060 measured offline, identical on all three trims).
 *Revert: `attachReplacePT5 = false` → the carried pixel rows come back and no chain upgrades.*
 
-### Phase P2.4b — pT3-class replacement via the general attach (NEW, 2026-08-02; maintainer approved the routing)
+### Phase P2.4b — pT3-class replacement via the general attach (RESEQUENCED 2026-08-02: runs AFTER integration is complete)
+**MAINTAINER DECISION (2026-08-02): integrate as-is with the pT3 code KEPT; do this phase only
+after the integration (P2.5-P2.7 pT5-side) is complete, so there is no switching back and forth
+between integration work and offline replacement work.** Consequence for P2.7: the deletion
+tranche splits — the pT5-side machinery (T5/T4 builders, ExtendT5FromDupT5, their dup kernels,
+the pT5 pixel map, crossCleanT5/pLS-vs-pT5) deletes at P2.7 as planned; the pT3-side machinery
+(pT3 builder, its pixel map, pt3dnn, its crossclean) survives P2.7 and deletes only after this
+phase passes. ALSO: every validation plot produced before this phase carries LST's own pT3 and
+bare-pLS rows verbatim — STATE THIS ON EVERY PLOT/OFFER (M18 panel item 10; the maintainer was
+not clearly told at the M19 presentation and should never have to discover it by asking).
 The general attach head is ALREADY trained on both target types (chains AND bare T3s;
 targetType is an input). The bare-T3 side — which replaces the pT3 class — was blocked at M16
 purely by candidate-finding volume (~43k bare-T3 targets/evt -> ~6.5M analytic-prefilter
