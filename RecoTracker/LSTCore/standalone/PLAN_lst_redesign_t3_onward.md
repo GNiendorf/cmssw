@@ -1698,9 +1698,30 @@ LATER separate pass (same prototype, jet-enriched ntuple) once the machinery exi
     deferred (pT 0.8 offline target). P2_PORT_MAP.md (660 lines) written by the
     prep agent (also caught: plan-section-3 K3/K4 kernels never built — simpler
     pipeline made them unnecessary).
-  - AWAITING MAINTAINER: bless the freeze candidate (or an alternate from the
-    record) -> tag the config, merge fanout5/final code into prototype/, formal
-    P1 close-out, START P2.
+  - MAINTAINER BLESSED THE FREEZE (2026-08-02). P1 CLOSED: frozen sources merged
+    into prototype/ (commit cd07ebb531a) and re-verified there (eff .8129, dup
+    .0518, fake .0463, d510 72/285); P2_PORT_MAP.md carries the freeze addendum
+    (fa3a164f7fb). prototype/ is the reference implementation from here on.
+- **P2 LANDING LOG (starts 2026-08-02; phases per P2_PORT_MAP.md section 5):**
+  - **P2.0 LANDED (commit 2635299103f): incidence layer behind
+    useChainTracking=false.** New ChainNodes (dense T3 compaction) +
+    ChainIncidence SoAs (CSR; two instances of one layout - the port map's
+    single 6-column layout is impossible, SoA columns share one size); K1a =
+    4 atomicAdds in the CreateTriplets accept path behind if constexpr (OFF
+    instantiation compile-time identical); K0/K1b/K1c in ChainGraph.h. Flag
+    plumbed CLI -> producer (default false). GATES: bit-identity OFF AND ON
+    (442-branch --allobj vs pristine-rebuilt baseline: 0/58,923,663 mismatches;
+    independently re-verified pre-commit); CSR invariants pass on CPU and CUDA
+    (degree sums, monotonicity, exact permutations); E = 88.5k/evt matches the
+    prototype PU200 scale event-by-event; T3-stage timing +0.3 ms OFF / +1.8 ON.
+    CUDA builds and RUNS (caught+fixed an alpaka memset prvalue defect via
+    make_device_view). NOTES for later phases: flag-on incidence memory
+    ~15 MB/evt (segment buffer is module-segmented with 4.7x slack; P2.6 fix =
+    compacted segment key); one extra host sync for exact ChainNodes sizing
+    (removable by nTotalTrips oversizing if syncs bind); machine timing
+    resolution is +-10-20 ms/evt run-to-run - stage-level timing is the usable
+    gate metric, not totals. Pre-existing CPU/GPU T3-count difference confirmed
+    NOT ours (CSR self-consistent per backend).
 - **pLS SELF-CLEANING CONFIG MATCHING (maintainer requirement, 2026-08-02):** LST's
   pLS dedup = ONE kernel (CheckHitspLS) at TWO sites, both gated by one flag:
   first pass in pixelLineSegmentCleaning() (LSTEvent.dev.cc:1044), second stricter
