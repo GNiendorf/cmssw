@@ -1544,3 +1544,5 @@ we get there; do not treat P5/P6 as booked upside. Below-T3 graph-ification: jud
 ROI (LS-graph edges == the uncut T3 candidate set: 10-100x compute for less per-node
 information); the surgical alternative if formation gaps demand it = new LS-level BRIDGE
 edge types inside the existing chain formalism, not LS nodes.
+
+**ANCHOR DECISION (maintainer, 2026-08-01): f2 (displaced-max) declared the working anchor** over f4 (min-fake) — displaced surplus is the mission; f4 stands as the proof point that every-metric-beats-LST is reachable flags-only.
