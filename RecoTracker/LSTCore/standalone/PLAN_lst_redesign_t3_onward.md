@@ -1643,6 +1643,64 @@ LATER separate pass (same prototype, jet-enriched ntuple) once the machinery exi
     levers explicitly for maintainer veto. ROADMAP CONFIRMED: M19 freeze -> P2
     integration into LST (nail timing + physics performance there) -> THEN the
     other samples (cube sample, jet sample) and further tuning with them in mind.
+- **2026-08-02 M19 CAPSTONE COMPLETE (18 agents, 0 errors; fanout5/*; FREEZE
+  CANDIDATE DELIVERED):**
+  - RECON REWROTE THE DUP MAP: 49.2% of dup-flagged TCs sit at |eta|>2.5 where our
+    output is BIT-IDENTICAL to LST (carried pLS-pLS; untouchable). The real window
+    is 1.5-2.5. ONE CELL = the whole gap: OT+OT chain-chain (+0.0060 dup pts;
+    biggest sub-cell = attach-upgraded-chain vs bare chain sh1-2). Mechanism =
+    ALTERNATE-HIT duplication (two full-length chains on one sim from disjoint
+    hits on the same layers; claim map is hit-row-keyed so alternates are free) —
+    NOT fragmentation. Purity wall re-measured ON THE FLAGSHIP: no pair shares >=3
+    OT hits (2-rung MD wall); share=2 purity is 5.5-7.1x better in the window
+    (.44-.57) than barrel (.08) — shorter-chain hypothesis CONFIRMED. -W is
+    DISCRETE (-H 1 owner-hit denominator): only 0.25/0.20/0.15 exist; -W 0.50 was
+    inert all along. OT+pLS cell: proto BETTER than LST (-225 in window; attach
+    contention already beats LST's own pixel dup handling). Length metric mix-
+    artifact quantified and policed (final agent refuted its own input's
+    standalone length claim — band braid LOSES delivered transition hits alone).
+  - ADOPTED into the freeze (skeptic-confirmed + auditor-clean only): ex_dupcc
+    band-aware braid + per-band claim tolerance (-WE 0.20 -WZ 1.5 -FBC 0; the
+    |eta|>=1.5-gated -W 0.20 keeps the FULL window benefit at ZERO displaced cost;
+    edge exact at 1.5), ex_extend chain extension (-EX 1 -EXW 0.25 -EXR 2.0
+    -EXS 1; real hit recovery), ex_trim -L 3.0 (flags-only), RETRAINED r2 attach
+    head at -a 6.875 (the only free-efficiency source; pays for the rest).
+    REJECTED with measured reasons: dupwin (identical cell, identical depth,
+    strictly dominated by the braid), lenorder (dominated by flags-only point,
+    does not stack), twoway (built, sizing gate met at 32 sims, fails dup at
+    every point — measured no-go), EDGE RETRAIN (head improved as T4-trace
+    predicted but every operating point breaks a floor + costs length — honest
+    no-go; dxy[10,30) stays the declared open item for the jet/cube round).
+    Carried-pT3 cell: EMPTY by construction (dropPartOfPT3 crosscleans upstream;
+    do not re-scan).
+  - **FREEZE CANDIDATE** = FLAGSHIP + "-a 6.875 -WE 0.20 -WZ 1.5 -FBC 0 -EX 1
+    -EXW 0.25 -EXR 2.0 -EXS 1 -L 3.0" on the r2-head binary (fanout5/final/bin/
+    chainproto_r2, md5 8daf3176; dual-head build deterministic via fn_build.sh;
+    patches/ re-appliable to a fresh golden copy with zero fuzz):
+    dup .05708 -> **.05183** (91% of the LST gap closed); window 1.5-2.5 .0778 ->
+    .0603 vs LST .0654 — BELOW LST in every 0.25 bin 1.5-2.5 (1.5-3.0: .0843 vs
+    LST .0877); nhitOT 9.895/9.886/3.467 (+0.101/+0.188/+0.050); d510 IMPROVES
+    71 -> 72/285; fake .04633 (free -0.0011); every hard floor holds; timing
+    +0.86 ms/evt solo. Trade as stated: -7 eff sim tracks in-sample (51
+    discordant pairs, z=-0.98 — NOT statistically established), -2 v1030, -1 d15
+    tracks. **TRUE-OOS (349 events): every gain transfers, the cost does not** —
+    dup -0.00559, window -0.01803, nhitOT +0.100/+0.187/+0.045, fake -0.00105,
+    eff +1 track (the in-sample -7 reverses). vs LST on the same OOS events: dup
+    +0.00011 = AT LST PARITY (flagship was +0.0057), window/endcap BELOW LST,
+    v510 +0.0797 d15 +0.0662 held. McNemar per band + mix-free length + extension
+    purity + fragility + solo timing all in fanout5/final/FREEZE_RECORD.txt (506
+    lines, 14 sections). Curves: performance/m19_freeze_*/ incl. TC_avgOTlen_eta.
+  - STANDING CAVEATS carried into the offer (from the record): dxy[10,30) .0256
+    vs LST .0470 declared regression (edge-retrain no-go; jet/cube-round item);
+    pT3 class + bare pLS are LST rows carried verbatim; edge/chain3/a2 heads saw
+    the OOS events in training (attach r2 + all cuts are clean-OOS); d510/d15
+    floors are 1-track-granularity quantities; CheckHitspLS config matching
+    deferred (pT 0.8 offline target). P2_PORT_MAP.md (660 lines) written by the
+    prep agent (also caught: plan-section-3 K3/K4 kernels never built — simpler
+    pipeline made them unnecessary).
+  - AWAITING MAINTAINER: bless the freeze candidate (or an alternate from the
+    record) -> tag the config, merge fanout5/final code into prototype/, formal
+    P1 close-out, START P2.
 - **pLS SELF-CLEANING CONFIG MATCHING (maintainer requirement, 2026-08-02):** LST's
   pLS dedup = ONE kernel (CheckHitspLS) at TWO sites, both gated by one flag:
   first pass in pixelLineSegmentCleaning() (LSTEvent.dev.cc:1044), second stricter
