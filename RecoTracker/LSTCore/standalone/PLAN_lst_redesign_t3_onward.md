@@ -1545,4 +1545,20 @@ ROI (LS-graph edges == the uncut T3 candidate set: 10-100x compute for less per-
 information); the surgical alternative if formation gaps demand it = new LS-level BRIDGE
 edge types inside the existing chain formalism, not LS nodes.
 
+- **2026-08-02 B3 CASCADE COMPLETED (fanout2/b3_edgecascade; merged behind -E3, default
+  off, bit-exact):** the 3-class edge head's +0.055 displaced AUC is REAL at edge level
+  (+12 pts displaced edge admission at matched fake; parity 8.6e-6) but **does NOT
+  propagate to chain-level displaced efficiency: K6 mutual-best welding absorbs the
+  extra eligible edges** (winners rarely change; extra chains lose the claim). -ED
+  measured as a fake/length lever, not displaced. HOWEVER the gate co-retrain revived
+  two dead levers: **-Z (exempt-T4 dca floor) and -MD (exempt-5+ displaced rescue,
+  alive on the B3 gate's .909 exempt AUC)** -> alternative anchor b3_k14: dup .0553
+  (-.005 vs f2), fake .0476, dxy[10,30) .0321 (NEW RECORD, +37%), dxy[1,5) .5483
+  (record), test-60 beats baseline on EVERY band — but dxy[5,10) -.021/vxy[10,30) -.010
+  vs f2 -> net surplus below f2; **f2 REMAINS anchor per displaced-dominance.**
+  Post-M16 protocol (mandatory): replacement modes change chain survival -> THIRD gate
+  retrain (dump+train+parity ~15 min cycle, b3_calibrate.py maps thresholds), then
+  re-scan -Z/-MD/-ED and the k-shape. Barrel length is now the binding constraint on
+  the displaced frontier, not fake.
+
 **ANCHOR DECISION (maintainer, 2026-08-01): f2 (displaced-max) declared the working anchor** over f4 (min-fake) — displaced surplus is the mission; f4 stands as the proof point that every-metric-beats-LST is reachable flags-only.
