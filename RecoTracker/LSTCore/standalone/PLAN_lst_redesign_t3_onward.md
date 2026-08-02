@@ -1545,6 +1545,29 @@ ROI (LS-graph edges == the uncut T3 candidate set: 10-100x compute for less per-
 information); the surgical alternative if formation gaps demand it = new LS-level BRIDGE
 edge types inside the existing chain formalism, not LS nodes.
 
+- **2026-08-02 M16 GENERAL-ATTACH VALIDATION — CONDITIONAL PASS (fix in flight, M16b):**
+  - **(a) pT5-CLASS REPLACEMENT: PASSED IN EVERY BAND — the displaced-with-pixel-seed
+    claim is cashed at scale:** our attach delivers prompt +.010 over baseline's pT5
+    slice, vxy[1,5) +18% rel, vxy[5,10) 3.85x, **vxy[10,30) 98x (LST: 2 sims of 1224;
+    ours: 192)** — the maintainer's IP-blindness prediction confirmed. Candidate finder
+    displaced-flat (~0.996 prefilter eff in every stratum). General head: single 19-input
+    g1 resident (beats per-type variant on chain pairs; 79M-pair training, test-60
+    verified frozen).
+  - **(b) pT3-CLASS: NOT DELIVERED** — the head is not the limiter, the target-universe
+    economics are: 42.8k bare T3s/evt -> 6.45M pairs/evt (21x chain-only; enumeration
+    8.1 s/evt) and every affordable margin sits below the LST pT3 slice. Needs per-class
+    margin re-derivation + THE GRID PREFILTER (now HARD-BLOCKING for production, not
+    optional).
+  - **(c) pLS CONTENTION: parity holds via contention alone** (FR .0492 vs .0493); the
+    active suppress rule costs prompt and is rejected -> plsembdnn/CrossCleanpLS NOT yet
+    replaceable.
+  - **AGGREGATE FAILED — root cause located to ONE staging defect:** the -A 4 path lets
+    every theta-passing chain attach and EXCLUDES attached chains from K9 (no mutual hit
+    contention: 565 attach/evt where K9 would accept 130; attach-vs-attach braid dups
+    487 -> 12,807; bare-chain slice starved -0.24 displaced). Judge: "everything else is
+    downstream of that one defect." **M16b fix in flight: attach offered only to
+    K9-ACCEPTED chains (in-place upgrade of claim winners, contention inherited).**
+  - Also mandatory after M16b: THIRD gate retrain + -Z/-MD/-ED re-scan (B3 protocol).
 - **2026-08-02 B3 CASCADE COMPLETED (fanout2/b3_edgecascade; merged behind -E3, default
   off, bit-exact):** the 3-class edge head's +0.055 displaced AUC is REAL at edge level
   (+12 pts displaced edge admission at matched fake; parity 8.6e-6) but **does NOT
