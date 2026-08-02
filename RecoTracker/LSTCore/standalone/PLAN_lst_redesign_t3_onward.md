@@ -1722,6 +1722,27 @@ LATER separate pass (same prototype, jet-enriched ntuple) once the machinery exi
     resolution is +-10-20 ms/evt run-to-run - stage-level timing is the usable
     gate metric, not totals. Pre-existing CPU/GPU T3-count difference confirmed
     NOT ours (CSR self-consistent per backend).
+  - **P2.1 LANDED (commit 26e2d0d9551): graph edges + edge head (K2/K3/K5),
+    output-neutral.** GATES: edge SET exact — every (inner,outer,type) key on
+    10/10 events, E1/E2 counts exact vs prototype; **logit parity BIT-ZERO
+    (0.0e0) at matched -O2 flags** over 923,968 edges with all 27 feature
+    columns bit-identical; the shipping-flag residual (1.9e-05) is fully
+    attributed to the LST library's -march=native -Ofast (FMA contraction +
+    reduction reassociation — rebuilding EITHER side to match recovers exact
+    zero); ZERO weld-decision sign flips at thetaEdge=0 in every comparison.
+    OFF-state 139.6M values bit-identical vs pristine HEAD. CUDA compiles and
+    runs (distributions to 5-6 sig figs; per-edge CPU/GPU pairing blocked by
+    the pre-existing T3 multiplicity diff -> P2.5). Timing +25.2 ms/evt CPU
+    (K5 inference 2.3x faster per edge than the prototype under -Ofast).
+    LESSON FOR ALL REMAINING PHASES: parity references must be FLAG-MATCHED
+    builds (the p21_ref dual-flag harness pattern); the physics-invariance bar
+    under shipping flags = decision sign flips, not raw logit deltas.
+    FLAGGED: (a) pre-existing -d-build defect — ls_* CUT_VALUE branches on
+    ls_isPLS rows dump uninitialized device memory (exposed by any allocation
+    change; physics branches clean; fix in the writer someday, not mid-port);
+    (b) md_type ports the ntuple writer's ring formula verbatim (the trained-in
+    definition) which differs from geometry moduleType — reconcile at the next
+    edge-head retrain, never silently in the port.
 - **pLS SELF-CLEANING CONFIG MATCHING (maintainer requirement, 2026-08-02):** LST's
   pLS dedup = ONE kernel (CheckHitspLS) at TWO sites, both gated by one flag:
   first pass in pixelLineSegmentCleaning() (LSTEvent.dev.cc:1044), second stricter
