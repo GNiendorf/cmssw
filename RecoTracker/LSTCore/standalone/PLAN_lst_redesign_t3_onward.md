@@ -1703,3 +1703,17 @@ edge types inside the existing chain formalism, not LS nodes.
     nhitOT; -BT 3 and a length tie-breaker among near-equal quality are the levers.**
     Chain-pix residual dups are vs kept pLS rows (own no OT hits, unreachable by -PU;
     the pix-pix half of dup pairs is LST's own, invariant).
+  - **2026-08-02 MAINTAINER INFO (verified on the frozen 300-evt sample): LST's
+    dxy[10,30) delivery is MAINLY T4s** — of the 49 LST-matched sims at 10<=|dxy|<30
+    (pt>0.9, |eta|<4.5, q!=0 raw denominator), 30 are type-9 T4 TCs (61%), 19 are T5,
+    zero pixel-class. RE-SCOPES the band: previously written off as "formation-side,
+    pre-chain" — but a T4 is exactly a 2-node E2 (shared-LS) chain over the SAME T3
+    collection we read, so the band is IN-SCOPE for the chain pipeline. Our alloff
+    flood ceiling there (.0363 vs LST .0470) means ~1/4 of the band's delivery is
+    missing from the welded-chain universe under current edge/weld settings (thetaEdge
+    pruning / -L / mutual-best absorption suspects), the rest lost at gate/claim.
+    NEXT-FANOUT ANGLE (cheap, ~30 sims/300evt): per-sim trace of LST's T4-delivered
+    band sims through our pipeline — T3 nodes present? E2 edge enumerated? edge score
+    vs cut? welded intact vs absorbed? gate branch (-M4D exempt)? claim? (May need the
+    t4_* object branches / T4->T3 indices from the --allobj ntuple; reader currently
+    does not load them.)
