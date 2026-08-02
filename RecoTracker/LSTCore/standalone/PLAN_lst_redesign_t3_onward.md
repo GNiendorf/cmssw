@@ -1717,3 +1717,26 @@ edge types inside the existing chain formalism, not LS nodes.
     vs cut? welded intact vs absorbed? gate branch (-M4D exempt)? claim? (May need the
     t4_* object branches / T4->T3 indices from the --allobj ntuple; reader currently
     does not load them.)
+  - **dupcut — DECOMPOSITION DONE; dup parity NOT reachable by shared-hit rules; the
+    big cell belongs to ATTACH.** Our +.0130 dup excess vs LST splits ~50/50: (1)
+    chain-vs-chain +1535 excess TCs — but structurally UNLIKE LST's own OT dups (LST:
+    near-identical objects, >=8 shared hits, the 0.6*min(nHits) leftovers; ours:
+    ALTERNATIVE HIT COMBINATIONS of one track sharing only 1-3 of 10-14 hits, inside
+    the -FC/-F tolerance). PURITY WALL measured: 1-shared purity .013, 2-shared .138,
+    3-shared .498 — only >=3 separable, and that band is small. Falsified en route
+    (do not re-try): seam/junction geometry, layer complementarity, module-path /
+    anchor-hit / single-owner refinements. (2) chain-vs-bare-pLS +1496 — ZERO shared
+    OT hits (bare pLS owns none): unreachable BY CONSTRUCTION for any hit rule. 38%
+    of the cell is chains re-delivering sims whose ONLY LST TC was the pLS (zero eff
+    value, pure dup, worth ~-.0072 dup); the fix is a pLS<->chain CONTENTION rule =
+    the M16 attach machinery with finite -a + suppression (-a 999 keeps it inert now)
+    — ATTACH REVIVED AS A DUP LEVER (was rejected at M16b on efficiency grounds; must
+    be re-judged on the full triple in composition). Root cause in one line: bare
+    chains have 4x the internal dup rate of pT5s (.0380 vs .0096) because the pixel
+    seed gives pT5 a unique per-track identity the bare-chain path lacks. Zero-cost
+    lever shipped: -FCX 1 -FCE 1 (strict claim count for IP-compatible chains only,
+    displaced exempt; hit-structure only) = dup .0643 -> .0627 at flat fake, -.0004
+    eff (14 tracks; only vxy[5,10) exceeds 0.001 and that band's granularity is 1
+    track = .0016). Filed for the fake budget: -FCX 1 -FC 0 reaches fake .0430
+    (BEATS LST) at eff -.0132 — the frontier exchange rate is ~1 eff pt per dup pt.
+    pLS-vs-pLS (49% of our dup total, 6937) is LST's own, carried verbatim, invariant.
