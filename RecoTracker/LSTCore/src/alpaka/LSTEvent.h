@@ -5,6 +5,7 @@
 #include <optional>
 
 #include "RecoTracker/LSTCore/interface/LSTInputHostCollection.h"
+#include "RecoTracker/LSTCore/interface/ChainEdgesHostCollection.h"
 #include "RecoTracker/LSTCore/interface/ChainIncidenceHostCollection.h"
 #include "RecoTracker/LSTCore/interface/ChainNodesHostCollection.h"
 #include "RecoTracker/LSTCore/interface/HitsHostCollection.h"
@@ -22,6 +23,7 @@
 #include "RecoTracker/LSTCore/interface/alpaka/Common.h"
 #include "RecoTracker/LSTCore/interface/alpaka/LST.h"
 #include "RecoTracker/LSTCore/interface/alpaka/LSTInputDeviceCollection.h"
+#include "RecoTracker/LSTCore/interface/alpaka/ChainEdgesDeviceCollection.h"
 #include "RecoTracker/LSTCore/interface/alpaka/ChainIncidenceDeviceCollection.h"
 #include "RecoTracker/LSTCore/interface/alpaka/ChainNodesDeviceCollection.h"
 #include "RecoTracker/LSTCore/interface/alpaka/HitsDeviceCollection.h"
@@ -88,6 +90,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     std::optional<ChainIncidenceDeviceCollection> chainMdIncidenceDC_;  // keyed by MiniDoublet index
     std::optional<ChainIncidenceDeviceCollection> chainLsIncidenceDC_;  // keyed by Segment index
     std::optional<ChainNodesDeviceCollection> chainNodesDC_;
+    std::optional<ChainEdgesDeviceCollection> chainEdgesDC_;
 
     //CPU interface stuff
     std::optional<LSTInputHostCollection> lstInputHC_;
@@ -169,6 +172,13 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     void resetChainIncidenceCounts();
     // Host-side verification of the CSR invariants, run under the verbose statistics path.
     void chainIncidenceStatistics();
+
+    // Chain-tracking phase P2.1: K2 edge enumeration, K3 node features, K5 edge-MLP inference.
+    // Only called when useChainTracking_ is true; nothing downstream consumes ChainEdges yet.
+    void buildChainEdges();
+    // Optional parity sidecar, enabled by the LST_CHAIN_EDGE_DUMP environment variable. Writes
+    // the per-event edge set and logits to a binary file and touches no ntuple branch.
+    void dumpChainEdges();
 
     unsigned int getNumberOfChainNodes() const { return nChainNodes_; }
     unsigned int getNumberOfChainE1Edges() const { return nChainE1Edges_; }

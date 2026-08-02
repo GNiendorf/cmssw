@@ -9,6 +9,15 @@
 
 namespace lst {
 
+  struct Params_ChainNode {
+    // Frozen node-feature contract of the edge head (prototype/Features.h, kNodeFeat = 13):
+    //  0 kappaSigned  1 log10R  2 tanLambda  3 chordEta  4 dphi01  5 dz01  6 dz12
+    //  7 drt01  8 drt12  9 innermostLayer  10 nBarrel  11 nPS  12 fakeScoreT3
+    // 13 + 13 + 14 edge floats == edgemlp::kInput == 40. Do not reorder.
+    static constexpr int kFeatures = 13;
+    using ArrayFxFeat = edm::StdArray<float, kFeatures>;
+  };
+
   // Dense triplet-node view used by the chain-tracking graph (port map phase P2.0, stage K0/K1c).
   //
   // LST stores triplets per-lower-module with gaps (ObjectRanges::tripletModuleIndices gives the
@@ -21,12 +30,23 @@ namespace lst {
   // every triplet has exactly one first MD, one last MD, one inner Segment and one outer Segment.
   //
   // The collection is allocated with exactly nNodes rows, so metadata().size() is the node count.
+  //
+  // The feature block is phase P2.1 (stage K3). It is stored rather than recomputed per edge
+  // because every node is read by ~4 edges on average (E ~ 2 * nNodes, each edge touching two
+  // nodes), so recomputing would triple the transcendental work for 2.9 MB of savings.
+  // The four chord-angle columns are the per-node quantities the EDGE feature build needs
+  // (prototype/Features.cc computeEdgeFeatures hoists exactly these out of the edge loop).
   GENERATE_SOA_LAYOUT(ChainNodesSoALayout,
-                      SOA_COLUMN(uint32_t, tripletIndex),   // dense node index -> sparse triplet index
-                      SOA_COLUMN(uint32_t, mdT3OutItems),   // payload of ChainIncidence(MD).t3OutOffsets
-                      SOA_COLUMN(uint32_t, mdT3InItems),    // payload of ChainIncidence(MD).t3InOffsets
-                      SOA_COLUMN(uint32_t, lsT3OutItems),   // payload of ChainIncidence(LS).t3OutOffsets
-                      SOA_COLUMN(uint32_t, lsT3InItems))    // payload of ChainIncidence(LS).t3InOffsets
+                      SOA_COLUMN(uint32_t, tripletIndex),  // dense node index -> sparse triplet index
+                      SOA_COLUMN(uint32_t, mdT3OutItems),  // payload of ChainIncidence(MD).t3OutOffsets
+                      SOA_COLUMN(uint32_t, mdT3InItems),   // payload of ChainIncidence(MD).t3InOffsets
+                      SOA_COLUMN(uint32_t, lsT3OutItems),  // payload of ChainIncidence(LS).t3OutOffsets
+                      SOA_COLUMN(uint32_t, lsT3InItems),   // payload of ChainIncidence(LS).t3InOffsets
+                      SOA_COLUMN(Params_ChainNode::ArrayFxFeat, features),  // K3, frozen 13-float row
+                      SOA_COLUMN(float, phiC01),  // atan2(c01y, c01x)
+                      SOA_COLUMN(float, phiC12),  // atan2(c12y, c12x)
+                      SOA_COLUMN(float, thetaC01),  // atan2(|c01_xy|, c01z)
+                      SOA_COLUMN(float, thetaC12))  // atan2(|c12_xy|, c12z)
 
   using ChainNodesSoA = ChainNodesSoALayout<>;
   using ChainNodes = ChainNodesSoA::View;

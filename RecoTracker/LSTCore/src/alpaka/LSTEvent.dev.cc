@@ -4,6 +4,7 @@
 
 #include "LSTEvent.h"
 
+#include "ChainEdges.h"
 #include "ChainGraph.h"
 #include "Hit.h"
 #include "Kernels.h"
@@ -16,7 +17,12 @@
 #include "Triplet.h"
 #include "Quadruplet.h"
 
+#include <atomic>
+#include <chrono>
+#include <cstdio>
+#include <cstdlib>
 #include <format>
+#include <mutex>
 #include <vector>
 
 using Device = ALPAKA_ACCELERATOR_NAMESPACE::Device;
@@ -25,6 +31,16 @@ using Acc1D = ALPAKA_ACCELERATOR_NAMESPACE::Acc1D;
 using Acc3D = ALPAKA_ACCELERATOR_NAMESPACE::Acc3D;
 
 using namespace ALPAKA_ACCELERATOR_NAMESPACE::lst;
+
+namespace {
+  // Optional per-kernel timing of the chain-tracking stages, enabled by LST_CHAIN_TIMING.
+  // It inserts a queue drain around each kernel, so it perturbs an asynchronous backend and is
+  // meant for stage attribution only, never for a headline number.
+  bool chainTimingEnabled() {
+    static bool const enabled = (std::getenv("LST_CHAIN_TIMING") != nullptr);
+    return enabled;
+  }
+}  // namespace
 
 void LSTEvent::initSync() {
   alpaka::wait(queue_);  // other calls can be asynchronous
@@ -80,6 +96,7 @@ void LSTEvent::resetEventSync() {
   chainMdIncidenceDC_.reset();
   chainLsIncidenceDC_.reset();
   chainNodesDC_.reset();
+  chainEdgesDC_.reset();
   nChainNodes_ = 0;
   nChainE1Edges_ = 0;
   nChainE2Edges_ = 0;
@@ -585,6 +602,7 @@ void LSTEvent::createTriplets() {
 
   if (useChainTracking_) {
     buildChainIncidence();
+    buildChainEdges();
   }
 
   if (objectsStatistics_) {
@@ -605,6 +623,9 @@ void LSTEvent::resetChainIncidenceCounts() {
 }
 
 void LSTEvent::buildChainIncidence() {
+  bool const timing = chainTimingEnabled();
+  auto const tStart = std::chrono::steady_clock::now();
+
   // K0. Compact the module-segmented triplet store into a dense node numbering.
   auto moduleNodeOffsets_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, nLowerModules_ + 1);
   auto nNodes_buf_d = cms::alpakatools::make_device_buffer<uint32_t>(queue_);
@@ -674,6 +695,12 @@ void LSTEvent::buildChainIncidence() {
   alpaka::wait(queue_);
   nChainE1Edges_ = *nE1_buf_h.data();
   nChainE2Edges_ = *nE2_buf_h.data();
+
+  if (timing) {
+    alpaka::wait(queue_);
+    double const ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - tStart).count();
+    lstWarning(std::format("[CHAIN TIMING] K0+K1 incidence {:.3f} ms", ms));
+  }
 
   if (objectsStatistics_) {
     chainIncidenceStatistics();
@@ -770,6 +797,219 @@ void LSTEvent::chainIncidenceStatistics() {
   unsigned int const e1 = checkFamily("MD/E1", mdInc, nodes.mdT3OutItems(), nodes.mdT3InItems());
   unsigned int const e2 = checkFamily("LS/E2", lsInc, nodes.lsT3OutItems(), nodes.lsT3InItems());
   lstWarning(std::format("[CHAIN] nodes(nT3)={} E1={} E2={} E={}", nChainNodes_, e1, e2, e1 + e2));
+}
+
+void LSTEvent::buildChainEdges() {
+  // Phase P2.1. K3 fills the frozen node-feature rows, K2 enumerates the exactly-counted edge
+  // list, K5 builds the edge features in registers and scores them with the edge head. Nothing
+  // reads the result yet: this phase is measurement only.
+  if (nChainNodes_ == 0)
+    return;
+
+  auto const chainFlat_workDiv = cms::alpakatools::make_workdiv<Acc1D>(max_blocks, 256);
+
+  bool const timing = chainTimingEnabled();
+  auto stamp = [&]() {
+    if (timing)
+      alpaka::wait(queue_);
+    return std::chrono::steady_clock::now();
+  };
+  auto const t0 = stamp();
+
+  // K3 first: K5 gathers node rows, so they must exist before it runs. Both are on the same
+  // in-order queue, so no explicit synchronization is needed between the two.
+  alpaka::exec<Acc1D>(queue_,
+                      chainFlat_workDiv,
+                      ChainNodeFeatures{},
+                      modules_.const_view().modules(),
+                      miniDoubletsDC_->const_view().miniDoublets(),
+                      segmentsDC_->const_view().segments(),
+                      tripletsDC_->const_view().triplets(),
+                      chainNodesDC_->view());
+
+  auto const t1 = stamp();
+
+  // Exact allocation by pure degree arithmetic (K1b), so there is no capped reservation and no
+  // ungated-writer hazard: every row below is written by exactly one thread at its own index.
+  uint32_t const nEdges = nChainE1Edges_ + nChainE2Edges_;
+  if (nEdges == 0)
+    return;
+
+  chainEdgesDC_.emplace(queue_, nEdges);
+  if (objectsStatistics_) {
+    double mb = alpaka::getExtentProduct(chainEdgesDC_->buffer()) / 1e6;
+    memoryAllocatedMB_ += mb;
+    lstWarning(std::format("[MEM] ChainEdges: {} allocated ({:.1f} MB)", nEdges, mb));
+  }
+
+  alpaka::exec<Acc1D>(queue_,
+                      chainFlat_workDiv,
+                      ChainBuildEdges{},
+                      tripletsDC_->const_view().triplets(),
+                      segmentsDC_->const_view().segments(),
+                      chainNodesDC_->const_view(),
+                      chainMdIncidenceDC_->const_view(),
+                      chainLsIncidenceDC_->const_view(),
+                      chainEdgesDC_->view(),
+                      nChainE1Edges_,
+                      nChainE2Edges_);
+
+  auto const t2 = stamp();
+
+  // Debug tap: with LST_CHAIN_FEAT_DUMP set, K5 also stores its 14 edge floats so the parity
+  // comparison can localize a mismatch to a feature instead of only seeing the logit.
+  static std::atomic<uint32_t> featDumpEvent{0};
+  char const* featPath = std::getenv("LST_CHAIN_FEAT_DUMP");
+  bool const wantFeat = (featPath != nullptr && *featPath != '\0' && featDumpEvent.fetch_add(1) == 0);
+  auto featBuf = cms::alpakatools::make_device_buffer<float[]>(
+      queue_, wantFeat ? static_cast<size_t>(nEdges) * kChainEdgeFeatures : size_t{1});
+
+  alpaka::exec<Acc1D>(queue_,
+                      chainFlat_workDiv,
+                      ChainEdgeInference{},
+                      modules_.const_view().modules(),
+                      miniDoubletsDC_->const_view().miniDoublets(),
+                      segmentsDC_->const_view().segments(),
+                      tripletsDC_->const_view().triplets(),
+                      chainNodesDC_->const_view(),
+                      chainMdIncidenceDC_->const_view(),
+                      chainLsIncidenceDC_->const_view(),
+                      chainEdgesDC_->view(),
+                      wantFeat ? featBuf.data() : nullptr);
+
+  auto const t3 = stamp();
+  if (timing) {
+    auto ms = [](auto a, auto b) { return std::chrono::duration<double, std::milli>(b - a).count(); };
+    lstWarning(std::format("[CHAIN TIMING] nodes={} edges={} | K3 nodeFeatures {:.3f} ms | "
+                           "K2 buildEdges {:.3f} ms | K5 edgeInference {:.3f} ms | total {:.3f} ms",
+                           nChainNodes_,
+                           nEdges,
+                           ms(t0, t1),
+                           ms(t1, t2),
+                           ms(t2, t3),
+                           ms(t0, t3)));
+  }
+
+  if (wantFeat) {
+    alpaka::wait(queue_);
+    std::vector<uint32_t> inner(nEdges), outer(nEdges);
+    std::vector<uint8_t> type(nEdges);
+    std::vector<float> feats(static_cast<size_t>(nEdges) * kChainEdgeFeatures);
+    std::vector<float> nodeFeats(static_cast<size_t>(nChainNodes_) * Params_ChainNode::kFeatures);
+    auto pull = [&](auto* hostPtr, auto column, unsigned int n) {
+      auto host_view = cms::alpakatools::make_host_view(hostPtr, n);
+      auto dev_view = cms::alpakatools::make_device_view(queue_, column, n);
+      alpaka::memcpy(queue_, host_view, dev_view);
+      alpaka::wait(queue_);
+    };
+    auto ev = chainEdgesDC_->view();
+    pull(inner.data(), ev.inner(), nEdges);
+    pull(outer.data(), ev.outer(), nEdges);
+    pull(type.data(), ev.type(), nEdges);
+    {
+      auto host_view = cms::alpakatools::make_host_view(feats.data(), feats.size());
+      alpaka::memcpy(queue_, host_view, featBuf);
+      alpaka::wait(queue_);
+    }
+    {
+      static_assert(sizeof(Params_ChainNode::ArrayFxFeat) == sizeof(float) * Params_ChainNode::kFeatures,
+                    "node feature rows must be densely packed for the debug dump");
+      auto host_view = cms::alpakatools::make_host_view(
+          reinterpret_cast<Params_ChainNode::ArrayFxFeat*>(nodeFeats.data()), nChainNodes_);
+      auto dev_view = cms::alpakatools::make_device_view(queue_, chainNodesDC_->view().features(), nChainNodes_);
+      alpaka::memcpy(queue_, host_view, dev_view);
+      alpaka::wait(queue_);
+    }
+
+    std::FILE* f = std::fopen(featPath, "wb");
+    if (f != nullptr) {
+      auto put32 = [&](uint32_t v) { std::fwrite(&v, sizeof(v), 1, f); };
+      put32(nChainNodes_);
+      put32(static_cast<uint32_t>(Params_ChainNode::kFeatures));
+      std::fwrite(nodeFeats.data(), sizeof(float), nodeFeats.size(), f);
+      uint32_t nKept = 0;
+      for (uint32_t e = 0; e < nEdges; ++e)
+        nKept += (type[e] != 0);
+      put32(nKept);
+      put32(static_cast<uint32_t>(kChainEdgeFeatures));
+      for (uint32_t e = 0; e < nEdges; ++e) {
+        if (type[e] == 0)
+          continue;
+        put32(inner[e]);
+        put32(outer[e]);
+        put32(type[e]);
+        std::fwrite(&feats[static_cast<size_t>(e) * kChainEdgeFeatures], sizeof(float), kChainEdgeFeatures, f);
+      }
+      std::fclose(f);
+    }
+  }
+  dumpChainEdges();
+}
+
+void LSTEvent::dumpChainEdges() {
+  // Parity sidecar for the P2.1 gate. Off unless LST_CHAIN_EDGE_DUMP names an output file; the
+  // ntuple and the track candidate collection are untouched either way, so the harness cannot
+  // see whether this ran. Record layout is documented in standalone/p21_ref/p21_ref_dump.cc.
+  char const* path = std::getenv("LST_CHAIN_EDGE_DUMP");
+  if (path == nullptr || *path == '\0' || !chainEdgesDC_.has_value())
+    return;
+
+  alpaka::wait(queue_);
+
+  uint32_t const nEdges = static_cast<uint32_t>(chainEdgesDC_->view().metadata().size());
+  std::vector<uint32_t> inner(nEdges), outer(nEdges);
+  std::vector<uint8_t> type(nEdges);
+  std::vector<float> logOdds(nEdges);
+
+  auto pullTo = [&](auto* hostPtr, auto column, unsigned int n) {
+    auto host_view = cms::alpakatools::make_host_view(hostPtr, n);
+    auto dev_view = cms::alpakatools::make_device_view(queue_, column, n);
+    alpaka::memcpy(queue_, host_view, dev_view);
+    alpaka::wait(queue_);
+  };
+  auto view = chainEdgesDC_->view();
+  pullTo(inner.data(), view.inner(), nEdges);
+  pullTo(outer.data(), view.outer(), nEdges);
+  pullTo(type.data(), view.type(), nEdges);
+  pullTo(logOdds.data(), view.logOdds(), nEdges);
+
+  uint32_t nE1Kept = 0, nE2Kept = 0;
+  for (uint32_t e = 0; e < nEdges; ++e) {
+    nE1Kept += (type[e] == 1);
+    nE2Kept += (type[e] == 2);
+  }
+
+  // Sequential event counter. The sidecar is only meaningful for single-stream runs, which is
+  // how the parity comparison is made.
+  static std::atomic<uint32_t> eventCounter{0};
+  uint32_t const ievt = eventCounter.fetch_add(1);
+
+  static std::mutex dumpMutex;
+  std::lock_guard<std::mutex> lock(dumpMutex);
+  std::FILE* f = std::fopen(path, (ievt == 0) ? "wb" : "ab");
+  if (f == nullptr)
+    return;
+  auto put32 = [&](uint32_t v) { std::fwrite(&v, sizeof(v), 1, f); };
+  auto put64 = [&](uint64_t v) { std::fwrite(&v, sizeof(v), 1, f); };
+  put32(0x50323145u);  // 'P21E'
+  put32(ievt);
+  put32(0u);  // run   - not known here, the comparison keys on the event order
+  put32(0u);  // lumi
+  put64(0u);  // event
+  put32(nChainNodes_);
+  put32(nChainE1Edges_);
+  put32(nChainE2Edges_);
+  put32(nE1Kept);
+  put32(nE2Kept);
+  for (uint32_t e = 0; e < nEdges; ++e) {
+    if (type[e] == 0)
+      continue;
+    put32(inner[e]);
+    put32(outer[e]);
+    put32(type[e]);
+    std::fwrite(&logOdds[e], sizeof(float), 1, f);
+  }
+  std::fclose(f);
 }
 
 void LSTEvent::createTrackCandidates(bool no_pls_dupclean, bool tc_pls_triplets) {
