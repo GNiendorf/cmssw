@@ -1585,3 +1585,20 @@ edge types inside the existing chain formalism, not LS nodes.
   the displaced frontier, not fake.
 
 **ANCHOR DECISION (maintainer, 2026-08-01): f2 (displaced-max) declared the working anchor** over f4 (min-fake) — displaced surplus is the mission; f4 stands as the proof point that every-metric-beats-LST is reachable flags-only.
+- **2026-08-02 M16b — STAGING DEFECT ELIMINATED; THE REAL QUESTION EXPOSED:** attach
+  resolved on K9-accepted chains only (claim byte-identical across all attach settings);
+  attach-vs-attach braid dups 10292 -> ~135 (76x); aggregate dup .0995 -> .0588 (below
+  anchor); attach cost 450 -> 133-198 ms/evt. NEW STRUCTURAL FINDING: **ctl_noatt
+  (wholesale pT5-row replacement, attach never fires) is the BEST replacement config**
+  (eff .8017, vxy[5,10) = anchor, vxy[10,30)/dxy[1,5) > anchor, fake .0536) — the chain
+  slice ALONE re-delivers the pixel classes displaced sims; every attachment on top is
+  aggregate-negative because attach only PREPENDS pixel hits (dilutes displaced matches,
+  adds no OT evidence; -D4 tightening monotonically restores displaced to anchor).
+  Class gate now a hard trade vs aggregate (class prompt saturates .5385 vs .5504 gate —
+  the M16 "PASS" was a flood artifact). MAINTAINER DECISION TEED UP: does the pixel-class
+  LABEL matter if the sims are delivered bare? Remaining aggregate gap of authentic mode:
+  -1.5 pts prompt vs hybrid anchor (and -1.2 vs LST) — recovery paths: (1) MANDATORY
+  third gate retrain on the new survival profile (claim 166 -> 1004 chain TCs/evt — the
+  gate is scoring a 6x different population with stale training), (2) recon the lost
+  prompt sims (attach-with-REMATCH if match-fails dominate). -RPS rejected again
+  (eff-dominant rule). pT3 class unchanged (grid-blocked).
