@@ -1774,3 +1774,30 @@ edge types inside the existing chain formalism, not LS nodes.
     tuned on the STALE 2-class penalty and -BK 1 makes alpha nearly flat; -F 0.20
     interacts with dupcut's -FCX/-FCE. The composed descent must re-establish, not
     assume, these operating points.
+  - **okretrain — NOT the predicted null: found the order-key MECHANISM and a second
+    passing solution.** Root cause sharpened: the a2 penalty max(0,-gateLogit) only
+    fires on NEGATIVE logits, and the resident head marks just 4.77% of the ranked
+    field negative (with tail AUC .598) — the order key was NEAR-INERT and -B
+    saturated (a2 at -B 40 vs -B 160: identical .8019; alpha was never the lever;
+    okredesign's -BT 5 hinge and this finding are the SAME mechanism seen from two
+    sides: what matters is the FRACTION OF THE FIELD the penalty engages x its tail
+    ranking quality). Population correction: the key ranks the pixdrop-surviving
+    712478 chains (2375/evt, true-frac .9030 vs .6088 all-welded), not the accepted
+    1004/evt. SURVIVOR-ONLY training is the fix (22-24% negative fraction, tail AUC
+    .73): winner ve (survivor-only + matchFrac-aware target). end-to-end gain tracks
+    NEGATIVE-TAIL structure, not survivor AUC (vf worst on allAUC, best on tail —
+    overall AUC actively misleading for ranking heads). STRICT-PASS config
+    (ve head, -B 80 -F 0.299): eff .8082, vxy01 .8410 (~144/263 = 55% of the claim
+    class), fake .0474, dup .0618 — EVERY floor and ceiling passes, fake AND dup
+    both improve; NOT a trade. **-F DUP CLIFF DISCOVERED: discrete at 0.30 (the
+    exactly-3-of-10-hits claim case): -F 0.299 dup .0618 vs -F 0.30 .0646, nothing
+    between** — transfers to all configs (t5's -F 0.20 already sub-cliff). -F 0.25
+    with the RESIDENT head is worthless (-.0004 eff): the gain is entirely the
+    retrained head. ve vs okredesign -BK 1 -BT 5 head-to-head: BK .8096/.0480/.0660
+    (dup over ceiling, -BT 3/4 buy-back available) vs ve .8082/.0474/.0618 (all
+    pass) — MUTUALLY EXCLUSIVE order keys (BK ignores the 2-class head); post-M18
+    A/B on the composed stack required: BK-winner vs ve-swap (-BK 0 -B 80 -F 0.299)
+    vs a combined-penalty variant if cheap. Process note: variant builds silently
+    overwrote bin/chainproto -> mislabeled controls; agent caught it, rebuilt
+    per-variant binaries, re-ran controls (the -B saturation result), deleted bad
+    outputs.
