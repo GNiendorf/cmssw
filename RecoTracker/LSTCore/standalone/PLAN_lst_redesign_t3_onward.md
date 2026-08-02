@@ -1511,6 +1511,57 @@ LATER separate pass (same prototype, jet-enriched ntuple) once the machinery exi
   displaced-with-pixel-seed population is a structural upside to CLAIM, not just parity
   to hold (maintainer point, 2026-08-01)**; (c) pLS dup-clean/suppress parity
   is then subsumed by the contention rule's A/B.
+- **2026-08-02 M18 — COMPOSITION WORKFLOW (14 agents: merge + 4 verifiers + 2 scanners
+  + descent + attach + 3-agent panel + T4 trace + featgate; fanout4/compose*):**
+  - MERGE: all five M17 lever sets in ONE tree (fanout4/compose), 5 acceptance gates
+    bit-exact (all 29 metrics identical to each sibling's own measurement; defaults
+    byte-identical to the anchor incl. per-event counters). Code skeptic: CONFIRMED
+    (only low-risk latent traps: -FS is a silent no-op for strict chains under
+    -FCX 1 — shareParams overrides only maxClaimedFrac; -ZBA silently inert outside
+    -G 6; tc_dbg* branches unconditional).
+  - FRONTIER (in-sample 300evt / test-60): effmax ds_tt05 eff .8137/.8116 (LST
+    .8136/.8122 = PARITY, +4/-3 sims), fake .0471/.0446, dup .0653/.0636; balanced
+    ds_tt12 .8128/.8101, .0475/.0452, .0631/.0610; ratemin bal .8115/.8090,
+    .0481/.0458, .0622/.0601. ALL displaced bands vxy>=1 far above LST in and out of
+    sample (OOS v1030 .7435 vs .6391, d15 .6127 vs .5392). Composition NON-ADDITIVITY:
+    the best stack = BK + t5-flags with -B kept at 10 (cs1_bkt5; -B 30 under BK is
+    worse) + cs2 recentered -ZM4D 1.2 -ZM4 -0.5 (the g3 -ZM4D 99 branch-erase was
+    DROPPED in composition — the g3 verifier found solo-g3 breaches ALL five
+    displaced floors, which the recentering fixed organically).
+  - ATTACH CONTENTION: adopt finite -a 8 -RPS 1 -RD 1 -> dup -.0061 (47% of the
+    dup gap), fake EXACTLY neutral, eff +.0002, only vxy[10,30) pays -.0016.
+    MECHANISM: attach-side eff delta crosses zero at head precision ~0.96 — correct
+    attaches RESCUE borderline TCs across the 0.75 boundary (7/10 + 4 pix = 11/14 =
+    .786); wrong quad kills (10/14=.714), wrong triplet survives (10/13). g1 head
+    training gap: 12 displaced true pairs vxy>=1, ZERO >=5 (retrain item).
+  - T4 TRACE (dxy[10,30)): upstream CLEAN (30/30 nodes present, 30/30 E2 edges
+    enumerated); dominant loss = EDGE MLP DISCRIMINATION (17/30 below -e 0, median
+    true-edge score -0.53; positives are 95.7% prompt, targets vxy 16-53cm) + ~4/5
+    weld thefts are E2-vs-E2 misranking. FIX: retrain edge head with E2-aware
+    displacement-reweighted positives (or dedicated E2 head); do NOT lower thetaEdge.
+  - FEATGATE: RETIRED BY MEASUREMENT — eta/tanLambda/barrelFrac (+dca significance)
+    gain only +0.0005 transition-band mX (bar +0.005) and REGRESS mD; band levers
+    stay as the transition fix.
+  - PANEL BLOCKS THE MAINTAINER OFFER (all numbers confirmed, framing/completeness
+    failed): (1) FLAGSHIP NEVER RUN — trim winner and attach winner tuned separately,
+    never composed in one run; (2) NO CURVES (standing rule violated, zero plots);
+    (3) test-60 is a SUBSET of the tuning 300 — not truly out-of-sample; true OOS =
+    the 349 non-overlapping salvage events; (4) floors are 1-3-track decisions, no
+    uncertainties stated (dxy[5,10) denom 285); (5) dxy[10,30) .0256 vs LST .0470
+    a silent universal regression (now in-scope; edge retrain is the fix); (6)
+    LENGTH rule failed by all three configs in all regions (effmax -0.79 barrel
+    hits; ratemin -0.28) AND the -TT<1 trim regime is physics-suspect (r<1 trims
+    that WORSEN the fit; tt12's -TT 1.2 is the valid regime); (7) okretrain ve head
+    stranded (never exported into compose) — A/B still owed; (8) -FS keeper never
+    composed (and has the latent no-op trap); (9) ~265-280 ms/evt added CPU
+    unreported, attach ~200 ms dominant (grid prefilter = the known P2 answer);
+    (10) mode framing: only the pT5 class is replaced; pT3 + bare pLS are LST rows
+    carried verbatim — must be stated in any offer.
+  - M18b CLOSEOUT (required before maintainer offer): run the ACTUAL flagship
+    (composed stack + trim + attach) in one binary; ve-head A/B on it; -FS probe
+    (after the no-op fix or documented); full curve sets for the named configs;
+    score on the 349 true-OOS events; state uncertainties; length decision via the
+    -TT>=1 regime; timing table in the offer.
 - **pLS SELF-CLEANING CONFIG MATCHING (maintainer requirement, 2026-08-02):** LST's
   pLS dedup = ONE kernel (CheckHitspLS) at TWO sites, both gated by one flag:
   first pass in pixelLineSegmentCleaning() (LSTEvent.dev.cc:1044), second stricter
