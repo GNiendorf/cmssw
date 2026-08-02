@@ -544,6 +544,28 @@ vxy[10,30) 98×); attach stage wall time (target ≤ 10 ms CPU, ≤ 0.1 ms GPU);
 (−.0060 measured offline, identical on all three trims).
 *Revert: `attachReplacePT5 = false` → the carried pixel rows come back and no chain upgrades.*
 
+### Phase P2.4b — pT3-class replacement via the general attach (NEW, 2026-08-02; maintainer approved the routing)
+The general attach head is ALREADY trained on both target types (chains AND bare T3s;
+targetType is an input). The bare-T3 side — which replaces the pT3 class — was blocked at M16
+purely by candidate-finding volume (~43k bare-T3 targets/evt -> ~6.5M analytic-prefilter
+pairs/evt, ~200x the chain-target load), not by physics. P2.4's grid prefilter removes that
+blocker. Sequence:
+1. After the grid is superset-verified for chain targets (P2.4), extend the SAME offline
+   verification to bare-T3 targets and measure the real per-event candidate volume.
+2. Re-run the M16 bare-T3 replacement A/B offline at the now-feasible cost (the -AT3/-RT3
+   machinery exists in the M16 tree; retrain/refresh the head on grid-selected pairs if the
+   candidate distribution shifted), judged per the maintainer protocol: full triple + attach
+   confusion matrix + displaced strata within the pT3-class slice.
+3. Only on an offline PASS: flip the class in production (bare-T3 attach delivers pT3-class
+   TCs; contention retires the seed rows), then DELETE the pT3 builder, its pixel map, and
+   pt3dnn.
+A/B gates: pT3-class per-band efficiency contribution >= baseline's (incl. displaced strata —
+LST's pT3 path is displacement-blind, so low-vxy gain is expected, not just parity); global
+triple within the frozen bars; attach stage time within the P2.4 budget.
+Kill/fallback: if the offline A/B fails, the pT3 builder stays and the deletion list shrinks
+accordingly — state it, do not force it.
+*Revert: class flip is one flag; the builder code is not deleted until the flip has soaked.*
+
 ### Phase P2.5 — the physics kinks the prototype could not validate (plan §10.3 residual risk)
 Atomic weld/claim race semantics vs the serial reference; CPU-vs-GPU score parity;
 ROCm wavefront parity (plan §6.8 — no warp-width assumptions; template on
