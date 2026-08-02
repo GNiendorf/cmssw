@@ -1562,6 +1562,25 @@ LATER separate pass (same prototype, jet-enriched ntuple) once the machinery exi
     (after the no-op fix or documented); full curve sets for the named configs;
     score on the 349 true-OOS events; state uncertainties; length decision via the
     -TT>=1 regime; timing table in the offer.
+  - **MAINTAINER REVIEW OF THE M18 CURVES (2026-08-02) — NEW STANDING PRIORITIES:**
+    "these look good overall"; **FAKE RATE DECLARED SOLVED** ("good enough" — stop
+    spending on it, never trade the remaining axes for it); **balanced is the
+    preferred config** (keeps length; effmax liked but its short length "a bummer");
+    displaced benefit "great"; integration readiness "close". THE TWO REMAINING
+    TARGETS FOR THE M19 FAN-OUT: **(1) DUP RATE OUTSIDE THE BARREL (transition +
+    endcap)** and **(2) TRACK LENGTH** — improve both without giving back eff/
+    displaced/fake. M19 candidate angles (launch after M18b lands, its flagship/OOS
+    numbers = the round baseline): (a) endcap/transition dup recon on the FLAGSHIP
+    (attach ON — the cell structure changes vs dupcut's anchor-mode matrix) then
+    targeted levers; (b) attach-head retrain (g1's displaced-pair training gap: 12
+    pairs vxy>=1, 0 >=5; higher precision moves the 0.96 crossover -> tighter -a
+    safely -> more endcap chain-vs-pLS dup removal); (c) length via ordering (length
+    tie-breaker among near-equal quality in the order key; -BK prefers shorter
+    chains = -0.15..-0.25 barrel hits measured); (d) length via assembly (chain
+    extension / justified-trim-only: fix the -TT<1 physics defect, recover terminal
+    MDs the fit supports; explore un-trim + extend-with-unclaimed-hits); (e) edge
+    head displacement retrain (the T4/dxy[10,30) fix — may ALSO weld longer
+    displaced chains = length upstream); (f) BK-vs-ve outcome integration.
 - **pLS SELF-CLEANING CONFIG MATCHING (maintainer requirement, 2026-08-02):** LST's
   pLS dedup = ONE kernel (CheckHitspLS) at TWO sites, both gated by one flag:
   first pass in pixelLineSegmentCleaning() (LSTEvent.dev.cc:1044), second stricter
