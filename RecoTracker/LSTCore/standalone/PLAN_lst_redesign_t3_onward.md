@@ -1585,6 +1585,39 @@ LATER separate pass (same prototype, jet-enriched ntuple) once the machinery exi
     MDs the fit supports; explore un-trim + extend-with-unclaimed-hits); (e) edge
     head displacement retrain (the T4/dxy[10,30) fix — may ALSO weld longer
     displaced chains = length upstream); (f) BK-vs-ve outcome integration.
+  - **2026-08-02 M18b CLOSEOUT — FLAGSHIP VERIFIED; the panel's blocks cleared:**
+    - COMPOSITION HELD, slightly better than predicted: attach add-on (-a 8 -RPS 1
+      -RD 1) moves dup -.0060 IDENTICALLY on all three trims, eff +.0003..+.0006,
+      fake ~0, displaced untouched (pure prompt-dup fix). FLAGSHIP fl_balanced:
+      eff .8132, vxy01 .8461, fake .0474, **dup .0571**, nhitOT 9.79/9.70/3.42
+      (LST .8136/.8473/.0455/.0513/10.15/10.01/3.56). fl_ratemin dup .0562 at
+      length 9.88/9.80/3.49; fl_effmax eff .8140 (above LST) at dup .0593.
+      fl_noatt reproduces ds_tt12 digit-for-digit (binary bit-compatibility).
+    - -FCX/-FCE = GENUINE NO-OP on this stack (claimCount=2 subsumes -F 0.20
+      fractional criterion) — dupcut lever retired here. -FS 0.5 -DD 4 ENGAGED but
+      BAD TRADE (+.0010 eff for +.0064 fake +.0066 dup — undoes the attach win):
+      DROPPED.
+    - BK-vs-ve: **BK-hinge SWEEPS** (.8132/.0474/.0571 vs .8129/.0478/.0582) — ve
+      retired. CODE-PATH FINDING: gateLogit (2-class a2 head) is attach FEATURE f11
+      (PixelAttach.cc:420) — -BK removes the a2 head from key+claim but NOT from
+      the attach MLP inputs (ve head changed attach deliveries -12.7% via feature
+      drift). P2 NOTE: the a2 header must ship as an attach feature provider, or
+      attach retrains without f11.
+    - TRUE-OOS (349 non-overlap events, exact (run,lumi,evt) alignment): **trade
+      profile STABLE** — fake +.0018 / dup +.0057 reproduce in-sample deltas
+      almost exactly; displaced gains as large or larger (v510 +.0812, d15
+      +.0794). CAVEAT (honest): OOS is clean for every cut/threshold + attach head
+      + ve, but edge_mlp_v3 / chain3_m12 / a2 were trained on 649 evts INCLUDING
+      these 349 — fully clean OOS needs retrained heads. LST's own numbers shift
+      between event sets (eff .8098 vs .8136) — read deltas, not absolutes.
+    - TIMING: ~265 ms/evt flat across compositions; ATTACH = 76% (~201 ms; the
+      instrument runs even at -a 999 — -a gates delivery, not scoring). Grid
+      prefilter at P2 is the answer. -FS costs +6 ms.
+    - FLOORS: d510 pinned at EXACTLY 71/285 = .2491 in every config (+0.58-track
+      margin — knife edge; losing ONE track fails). OOS v510 "fails" the 300-evt
+      bar by 1.7 tracks while beating LST by +54 tracks there (bar artifact).
+    - Flagship curves: performance/m18b_flagship_*/. OOS artifacts + 7 GB
+      oos349 ntuple in fanout4/compose_attach/.
   - **MAINTAINER DIRECTIVE (2026-08-02): M19 = the CAPSTONE round — one huge final
     search (~20 agents authorized) across ALL remaining axes before integration:**
     dup |eta| 1.5-3 (primary), track length (primary), overall efficiency "a tad"
