@@ -1752,3 +1752,25 @@ edge types inside the existing chain formalism, not LS nodes.
     track = .0016). Filed for the fake budget: -FCX 1 -FC 0 reaches fake .0430
     (BEATS LST) at eff -.0132 — the frontier exchange rate is ~1 eff pt per dup pt.
     pLS-vs-pLS (49% of our dup total, 6937) is LST's own, carried verbatim, invariant.
+  - **cheapwins — NO-RETRAIN COMPOSITION t5: +121 prompt sims with EVERY axis
+    improving vs ctl_noatt** (eff .8073, vxy01 .8399, all five displaced bands up,
+    fake .0526, dup .0636; 123 A/Bs; canonical head). Spec correction by the agent:
+    -M4/-MRI are KILL thresholds — the briefed "loosening" values would have
+    TIGHTENED (measured: -MRI 1.0 = -37 sims); scan retargeted via the recon's
+    m16r_cov.npz margin CDF (IP-T4 tail smooth to 1.5; IP-5+ PILED at the threshold
+    — knee at -MRI 0.0, saturated by -0.25). Per-lever ledger: **-TR 1 terminal trim
+    (B2) is the DOMINANT no-retrain lever, +34 sims with fake DOWN — was not even in
+    the brief**; -C25 2.0 -> 0.0 a live unscanned cell (+15 sims, knee before fully
+    off); -M4 fake-free/dup-expensive vs -MRI dup-free/fake-cheap (complementary
+    axes); -F TIGHTENED to 0.20-0.25 is the dup+fake BUYER (with -FC 1 dominating,
+    -F < 0.20 inert); -PU 0 finally costed: +9.3 sims for +.0028 dup = DOMINATED
+    (by -M4 2.5); **-PU 1 (pre-claim without braid participation) is the keeper**
+    (+4 sims ~free); -M4D -1.2 the only dxy[5,10) mover (+.0035); -OK 2 breaks
+    floors (retired again). t5 overrides on the anchor: -TR 1 -TT 0.8 -TA 1.0
+    -F 0.20 -MRI -0.5 -M4 4.0 -M4D -1.2 -PU 1 -B 30 -C25 0.0. vs LST after t5:
+    eff -.0063, vxy01 -.0074 (57% of the prompt gap closed with flags alone), fake
+    +.0071, dup +.0123. COMPOSITION CAUTIONS: t5 moves GLOBAL margins that
+    transition's g3 -Z band deltas are additive to (re-scan needed); t5's -B 30 was
+    tuned on the STALE 2-class penalty and -BK 1 makes alpha nearly flat; -F 0.20
+    interacts with dupcut's -FCX/-FCE. The composed descent must re-establish, not
+    assume, these operating points.
