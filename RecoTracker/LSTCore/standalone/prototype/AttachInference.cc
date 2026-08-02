@@ -63,8 +63,14 @@ inline float preprocess(float x, int i) {
 bool attachHeadAvailable() { return true; }
 
 float attachLogit(const float* f) {
-  static_assert(attachmlp::kInput == kAttachFeat,
-                "attach_mlp_weights.h input size does not match PixelAttach.h layout");
+  // M16: the layout grew from 18 to 19 (feature 18 = targetType) while slots 0..17 kept
+  // their definitions and order EXACTLY. A head trained on the old 18-slot layout (the
+  // M7 attach_mlp_weights.h) therefore stays valid for CHAIN targets and is fed the
+  // leading kInput features verbatim -- bit-identical to pre-M16 scoring. A head trained
+  // on the general layout has kInput == kAttachFeat and consumes targetType too. Only an
+  // OVER-long head (kInput > kAttachFeat) is a real contract violation.
+  static_assert(attachmlp::kInput <= kAttachFeat,
+                "attach_mlp_weights.h input size exceeds the PixelAttach.h layout");
 
   float x[attachmlp::kInput];
   ATTACHMLP_UNROLL_LOOP

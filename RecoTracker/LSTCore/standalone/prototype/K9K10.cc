@@ -28,12 +28,24 @@ void warnNoPixFlags() {
 
 // B4: the claim-tolerance predicate. maxClaimedItems < 0 reproduces the legacy
 // fractional test EXACTLY (same float comparison, same operand order).
-inline bool claimOk(const ArbitrationParams& params, int nClaimed, float frac) {
+inline bool claimOk(const ArbitrationParams& params, int nClaimed, float frac, bool strict = true) {
   if (params.maxClaimedItems < 0)
     return !(frac > params.maxClaimedFrac);
-  if (params.claimCountExclusive)
+  if (params.claimCountExclusive && strict)
     return nClaimed <= params.maxClaimedItems;
   return (nClaimed <= params.maxClaimedItems) || !(frac > params.maxClaimedFrac);
+}
+
+// EX_DUPCC: the same predicate with the tolerance pair passed explicitly, so a candidate in
+// the -WZ/-WN band can be priced differently from the rest. Identical operand order and
+// float comparisons to claimOk above; claimOk(p,...) == claimOkV(p.maxClaimedItems,
+// p.maxClaimedFrac, p.claimCountExclusive, ...) exactly.
+inline bool claimOkV(int maxItems, float maxFrac, bool excl, int nClaimed, float frac, bool strict) {
+  if (maxItems < 0)
+    return !(frac > maxFrac);
+  if (excl && strict)
+    return nClaimed <= maxItems;
+  return (nClaimed <= maxItems) || !(frac > maxFrac);
 }
 
 }  // namespace
@@ -42,7 +54,8 @@ void k9Arbitrate(const LSTEventData& ev,
                  const Chains& chains,
                  const ArbitrationParams& params,
                  std::vector<int>& acceptedChains,
-                 const std::vector<char>* bypassPT5Drop) {
+                 const std::vector<char>* bypassPT5Drop,
+                 std::vector<int>* ownerOut) {
   acceptedChains.clear();
   const int nChains = static_cast<int>(chains.score.size());
   const int nMD = static_cast<int>(ev.md_anchorHitIdx.size());
@@ -60,6 +73,10 @@ void k9Arbitrate(const LSTEventData& ev,
   std::vector<int> order;
   order.reserve(nChains);
   for (int c = 0; c < nChains; ++c) {
+    // M16: attached chains are pixel-backed deliveries handled through preClaimOwners.
+    if (params.excludeChain != nullptr && c < static_cast<int>(params.excludeChain->size()) &&
+        (*params.excludeChain)[c] != 0)
+      continue;
     if (chains.score[c] < params.thetaForChain(c, chains.nLayers[c]))
       continue;
     if (params.dropPixelConsumed && havePixFlags) {
@@ -70,7 +87,8 @@ void k9Arbitrate(const LSTEventData& ev,
       bool consumed = false;
       for (int k = chains.offsets[c]; k < chains.offsets[c + 1] && !consumed; ++k) {
         const int t3 = chains.items[k];
-        consumed = (ev.t3_partOfPT5[t3] && !bypassPT5) || ev.t3_partOfPT3[t3];
+        consumed = (ev.t3_partOfPT5[t3] && params.dropPartOfPT5 && !bypassPT5) ||
+                   (ev.t3_partOfPT3[t3] && params.dropPartOfPT3);
       }
       if (consumed)
         continue;
@@ -186,7 +204,7 @@ void k9Arbitrate(const LSTEventData& ev,
   // claimed slots to the maxClaimedFrac test.
   const bool pixBraid = nPix > 0 && params.preClaimMode >= 2;
 
-  const bool braid = params.braidFrac > 0.f;
+  const bool braid = params.braidFrac > 0.f || params.braidFracAlt > 0.f;
   // Owner-overlap tally, allocated once: cnt[slot] valid only for slot in touched.
   // Slot of owner o: o >= 0 -> o (chain); o <= -2 -> nChains + (-o - 2) (pixel owner).
   std::vector<int> cnt;
@@ -195,7 +213,16 @@ void k9Arbitrate(const LSTEventData& ev,
     cnt.assign(static_cast<std::size_t>(nChains) + static_cast<std::size_t>(nPix), 0);
     touched.reserve(32);
   }
-  for (int c : order) {
+  // M17 (-FS): candidates rejected by pass 1, kept in pass-1 order for the share pass.
+  const bool sharePass = params.sharePassFrac > params.maxClaimedFrac;
+  std::vector<int> deferred;
+  ArbitrationParams shareParams = params;
+  shareParams.maxClaimedFrac = params.sharePassFrac;
+
+  for (int pass = 0; pass < (sharePass ? 2 : 1); ++pass) {
+  const ArbitrationParams& pp = (pass == 0) ? params : shareParams;
+  const std::vector<int>& walk = (pass == 0) ? order : deferred;
+  for (int c : walk) {
     const int b = keyOff[c];
     const int e = keyOff[c + 1];
     const int total = e - b;
@@ -210,12 +237,34 @@ void k9Arbitrate(const LSTEventData& ev,
     const float frac = (total > 0) ? static_cast<float>(nClaimed) / static_cast<float>(total) : 0.f;
     // COMPOSED (B1 x B4): the pixel-unified claim count feeds the B4 tolerance predicate.
     // With -FC off this is bit-identical to B1's `frac > maxClaimedFrac` test.
-    if (!claimOk(params, nClaimed, frac)) {
+    // DUPCUT (-FCE): a chain flagged in strictExemptMask keeps the legacy loosen-only
+    // tolerance; everyone else obeys claimCountExclusive. nullptr = all strict (legacy).
+    // COMPOSED with the M17 (-FS) share pass: the tolerance object is the per-pass one
+    // (pp), the exempt mask is a per-chain property and is therefore pass-invariant.
+    const bool strictClaim = params.strictExemptMask == nullptr ||
+                             c >= static_cast<int>(params.strictExemptMask->size()) ||
+                             (*params.strictExemptMask)[c] == 0;
+    // EX_DUPCC: band membership is needed for both the claim tolerance and the braid.
+    const bool altBraidBand = params.braidAltMask != nullptr &&
+                              c < static_cast<int>(params.braidAltMask->size()) &&
+                              (*params.braidAltMask)[c] != 0;
+    const int cItems = (altBraidBand && params.maxClaimedItemsAlt != -2) ? params.maxClaimedItemsAlt
+                                                                        : pp.maxClaimedItems;
+    const float cFrac = (altBraidBand && params.maxClaimedFracAlt > 0.f) ? params.maxClaimedFracAlt
+                                                                        : pp.maxClaimedFrac;
+    if (!claimOkV(cItems, cFrac, pp.claimCountExclusive, nClaimed, frac, strictClaim)) {
       if (params.stats != nullptr && nPixClaimed > 0)
         ++params.stats->killedByPixFrac;
+      if (pass == 0 && sharePass)
+        deferred.push_back(c);
       continue;
     }
-    if (braid && nClaimed > 0) {
+    // EX_DUPCC: the effective owner-relative fraction is per-candidate. A candidate in the
+    // alt band (-WZ/-WN geometry mask) uses braidFracAlt; everyone else uses braidFrac.
+    // A 0 fraction disables the test for that candidate only.
+    const float bFrac =
+        (altBraidBand && params.braidFracAlt > 0.f) ? params.braidFracAlt : params.braidFrac;
+    if (braid && bFrac > 0.f && nClaimed > 0 && !(params.strictExemptBraid && !strictClaim)) {
       // Owner-relative overlap: does this candidate swallow >= braidFrac of any single
       // already-accepted owner? If so it is a welder-braid sibling, not a new track.
       touched.clear();
@@ -233,7 +282,7 @@ void k9Arbitrate(const LSTEventData& ev,
       bool killed = false, killedByPix = false;
       for (int slot : touched) {
         const int oTot = (slot < nChains) ? (keyOff[slot + 1] - keyOff[slot]) : ownedPix[slot - nChains];
-        if (oTot > 0 && static_cast<float>(cnt[slot]) >= params.braidFrac * static_cast<float>(oTot)) {
+        if (oTot > 0 && static_cast<float>(cnt[slot]) >= bFrac * static_cast<float>(oTot)) {
           killed = true;
           killedByPix = killedByPix || (slot >= nChains);
         }
@@ -242,6 +291,8 @@ void k9Arbitrate(const LSTEventData& ev,
       if (killed) {
         if (params.stats != nullptr && killedByPix)
           ++params.stats->killedByPixBraid;
+        // A braid kill is a duplicate verdict, not a claim-budget verdict: it would fire
+        // identically in the share pass, so such a candidate is never deferred.
         continue;
       }
     }
@@ -249,6 +300,12 @@ void k9Arbitrate(const LSTEventData& ev,
       owner[keyItems[k]] = c;
     acceptedChains.push_back(c);
   }
+  }
+
+  // Read-only export of the final claim map (EXPLOIT chain extension). No decision above
+  // depends on it; with ownerOut == nullptr the function is byte-for-byte the legacy one.
+  if (ownerOut != nullptr)
+    *ownerOut = owner;
 }
 
 void k9ArbitrateTwoPass(const LSTEventData& ev,

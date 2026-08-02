@@ -61,15 +61,27 @@ private:
   std::unique_ptr<ChainDumpWriterImpl> impl_;
 };
 
-// K8 attach-head training dump (M7, plan 5a additive evidence): flat TTree "pairs",
-// ONE ENTRY PER PREFILTERED (accepted nLayers>=5 chain, pLS) PAIR:
-//   af_00..af_17 (Float, kAttachFeat, order = the frozen PixelAttach.h contract;
-//   exact definitions documented in PixelAttach.cc)
-//   label (Int 0/1: 1 iff the pLS shares a sim with the chain -- pLS_simIdxAll, full
-//   tracking-ntuple sim rows per the EventData.h M7 rule, intersects the chain's
-//   all-member T3SimSets intersection set)
-//   chainNLayers (Int), simVxy/simPt (Float, shared-sim kinematics, accepted sims
-//   only, -999 for fake pairs), evt (ULong64)
+// K8 attach-head training dump (M7, plan 5a additive evidence; M16 GENERALIZED): flat
+// TTree "pairs", ONE ENTRY PER PREFILTERED (target, pLS) PAIR over BOTH target kinds:
+//   af_00..af_18 (Float, kAttachFeat = 19, order = the frozen PixelAttach.h contract;
+//   exact definitions documented in PixelAttach.cc; af_18 = targetType, redundant with
+//   the ttype branch on purpose -- the head consumes the feature, analysis code slices
+//   on the branch)
+//   ttype (Int, M16): 0 = ACCEPTED CHAIN target (nLayers >= 5), 1 = BARE T3 target (a T3
+//   in no K9-accepted chain). The two delivery classes of the general pLS->OT attach.
+//   label (Int 0/1: 1 iff the pLS shares a sim with the target -- pLS_simIdxAll, full
+//   tracking-ntuple sim rows per the EventData.h M7 rule, intersects the target's sim
+//   set; chain target -> the all-member T3SimSets intersection, T3 target -> that T3's
+//   own >=2/3-MD T3SimSets entry)
+//   chainNLayers (Int; 3 for every T3 target by construction)
+//   wgt (Float, M16): inverse sampling weight of the entry. 1 for every kept pair; when
+//   the caller downsamples FAKE pairs of a target kind by a stride N (volume control --
+//   the bare-T3 universe is ~35x the chain universe), the surviving fakes carry wgt = N
+//   so a weighted training loss reproduces the undownsampled fake population. TRUE pairs
+//   are NEVER downsampled (wgt always 1). Reported statistics are always computed on the
+//   FULL enumeration, never on the written subset.
+//   simVxy/simPt (Float, shared-sim kinematics, accepted sims only, -999 for fake pairs)
+//   evt (ULong64)
 // A TNamed "feature_spec" records the ordered af feature names.
 class PairDumpWriterImpl;
 
@@ -77,7 +89,14 @@ class PairDumpWriter {
 public:
   explicit PairDumpWriter(const std::string& outPath);
   ~PairDumpWriter();
-  void fillPair(unsigned long long evt, const float* f, int label, int chainNLayers, float simVxy, float simPt);
+  void fillPair(unsigned long long evt,
+                const float* f,
+                int label,
+                int chainNLayers,
+                float simVxy,
+                float simPt,
+                int ttype,
+                float wgt);
   void writeAndClose();
 
 private:

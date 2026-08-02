@@ -214,6 +214,18 @@ public:
     // the SAME quantity the -G 3/4/5 modes split on). Meta only, NOT a gate input; it
     // exists so the training loop can report AUC per -G 5 BRANCH (dca < -X vs >= -X).
     tree_->Branch("dcaXY", &dcaXY_, "dcaXY/F");
+    // M17 (third gate retrain, ctl_noatt survival profile): the two staging predicates the
+    // hybrid K9 funnel applies BEFORE the claim, dumped per chain so the training loop can
+    // restrict/weight to exactly the population whose fate the gate decides in a given
+    // replacement mode, and so the offline funnel replica can be checked against the
+    // hybrid log per event.
+    //   score   = the legacy K6 chain score (sum edge logits - lambdaLen * nLayers); the
+    //             quantity K9's theta / -U exempt thresholds cut on.
+    //   pixPT5  = 1 iff ANY member T3 carries partOfPT5 (the crossclean half -RT5 1 disables)
+    //   pixPT3  = 1 iff ANY member T3 carries partOfPT3 (the half -RT3 0 keeps ON)
+    tree_->Branch("score", &score_, "score/F");
+    tree_->Branch("pixPT5", &pixPT5_, "pixPT5/I");
+    tree_->Branch("pixPT3", &pixPT3_, "pixPT3/I");
     char name[16], leaf[16];
     for (int i = 0; i < kChainFeat; ++i) {
       std::snprintf(name, sizeof(name), "cf_%02d", i);
@@ -237,7 +249,20 @@ public:
       throw std::runtime_error("ChainDumpWriter: ChainLabels size mismatch");
 
     evt_ = ev.evt;
+    const int nT3 = static_cast<int>(ev.t3_lsIdx0.size());
+    const bool havePixFlags =
+        static_cast<int>(ev.t3_partOfPT5.size()) == nT3 && static_cast<int>(ev.t3_partOfPT3.size()) == nT3;
     for (std::size_t c = 0; c < nChains; ++c) {
+      score_ = chains.score.empty() ? -999.f : chains.score[c];
+      pixPT5_ = 0;
+      pixPT3_ = 0;
+      if (havePixFlags) {
+        for (int k = chains.offsets[c]; k < chains.offsets[c + 1]; ++k) {
+          const int t3n = chains.items[k];
+          pixPT5_ = pixPT5_ || (ev.t3_partOfPT5[t3n] ? 1 : 0);
+          pixPT3_ = pixPT3_ || (ev.t3_partOfPT3[t3n] ? 1 : 0);
+        }
+      }
       label_ = static_cast<Int_t>(labels.label[c]);
       labelOld_ = labels.labelOld.empty() ? -1 : static_cast<Int_t>(labels.labelOld[c]);
       matchFrac_ = labels.matchFrac.empty() ? -1.f : labels.matchFrac[c];
@@ -285,6 +310,9 @@ private:
   Float_t simPt_ = -999.f;
   Int_t nLayers_ = 0;
   Float_t dcaXY_ = -999.f;
+  Float_t score_ = -999.f;
+  Int_t pixPT5_ = 0;
+  Int_t pixPT3_ = 0;
   Float_t cf_[kChainFeat] = {};
 };
 
@@ -316,7 +344,9 @@ public:
 
     tree_->Branch("evt", &evt_, "evt/l");
     tree_->Branch("label", &label_, "label/I");
+    tree_->Branch("ttype", &ttype_, "ttype/I");  // M16: 0 = accepted chain, 1 = bare T3
     tree_->Branch("chainNLayers", &chainNLayers_, "chainNLayers/I");
+    tree_->Branch("wgt", &wgt_, "wgt/F");  // M16: inverse fake-downsample weight
     tree_->Branch("simVxy", &simVxy_, "simVxy/F");
     tree_->Branch("simPt", &simPt_, "simPt/F");
     char name[16], leaf[16];
@@ -334,10 +364,19 @@ public:
     }
   }
 
-  void fillPair(unsigned long long evt, const float* f, int label, int chainNLayers, float simVxy, float simPt) {
+  void fillPair(unsigned long long evt,
+                const float* f,
+                int label,
+                int chainNLayers,
+                float simVxy,
+                float simPt,
+                int ttype,
+                float wgt) {
     evt_ = evt;
     label_ = label;
+    ttype_ = ttype;
     chainNLayers_ = chainNLayers;
+    wgt_ = wgt;
     simVxy_ = simVxy;
     simPt_ = simPt;
     for (int i = 0; i < kAttachFeat; ++i)
@@ -370,7 +409,9 @@ private:
 
   ULong64_t evt_ = 0;
   Int_t label_ = 0;
+  Int_t ttype_ = 0;
   Int_t chainNLayers_ = 0;
+  Float_t wgt_ = 1.f;
   Float_t simVxy_ = -999.f;
   Float_t simPt_ = -999.f;
   Float_t af_[kAttachFeat] = {};
@@ -380,9 +421,15 @@ PairDumpWriter::PairDumpWriter(const std::string& outPath) : impl_(std::make_uni
 
 PairDumpWriter::~PairDumpWriter() = default;
 
-void PairDumpWriter::fillPair(
-    unsigned long long evt, const float* f, int label, int chainNLayers, float simVxy, float simPt) {
-  impl_->fillPair(evt, f, label, chainNLayers, simVxy, simPt);
+void PairDumpWriter::fillPair(unsigned long long evt,
+                              const float* f,
+                              int label,
+                              int chainNLayers,
+                              float simVxy,
+                              float simPt,
+                              int ttype,
+                              float wgt) {
+  impl_->fillPair(evt, f, label, chainNLayers, simVxy, simPt, ttype, wgt);
 }
 
 void PairDumpWriter::writeAndClose() { impl_->writeAndClose(); }

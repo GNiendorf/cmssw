@@ -1,6 +1,7 @@
 #include "OutputWriter.h"
 
 #include <algorithm>
+#include <cstdlib>
 
 #include "TFile.h"
 #include "TNamed.h"
@@ -8,7 +9,18 @@
 
 namespace {
 constexpr float kMatchFrac = 0.75f;
+
+// DUPCUT diagnostics: per-TC outer-tracker hit rows, written only when the
+// PROTO_DUMP_TCHITS environment variable is set to a non-zero value. Off by
+// default, so every run without it is bit-identical to the legacy writer.
+bool dumpTcHits() {
+  static const bool on = [] {
+    const char* v = std::getenv("PROTO_DUMP_TCHITS");
+    return v != nullptr && v[0] != '\0' && v[0] != '0';
+  }();
+  return on;
 }
+}  // namespace
 
 class OutputWriterImpl {
 public:
@@ -39,9 +51,25 @@ public:
 
     // Diagnostics extras (hybrid mode; empty in other modes). Harmless to the harness —
     // it reads branches by name — and enable offline duplicate decomposition:
-    // per-TC full-sim-list match rows + chain/baseline provenance.
+    // per-TC full-sim-list match rows + provenance. tc_isChain carries the M16 OutDeliv
+    // code (0 carried / 1 chain / 2 attach-pT5 / 3 attach-pT3); values 0 and 1 are the
+    // legacy semantics verbatim, so every pre-M16 file and legacy-mode run is unchanged.
     tree_->Branch("tc_simIdxAll", &tc_simIdxAll_out_);
     tree_->Branch("tc_isChain", &tc_isChain_);
+    if (dumpTcHits())
+      tree_->Branch("tc_hitOT", &tc_hitOT_);
+    // FANOUT4 transition diagnostics (see OutTC in OutputWriter.h). Extra branches only;
+    // the efficiency harness reads by name and never sees them.
+    tree_->Branch("tc_dbgBr", &tc_dbgBr_);
+    tree_->Branch("tc_dbgNL", &tc_dbgNL_);
+    tree_->Branch("tc_dbgNMD", &tc_dbgNMD_);
+    tree_->Branch("tc_dbgNB", &tc_dbgNB_);
+    tree_->Branch("tc_dbgNPS", &tc_dbgNPS_);
+    tree_->Branch("tc_dbgNN", &tc_dbgNN_);
+    tree_->Branch("tc_dbgInLay", &tc_dbgInLay_);
+    tree_->Branch("tc_dbgMP", &tc_dbgMP_);
+    tree_->Branch("tc_dbgMD", &tc_dbgMD_);
+    tree_->Branch("tc_dbgDca", &tc_dbgDca_);
 
     tree_->Branch("run", &run_, "run/i");
     tree_->Branch("lumi", &lumi_, "lumi/i");
@@ -242,6 +270,26 @@ public:
       const std::vector<float>& simidxfrac = ev.tc_simIdxAllFrac.at(in_idx);
       tc_isFake_.push_back(simidx.empty() ? 1 : 0);
       tc_isChain_.push_back(0);
+      if (dumpTcHits()) {
+        // Carried-row OT content, exactly the mapping the -PU pre-claim uses:
+        // type 7 -> pT5_t5Idx -> t5_hitIndices, type 5 -> pT3_otHitIndices,
+        // type 8 -> no outer-tracker hits at all.
+        std::vector<int> oth;
+        if (type == 7 && in_idx < ev.tc_pt5Idx.size()) {
+          const int p5 = ev.tc_pt5Idx[in_idx];
+          if (p5 >= 0 && p5 < static_cast<int>(ev.pT5_t5Idx.size())) {
+            const int t5 = ev.pT5_t5Idx[p5];
+            if (t5 >= 0 && t5 < static_cast<int>(ev.t5_hitIndices.size()))
+              oth = ev.t5_hitIndices[t5];
+          }
+        } else if (type == 5 && in_idx < ev.tc_pt3Idx.size()) {
+          const int p3 = ev.tc_pt3Idx[in_idx];
+          if (p3 >= 0 && p3 < static_cast<int>(ev.pT3_otHitIndices.size()))
+            oth = ev.pT3_otHitIndices[p3];
+        }
+        tc_hitOT_.push_back(std::move(oth));
+      }
+      pushDbg(OutTC());
       accumulate(simidx, simidxfrac);
     }
 
@@ -260,7 +308,15 @@ public:
       tc_type_.push_back(tc.type);
       tc_nhitOT_.push_back(tc.nhitOT);
       tc_isFake_.push_back(simidx.empty() ? 1 : 0);
-      tc_isChain_.push_back(1);
+      tc_isChain_.push_back(tc.deliv);  // M16 delivery class; 1 for every legacy caller
+      if (dumpTcHits()) {
+        std::vector<int> oth;
+        for (size_t h = 0; h < tc.hitIdxs.size() && h < tc.hitTypes.size(); ++h)
+          if (tc.hitTypes[h] == proto::HitType::Phase2OT)
+            oth.push_back(static_cast<int>(tc.hitIdxs[h]));
+        tc_hitOT_.push_back(std::move(oth));
+      }
+      pushDbg(tc);
       accumulate(simidx, simidxfrac);
     }
 
@@ -376,6 +432,17 @@ private:
     sim_tcIdx_.clear();
     tc_simIdxAll_out_.clear();
     tc_isChain_.clear();
+    tc_hitOT_.clear();
+    tc_dbgBr_.clear();
+    tc_dbgNL_.clear();
+    tc_dbgNMD_.clear();
+    tc_dbgNB_.clear();
+    tc_dbgNPS_.clear();
+    tc_dbgNN_.clear();
+    tc_dbgInLay_.clear();
+    tc_dbgMP_.clear();
+    tc_dbgMD_.clear();
+    tc_dbgDca_.clear();
     run_ = 0;
     lumi_ = 0;
     evt_ = 0;
@@ -391,7 +458,23 @@ private:
   std::vector<int> tc_type_, tc_isFake_, tc_isDuplicate_, tc_nhitOT_;
   std::vector<int> sim_tcIdx_;
   std::vector<std::vector<int>> tc_simIdxAll_out_;  // branch "tc_simIdxAll" (hybrid diagnostics)
-  std::vector<int> tc_isChain_;                     // 1 = chain TC, 0 = kept baseline row
+  std::vector<std::vector<int>> tc_hitOT_;          // branch "tc_hitOT" (PROTO_DUMP_TCHITS)
+  std::vector<int> tc_dbgBr_, tc_dbgNL_, tc_dbgNMD_, tc_dbgNB_, tc_dbgNPS_, tc_dbgNN_, tc_dbgInLay_;
+  std::vector<float> tc_dbgMP_, tc_dbgMD_, tc_dbgDca_;
+  void pushDbg(const OutTC& t) {
+    tc_dbgBr_.push_back(t.dbgBranch);
+    tc_dbgNL_.push_back(t.dbgNL);
+    tc_dbgNMD_.push_back(t.dbgNMD);
+    tc_dbgNB_.push_back(t.dbgNB);
+    tc_dbgNPS_.push_back(t.dbgNPS);
+    tc_dbgNN_.push_back(t.dbgNNodes);
+    tc_dbgInLay_.push_back(t.dbgInLay);
+    tc_dbgMP_.push_back(t.dbgMP);
+    tc_dbgMD_.push_back(t.dbgMDm);
+    tc_dbgDca_.push_back(t.dbgDca);
+  }
+  std::vector<int> tc_isChain_;                     // OutDeliv: 0 carried, 1 chain,
+                                                    // 2 attach-pT5, 3 attach-pT3 (M16)
   unsigned int run_ = 0, lumi_ = 0;
   unsigned long long evt_ = 0;
 };

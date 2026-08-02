@@ -17,8 +17,17 @@
 extern const char* const kAttachFeatNames[kAttachFeat];
 
 struct AttachPair {
-  int chainPos = -1;  // position in the acceptedChains vector passed in
+  // M16: pairs now carry their TARGET KIND. ttype == kAttachTargetChain -> chainPos is a
+  // position in the acceptedChains vector passed in and t3Row is -1; ttype ==
+  // kAttachTargetT3 -> t3Row is a row into ev.t3_* and chainPos is -1.
+  int8_t ttype = static_cast<int8_t>(kAttachTargetChain);
+  int chainPos = -1;  // position in the acceptedChains vector passed in (chain targets)
+  int t3Row = -1;     // row into ev.t3_* (bare-T3 targets)
   int plsRow = -1;    // row into ev.pLS_*
+  // M16: unified target ordinal into the enumeration's target list (chain targets first
+  // in acceptedChains order, then bare T3s in t3-row order). Lets a caller build per-
+  // target CSR spans over a mixed pair list without re-deriving the ordering.
+  int targetOrd = -1;
   float f[kAttachFeat] = {};
 };
 
@@ -27,6 +36,8 @@ struct AttachPair {
 // params.prefDTanL and |dPhiAtInnermost| < params.prefDPhi), with all kAttachFeat
 // features computed and NaN/Inf-guarded. Pairs are emitted grouped by chainPos
 // ascending, plsRow ascending within a chain (deterministic).
+// Chain-targets-only wrapper over k8EnumeratePrefilteredPairsGeneral (empty bare mask);
+// every emitted pair has ttype == kAttachTargetChain, so the M7 callers are unchanged.
 void k8EnumeratePrefilteredPairs(const LSTEventData& ev,
                                  const Chains& chains,
                                  const std::vector<int>& acceptedChains,
@@ -34,6 +45,23 @@ void k8EnumeratePrefilteredPairs(const LSTEventData& ev,
                                  const std::vector<float>& chainGateLogits,
                                  const AttachParams& params,
                                  std::vector<AttachPair>& out);
+
+// M16 GENERAL enumeration: the SAME prefilter and the SAME feature builder run over the
+// union of both target universes --
+//   (a) accepted chains with nLayers >= 5   (ttype 0),
+//   (b) bare T3s, bareT3Mask[t] != 0        (ttype 1; pass an EMPTY mask for chains only).
+// Emission order: all chain targets first (acceptedChains order), then all bare T3s in
+// ascending t3 row; within a target, plsRow ascending. targetOrd counts targets in that
+// same order starting at 0, so a caller can bucket pairs into per-target spans with one
+// counting pass.
+void k8EnumeratePrefilteredPairsGeneral(const LSTEventData& ev,
+                                        const Chains& chains,
+                                        const std::vector<int>& acceptedChains,
+                                        const ChainFeatures& cf,
+                                        const std::vector<float>& chainGateLogits,
+                                        const std::vector<char>& bareT3Mask,
+                                        const AttachParams& params,
+                                        std::vector<AttachPair>& out);
 
 // Diagnostic single-pair probe (pairdump prefilter-efficiency accounting, NOT the hot
 // path): evaluates BOTH prefilter quantities for (chain chainIdx, pLS plsRow) even when
@@ -46,5 +74,13 @@ bool k8ProbePairWindows(const LSTEventData& ev,
                         int plsRow,
                         float& absDTanL,
                         float& absDPhi);
+
+// M16: the same probe for a BARE T3 target (identical windows, T3 target geometry).
+bool k8ProbePairWindowsT3(const LSTEventData& ev,
+                          int t3Row,
+                          const AttachParams& params,
+                          int plsRow,
+                          float& absDTanL,
+                          float& absDPhi);
 
 #endif

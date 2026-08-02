@@ -17,11 +17,39 @@
 #include "EventData.h"
 #include "Matching.h"
 
+// M16 DELIVERY CLASS (written into the tc_isChain branch, whose legacy values 0/1 are
+// the first two entries -- so every pre-M16 file and every legacy-mode run is bit-exact).
+// It answers "which machinery produced this TC", which is what the M16 replacement A/Bs
+// slice on: a type-7 row can now be either a carried baseline pT5 or an attach delivery,
+// and tc_type alone can no longer tell them apart.
+enum OutDeliv : int {
+  kDelivCarried = 0,   // kept baseline pixel row (tc_type 7/5/8), copied verbatim
+  kDelivChain = 1,     // bare chain TC (tc_type 4/9), or a legacy -A 1/2 in-place upgrade
+  kDelivAttachT5 = 2,  // M16 general attach: (pLS, chain) -> tc_type 7, pT5-class
+  kDelivAttachT3 = 3,  // M16 general attach: (pLS, bare T3) -> tc_type 5, pT3-class
+};
+
 // A prototype track candidate with its full hit list, for exact hit-level matching.
 struct OutTC {
   float pt = 0, eta = 0, phi = 0;
   int type = 4;    // LSTObjType convention: 7=pT5, 5=pT3, 4=T5, 8=pLS, 9=T4
   int nhitOT = 0;  // number of OT hits (tc_nhitOT; harness reads it unconditionally)
+  int deliv = kDelivChain;  // M16 provenance; default keeps every legacy caller at 1
+  // FANOUT4 "transition" DIAGNOSTICS (harness-invisible extras, like tc_isChain).
+  // Filled only by the hybrid -G 6 path; carried baseline rows keep the sentinels.
+  // dbgBranch: which -G 6 branch admitted this chain --
+  //   0 = T4-class IP (nL<=4, dca <  max(-X,-Z), rule "mX < -M4")
+  //   1 = T4-class exempt (nL<=4, dca >= max(-X,-Z), rule "mD < -M4D")
+  //   2 = 5+ IP (dca <  -X, rule "mP < -M5/-M6 unless mX >= -MRI")
+  //   3 = 5+ exempt (dca >= -X, rule "mD < -MD unless mX >= -MR")
+  int dbgBranch = -1;
+  int dbgNL = 0;      // chain nLayers
+  int dbgNMD = 0;     // chain MD count
+  int dbgNB = 0;      // chain MDs with md_layer <= 6 (barrel)
+  int dbgNPS = 0;     // chain MDs with md_type == 1 (PS modules)
+  int dbgNNodes = 0;  // member T3 count
+  int dbgInLay = 0;   // innermost chain MD layer
+  float dbgMP = 0.f, dbgMDm = 0.f, dbgDca = -1.f;
   std::vector<unsigned int> hitIdxs;  // ph2 rows for OT hits, pix rows for pixel hits
   std::vector<proto::HitType> hitTypes;
 };

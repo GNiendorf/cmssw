@@ -1,7 +1,32 @@
 // K8 pixel attach (M7, plan section 3 K8 / 5a): implementation of the frozen
 // PixelAttach.h contract plus the shared prefilter pair enumeration (PixelAttachPairs.h).
 //
-// EXACT FEATURE DEFINITIONS (kAttachFeat = 18, frozen order; the header delegates the
+// M16 (general attach): the target side is now EITHER an accepted chain (ttype 0) or a
+// BARE T3 (ttype 1, k8BuildBareT3Mask). Everything below is written once against a
+// TargetPre struct that both kinds fill; the prefilter, the propagation and the feature
+// builder are literally the same code for both -- the "one helix-propagation candidate
+// finder, target-agnostic" of the plan-11 design decision. T3-target field mapping (the
+// only deltas; PixelAttach.h documents the rationale):
+//   rtInner/zInner  : md_anchor rt/z of t3_md0
+//   chordPhi        : atan2 of (md1 anchor - md0 anchor)  [the innermost chord, exactly
+//                     as a chain uses its two innermost deduped MDs]
+//   tanLambda       : dz02 / ds02 over the T3 anchors (ds02 = xy chord md0 -> md2), the
+//                     Features.cc node-feature-2 convention -- NOT an rz line fit, since
+//                     a 3-point rz fit through the anchors is the same two-point slope
+//                     up to the middle-point residual and the node convention is already
+//                     validated upstream
+//   fitKappa (f7)   : rotSign / max(t3_radius, 1e-9), rotSign = sign of the z-component
+//                     of cross(md0->md1, md1->md2) (collinear -> +1). Same sign
+//                     convention as the chain Kasa fit (both are "the rotation sense the
+//                     hits sweep"), so f12 chargeAgree and f13 dKappa stay comparable.
+//                     Non-finite t3_radius -> 1e12 stand-in (Features.cc cleanRadius).
+//   innermostLayer  : md_layer[t3_md0]        nLayers (f10): 3
+//   gateLogit (f11) : 0 (no chain gate exists for a bare T3 -- feature 18 flags it)
+//   centerX/Y       : t3_centerX / t3_centerY (the T3's OWN circle-fit center, the exact
+//                     analog of the chain's Kasa center); non-finite -> centerValid
+//                     false -> f16 = 0, the same degenerate flag value chains use
+//
+// EXACT FEATURE DEFINITIONS (kAttachFeat = 19, frozen order; the header delegates the
 // precise definitions to this site):
 //   pLS side (constant per pLS, hoisted):
 //     0 log10PtIn        : log10(max(pLS_pt, 1e-6))
@@ -54,11 +79,18 @@
 //    17 zResidAtInnermost: pLS_hit0_z + pLSTanLambda * (rt_inner - rt_hit0) - z_inner
 //                          (header formula; pLSTanLambda = pz/pt as in feature 14;
 //                          rt_hit0 = hypot(pLS_hit0_x, pLS_hit0_y)).
+//   target kind:
+//    18 targetType      : 0.0 for an accepted-chain target, 1.0 for a bare-T3 target
+//                         (M16; the categorical that tells the head slot 11 is a
+//                         structural zero and slot 10 is pinned to 3).
 //
 // PREFILTER (efficiency-first, plan v1): charge compatibility NOT required (sign flips
 // exist for near-straight/displaced tracks, the M2 lesson); |dTanLambda| < prefDTanL
-// AND |dPhiAtInnermost| < prefDPhi. Only chains with nLayers >= 5 participate (v1
-// scope: chain+pLS -> pT5-class).
+// AND |dPhiAtInnermost| < prefDPhi. Chain targets: only nLayers >= 5 participate (v1
+// scope: chain+pLS -> pT5-class). M16 bare-T3 targets: EVERY masked T3 participates and
+// runs the IDENTICAL windows with no T3-specific loosening or tightening -- the general
+// attach has ONE candidate finder, and any per-class tuning belongs to the head margins,
+// not the prefilter.
 //
 // NaN/Inf guard: every emitted feature vector passes the Features.cc sanitize
 // convention (NaN -> 0, +/-Inf -> +/-1e12); the epsilon guards above keep all
@@ -98,7 +130,8 @@ const char* const kAttachFeatNames[kAttachFeat] = {"log10PtIn",
                                                    "dTanLambda",
                                                    "dPhiAtInnermost",
                                                    "circleCenterDist",
-                                                   "zResidAtInnermost"};
+                                                   "zResidAtInnermost",
+                                                   "targetType"};
 
 namespace {
 
@@ -160,24 +193,26 @@ PlsPre makePlsPre(const LSTEventData& ev, int p) {
   return o;
 }
 
-// ---- per-chain hoisted quantities -----------------------------------------------------
-struct ChainPre {
+// ---- per-target hoisted quantities (M16: chain OR bare T3) ----------------------------
+struct TargetPre {
   // geometry (probe path needs only these)
   float rtInner = 0.f, zInner = 0.f, chordPhi = 0.f;
-  float tanLambda = 0.f;  // rz line fit slope (0 if degenerate)
+  float tanLambda = 0.f;  // rz line fit slope / T3 dz02-ds02 (0 if degenerate)
   // feature block 7-11 (cf row + gate logit; unused by the probe)
   float fitKappa = 0.f, innermostLayer = 0.f, nLayersF = 0.f, gateLogit = 0.f;
   float rotSign = 1.f;  // sign(fitKappa), 0 -> +1
-  // chain Kasa fit center (feature 16); centerValid false -> flag value 0
+  // target circle-fit center (feature 16); centerValid false -> flag value 0
   float centerX = 0.f, centerY = 0.f;
   bool centerValid = false;
+  // feature 18 (M16): 0 = accepted chain, 1 = bare T3
+  float targetType = static_cast<float>(kAttachTargetChain);
 };
 
 // Geometry part: innermost anchor rt/z, innermost chord phi, rz-fit tanLambda, Kasa
 // center -- all over chains.mdItems (innermost-first), double accumulation exactly as
 // ChainFeatures.cc.
-ChainPre makeChainPreGeom(const LSTEventData& ev, const Chains& chains, int c) {
-  ChainPre o;
+TargetPre makeChainPreGeom(const LSTEventData& ev, const Chains& chains, int c) {
+  TargetPre o;
   const int mb = chains.mdOffsets[c], me = chains.mdOffsets[c + 1];
   const int nMD = me - mb;
   if (nMD < 1)
@@ -255,9 +290,9 @@ ChainPre makeChainPreGeom(const LSTEventData& ev, const Chains& chains, int c) {
   return o;
 }
 
-ChainPre makeChainPre(
+TargetPre makeChainPre(
     const LSTEventData& ev, const Chains& chains, int c, const ChainFeatures& cf, float gateLogit) {
-  ChainPre o = makeChainPreGeom(ev, chains, c);
+  TargetPre o = makeChainPreGeom(ev, chains, c);
   const float* f = &cf.f[static_cast<std::size_t>(c) * kChainFeat];
   o.fitKappa = f[7];
   o.innermostLayer = f[10];
@@ -267,8 +302,52 @@ ChainPre makeChainPre(
   return o;
 }
 
+// ---- M16: bare-T3 target ---------------------------------------------------------------
+// Geometry part (the probe path needs only these): innermost anchor rt/z from md0, the
+// md0 -> md1 chord phi, and tanLambda = dz02/ds02 over the anchors (Features.cc node
+// convention). Field-for-field the chain analog; see the mapping block at the top.
+TargetPre makeT3PreGeom(const LSTEventData& ev, int t) {
+  TargetPre o;
+  o.targetType = static_cast<float>(kAttachTargetT3);
+  const int m0 = ev.t3_md0[t], m1 = ev.t3_md1[t], m2 = ev.t3_md2[t];
+  const float x0 = ev.md_anchor_x[m0], y0 = ev.md_anchor_y[m0];
+  o.rtInner = std::sqrt(x0 * x0 + y0 * y0);
+  o.zInner = ev.md_anchor_z[m0];
+  o.chordPhi = std::atan2(ev.md_anchor_y[m1] - y0, ev.md_anchor_x[m1] - x0);
+  const float c02x = ev.md_anchor_x[m2] - x0;
+  const float c02y = ev.md_anchor_y[m2] - y0;
+  const float c02z = ev.md_anchor_z[m2] - o.zInner;
+  const float c02xy = std::sqrt(c02x * c02x + c02y * c02y);
+  o.tanLambda = c02z / std::max(c02xy, 1e-9f);
+  return o;
+}
+
+TargetPre makeT3Pre(const LSTEventData& ev, int t) {
+  TargetPre o = makeT3PreGeom(ev, t);
+  const int m0 = ev.t3_md0[t], m1 = ev.t3_md1[t], m2 = ev.t3_md2[t];
+  // rotSign = sign(z of cross(md0->md1, md1->md2)); collinear counts +1 (Features.cc).
+  const float c01x = ev.md_anchor_x[m1] - ev.md_anchor_x[m0];
+  const float c01y = ev.md_anchor_y[m1] - ev.md_anchor_y[m0];
+  const float c12x = ev.md_anchor_x[m2] - ev.md_anchor_x[m1];
+  const float c12y = ev.md_anchor_y[m2] - ev.md_anchor_y[m1];
+  const float cross = c01x * c12y - c01y * c12x;
+  o.rotSign = (cross >= 0.f) ? 1.f : -1.f;
+  const float radius = std::isfinite(ev.t3_radius[t]) ? ev.t3_radius[t] : 1e12f;
+  o.fitKappa = o.rotSign / std::max(radius, 1e-9f);
+  o.innermostLayer = static_cast<float>(ev.md_layer[m0]);
+  o.nLayersF = 3.f;   // a T3 is a 3-layer object by construction
+  o.gateLogit = 0.f;  // no chain gate exists for a bare T3 (feature 18 flags the absence)
+  const float cx = ev.t3_centerX[t], cy = ev.t3_centerY[t];
+  if (std::isfinite(cx) && std::isfinite(cy)) {
+    o.centerX = cx;
+    o.centerY = cy;
+    o.centerValid = true;
+  }
+  return o;
+}
+
 // dPhiAtInnermost (feature 15 / prefilter window 2). See the definition block on top.
-float dPhiAtInnermost(const PlsPre& pls, const ChainPre& cp) {
+float dPhiAtInnermost(const PlsPre& pls, const TargetPre& cp) {
   float phiDir = pls.phi;  // fallback: seed direction at production
   const float R1 = cp.rtInner;
   if (pls.d > kEps) {
@@ -301,7 +380,7 @@ float dPhiAtInnermost(const PlsPre& pls, const ChainPre& cp) {
 // true (probe path); the fast path rejects on dTanLambda before touching the circle
 // propagation. fOut may be null (windows-only probe).
 bool evalPair(const PlsPre& pls,
-              const ChainPre& cp,
+              const TargetPre& cp,
               const AttachParams& params,
               bool evalAll,
               float* fOut,
@@ -345,12 +424,75 @@ bool evalPair(const PlsPre& pls,
   fOut[15] = dPhi;
   fOut[16] = centerDist;
   fOut[17] = zResid;
+  fOut[18] = cp.targetType;  // M16
   for (int i = 0; i < kAttachFeat; ++i)
     fOut[i] = sanitizeOne(fOut[i]);
   return true;
 }
 
 }  // namespace
+
+void k8EnumeratePrefilteredPairsGeneral(const LSTEventData& ev,
+                                        const Chains& chains,
+                                        const std::vector<int>& acceptedChains,
+                                        const ChainFeatures& cf,
+                                        const std::vector<float>& chainGateLogits,
+                                        const std::vector<char>& bareT3Mask,
+                                        const AttachParams& params,
+                                        std::vector<AttachPair>& out) {
+  out.clear();
+  const int nPls = static_cast<int>(ev.pLS_pt.size());
+  if (nPls == 0)
+    return;
+
+  std::vector<PlsPre> pls;
+  pls.reserve(nPls);
+  for (int p = 0; p < nPls; ++p)
+    pls.push_back(makePlsPre(ev, p));
+
+  int targetOrd = 0;
+
+  // (a) accepted chains, nLayers >= 5 (ttype 0) -- unchanged M7 behavior.
+  for (int pos = 0; pos < static_cast<int>(acceptedChains.size()); ++pos) {
+    const int c = acceptedChains[pos];
+    if (chains.nLayers[c] < 5)
+      continue;  // v1 scope: attach only to pT5-class chains
+    const float gate = c < static_cast<int>(chainGateLogits.size()) ? chainGateLogits[c] : 0.f;
+    const TargetPre cp = makeChainPre(ev, chains, c, cf, gate);
+    for (int p = 0; p < nPls; ++p) {
+      AttachPair ap;
+      float aDT, aDP;
+      if (!evalPair(pls[p], cp, params, false, ap.f, aDT, aDP))
+        continue;
+      ap.ttype = static_cast<int8_t>(kAttachTargetChain);
+      ap.chainPos = pos;
+      ap.targetOrd = targetOrd;
+      ap.plsRow = p;
+      out.push_back(ap);
+    }
+    ++targetOrd;
+  }
+
+  // (b) M16: bare T3s (ttype 1) -- the SAME prefilter, the SAME feature builder.
+  const int nT3 = static_cast<int>(bareT3Mask.size());
+  for (int t = 0; t < nT3; ++t) {
+    if (!bareT3Mask[t])
+      continue;
+    const TargetPre cp = makeT3Pre(ev, t);
+    for (int p = 0; p < nPls; ++p) {
+      AttachPair ap;
+      float aDT, aDP;
+      if (!evalPair(pls[p], cp, params, false, ap.f, aDT, aDP))
+        continue;
+      ap.ttype = static_cast<int8_t>(kAttachTargetT3);
+      ap.t3Row = t;
+      ap.targetOrd = targetOrd;
+      ap.plsRow = p;
+      out.push_back(ap);
+    }
+    ++targetOrd;
+  }
+}
 
 void k8EnumeratePrefilteredPairs(const LSTEventData& ev,
                                  const Chains& chains,
@@ -359,30 +501,21 @@ void k8EnumeratePrefilteredPairs(const LSTEventData& ev,
                                  const std::vector<float>& chainGateLogits,
                                  const AttachParams& params,
                                  std::vector<AttachPair>& out) {
-  out.clear();
-  const int nPls = static_cast<int>(ev.pLS_pt.size());
-  if (nPls == 0 || acceptedChains.empty())
-    return;
+  static const std::vector<char> kNoBareT3;  // chain targets only (M7 callers)
+  k8EnumeratePrefilteredPairsGeneral(ev, chains, acceptedChains, cf, chainGateLogits, kNoBareT3, params, out);
+}
 
-  std::vector<PlsPre> pls;
-  pls.reserve(nPls);
-  for (int p = 0; p < nPls; ++p)
-    pls.push_back(makePlsPre(ev, p));
-
-  for (int pos = 0; pos < static_cast<int>(acceptedChains.size()); ++pos) {
-    const int c = acceptedChains[pos];
-    if (chains.nLayers[c] < 5)
-      continue;  // v1 scope: attach only to pT5-class chains
-    const float gate = c < static_cast<int>(chainGateLogits.size()) ? chainGateLogits[c] : 0.f;
-    const ChainPre cp = makeChainPre(ev, chains, c, cf, gate);
-    for (int p = 0; p < nPls; ++p) {
-      AttachPair ap;
-      float aDT, aDP;
-      if (!evalPair(pls[p], cp, params, false, ap.f, aDT, aDP))
-        continue;
-      ap.chainPos = pos;
-      ap.plsRow = p;
-      out.push_back(ap);
+void k8BuildBareT3Mask(const LSTEventData& ev,
+                       const Chains& chains,
+                       const std::vector<int>& acceptedChains,
+                       std::vector<char>& mask) {
+  const int nT3 = static_cast<int>(ev.t3_lsIdx0.size());
+  mask.assign(nT3, 1);
+  for (int c : acceptedChains) {
+    for (int k = chains.offsets[c]; k < chains.offsets[c + 1]; ++k) {
+      const int t = chains.items[k];
+      if (t >= 0 && t < nT3)
+        mask[t] = 0;
     }
   }
 }
@@ -395,7 +528,14 @@ bool k8ProbePairWindows(const LSTEventData& ev,
                         float& absDTanL,
                         float& absDPhi) {
   const PlsPre pls = makePlsPre(ev, plsRow);
-  const ChainPre cp = makeChainPreGeom(ev, chains, chainIdx);
+  const TargetPre cp = makeChainPreGeom(ev, chains, chainIdx);
+  return evalPair(pls, cp, params, true, nullptr, absDTanL, absDPhi);
+}
+
+bool k8ProbePairWindowsT3(
+    const LSTEventData& ev, int t3Row, const AttachParams& params, int plsRow, float& absDTanL, float& absDPhi) {
+  const PlsPre pls = makePlsPre(ev, plsRow);
+  const TargetPre cp = makeT3PreGeom(ev, t3Row);
   return evalPair(pls, cp, params, true, nullptr, absDTanL, absDPhi);
 }
 

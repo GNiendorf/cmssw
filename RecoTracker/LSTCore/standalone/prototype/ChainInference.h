@@ -54,4 +54,33 @@ int chainGate3NumInputs();
 // Fills out3[3*c + k] for every chain in cf; dca[c] = k8ChainDcaXY(chain c).
 void runChainInference3(const ChainFeatures& cf, const std::vector<float>& dca, std::vector<float>& out3);
 
+// ---------------------------------------------------------------------------------
+// OKR matchFrac REGRESSOR (mf_mlp_weights.h, namespace mfmlp; same implementation
+// pattern and the same kSrcCol gather as the 3-class head, so it may use any subset of
+// the ChainFeatures columns plus the chain dcaXY).
+//
+// The single output is the PRE-SIGMOID logit of the chain's predicted harness match
+// fraction -- the continuous [0,1] target the chaindump stores as `matchFrac`, i.e. the
+// share of the chain's hits that belong to its best sim track. It is what the K9 greedy
+// claim actually trades away when it lets one chain take a slot from another, so it is a
+// candidate ORDER key in its own right.
+
+// True iff a trained regressor is compiled in (the sentinel header exports zeros).
+bool chainMatchFracAvailable();
+
+// Predicted matchFrac LOGIT for ONE chain (sigmoid of it = the predicted fraction).
+float chainMatchFracLogit(const float* f, float dcaXY);
+
+// Fills outLogit[c] for every chain in cf; dca[c] = k8ChainDcaXY(chain c).
+void runChainInferenceMF(const ChainFeatures& cf, const std::vector<float>& dca, std::vector<float>& outLogit);
+
+// ---------------------------------------------------------------------------------
+// OKR SECONDARY 3-class head (chain3b_mlp_weights.h, namespace chain3bmlp): an
+// ALTERNATIVE 3-class checkpoint carried alongside the resident one so an order-key
+// experiment can swap the RANKING network without touching the GATE. The gate's kill
+// thresholds are calibrated on the resident head's logit scale; recompiling that header
+// would change which chains die and confound any ordering measurement. Same contract as
+// runChainInference3 (raw fake / prompt / displaced logits, no softmax).
+void runChainInference3b(const ChainFeatures& cf, const std::vector<float>& dca, std::vector<float>& out3);
+
 #endif

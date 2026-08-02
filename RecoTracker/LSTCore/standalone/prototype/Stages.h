@@ -127,7 +127,41 @@ struct ArbitrationParams {
   // maxClaimedItems < 0 = off => bit-exact legacy fractional test.
   int maxClaimedItems = -1;
   bool claimCountExclusive = false;
+  // DUPCUT (-FCE): restrict the claimCountExclusive TIGHTENING to the chains flagged 0
+  // here, i.e. leave the flagged ones on the legacy loosen-only OR. The mask supplied is
+  // the -G 5/-G 6 exempt mask (dcaXY >= dcaSplit), so the strict count binds on
+  // IP-compatible chains only and the displaced population keeps the tolerance it needs.
+  // nullptr = every chain is strict == bit-exact pre-DUPCUT behavior.
+  const std::vector<char>* strictExemptMask = nullptr;
+  // DUPCUT (-FCE 2): the same mask additionally exempts those chains from the -W braid
+  // kill, so a braidFrac tightening can be aimed at the IP population alone.
+  bool strictExemptBraid = false;
+  // M17 claimshare (-FS): SUBORDINATE SHARE PASS. Raising maxClaimedFrac outright is not a
+  // pure loosening of the accepted set: a chain that only the looser tolerance admits
+  // CLAIMS its hits, which can push a later (lower-key) chain that the tight tolerance
+  // would have accepted over the limit. Measured at -F 0.5: +36k duplicate TCs and +6.4k
+  // fakes for a net +68 matched sims, because the evictions eat most of the recovery.
+  // sharePassFrac > maxClaimedFrac runs a SECOND greedy pass over exactly the candidates
+  // the first pass rejected, in the same order, continuing on the first pass's owner map
+  // with the looser tolerance. The pass-1 accepted set is therefore bit-identical to the
+  // -FS-off run BY CONSTRUCTION (efficiency can only go up), and pass-2 chains arbitrate
+  // among themselves but can never evict a pass-1 chain. 0 = off (bit-exact legacy).
+  float sharePassFrac = 0.f;
   bool dropPixelConsumed = true;
+  // M16 (-A 4 replacement modes): the pixel-consumed drop exists ONLY because the kept
+  // baseline pixel TC already delivers that track. Under -RT5 1 every carried type-7 row
+  // is dropped and the attached chains deliver instead, so the partOfPT5 half of the
+  // crossclean would be killing chains for colliding with rows that NO LONGER EXIST;
+  // -RT3 1 says the same about partOfPT3. These two switches turn the halves off
+  // independently. Both true (with dropPixelConsumed) == bit-exact legacy.
+  bool dropPartOfPT5 = true;
+  bool dropPartOfPT3 = true;
+  // M16 (-A 4): chains flagged here are NOT K9 candidates at all. Used for the attached
+  // chains, which are PIXEL-BACKED deliveries: they pre-claim their hits alongside the
+  // surviving carried pixel rows (via preClaimOwners) and are emitted unconditionally,
+  // exactly like a carried row -- so letting them also walk the greedy claim would
+  // deliver them twice. nullptr = legacy (bit-exact).
+  const std::vector<char>* excludeChain = nullptr;
   // A8 (fake-aware ordering, -B): K9's best-first ORDER key. nullptr = order by
   // chains.score (legacy, bit-exact). When set (size nChains) the greedy walk visits
   // chains by orderKey desc / index asc, while ACCEPTANCE thresholds still cut on
@@ -140,6 +174,19 @@ struct ArbitrationParams {
   // welder-braid duplicates: a long sibling can swallow a short accepted chain whole
   // while its own claimed fraction stays under F. 0 = off (bit-exact legacy).
   float braidFrac = 0.f;
+  // EX_DUPCC (-WE/-WZ/-WN): BAND-AWARE BRAID. Candidates flagged in braidAltMask use
+  // braidFracAlt instead of braidFrac. The mask is a per-chain geometry/topology band
+  // (main.cc builds it from |eta| >= -WZ and nNodes <= -WN), so the disks can run a
+  // tighter owner-relative duplicate test than the barrel without touching the
+  // candidate-relative claim budget. nullptr / 0 = bit-exact legacy: every chain uses
+  // braidFrac, and a 0 effective fraction means "no braid test for this candidate".
+  float braidFracAlt = 0.f;
+  const std::vector<char>* braidAltMask = nullptr;
+  // EX_DUPCC (-FB/-FBC): PER-BAND CLAIM TOLERANCE. Same band mask as the band braid.
+  // maxClaimedFracAlt <= 0 / maxClaimedItemsAlt == -2 mean "band uses the global value",
+  // so the defaults are bit-exact legacy.
+  float maxClaimedFracAlt = 0.f;
+  int maxClaimedItemsAlt = -2;
   // A8 (-H 1): run the claim (and the braid test) on HIT indices instead of MD indices.
   // Genuine chain-chain duplicates are built from DIFFERENT T3/MD objects sitting on the
   // same hits, so an MD-level claim map cannot see them at all; the hit-level map can.
@@ -184,11 +231,17 @@ struct ArbitrationParams {
 // replacement for its pixel seed, so the crossclean that exists only because the track
 // was delivered by a kept baseline pixel TC must not kill it. The partOfPT3 half still
 // drops (pT3 rows are untouched by attach in v1). nullptr = legacy behavior (bit-exact).
+// ownerOut (optional): a COPY of the final claim-universe owner map (-1 = free, >= 0 =
+// accepted chain, <= -2 = pixel owner), indexed by HIT row when params.hitLevelClaim and
+// by MD row otherwise. Written once at the end; k9Arbitrate never reads it, so passing it
+// cannot change any decision. Consumed by the EXPLOIT chain-extension pass, which needs
+// to know which rows are still unclaimed after arbitration.
 void k9Arbitrate(const LSTEventData& ev,
                  const Chains& chains,
                  const ArbitrationParams& params,
                  std::vector<int>& acceptedChains,
-                 const std::vector<char>* bypassPT5Drop = nullptr);
+                 const std::vector<char>* bypassPT5Drop = nullptr,
+                 std::vector<int>* ownerOut = nullptr);
 
 // K9 two-pass (M7b, hybrid -A 2): SUBORDINATE claim for K8-attached chains. The v1 (-A 1)
 // bypass re-admitted ~550 prompt chains/evt into the ONE shared MD claim, which evicted
