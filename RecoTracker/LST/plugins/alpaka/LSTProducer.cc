@@ -33,6 +33,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
           nopLSDupClean_(config.getParameter<bool>("nopLSDupClean")),
           tcpLSTriplets_(config.getParameter<bool>("tcpLSTriplets")),
           reduceMemByFullPrecompute_(config.getParameter<bool>("reduceMemByFullPrecompute")),
+          useChainTracking_(config.getParameter<bool>("useChainTracking")),
           lstInputToken_{consumes(config.getParameter<edm::InputTag>("lstInput"))},
           lstESToken_{esConsumes(edm::ESInputTag("", ptCutStr_))},
           lstOutputToken_{produces()} {}
@@ -51,7 +52,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
               &lstInputDC,
               nopLSDupClean_,
               tcpLSTriplets_,
-              reduceMemByFullPrecompute_);
+              reduceMemByFullPrecompute_,
+              useChainTracking_);
 
       // Output
       auto lstTrackCandidates = lst.getTrackCandidates();
@@ -71,6 +73,11 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
               "If true, run extra counting kernels that exactly size the MD/LS/T3/T5/T4 "
               "buffers, reducing average per-event memory at a small CPU/GPU runtime cost. "
               "If false (default), buffers use cheaper, looser occupancy estimates.");
+      desc.add<bool>("useChainTracking", false)
+          ->setComment(
+              "Master flag of the chain-tracking pipeline. At the current phase (P2.0) it only "
+              "builds the dense triplet node index and the triplet incidence CSR; nothing "
+              "downstream consumes them, so the track candidate output is unchanged either way.");
       descriptions.addWithDefaultLabel(desc);
     }
 
@@ -82,6 +89,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     const bool nopLSDupClean_;
     const bool tcpLSTriplets_;
     const bool reduceMemByFullPrecompute_;
+    const bool useChainTracking_;
     const device::EDGetToken<lst::LSTInputDeviceCollection> lstInputToken_;
     const device::ESGetToken<lst::LSTESData<Device>, TrackerRecoGeometryRecord> lstESToken_;
     const device::EDPutToken<lst::TrackCandidatesBaseDeviceCollection> lstOutputToken_;

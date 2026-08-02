@@ -4,6 +4,7 @@
 
 #include "LSTEvent.h"
 
+#include "ChainGraph.h"
 #include "Hit.h"
 #include "Kernels.h"
 #include "MiniDoublet.h"
@@ -16,6 +17,7 @@
 #include "Quadruplet.h"
 
 #include <format>
+#include <vector>
 
 using Device = ALPAKA_ACCELERATOR_NAMESPACE::Device;
 using Queue = ALPAKA_ACCELERATOR_NAMESPACE::Queue;
@@ -75,6 +77,12 @@ void LSTEvent::resetEventSync() {
   pixelTripletsDC_.reset();
   pixelQuintupletsDC_.reset();
   quadrupletsDC_.reset();
+  chainMdIncidenceDC_.reset();
+  chainLsIncidenceDC_.reset();
+  chainNodesDC_.reset();
+  nChainNodes_ = 0;
+  nChainE1Edges_ = 0;
+  nChainE2Edges_ = 0;
 
   lstInputHC_.reset();
   hitsHC_.reset();
@@ -453,6 +461,28 @@ void LSTEvent::createTriplets() {
     auto connectedLSMax_view =
         cms::alpakatools::make_device_view(queue_, triplets.connectedLSMax(), triplets.metadata().size());
     alpaka::memset(queue_, connectedLSMax_view, 0u);
+
+    if (useChainTracking_) {
+      // Chain-tracking K1a target arrays. They are keyed by the raw MiniDoublet / Segment index, so
+      // they must span the whole allocated extent of those collections (which is module-segmented
+      // and therefore sparser than the produced-object count). Allocated and zeroed before the
+      // triplet builder runs, since the builder tallies straight into them.
+      unsigned int const nMDKeys = miniDoubletsDC_->view().miniDoublets().metadata().size();
+      unsigned int const nLSKeys = segmentsDC_->view().segments().metadata().size();
+      chainMdIncidenceDC_.emplace(queue_, nMDKeys + 1);
+      chainLsIncidenceDC_.emplace(queue_, nLSKeys + 1);
+      // Only the tallies need clearing: K1b writes every entry of the offset and prefix columns
+      // (including the terminating one) and K1c writes every entry of the item columns.
+      resetChainIncidenceCounts();
+      if (objectsStatistics_) {
+        double mb = (alpaka::getExtentProduct(chainMdIncidenceDC_->buffer()) +
+                     alpaka::getExtentProduct(chainLsIncidenceDC_->buffer())) /
+                    1e6;
+        memoryAllocatedMB_ += mb;
+        lstWarning(std::format(
+            "[MEM] ChainIncidence: {} MD keys + {} LS keys allocated ({:.1f} MB)", nMDKeys, nLSKeys, mb));
+      }
+    }
   }
 
   uint16_t nonZeroModules = 0;
@@ -499,6 +529,20 @@ void LSTEvent::createTriplets() {
 
   auto const createTriplets_workDiv = cms::alpakatools::make_workdiv<Acc3D>({nonZeroModules, 1, 1}, {1, 16, 16});
 
+  // Null unless chain tracking is on; the kernel drops every use of them at compile time.
+  uint32_t* chainMdT3OutCounts = nullptr;
+  uint32_t* chainMdT3InCounts = nullptr;
+  uint32_t* chainLsT3OutCounts = nullptr;
+  uint32_t* chainLsT3InCounts = nullptr;
+  if (useChainTracking_) {
+    auto mdIncidence = chainMdIncidenceDC_->view();
+    auto lsIncidence = chainLsIncidenceDC_->view();
+    chainMdT3OutCounts = mdIncidence.metadata().addressOf_t3OutCounts();
+    chainMdT3InCounts = mdIncidence.metadata().addressOf_t3InCounts();
+    chainLsT3OutCounts = lsIncidence.metadata().addressOf_t3OutCounts();
+    chainLsT3InCounts = lsIncidence.metadata().addressOf_t3InCounts();
+  }
+
   auto execCreateTriplets = [&](auto kernel) {
     alpaka::exec<Acc3D>(queue_,
                         createTriplets_workDiv,
@@ -512,12 +556,23 @@ void LSTEvent::createTriplets() {
                         rangesDC_->const_view(),
                         index_gpu_buf.data(),
                         nonZeroModules,
-                        ptCut_);
+                        ptCut_,
+                        chainMdT3OutCounts,
+                        chainMdT3InCounts,
+                        chainLsT3OutCounts,
+                        chainLsT3InCounts);
   };
-  if (reduceMemByFullPrecompute_)
-    execCreateTriplets(CreateTripletsReduceMem{});
-  else
-    execCreateTriplets(CreateTriplets{});
+  if (useChainTracking_) {
+    if (reduceMemByFullPrecompute_)
+      execCreateTriplets(CreateTripletsReduceMemChain{});
+    else
+      execCreateTriplets(CreateTripletsChain{});
+  } else {
+    if (reduceMemByFullPrecompute_)
+      execCreateTriplets(CreateTripletsReduceMem{});
+    else
+      execCreateTriplets(CreateTriplets{});
+  }
 
   auto const addTripletRangesToEventExplicit_workDiv = cms::alpakatools::make_workdiv<Acc1D>(1, 1024);
 
@@ -528,9 +583,193 @@ void LSTEvent::createTriplets() {
                       tripletsDC_->const_view().tripletsOccupancy(),
                       rangesDC_->view());
 
+  if (useChainTracking_) {
+    buildChainIncidence();
+  }
+
   if (objectsStatistics_) {
     addTripletsToEventExplicit();
   }
+}
+
+void LSTEvent::resetChainIncidenceCounts() {
+  // Zero the two tally columns of both incidence instances. They serve twice: as the K1a atomic
+  // counters before the triplet builder, and as the K1c per-key write cursors after K1b.
+  for (auto* incidence : {&chainMdIncidenceDC_.value(), &chainLsIncidenceDC_.value()}) {
+    auto view = incidence->view();
+    auto outCounts_view = cms::alpakatools::make_device_view(queue_, view.t3OutCounts(), view.metadata().size());
+    alpaka::memset(queue_, outCounts_view, 0u);
+    auto inCounts_view = cms::alpakatools::make_device_view(queue_, view.t3InCounts(), view.metadata().size());
+    alpaka::memset(queue_, inCounts_view, 0u);
+  }
+}
+
+void LSTEvent::buildChainIncidence() {
+  // K0. Compact the module-segmented triplet store into a dense node numbering.
+  auto moduleNodeOffsets_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, nLowerModules_ + 1);
+  auto nNodes_buf_d = cms::alpakatools::make_device_buffer<uint32_t>(queue_);
+
+  auto const chainScan_workDiv = cms::alpakatools::make_workdiv<Acc1D>(1, kChainScanBlockThreads);
+
+  alpaka::exec<Acc1D>(queue_,
+                      chainScan_workDiv,
+                      ChainPrefixTripletModules{},
+                      modules_.const_view().modules(),
+                      tripletsDC_->const_view().tripletsOccupancy(),
+                      moduleNodeOffsets_buf.data(),
+                      nNodes_buf_d.data());
+
+  auto nNodes_buf_h = cms::alpakatools::make_host_buffer<uint32_t>(queue_);
+  alpaka::memcpy(queue_, nNodes_buf_h, nNodes_buf_d);
+  alpaka::wait(queue_);  // the node count sizes the dense node collection exactly
+  nChainNodes_ = *nNodes_buf_h.data();
+
+  if (nChainNodes_ == 0)
+    return;
+
+  chainNodesDC_.emplace(queue_, nChainNodes_);
+  if (objectsStatistics_) {
+    double mb = alpaka::getExtentProduct(chainNodesDC_->buffer()) / 1e6;
+    memoryAllocatedMB_ += mb;
+    lstWarning(std::format("[MEM] ChainNodes: {} allocated ({:.1f} MB)", nChainNodes_, mb));
+  }
+
+  auto const chainFlat_workDiv = cms::alpakatools::make_workdiv<Acc1D>(max_blocks, 256);
+
+  alpaka::exec<Acc1D>(queue_,
+                      chainFlat_workDiv,
+                      ChainScatterTripletModules{},
+                      modules_.const_view().modules(),
+                      tripletsDC_->const_view().tripletsOccupancy(),
+                      rangesDC_->const_view(),
+                      moduleNodeOffsets_buf.data(),
+                      chainNodesDC_->view());
+
+  // K1b. Exclusive prefixes plus the exact edge counts E1 (MD keyed) and E2 (Segment keyed).
+  unsigned int const nMDKeys = chainMdIncidenceDC_->view().metadata().size() - 1;
+  unsigned int const nLSKeys = chainLsIncidenceDC_->view().metadata().size() - 1;
+
+  alpaka::exec<Acc1D>(queue_, chainScan_workDiv, ChainPrefixIncidence{}, chainMdIncidenceDC_->view(), nMDKeys);
+  alpaka::exec<Acc1D>(queue_, chainScan_workDiv, ChainPrefixIncidence{}, chainLsIncidenceDC_->view(), nLSKeys);
+
+  // The K1a tallies are now captured in the offset columns; reuse them as the K1c write cursors.
+  resetChainIncidenceCounts();
+
+  // K1c. Fill the CSR payloads.
+  alpaka::exec<Acc1D>(queue_,
+                      chainFlat_workDiv,
+                      ChainScatterIncidence{},
+                      segmentsDC_->const_view().segments(),
+                      tripletsDC_->const_view().triplets(),
+                      chainNodesDC_->view(),
+                      chainMdIncidenceDC_->view(),
+                      chainLsIncidenceDC_->view());
+
+  auto nE1_buf_h = cms::alpakatools::make_host_buffer<uint32_t>(queue_);
+  auto nE2_buf_h = cms::alpakatools::make_host_buffer<uint32_t>(queue_);
+  auto nE1_buf_d = cms::alpakatools::make_device_view(queue_, chainMdIncidenceDC_->view().nEdgesExact());
+  auto nE2_buf_d = cms::alpakatools::make_device_view(queue_, chainLsIncidenceDC_->view().nEdgesExact());
+  alpaka::memcpy(queue_, nE1_buf_h, nE1_buf_d);
+  alpaka::memcpy(queue_, nE2_buf_h, nE2_buf_d);
+  alpaka::wait(queue_);
+  nChainE1Edges_ = *nE1_buf_h.data();
+  nChainE2Edges_ = *nE2_buf_h.data();
+
+  if (objectsStatistics_) {
+    chainIncidenceStatistics();
+  }
+}
+
+void LSTEvent::chainIncidenceStatistics() {
+  // Host-side check of every invariant the CSR must satisfy. This is the phase P2.0 sanity gate;
+  // it only runs with chain tracking on and verbose statistics enabled.
+  alpaka::wait(queue_);
+
+  // Pull the columns down one by one so this works unchanged on every backend.
+  auto pull = [&](auto column, unsigned int n) {
+    std::vector<uint32_t> host(n);
+    auto host_view = cms::alpakatools::make_host_view(host.data(), n);
+    auto dev_view = cms::alpakatools::make_device_view(queue_, column, n);
+    alpaka::memcpy(queue_, host_view, dev_view, n);
+    alpaka::wait(queue_);
+    return host;
+  };
+
+  auto nodes = chainNodesDC_->view();
+  auto mdInc = chainMdIncidenceDC_->view();
+  auto lsInc = chainLsIncidenceDC_->view();
+
+  auto checkFamily = [&](char const* name, auto incidence, auto outItemsCol, auto inItemsCol) {
+    unsigned int const nKeys = incidence.metadata().size() - 1;
+    std::vector<uint32_t> const outOff = pull(incidence.t3OutOffsets(), nKeys + 1);
+    std::vector<uint32_t> const inOff = pull(incidence.t3InOffsets(), nKeys + 1);
+    std::vector<uint32_t> const prodPrefix = pull(incidence.edgeProdPrefix(), nKeys + 1);
+    std::vector<uint32_t> const outItems = pull(outItemsCol, nChainNodes_);
+    std::vector<uint32_t> const inItems = pull(inItemsCol, nChainNodes_);
+
+    unsigned long long edges = 0;
+    unsigned int nonEmptyKeys = 0;
+    unsigned int maxDegIn = 0, maxDegOut = 0;
+    bool monotonic = true;
+    for (unsigned int k = 0; k < nKeys; ++k) {
+      monotonic = monotonic && outOff[k + 1] >= outOff[k] && inOff[k + 1] >= inOff[k] &&
+                  prodPrefix[k + 1] >= prodPrefix[k];
+      unsigned int const degOut = outOff[k + 1] - outOff[k];
+      unsigned int const degIn = inOff[k + 1] - inOff[k];
+      edges += static_cast<unsigned long long>(degIn) * degOut;
+      nonEmptyKeys += (degIn != 0 || degOut != 0);
+      maxDegIn = std::max(maxDegIn, degIn);
+      maxDegOut = std::max(maxDegOut, degOut);
+    }
+
+    // Every triplet contributes exactly one entry to each of the two item arrays, so the degree
+    // sums must both equal the node count and each item array must be a permutation of [0, nNodes).
+    std::vector<unsigned char> seenOut(nChainNodes_, 0), seenIn(nChainNodes_, 0);
+    bool outOfBounds = false, duplicated = false;
+    for (unsigned int i = 0; i < nChainNodes_; ++i) {
+      uint32_t const o = outItems[i];
+      uint32_t const n = inItems[i];
+      if (o >= nChainNodes_ || n >= nChainNodes_) {
+        outOfBounds = true;
+        continue;
+      }
+      duplicated = duplicated || seenOut[o] || seenIn[n];
+      seenOut[o] = 1;
+      seenIn[n] = 1;
+    }
+    unsigned int coveredOut = 0, coveredIn = 0;
+    for (unsigned int i = 0; i < nChainNodes_; ++i) {
+      coveredOut += seenOut[i];
+      coveredIn += seenIn[i];
+    }
+
+    bool const degreeOk = (outOff[nKeys] == nChainNodes_) && (inOff[nKeys] == nChainNodes_);
+    bool const permutationOk =
+        !duplicated && !outOfBounds && coveredOut == nChainNodes_ && coveredIn == nChainNodes_;
+    lstWarning(std::format(
+        "[CHAIN] {}: keys={} used={} sumDegOut={} sumDegIn={} nT3={} maxDegIn={} maxDegOut={} "
+        "E={} prefixE={} degreeSum={} monotonic={} permutation={}",
+        name,
+        nKeys,
+        nonEmptyKeys,
+        outOff[nKeys],
+        inOff[nKeys],
+        nChainNodes_,
+        maxDegIn,
+        maxDegOut,
+        edges,
+        prodPrefix[nKeys],
+        degreeOk ? "ok" : "FAIL",
+        monotonic ? "ok" : "FAIL",
+        permutationOk ? "ok" : "FAIL"));
+    if (edges != prodPrefix[nKeys])
+      lstWarning(std::format("[CHAIN] {}: EDGE PREFIX MISMATCH", name));
+    return static_cast<unsigned int>(edges);
+  };
+
+  unsigned int const e1 = checkFamily("MD/E1", mdInc, nodes.mdT3OutItems(), nodes.mdT3InItems());
+  unsigned int const e2 = checkFamily("LS/E2", lsInc, nodes.lsT3OutItems(), nodes.lsT3InItems());
+  lstWarning(std::format("[CHAIN] nodes(nT3)={} E1={} E2={} E={}", nChainNodes_, e1, e2, e1 + e2));
 }
 
 void LSTEvent::createTrackCandidates(bool no_pls_dupclean, bool tc_pls_triplets) {

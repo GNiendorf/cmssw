@@ -135,6 +135,10 @@ public:
   // Boolean to enable reduced-memory mode via exact precompute counting kernels
   bool reduce_mem_by_full_precompute;
 
+  // Boolean to enable the chain-tracking pipeline (see standalone/prototype/P2_PORT_MAP.md).
+  // At phase P2.0 this only builds the triplet compaction and the incidence CSR; no physics change.
+  bool use_chain_tracking;
+
   // Boolean to enable MD branches
   bool md_branches;
 

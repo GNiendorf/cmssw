@@ -5,6 +5,8 @@
 #include <optional>
 
 #include "RecoTracker/LSTCore/interface/LSTInputHostCollection.h"
+#include "RecoTracker/LSTCore/interface/ChainIncidenceHostCollection.h"
+#include "RecoTracker/LSTCore/interface/ChainNodesHostCollection.h"
 #include "RecoTracker/LSTCore/interface/HitsHostCollection.h"
 #include "RecoTracker/LSTCore/interface/MiniDoubletsHostCollection.h"
 #include "RecoTracker/LSTCore/interface/PixelQuintupletsHostCollection.h"
@@ -20,6 +22,8 @@
 #include "RecoTracker/LSTCore/interface/alpaka/Common.h"
 #include "RecoTracker/LSTCore/interface/alpaka/LST.h"
 #include "RecoTracker/LSTCore/interface/alpaka/LSTInputDeviceCollection.h"
+#include "RecoTracker/LSTCore/interface/alpaka/ChainIncidenceDeviceCollection.h"
+#include "RecoTracker/LSTCore/interface/alpaka/ChainNodesDeviceCollection.h"
 #include "RecoTracker/LSTCore/interface/alpaka/HitsDeviceCollection.h"
 #include "RecoTracker/LSTCore/interface/alpaka/MiniDoubletsDeviceCollection.h"
 #include "RecoTracker/LSTCore/interface/alpaka/PixelQuintupletsDeviceCollection.h"
@@ -44,6 +48,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     const float ptCut_;
     const uint16_t clustSizeCut_;
     const bool reduceMemByFullPrecompute_;
+    // Master flag of the chain-tracking port (P2_PORT_MAP.md). At phase P2.0 it only enables the
+    // triplet compaction and the incidence CSR build; nothing downstream consumes them yet, so the
+    // track candidate collection is bit-identical with the flag either way.
+    const bool useChainTracking_;
 
     std::array<unsigned int, 6> n_minidoublets_by_layer_barrel_{};
     std::array<unsigned int, 5> n_minidoublets_by_layer_endcap_{};
@@ -58,6 +66,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     unsigned int nTotalSegments_;
     unsigned int pixelSize_;
     uint16_t pixelModuleIndex_;
+    unsigned int nChainNodes_ = 0;   // dense triplet-node count (K0)
+    unsigned int nChainE1Edges_ = 0; // exact MD-keyed edge count (K1b)
+    unsigned int nChainE2Edges_ = 0; // exact LS-keyed edge count (K1b)
 
     //Device stuff
     LSTInputDeviceCollection const* lstInputDC_;  // not owned
@@ -73,6 +84,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     std::optional<TrackCandidatesExtendedDeviceCollection> trackCandidatesExtendedDC_;
     std::optional<PixelTripletsDeviceCollection> pixelTripletsDC_;
     std::optional<PixelQuintupletsDeviceCollection> pixelQuintupletsDC_;
+    // Chain-tracking graph state, only allocated when useChainTracking_ is true.
+    std::optional<ChainIncidenceDeviceCollection> chainMdIncidenceDC_;  // keyed by MiniDoublet index
+    std::optional<ChainIncidenceDeviceCollection> chainLsIncidenceDC_;  // keyed by Segment index
+    std::optional<ChainNodesDeviceCollection> chainNodesDC_;
 
     //CPU interface stuff
     std::optional<LSTInputHostCollection> lstInputHC_;
@@ -107,11 +122,13 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
              const uint16_t clustSizeCut,
              Queue& q,
              const LSTESData<Device>* deviceESData,
-             bool reduce_mem_by_full_precompute)
+             bool reduce_mem_by_full_precompute,
+             bool use_chain_tracking = false)
         : queue_(q),
           ptCut_(ptCut),
           clustSizeCut_(clustSizeCut),
           reduceMemByFullPrecompute_(reduce_mem_by_full_precompute),
+          useChainTracking_(use_chain_tracking),
           nModules_(deviceESData->nModules),
           nLowerModules_(deviceESData->nLowerModules),
           nPixels_(deviceESData->nPixels),
@@ -144,6 +161,18 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     void pixelLineSegmentCleaning(bool no_pls_dupclean);
     void createPixelQuintuplets();
     void createQuadruplets();
+
+    // Chain-tracking phase P2.0: K0 triplet compaction plus the K1b/K1c incidence CSR build.
+    // Only called when useChainTracking_ is true; writes nothing any other stage reads.
+    void buildChainIncidence();
+    // Zeroes the incidence tally columns; they are the K1a counters and then the K1c cursors.
+    void resetChainIncidenceCounts();
+    // Host-side verification of the CSR invariants, run under the verbose statistics path.
+    void chainIncidenceStatistics();
+
+    unsigned int getNumberOfChainNodes() const { return nChainNodes_; }
+    unsigned int getNumberOfChainE1Edges() const { return nChainE1Edges_; }
+    unsigned int getNumberOfChainE2Edges() const { return nChainE2Edges_; }
 
     // functions that map the objects to the appropriate modules
     void addMiniDoubletsToEventExplicit();

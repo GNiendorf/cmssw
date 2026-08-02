@@ -25,7 +25,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
              LSTInputDeviceCollection const* lstInputDC,
              bool no_pls_dupclean,
              bool tc_pls_triplets,
-             bool reduce_mem_by_full_precompute);
+             bool reduce_mem_by_full_precompute,
+             bool use_chain_tracking = false);
     std::unique_ptr<TrackCandidatesBaseDeviceCollection> getTrackCandidates() {
       return std::move(trackCandidatesBaseDC_);
     }
