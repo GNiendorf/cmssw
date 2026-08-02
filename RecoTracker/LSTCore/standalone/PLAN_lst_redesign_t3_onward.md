@@ -1585,6 +1585,21 @@ LATER separate pass (same prototype, jet-enriched ntuple) once the machinery exi
     MDs the fit supports; explore un-trim + extend-with-unclaimed-hits); (e) edge
     head displacement retrain (the T4/dxy[10,30) fix — may ALSO weld longer
     displaced chains = length upstream); (f) BK-vs-ve outcome integration.
+  - **MAINTAINER DIRECTIVE (2026-08-02): M19 = the CAPSTONE round — one huge final
+    search (~20 agents authorized) across ALL remaining axes before integration:**
+    dup |eta| 1.5-3 (primary), track length (primary), overall efficiency "a tad"
+    (nice-to-have; headroom exists: flood ceiling .8197 vs .8137 = joint claim+gate;
+    capped 2-way ownership exemption gets its dedicated shot), dxy>10 (edge-head
+    displacement retrain — the traced fix), residual easy fake wins (free only —
+    fake is SOLVED, never traded for). Structure: recon -> exploit -> adversarial
+    verify -> single final composition + descent + curves + true-OOS; trainings
+    (edge head, attach head) launch FIRST (long poles, highest ceilings); one
+    parallel P2-PREP agent drafts the Alpaka port mapping (stage->kernel table, SoA
+    layouts, memory plan, grid prefilter replacing the ~200ms attach scan) so
+    integration starts immediately at config freeze. AFTER M19: pick best
+    improvements, select THE final config, freeze, begin P2 integration (own
+    hurdles: parallelization, CPU/GPU timing, memory). Launch trigger: M18b
+    completion (flagship + true-OOS = round baseline).
 - **pLS SELF-CLEANING CONFIG MATCHING (maintainer requirement, 2026-08-02):** LST's
   pLS dedup = ONE kernel (CheckHitspLS) at TWO sites, both gated by one flag:
   first pass in pixelLineSegmentCleaning() (LSTEvent.dev.cc:1044), second stricter
