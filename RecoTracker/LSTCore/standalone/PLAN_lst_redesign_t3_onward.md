@@ -1511,6 +1511,24 @@ LATER separate pass (same prototype, jet-enriched ntuple) once the machinery exi
   displaced-with-pixel-seed population is a structural upside to CLAIM, not just parity
   to hold (maintainer point, 2026-08-01)**; (c) pLS dup-clean/suppress parity
   is then subsumed by the contention rule's A/B.
+- **pLS SELF-CLEANING CONFIG MATCHING (maintainer requirement, 2026-08-02):** LST's
+  pLS dedup = ONE kernel (CheckHitspLS) at TWO sites, both gated by one flag:
+  first pass in pixelLineSegmentCleaning() (LSTEvent.dev.cc:1044), second stricter
+  quad-aware pass inside createTrackCandidates() (:599) before bare pLS -> TC.
+  CURRENT STATE: frozen benchmark ntuple = standalone defaults = cleaning ON (both
+  passes) + tc_pls_triplets OFF (quads only) + pt 0.8; the prototype carries LST's
+  bare-pLS TC rows VERBATIM (dupcut verified bit-identical 188230-row set) -> pLS
+  self-cleaning is identical by construction; today's A/Bs are fair. THE CATCH: the
+  Phase-2 seedingLST+trackingLST combined config flips BOTH (nopLSDupClean=True i.e.
+  both passes OFF, tcpLSTriplets=True i.e. triplet pLS become TCs, ptCut 0.6 -
+  lstProducerTask_cff.py), while the trackingLST-only workflow keeps producer
+  defaults (= our benchmark). PRE-P2 ACTION: decide the integration target config
+  with the maintainer; if it is the seedingLST combo, REGENERATE the benchmark with
+  the standalone flags --no_pls_dupclean --tc_pls_triplets (both exist in lst.cc)
+  and re-baseline (symmetric shift: pLS-pLS dup cell grows - already 49% of our dup
+  budget - and the bare-pLS universe expands, raising the attach-contention lever's
+  weight). Any config we ship must run the SAME two CheckHitspLS sites with the SAME
+  flag values as the target workflow.
 - Code hygiene: freeze the winning config, prune dead experiments from prototype/,
   document stage contracts, final commit tag.
 
