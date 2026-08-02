@@ -1633,6 +1633,16 @@ LATER separate pass (same prototype, jet-enriched ntuple) once the machinery exi
     improvements, select THE final config, freeze, begin P2 integration (own
     hurdles: parallelization, CPU/GPU timing, memory). Launch trigger: M18b
     completion (flagship + true-OOS = round baseline).
+  - **MAINTAINER FREEZE CRITERION (2026-08-02, standing): SIMPLICITY OVER
+    CLEVERNESS.** The algorithm exists to be SIMPLER than LST; reject any lever
+    whose logic is clearly sample-specific / transfer-fragile ("crazy logic") if it
+    only edges out a small improvement — transferability to other samples is a core
+    goal. Apply at the M19 freeze: every adopted lever needs a physics story
+    (resolution effect, hit-sharing structure, evidence ordering, better training
+    data) and gets flagged if it looks PU200-ttbar-specific. ROADMAP CONFIRMED:
+    M19 freeze -> P2 integration into LST (nail timing + physics performance there)
+    -> THEN the other samples (cube sample, jet sample) and further tuning with
+    them in mind.
 - **pLS SELF-CLEANING CONFIG MATCHING (maintainer requirement, 2026-08-02):** LST's
   pLS dedup = ONE kernel (CheckHitspLS) at TWO sites, both gated by one flag:
   first pass in pixelLineSegmentCleaning() (LSTEvent.dev.cc:1044), second stricter
