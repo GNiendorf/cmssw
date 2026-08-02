@@ -1572,7 +1572,11 @@ LATER separate pass (same prototype, jet-enriched ntuple) once the machinery exi
     displaced/fake. M19 candidate angles (launch after M18b lands, its flagship/OOS
     numbers = the round baseline): (a) endcap/transition dup recon on the FLAGSHIP
     (attach ON — the cell structure changes vs dupcut's anchor-mode matrix) then
-    targeted levers; (b) attach-head retrain (g1's displaced-pair training gap: 12
+    targeted levers — **maintainer localization from the dup-vs-eta curve: the
+    excess over LST is LARGEST at |eta| ~1.5-3 (transition through endcap disks
+    into the chain/pLS overlap edge where OT coverage ends ~2.5); barrel is
+    elevated but tolerable — the recon must bin the dup DELTA vs eta finely
+    (0.25-ish bins) x TC-pair cell to name the mechanism in that window**; (b) attach-head retrain (g1's displaced-pair training gap: 12
     pairs vxy>=1, 0 >=5; higher precision moves the 0.96 crossover -> tighter -a
     safely -> more endcap chain-vs-pLS dup removal); (c) length via ordering (length
     tie-breaker among near-equal quality in the order key; -BK prefers shorter
