@@ -1,0 +1,90 @@
+#ifndef RecoTracker_LSTCore_interface_ChainsSoA_h
+#define RecoTracker_LSTCore_interface_ChainsSoA_h
+
+#include <cstdint>
+
+#include "DataFormats/Common/interface/StdArray.h"
+#include "DataFormats/SoATemplate/interface/SoALayout.h"
+
+#include "RecoTracker/LSTCore/interface/Common.h"
+
+namespace lst {
+
+  struct Params_ChainFeat {
+    // FROZEN chain-feature contract (prototype/ChainFeatures.h, kChainFeat = 25). Slots 0-15 are
+    // the M6 contract, 16-24 the a2 additions. The 3-class gate head gathers a SUBSET of these
+    // columns through its own kSrcCol table (column -1 = the chain dcaXY), so the contract must
+    // stay exactly 25 wide and in this order:
+    //   0 nNodes  1 nLayers  2 sumEdgeLogit  3 minEdgeLogit  4 meanEdgeLogit
+    //   5 fullFitChi2PerHit  6 rzLineChi2PerHit  7 fitKappa  8 dKappaFitVsMedianT3  9 ptEst
+    //  10 innermostLayer  11 layerSpan  12 nPS  13 nBarrel  14 maxJunctionDegProduct
+    //  15 chargeConsistency  16 maxXyResid  17 maxRzResid  18 stdEdgeLogit  19 maxBridgeChi2
+    //  20 minT3FakeScore  21 maxT3FakeScore  22 meanT3PromptScore  23 minT3DisplacedScore
+    //  24 meanT3DisplacedScore
+    static constexpr int kFeatures = 25;
+    using ArrayFxFeat = edm::StdArray<float, kFeatures>;
+  };
+
+  // Welded chains (port map phase P2.2, stages K6c-K6f and K7a-K7c).
+  //
+  // Storage contract for the CSR payloads, all in ChainItemsSoA and all keyed off ONE per-chain
+  // number, nodeOffset:
+  //   nodeItems[nodeOffset,             nodeOffset + nNodes)         member nodes, innermost first
+  //   edgeItems[nodeOffset,             nodeOffset + nNodes - 1)     welded edges, innermost first
+  //   mdItems  [3 * nodeOffset,         3 * nodeOffset + nMDs)       deduped MD union, first
+  //                                                                  appearance order
+  //   mdScratch[3 * nodeOffset,         3 * nodeOffset + 3 * nNodes) K6f working space
+  // The edge list is one shorter than the node list, so it fits in the node region with one slot
+  // to spare; the MD union of n nodes can never exceed 3n entries, so the 3x-strided MD region is
+  // an exact bound. ChainItems is therefore allocated with 3 * (total welded nodes) rows and needs
+  // no second prefix pass. The terminal trim (K6f) moves nodeOffset by +1 (inner drop) or shortens
+  // nNodes (outer drop); both keep every region above inside the chain's original allocation.
+  GENERATE_SOA_LAYOUT(ChainsSoALayout,
+                      SOA_COLUMN(uint32_t, nodeOffset),
+                      SOA_COLUMN(uint16_t, nNodes),
+                      SOA_COLUMN(uint16_t, nMDs),
+                      SOA_COLUMN(uint8_t, nLayers),
+                      // -G 6 branch code: 0 = T4 IP, 1 = T4 exempt, 2 = 5+ IP, 3 = 5+ exempt.
+                      SOA_COLUMN(int8_t, branch),
+                      // 0 = untrimmed, 1 = innermost node dropped, 2 = outermost node dropped.
+                      SOA_COLUMN(int8_t, trimAction),
+                      // bit0 killed by the gate, bit1 exempt (large-DCA) branch, bit2 |eta| band,
+                      // bit3 killed by the C1 (nNodes == 2, nLayers == 5) cell rule.
+                      SOA_COLUMN(uint8_t, flags),
+                      // K6e/K6f: sum of member weld-edge logits + lambdaLen * nLayers. K7c
+                      // subtracts kChainGateKill from it when the gate kills the chain, exactly as
+                      // the reference implementation does, so K9 can threshold on this one number.
+                      SOA_COLUMN(float, score),
+                      SOA_COLUMN(float, dcaXY),  // K7a, the -X split axis and gate input 24
+                      SOA_COLUMN(float, zFake),
+                      SOA_COLUMN(float, zPrompt),
+                      SOA_COLUMN(float, zDisp),
+                      SOA_COLUMN(float, marginP),  // zPrompt - zFake
+                      SOA_COLUMN(float, marginD),  // zDisp   - zFake
+                      SOA_COLUMN(float, marginX),  // max(zPrompt, zDisp) - zFake
+                      SOA_COLUMN(Params_ChainFeat::ArrayFxFeat, features),
+                      SOA_SCALAR(uint32_t, nChains))
+
+  using ChainsSoA = ChainsSoALayout<>;
+  using Chains = ChainsSoA::View;
+  using ChainsConst = ChainsSoA::ConstView;
+
+  GENERATE_SOA_LAYOUT(ChainItemsSoALayout,
+                      SOA_COLUMN(uint32_t, nodeItems),  // dense chain-node index
+                      SOA_COLUMN(uint32_t, edgeItems),  // row in ChainEdges
+                      SOA_COLUMN(uint32_t, mdItems),    // MiniDoublet index
+                      SOA_COLUMN(uint32_t, mdScratch))  // K6f candidate MD union
+
+  using ChainItemsSoA = ChainItemsSoALayout<>;
+  using ChainItems = ChainItemsSoA::View;
+  using ChainItemsConst = ChainItemsSoA::ConstView;
+
+  // Chain flag bits.
+  static constexpr uint8_t kChainFlagKilled = 0x1;
+  static constexpr uint8_t kChainFlagExempt = 0x2;
+  static constexpr uint8_t kChainFlagEtaBand = 0x4;
+  static constexpr uint8_t kChainFlagCellKill = 0x8;
+
+}  // namespace lst
+
+#endif

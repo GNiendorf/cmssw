@@ -5,7 +5,9 @@
 #include "LSTEvent.h"
 
 #include "ChainEdges.h"
+#include "ChainGate.h"
 #include "ChainGraph.h"
+#include "ChainWeld.h"
 #include "Hit.h"
 #include "Kernels.h"
 #include "MiniDoublet.h"
@@ -97,9 +99,13 @@ void LSTEvent::resetEventSync() {
   chainLsIncidenceDC_.reset();
   chainNodesDC_.reset();
   chainEdgesDC_.reset();
+  chainsDC_.reset();
+  chainItemsDC_.reset();
   nChainNodes_ = 0;
   nChainE1Edges_ = 0;
   nChainE2Edges_ = 0;
+  nChainCount_ = 0;
+  nChainWeldedNodes_ = 0;
 
   lstInputHC_.reset();
   hitsHC_.reset();
@@ -944,6 +950,7 @@ void LSTEvent::buildChainEdges() {
     }
   }
   dumpChainEdges();
+  buildChains();
 }
 
 void LSTEvent::dumpChainEdges() {
@@ -1008,6 +1015,331 @@ void LSTEvent::dumpChainEdges() {
     put32(outer[e]);
     put32(type[e]);
     std::fwrite(&logOdds[e], sizeof(float), 1, f);
+  }
+  std::fclose(f);
+}
+
+void LSTEvent::buildChains() {
+  // Phase P2.2. K6a/K6b weld the edge graph into disjoint simple paths, K6c-K6e emit them as
+  // chains, K6f trims a parasitic terminal, K7a builds the 25 frozen chain features plus the chain
+  // dcaXY, and K7b/K7c run the 3-class gate and the -G 6 branch kill. Nothing reads the kill bit:
+  // this phase is measurement only, exactly like P2.1.
+  if (nChainNodes_ == 0 || !chainEdgesDC_.has_value())
+    return;
+
+  bool const timing = chainTimingEnabled();
+  auto stamp = [&]() {
+    if (timing)
+      alpaka::wait(queue_);
+    return std::chrono::steady_clock::now();
+  };
+  auto const t0 = stamp();
+
+  auto const chainFlat_workDiv = cms::alpakatools::make_workdiv<Acc1D>(max_blocks, 256);
+  auto const chainScan_workDiv = cms::alpakatools::make_workdiv<Acc1D>(1, kChainScanBlockThreads);
+
+  // K6a / K6b. Weld slots start empty (-1) and the packed argmax keys start at the 0 sentinel.
+  auto outWeld_buf = cms::alpakatools::make_device_buffer<int32_t[]>(queue_, nChainNodes_);
+  auto inWeld_buf = cms::alpakatools::make_device_buffer<int32_t[]>(queue_, nChainNodes_);
+  auto bestOut_buf = cms::alpakatools::make_device_buffer<uint64_t[]>(queue_, nChainNodes_);
+  auto bestIn_buf = cms::alpakatools::make_device_buffer<uint64_t[]>(queue_, nChainNodes_);
+  alpaka::memset(queue_, outWeld_buf, 0xff);
+  alpaka::memset(queue_, inWeld_buf, 0xff);
+
+  for (int sweep = 0; sweep < kChainWeldSweeps; ++sweep) {
+    // A fixed sweep count, no host sync: the reference's "break when nothing welded" early exit is
+    // a CPU nicety and a zero-weld sweep is idempotent.
+    alpaka::memset(queue_, bestOut_buf, 0);
+    alpaka::memset(queue_, bestIn_buf, 0);
+    alpaka::exec<Acc1D>(queue_,
+                        chainFlat_workDiv,
+                        ChainWeldArgmax{},
+                        chainEdgesDC_->const_view(),
+                        outWeld_buf.data(),
+                        inWeld_buf.data(),
+                        bestOut_buf.data(),
+                        bestIn_buf.data(),
+                        chainConfig_.thetaEdge);
+    alpaka::exec<Acc1D>(queue_,
+                        chainFlat_workDiv,
+                        ChainWeldMutual{},
+                        chainEdgesDC_->const_view(),
+                        nChainNodes_,
+                        outWeld_buf.data(),
+                        inWeld_buf.data(),
+                        bestOut_buf.data(),
+                        bestIn_buf.data());
+  }
+
+  auto const t1 = stamp();
+
+  // K6c / K6d. Head detection, path lengths, and the two exclusive prefixes that name the chains.
+  auto headNodeCount_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, nChainNodes_);
+  auto chainIndexOf_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, nChainNodes_);
+  auto nodeOffsetOf_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, nChainNodes_);
+  auto nChains_buf_d = cms::alpakatools::make_device_buffer<uint32_t>(queue_);
+  auto nChainNodesTotal_buf_d = cms::alpakatools::make_device_buffer<uint32_t>(queue_);
+
+  alpaka::exec<Acc1D>(queue_,
+                      chainFlat_workDiv,
+                      ChainCountChains{},
+                      chainEdgesDC_->const_view(),
+                      nChainNodes_,
+                      outWeld_buf.data(),
+                      inWeld_buf.data(),
+                      headNodeCount_buf.data());
+
+  alpaka::exec<Acc1D>(queue_,
+                      chainScan_workDiv,
+                      ChainPrefixChains{},
+                      nChainNodes_,
+                      headNodeCount_buf.data(),
+                      chainIndexOf_buf.data(),
+                      nodeOffsetOf_buf.data(),
+                      nChains_buf_d.data(),
+                      nChainNodesTotal_buf_d.data());
+
+  auto nChains_buf_h = cms::alpakatools::make_host_buffer<uint32_t>(queue_);
+  auto nChainNodesTotal_buf_h = cms::alpakatools::make_host_buffer<uint32_t>(queue_);
+  alpaka::memcpy(queue_, nChains_buf_h, nChains_buf_d);
+  alpaka::memcpy(queue_, nChainNodesTotal_buf_h, nChainNodesTotal_buf_d);
+  alpaka::wait(queue_);  // the chain count sizes both chain collections exactly
+  nChainCount_ = *nChains_buf_h.data();
+  nChainWeldedNodes_ = *nChainNodesTotal_buf_h.data();
+
+  if (nChainCount_ == 0)
+    return;
+
+  // Exact sizing: 3 * (total member nodes) bounds the MD union of every chain at once (see the
+  // storage contract in ChainsSoA.h), so no second prefix pass and no reservation are needed.
+  chainsDC_.emplace(queue_, nChainCount_);
+  chainItemsDC_.emplace(queue_, 3 * nChainWeldedNodes_);
+  if (objectsStatistics_) {
+    double mb =
+        (alpaka::getExtentProduct(chainsDC_->buffer()) + alpaka::getExtentProduct(chainItemsDC_->buffer())) / 1e6;
+    memoryAllocatedMB_ += mb;
+    lstWarning(std::format("[MEM] Chains: {} chains / {} member nodes allocated ({:.1f} MB)",
+                           nChainCount_,
+                           nChainWeldedNodes_,
+                           mb));
+  }
+
+  auto const t2 = stamp();
+
+  alpaka::exec<Acc1D>(queue_,
+                      chainFlat_workDiv,
+                      ChainEmitChains{},
+                      segmentsDC_->const_view().segments(),
+                      tripletsDC_->const_view().triplets(),
+                      modules_.const_view().modules(),
+                      miniDoubletsDC_->const_view().miniDoublets(),
+                      chainNodesDC_->const_view(),
+                      chainEdgesDC_->const_view(),
+                      nChainNodes_,
+                      outWeld_buf.data(),
+                      headNodeCount_buf.data(),
+                      chainIndexOf_buf.data(),
+                      nodeOffsetOf_buf.data(),
+                      chainsDC_->view(),
+                      chainItemsDC_->view(),
+                      chainConfig_.lambdaLen);
+
+  auto const t3 = stamp();
+
+  if (chainConfig_.terminalTrim && chainConfig_.trimFactor > 0.f) {
+    for (int pass = 0; pass < chainConfig_.trimPasses; ++pass)
+      alpaka::exec<Acc1D>(queue_,
+                          chainFlat_workDiv,
+                          ChainTrimTerminals{},
+                          segmentsDC_->const_view().segments(),
+                          tripletsDC_->const_view().triplets(),
+                          modules_.const_view().modules(),
+                          miniDoubletsDC_->const_view().miniDoublets(),
+                          chainNodesDC_->const_view(),
+                          chainEdgesDC_->const_view(),
+                          chainsDC_->view(),
+                          chainItemsDC_->view(),
+                          chainConfig_);
+  }
+
+  auto const t4 = stamp();
+
+  alpaka::exec<Acc1D>(queue_,
+                      chainFlat_workDiv,
+                      ChainFeaturesKernel{},
+                      modules_.const_view().modules(),
+                      miniDoubletsDC_->const_view().miniDoublets(),
+                      segmentsDC_->const_view().segments(),
+                      tripletsDC_->const_view().triplets(),
+                      chainNodesDC_->const_view(),
+                      chainEdgesDC_->const_view(),
+                      chainMdIncidenceDC_->const_view(),
+                      chainLsIncidenceDC_->const_view(),
+                      chainItemsDC_->const_view(),
+                      chainsDC_->view());
+
+  auto const t5 = stamp();
+
+  alpaka::exec<Acc1D>(queue_,
+                      chainFlat_workDiv,
+                      ChainGateKernel{},
+                      miniDoubletsDC_->const_view().miniDoublets(),
+                      segmentsDC_->const_view().segments(),
+                      tripletsDC_->const_view().triplets(),
+                      chainNodesDC_->const_view(),
+                      chainItemsDC_->const_view(),
+                      chainsDC_->view(),
+                      chainConfig_);
+
+  auto const t6 = stamp();
+  if (timing) {
+    auto ms = [](auto a, auto b) { return std::chrono::duration<double, std::milli>(b - a).count(); };
+    lstWarning(std::format("[CHAIN TIMING] chains={} weldedNodes={} | K6ab weld {:.3f} ms | "
+                           "K6cd count+prefix {:.3f} ms | K6e emit {:.3f} ms | K6f trim {:.3f} ms | "
+                           "K7a features {:.3f} ms | K7bc gate {:.3f} ms | total {:.3f} ms",
+                           nChainCount_,
+                           nChainWeldedNodes_,
+                           ms(t0, t1),
+                           ms(t1, t2),
+                           ms(t2, t3),
+                           ms(t3, t4),
+                           ms(t4, t5),
+                           ms(t5, t6),
+                           ms(t0, t6)));
+  }
+
+  dumpChains();
+}
+
+void LSTEvent::dumpChains() {
+  // Parity sidecar for the P2.2 gate. Off unless LST_CHAIN_CHAIN_DUMP names an output file; the
+  // ntuple and the track candidate collection are untouched either way. Record layout is
+  // documented in standalone/p22_ref/p22_ref_dump.cc.
+  char const* path = std::getenv("LST_CHAIN_CHAIN_DUMP");
+  if (path == nullptr || *path == '\0' || !chainsDC_.has_value())
+    return;
+
+  alpaka::wait(queue_);
+
+  auto pullTo = [&](auto* hostPtr, auto column, unsigned int n) {
+    auto host_view = cms::alpakatools::make_host_view(hostPtr, n);
+    auto dev_view = cms::alpakatools::make_device_view(queue_, column, n);
+    alpaka::memcpy(queue_, host_view, dev_view);
+    alpaka::wait(queue_);
+  };
+
+  uint32_t const nC = nChainCount_;
+  uint32_t const nItems = 3u * nChainWeldedNodes_;
+  auto ch = chainsDC_->view();
+  auto it = chainItemsDC_->view();
+
+  std::vector<uint32_t> nodeOffset(nC);
+  std::vector<uint16_t> nNodes(nC), nMDs(nC);
+  std::vector<uint8_t> nLayers(nC), flags(nC);
+  std::vector<int8_t> branch(nC), trimAction(nC);
+  std::vector<float> score(nC), dcaXY(nC), zF(nC), zP(nC), zD(nC), mP(nC), mD(nC), mX(nC);
+  std::vector<float> feats(static_cast<size_t>(nC) * Params_ChainFeat::kFeatures);
+  pullTo(nodeOffset.data(), ch.nodeOffset(), nC);
+  pullTo(nNodes.data(), ch.nNodes(), nC);
+  pullTo(nMDs.data(), ch.nMDs(), nC);
+  pullTo(nLayers.data(), ch.nLayers(), nC);
+  pullTo(flags.data(), ch.flags(), nC);
+  pullTo(branch.data(), ch.branch(), nC);
+  pullTo(trimAction.data(), ch.trimAction(), nC);
+  pullTo(score.data(), ch.score(), nC);
+  pullTo(dcaXY.data(), ch.dcaXY(), nC);
+  pullTo(zF.data(), ch.zFake(), nC);
+  pullTo(zP.data(), ch.zPrompt(), nC);
+  pullTo(zD.data(), ch.zDisp(), nC);
+  pullTo(mP.data(), ch.marginP(), nC);
+  pullTo(mD.data(), ch.marginD(), nC);
+  pullTo(mX.data(), ch.marginX(), nC);
+  {
+    static_assert(sizeof(Params_ChainFeat::ArrayFxFeat) == sizeof(float) * Params_ChainFeat::kFeatures,
+                  "chain feature rows must be densely packed for the debug dump");
+    auto host_view =
+        cms::alpakatools::make_host_view(reinterpret_cast<Params_ChainFeat::ArrayFxFeat*>(feats.data()), nC);
+    auto dev_view = cms::alpakatools::make_device_view(queue_, ch.features(), nC);
+    alpaka::memcpy(queue_, host_view, dev_view);
+    alpaka::wait(queue_);
+  }
+
+  std::vector<uint32_t> nodeItems(nItems), edgeItems(nItems), mdItems(nItems);
+  pullTo(nodeItems.data(), it.nodeItems(), nItems);
+  pullTo(edgeItems.data(), it.edgeItems(), nItems);
+  pullTo(mdItems.data(), it.mdItems(), nItems);
+
+  uint32_t const nEdges = static_cast<uint32_t>(chainEdgesDC_->view().metadata().size());
+  std::vector<uint8_t> edgeType(nEdges);
+  pullTo(edgeType.data(), chainEdgesDC_->view().type(), nEdges);
+
+  // MD identity for the cross-implementation comparison: the reference numbers MiniDoublets in
+  // ntuple order, this side in SoA order, so the stable key is the pair of ph2 hit rows.
+  unsigned int const nMDTotal = static_cast<unsigned int>(miniDoubletsDC_->view().miniDoublets().metadata().size());
+  unsigned int const nHitsTotal = static_cast<unsigned int>(lstInputDC_->const_view().hits().metadata().size());
+  std::vector<unsigned int> mdAnchorHit(nMDTotal), mdOuterHit(nMDTotal), hitIdx(nHitsTotal);
+  pullTo(mdAnchorHit.data(), miniDoubletsDC_->view().miniDoublets().anchorHitIndices(), nMDTotal);
+  pullTo(mdOuterHit.data(), miniDoubletsDC_->view().miniDoublets().outerHitIndices(), nMDTotal);
+  {
+    std::vector<unsigned int> tmp(nHitsTotal);
+    auto host_view = cms::alpakatools::make_host_view(tmp.data(), nHitsTotal);
+    auto dev_view = cms::alpakatools::make_device_view(queue_, lstInputDC_->const_view().hits().idxs(), nHitsTotal);
+    alpaka::memcpy(queue_, host_view, dev_view);
+    alpaka::wait(queue_);
+    hitIdx = std::move(tmp);
+  }
+
+  static std::atomic<uint32_t> eventCounter{0};
+  uint32_t const ievt = eventCounter.fetch_add(1);
+  static std::mutex dumpMutex;
+  std::lock_guard<std::mutex> lock(dumpMutex);
+  std::FILE* f = std::fopen(path, (ievt == 0) ? "wb" : "ab");
+  if (f == nullptr)
+    return;
+  auto put32 = [&](uint32_t v) { std::fwrite(&v, sizeof(v), 1, f); };
+  auto putf = [&](float v) { std::fwrite(&v, sizeof(v), 1, f); };
+
+  put32(0x50323243u);  // 'P22C'
+  put32(ievt);
+  put32(nChainNodes_);
+  put32(nEdges);
+  put32(nC);
+  for (uint32_t c = 0; c < nC; ++c) {
+    uint32_t const off = nodeOffset[c];
+    uint32_t const n = nNodes[c];
+    uint32_t const m = nMDs[c];
+    int const drop = trimAction[c];
+    // Pre-trim geometry, recovered from the endpoint move: the untrimmed node run always starts at
+    // (off - 1) for an inner drop and at off otherwise, and is one node longer whenever a drop
+    // happened. This lets one record carry both the pre-trim weld and the post-trim chain.
+    uint32_t const preOff = (drop == 1) ? off - 1u : off;
+    uint32_t const preN = (drop == 0) ? n : n + 1u;
+    put32(preN);
+    put32(n);
+    put32(m);
+    put32(nLayers[c]);
+    put32(static_cast<uint32_t>(static_cast<int32_t>(branch[c])));
+    put32(static_cast<uint32_t>(drop));
+    put32(flags[c]);
+    putf(score[c]);
+    putf(dcaXY[c]);
+    putf(zF[c]);
+    putf(zP[c]);
+    putf(zD[c]);
+    putf(mP[c]);
+    putf(mD[c]);
+    putf(mX[c]);
+    for (int k = 0; k < Params_ChainFeat::kFeatures; ++k)
+      putf(feats[static_cast<size_t>(c) * Params_ChainFeat::kFeatures + k]);
+    for (uint32_t k = 0; k < preN; ++k)
+      put32(nodeItems[preOff + k]);
+    for (uint32_t k = 0; k + 1 < preN; ++k)
+      put32(edgeType[edgeItems[preOff + k]]);
+    for (uint32_t k = 0; k < m; ++k) {
+      uint32_t const md = mdItems[3u * off + k];
+      put32(hitIdx[mdAnchorHit[md]]);
+      put32(hitIdx[mdOuterHit[md]]);
+    }
   }
   std::fclose(f);
 }

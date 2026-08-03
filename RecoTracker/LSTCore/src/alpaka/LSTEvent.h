@@ -8,6 +8,8 @@
 #include "RecoTracker/LSTCore/interface/ChainEdgesHostCollection.h"
 #include "RecoTracker/LSTCore/interface/ChainIncidenceHostCollection.h"
 #include "RecoTracker/LSTCore/interface/ChainNodesHostCollection.h"
+#include "RecoTracker/LSTCore/interface/ChainsHostCollection.h"
+#include "RecoTracker/LSTCore/interface/ChainConfig.h"
 #include "RecoTracker/LSTCore/interface/HitsHostCollection.h"
 #include "RecoTracker/LSTCore/interface/MiniDoubletsHostCollection.h"
 #include "RecoTracker/LSTCore/interface/PixelQuintupletsHostCollection.h"
@@ -26,6 +28,7 @@
 #include "RecoTracker/LSTCore/interface/alpaka/ChainEdgesDeviceCollection.h"
 #include "RecoTracker/LSTCore/interface/alpaka/ChainIncidenceDeviceCollection.h"
 #include "RecoTracker/LSTCore/interface/alpaka/ChainNodesDeviceCollection.h"
+#include "RecoTracker/LSTCore/interface/alpaka/ChainsDeviceCollection.h"
 #include "RecoTracker/LSTCore/interface/alpaka/HitsDeviceCollection.h"
 #include "RecoTracker/LSTCore/interface/alpaka/MiniDoubletsDeviceCollection.h"
 #include "RecoTracker/LSTCore/interface/alpaka/PixelQuintupletsDeviceCollection.h"
@@ -71,6 +74,11 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     unsigned int nChainNodes_ = 0;   // dense triplet-node count (K0)
     unsigned int nChainE1Edges_ = 0; // exact MD-keyed edge count (K1b)
     unsigned int nChainE2Edges_ = 0; // exact LS-keyed edge count (K1b)
+    unsigned int nChainCount_ = 0;   // welded chain count (K6d)
+    unsigned int nChainWeldedNodes_ = 0;  // total member nodes over all chains (K6d)
+    // Frozen chain-tracking configuration. P2.3 will fill this from the producer parameter set;
+    // at P2.2 it always carries the FREEZE_RECORD defaults documented in ChainConfig.h.
+    ChainConfig chainConfig_{};
 
     //Device stuff
     LSTInputDeviceCollection const* lstInputDC_;  // not owned
@@ -91,6 +99,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     std::optional<ChainIncidenceDeviceCollection> chainLsIncidenceDC_;  // keyed by Segment index
     std::optional<ChainNodesDeviceCollection> chainNodesDC_;
     std::optional<ChainEdgesDeviceCollection> chainEdgesDC_;
+    std::optional<ChainsDeviceCollection> chainsDC_;
+    std::optional<ChainItemsDeviceCollection> chainItemsDC_;
 
     //CPU interface stuff
     std::optional<LSTInputHostCollection> lstInputHC_;
@@ -180,6 +190,14 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     // the per-event edge set and logits to a binary file and touches no ntuple branch.
     void dumpChainEdges();
 
+    // Chain-tracking phase P2.2: K6a-K6f weld + terminal trim, K7a-K7c chain features + 3-class
+    // gate + the -G 6 kill. Only called when useChainTracking_ is true; NOTHING consumes the kill
+    // bit yet, so this phase is output-neutral like P2.0 and P2.1.
+    void buildChains();
+    // Optional parity sidecar, enabled by the LST_CHAIN_CHAIN_DUMP environment variable.
+    void dumpChains();
+
+    unsigned int getNumberOfChains() const { return nChainCount_; }
     unsigned int getNumberOfChainNodes() const { return nChainNodes_; }
     unsigned int getNumberOfChainE1Edges() const { return nChainE1Edges_; }
     unsigned int getNumberOfChainE2Edges() const { return nChainE2Edges_; }
