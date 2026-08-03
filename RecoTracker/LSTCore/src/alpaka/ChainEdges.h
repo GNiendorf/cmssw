@@ -501,19 +501,23 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         float const rOut = chainCleanRadius(triplets.radius()[t3Out]);
         float const centerDistRel = centerDist / chainMaxf(0.5f * (rIn + rOut), chainfeat::kEps);
 
-        // Shared key: E1 -> the shared middle MD; E2 -> the shared LS and its first MD.
+        // Shared key: E1 -> the shared middle MD; E2 -> the shared LS and its first MD. The shared
+        // object is always the inner node's "in" side, so its DENSE incidence key is the one K1c
+        // already parked on that node; the raw index is still needed for the layer lookup.
         unsigned int sharedMd;
         uint32_t degIn, degOut;
         if (etype == 1u) {
           unsigned int const m = segments.mdIndices()[triplets.segmentIndices()[t3In][1]][1];  // == md0(outer)
           sharedMd = m;
-          degIn = mdIncidence.t3InOffsets()[m + 1u] - mdIncidence.t3InOffsets()[m];
-          degOut = mdIncidence.t3OutOffsets()[m + 1u] - mdIncidence.t3OutOffsets()[m];
+          uint32_t const k = nodes.mdKeyIn()[inner];
+          degIn = mdIncidence.t3InOffsets()[k + 1u] - mdIncidence.t3InOffsets()[k];
+          degOut = mdIncidence.t3OutOffsets()[k + 1u] - mdIncidence.t3OutOffsets()[k];
         } else {
           unsigned int const l = triplets.segmentIndices()[t3In][1];  // == ls0(outer)
           sharedMd = segments.mdIndices()[l][0];
-          degIn = lsIncidence.t3InOffsets()[l + 1u] - lsIncidence.t3InOffsets()[l];
-          degOut = lsIncidence.t3OutOffsets()[l + 1u] - lsIncidence.t3OutOffsets()[l];
+          uint32_t const k = nodes.lsKeyIn()[inner];
+          degIn = lsIncidence.t3InOffsets()[k + 1u] - lsIncidence.t3InOffsets()[k];
+          degOut = lsIncidence.t3OutOffsets()[k + 1u] - lsIncidence.t3OutOffsets()[k];
         }
         int const sharedLayer = chainMdLayer(modules, mds, sharedMd);
 

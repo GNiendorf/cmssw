@@ -517,7 +517,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
 
   // ChainTracking enables stage K1a of the chain-tracking port (P2_PORT_MAP.md phase P2.0): four
   // incidence tallies fused into the triplet accept path. They write four brand new counter arrays
-  // and read nothing that any existing stage produces, so the T3 collection is untouched. The four
+  // and read nothing that any existing stage produces, so the T3 collection is untouched. The six
   // pointers are null and every use of them is removed at compile time when ChainTracking is false.
   template <bool ReduceMem, bool ChainTracking>
   struct CreateTripletsT {
@@ -535,7 +535,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                   uint32_t* chainMdT3OutCounts,
                                   uint32_t* chainMdT3InCounts,
                                   uint32_t* chainLsT3OutCounts,
-                                  uint32_t* chainLsT3InCounts) const {
+                                  uint32_t* chainLsT3InCounts,
+                                  uint32_t const* chainMdKeyBias,
+                                  uint32_t const* chainLsKeyBias) const {
       ALPAKA_ASSERT_ACC((alpaka::getWorkDiv<alpaka::Grid, alpaka::Blocks>(acc)[1] == 1) &&
                         (alpaka::getWorkDiv<alpaka::Grid, alpaka::Blocks>(acc)[2] == 1));
 
@@ -618,12 +620,22 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
           // K1a. Per-key incidence tallies for the chain-tracking triplet graph. The first MD and
           // the inner LS are the "out" side of this triplet (edges leave it there); the last MD and
           // the outer LS are the "in" side (edges arrive there). Write-only, new arrays.
+          //
+          // The tallies are keyed by the DENSE MD / Segment index, obtained from the raw one by
+          // adding the owning module's bias word (ChainPrefixKeyModules in ChainGraph.h). The three
+          // owning modules are already in hand: the inner module owns this triplet's first MD and
+          // its inner Segment, the middle module owns its outer Segment, and the outer module owns
+          // its last MD.
           unsigned int const chainFirstMDIndex = segments.mdIndices()[innerSegmentIndex][0];
           unsigned int const chainLastMDIndex = segments.mdIndices()[outerSegmentIndex][1];
-          alpaka::atomicAdd(acc, &chainMdT3OutCounts[chainFirstMDIndex], 1u, alpaka::hierarchy::Threads{});
-          alpaka::atomicAdd(acc, &chainMdT3InCounts[chainLastMDIndex], 1u, alpaka::hierarchy::Threads{});
-          alpaka::atomicAdd(acc, &chainLsT3OutCounts[innerSegmentIndex], 1u, alpaka::hierarchy::Threads{});
-          alpaka::atomicAdd(acc, &chainLsT3InCounts[outerSegmentIndex], 1u, alpaka::hierarchy::Threads{});
+          uint32_t const chainFirstMDKey = chainFirstMDIndex + chainMdKeyBias[innerInnerLowerModuleIndex];
+          uint32_t const chainLastMDKey = chainLastMDIndex + chainMdKeyBias[outerOuterLowerModuleIndex];
+          uint32_t const chainInnerLSKey = innerSegmentIndex + chainLsKeyBias[innerInnerLowerModuleIndex];
+          uint32_t const chainOuterLSKey = outerSegmentIndex + chainLsKeyBias[middleLowerModuleIndex];
+          alpaka::atomicAdd(acc, &chainMdT3OutCounts[chainFirstMDKey], 1u, alpaka::hierarchy::Threads{});
+          alpaka::atomicAdd(acc, &chainMdT3InCounts[chainLastMDKey], 1u, alpaka::hierarchy::Threads{});
+          alpaka::atomicAdd(acc, &chainLsT3OutCounts[chainInnerLSKey], 1u, alpaka::hierarchy::Threads{});
+          alpaka::atomicAdd(acc, &chainLsT3InCounts[chainOuterLSKey], 1u, alpaka::hierarchy::Threads{});
         }
       };
 

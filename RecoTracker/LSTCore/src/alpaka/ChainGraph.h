@@ -122,6 +122,90 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     }
   };
 
+  // K0c (phase P2.6c). The per-module bias that turns a RAW MiniDoublet / Segment index into a
+  // DENSE one, plus the two dense totals.
+  //
+  // LST sizes each module's MD and LS slice from a worst-case occupancy estimate and fills only
+  // part of it, so the raw index space is much larger than the produced-object count: measured on
+  // PU200RelVal, 82049 MD slots for 40187 produced MDs (2.0x) and 528062 Segment slots for 112491
+  // produced Segments (4.7x). The two ChainIncidence instances used to be keyed by the raw index
+  // and so paid for all of that slack; keying them by the dense index instead is what makes them
+  // affordable.
+  //
+  // With  dense(module, i) = denseBase[module] + i  and  raw(module, i) = sparseBase[module] + i,
+  // both for i < count[module], the bias is
+  //     bias[module] = denseBase[module] - sparseBase[module]   and   dense = raw + bias[module].
+  // denseBase <= sparseBase always, so the subtraction wraps; it is stored and applied in uint32_t,
+  // where wrapping is defined and exact - the recovered dense index is a valid index, hence inside
+  // [0, 2^32), hence the unique representative of the modular result. Storing one biased word per
+  // module keeps the conversion to a single load and a single add at every use site.
+  //
+  // WHY THIS CANNOT MOVE ANY BIT: denseBase and sparseBase are both non-decreasing in module, so
+  // the raw and the dense numbering order the produced objects identically - the remap is strictly
+  // increasing on the produced set. The slack slots that disappear were never referenced by any
+  // triplet, so every key they occupied had degIn == degOut == 0 and contributed nothing to
+  // t3OutOffsets, t3InOffsets or edgeProdPrefix. Deleting zero-degree keys from a CSR whose
+  // surviving keys keep their relative order leaves the payload arrays, the prefix values at the
+  // surviving keys, and therefore the K2 edge enumeration order, unchanged.
+  struct ChainPrefixKeyModules {
+    ALPAKA_FN_ACC void operator()(Acc1D const& acc,
+                                  ModulesConst modules,
+                                  MiniDoubletsOccupancyConst mdsOccupancy,
+                                  SegmentsOccupancyConst segmentsOccupancy,
+                                  ObjectRangesConst ranges,
+                                  uint32_t* mdKeyBias,
+                                  uint32_t* lsKeyBias,
+                                  uint32_t* totals) const {
+      // 1-block kernel
+      ALPAKA_ASSERT_ACC((alpaka::getWorkDiv<alpaka::Grid, alpaka::Blocks>(acc)[0u] == 1));
+
+      auto& partial = alpaka::declareSharedVar<uint32_t[2 * kChainScanBlockThreads], __COUNTER__>(acc);
+
+      uint32_t const nWorkers = chainScanWorkerCount(acc);
+      uint32_t const worker = chainScanWorkerIndex(acc);
+      ALPAKA_ASSERT_ACC(nWorkers <= kChainScanBlockThreads);
+
+      uint32_t const nKeys = modules.nLowerModules();
+      uint32_t const chunk = (nKeys + nWorkers - 1u) / nWorkers;
+      uint32_t const begin = (worker * chunk < nKeys) ? worker * chunk : nKeys;
+      uint32_t const end = (begin + chunk < nKeys) ? begin + chunk : nKeys;
+
+      uint32_t localMd = 0u, localLs = 0u;
+      for (uint32_t k = begin; k < end; ++k) {
+        localMd += mdsOccupancy.nMDs()[k];
+        localLs += segmentsOccupancy.nSegments()[k];
+      }
+      partial[worker] = localMd;
+      partial[nWorkers + worker] = localLs;
+
+      alpaka::syncBlockThreads(acc);
+
+      uint32_t baseMd = 0u, baseLs = 0u, totMd = 0u, totLs = 0u;
+      for (uint32_t w = 0; w < nWorkers; ++w) {
+        if (w == worker) {
+          baseMd = totMd;
+          baseLs = totLs;
+        }
+        totMd += partial[w];
+        totLs += partial[nWorkers + w];
+      }
+
+      uint32_t runMd = baseMd, runLs = baseLs;
+      for (uint32_t k = begin; k < end; ++k) {
+        mdKeyBias[k] = runMd - static_cast<uint32_t>(ranges.miniDoubletModuleIndices()[k]);
+        lsKeyBias[k] = runLs - static_cast<uint32_t>(ranges.segmentModuleIndices()[k]);
+        runMd += mdsOccupancy.nMDs()[k];
+        runLs += segmentsOccupancy.nSegments()[k];
+      }
+
+      alpaka::syncBlockThreads(acc);
+      if (cms::alpakatools::once_per_block(acc)) {
+        totals[0] = totMd;
+        totals[1] = totLs;
+      }
+    }
+  };
+
   // K1b. Exclusive prefixes of the two K1a tallies, and in the same pass the exclusive prefix of
   // the per-key edge products degIn * degOut, which yields the exact enumerable edge count for
   // this key family (E1 for the MD-keyed instance, E2 for the Segment-keyed one).
@@ -236,7 +320,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                   MiniDoubletsConst mds,
                                   ChainNodes nodes,
                                   ChainIncidence mdIncidence,
-                                  ChainIncidence lsIncidence) const {
+                                  ChainIncidence lsIncidence,
+                                  uint32_t const* mdKeyBias,
+                                  uint32_t const* lsKeyBias) const {
       uint32_t const nNodes = static_cast<uint32_t>(nodes.metadata().size());
 
       for (uint32_t node : cms::alpakatools::uniform_elements(acc, nNodes)) {
@@ -249,28 +335,41 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
 
         nodes.stableId()[node] = chainNodeStableId(mds, firstMDIndex, midMDIndex, lastMDIndex);
 
+        // Raw -> dense incidence keys (ChainPrefixKeyModules). The triplet's three lower modules
+        // own, in order: its first MD and its inner Segment (layer 0), its outer Segment
+        // (layer 1), and its last MD (layer 2).
+        uint32_t const m0 = triplets.lowerModuleIndices()[t3][0];
+        uint32_t const m1 = triplets.lowerModuleIndices()[t3][1];
+        uint32_t const m2 = triplets.lowerModuleIndices()[t3][2];
+        uint32_t const firstMDKey = firstMDIndex + mdKeyBias[m0];
+        uint32_t const lastMDKey = lastMDIndex + mdKeyBias[m2];
+        uint32_t const innerLSKey = innerSegmentIndex + lsKeyBias[m0];
+        uint32_t const outerLSKey = outerSegmentIndex + lsKeyBias[m1];
+
+        // The "in" side keys are re-read once per incident edge by K5 and K7a; keep them.
+        nodes.mdKeyIn()[node] = lastMDKey;
+        nodes.lsKeyIn()[node] = outerLSKey;
+
         uint32_t slot;
 
-        slot = mdIncidence.t3OutOffsets()[firstMDIndex] +
-               alpaka::atomicAdd(acc, &mdIncidence.t3OutCounts()[firstMDIndex], 1u, alpaka::hierarchy::Threads{});
-        ALPAKA_ASSERT_ACC(slot < mdIncidence.t3OutOffsets()[firstMDIndex + 1u]);
+        slot = mdIncidence.t3OutOffsets()[firstMDKey] +
+               alpaka::atomicAdd(acc, &mdIncidence.t3OutCounts()[firstMDKey], 1u, alpaka::hierarchy::Threads{});
+        ALPAKA_ASSERT_ACC(slot < mdIncidence.t3OutOffsets()[firstMDKey + 1u]);
         nodes.mdT3OutItems()[slot] = node;
 
-        slot = mdIncidence.t3InOffsets()[lastMDIndex] +
-               alpaka::atomicAdd(acc, &mdIncidence.t3InCounts()[lastMDIndex], 1u, alpaka::hierarchy::Threads{});
-        ALPAKA_ASSERT_ACC(slot < mdIncidence.t3InOffsets()[lastMDIndex + 1u]);
+        slot = mdIncidence.t3InOffsets()[lastMDKey] +
+               alpaka::atomicAdd(acc, &mdIncidence.t3InCounts()[lastMDKey], 1u, alpaka::hierarchy::Threads{});
+        ALPAKA_ASSERT_ACC(slot < mdIncidence.t3InOffsets()[lastMDKey + 1u]);
         nodes.mdT3InItems()[slot] = node;
 
-        slot = lsIncidence.t3OutOffsets()[innerSegmentIndex] +
-               alpaka::atomicAdd(
-                   acc, &lsIncidence.t3OutCounts()[innerSegmentIndex], 1u, alpaka::hierarchy::Threads{});
-        ALPAKA_ASSERT_ACC(slot < lsIncidence.t3OutOffsets()[innerSegmentIndex + 1u]);
+        slot = lsIncidence.t3OutOffsets()[innerLSKey] +
+               alpaka::atomicAdd(acc, &lsIncidence.t3OutCounts()[innerLSKey], 1u, alpaka::hierarchy::Threads{});
+        ALPAKA_ASSERT_ACC(slot < lsIncidence.t3OutOffsets()[innerLSKey + 1u]);
         nodes.lsT3OutItems()[slot] = node;
 
-        slot = lsIncidence.t3InOffsets()[outerSegmentIndex] +
-               alpaka::atomicAdd(
-                   acc, &lsIncidence.t3InCounts()[outerSegmentIndex], 1u, alpaka::hierarchy::Threads{});
-        ALPAKA_ASSERT_ACC(slot < lsIncidence.t3InOffsets()[outerSegmentIndex + 1u]);
+        slot = lsIncidence.t3InOffsets()[outerLSKey] +
+               alpaka::atomicAdd(acc, &lsIncidence.t3InCounts()[outerLSKey], 1u, alpaka::hierarchy::Threads{});
+        ALPAKA_ASSERT_ACC(slot < lsIncidence.t3InOffsets()[outerLSKey + 1u]);
         nodes.lsT3InItems()[slot] = node;
       }
     }

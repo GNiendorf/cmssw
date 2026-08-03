@@ -436,6 +436,14 @@ void LSTEvent::createSegmentsWithModuleMap() {
 }
 
 void LSTEvent::createTriplets() {
+  // P2.6c. Per-module raw->dense key bias for the two chain incidence instances (filled by
+  // ChainPrefixKeyModules in the allocation block below, consumed by the K1a tallies in the triplet
+  // builder and by K1c in buildChainIncidence). Declared at function scope because those consumers
+  // straddle the allocation block, matching the lifetime the incidence collections already have.
+  unsigned int const chainKeyBiasSize = useChainTracking_ ? nLowerModules_ : 1u;
+  auto chainMdKeyBias_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, chainKeyBiasSize);
+  auto chainLsKeyBias_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, chainKeyBiasSize);
+
   if (!tripletsDC_) {
     auto const countSegConn_wd = cms::alpakatools::make_workdiv<Acc3D>({nLowerModules_, 1, 1}, {1, 16, 16});
 
@@ -470,6 +478,25 @@ void LSTEvent::createTriplets() {
     auto maxTriplets_buf_h = cms::alpakatools::make_host_buffer<unsigned int>(queue_);
     auto maxTriplets_buf_d = cms::alpakatools::make_device_view(queue_, rangesOccupancy.nTotalTrips());
     alpaka::memcpy(queue_, maxTriplets_buf_h, maxTriplets_buf_d);
+
+    // P2.6c. Build the raw->dense key bias here so that its two totals, which size the incidence
+    // collections, ride down on the host sync the triplet count already pays for. No extra wait.
+    auto chainKeyTotals_buf_h = cms::alpakatools::make_host_buffer<uint32_t[]>(queue_, 2u);
+    auto chainKeyTotals_buf_d = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, 2u);
+    if (useChainTracking_) {
+      alpaka::exec<Acc1D>(queue_,
+                          cms::alpakatools::make_workdiv<Acc1D>(1, kChainScanBlockThreads),
+                          ChainPrefixKeyModules{},
+                          modules_.const_view().modules(),
+                          miniDoubletsDC_->const_view().miniDoubletsOccupancy(),
+                          segmentsDC_->const_view().segmentsOccupancy(),
+                          rangesDC_->const_view(),
+                          chainMdKeyBias_buf.data(),
+                          chainLsKeyBias_buf.data(),
+                          chainKeyTotals_buf_d.data());
+      alpaka::memcpy(queue_, chainKeyTotals_buf_h, chainKeyTotals_buf_d, 2u);
+    }
+
     alpaka::wait(queue_);  // wait to get the value before using it
 
     unsigned int nTotalTriplets = *maxTriplets_buf_h.data();
@@ -500,12 +527,14 @@ void LSTEvent::createTriplets() {
     alpaka::memset(queue_, connectedLSMax_view, 0u);
 
     if (useChainTracking_) {
-      // Chain-tracking K1a target arrays. They are keyed by the raw MiniDoublet / Segment index, so
-      // they must span the whole allocated extent of those collections (which is module-segmented
-      // and therefore sparser than the produced-object count). Allocated and zeroed before the
-      // triplet builder runs, since the builder tallies straight into them.
-      unsigned int const nMDKeys = miniDoubletsDC_->view().miniDoublets().metadata().size();
-      unsigned int const nLSKeys = segmentsDC_->view().segments().metadata().size();
+      // Chain-tracking K1a target arrays, keyed by the DENSE MiniDoublet / Segment index that
+      // ChainPrefixKeyModules just defined. Keying them by the RAW module-segmented index instead
+      // forced them to span the full allocated extent of those two collections, which carries about
+      // 2.0x (MD) and 4.7x (Segment) slack over the produced-object count and made this the single
+      // largest chain allocation. Allocated and zeroed before the triplet builder runs, since the
+      // builder tallies straight into them.
+      unsigned int const nMDKeys = chainKeyTotals_buf_h.data()[0];
+      unsigned int const nLSKeys = chainKeyTotals_buf_h.data()[1];
       chainMdIncidenceDC_.emplace(queue_, nMDKeys + 1);
       chainLsIncidenceDC_.emplace(queue_, nLSKeys + 1);
       // Only the tallies need clearing: K1b writes every entry of the offset and prefix columns
@@ -517,7 +546,10 @@ void LSTEvent::createTriplets() {
                     1e6;
         memoryAllocatedMB_ += mb;
         lstWarning(std::format(
-            "[MEM] ChainIncidence: {} MD keys + {} LS keys allocated ({:.1f} MB)", nMDKeys, nLSKeys, mb));
+            "[MEM] ChainIncidence: {} dense MD keys + {} dense LS keys allocated ({:.1f} MB)",
+            nMDKeys,
+            nLSKeys,
+            mb));
       }
     }
   }
@@ -597,7 +629,9 @@ void LSTEvent::createTriplets() {
                         chainMdT3OutCounts,
                         chainMdT3InCounts,
                         chainLsT3OutCounts,
-                        chainLsT3InCounts);
+                        chainLsT3InCounts,
+                        chainMdKeyBias_buf.data(),
+                        chainLsKeyBias_buf.data());
   };
   if (useChainTracking_) {
     if (reduceMemByFullPrecompute_)
@@ -621,7 +655,7 @@ void LSTEvent::createTriplets() {
                       rangesDC_->view());
 
   if (useChainTracking_) {
-    buildChainIncidence();
+    buildChainIncidence(chainMdKeyBias_buf.data(), chainLsKeyBias_buf.data());
     buildChainEdges();
   }
 
@@ -642,7 +676,7 @@ void LSTEvent::resetChainIncidenceCounts() {
   }
 }
 
-void LSTEvent::buildChainIncidence() {
+void LSTEvent::buildChainIncidence(uint32_t const* chainMdKeyBias, uint32_t const* chainLsKeyBias) {
   bool const timing = chainTimingEnabled();
   auto const tStart = std::chrono::steady_clock::now();
 
@@ -705,7 +739,9 @@ void LSTEvent::buildChainIncidence() {
                       miniDoubletsDC_->const_view().miniDoublets(),
                       chainNodesDC_->view(),
                       chainMdIncidenceDC_->view(),
-                      chainLsIncidenceDC_->view());
+                      chainLsIncidenceDC_->view(),
+                      chainMdKeyBias,
+                      chainLsKeyBias);
 
   auto nE1_buf_h = cms::alpakatools::make_host_buffer<uint32_t>(queue_);
   auto nE2_buf_h = cms::alpakatools::make_host_buffer<uint32_t>(queue_);

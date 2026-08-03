@@ -189,7 +189,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
 
     // Chain-tracking phase P2.0: K0 triplet compaction plus the K1b/K1c incidence CSR build.
     // Only called when useChainTracking_ is true; writes nothing any other stage reads.
-    void buildChainIncidence();
+    // The two per-module raw->dense key bias arrays are built in createTriplets (P2.6c).
+    void buildChainIncidence(uint32_t const* chainMdKeyBias, uint32_t const* chainLsKeyBias);
     // Zeroes the incidence tally columns; they are the K1a counters and then the K1c cursors.
     void resetChainIncidenceCounts();
     // Host-side verification of the CSR invariants, run under the verbose statistics path.

@@ -379,14 +379,16 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         long long maxDegProd = 0;
         for (int k = 0; k < nE; ++k) {
           uint32_t const e = items.edgeItems()[off + k];
-          uint32_t const t3In = nodes.tripletIndex()[edges.inner()[e]];
+          // The junction is the inner node's "in" side, whose dense incidence keys K1c stored on
+          // the node; same values the K5 edge features used, one load instead of three.
+          uint32_t const innerNode = edges.inner()[e];
           long long degIn, degOut;
           if (edges.type()[e] == 1u) {
-            unsigned int const m = segments.mdIndices()[triplets.segmentIndices()[t3In][1]][1];
+            uint32_t const m = nodes.mdKeyIn()[innerNode];
             degIn = mdIncidence.t3InOffsets()[m + 1u] - mdIncidence.t3InOffsets()[m];
             degOut = mdIncidence.t3OutOffsets()[m + 1u] - mdIncidence.t3OutOffsets()[m];
           } else {
-            unsigned int const l = triplets.segmentIndices()[t3In][1];
+            uint32_t const l = nodes.lsKeyIn()[innerNode];
             degIn = lsIncidence.t3InOffsets()[l + 1u] - lsIncidence.t3InOffsets()[l];
             degOut = lsIncidence.t3OutOffsets()[l + 1u] - lsIncidence.t3OutOffsets()[l];
           }

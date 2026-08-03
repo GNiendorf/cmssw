@@ -54,7 +54,17 @@ namespace lst {
                       SOA_COLUMN(float, phiC01),  // atan2(c01y, c01x)
                       SOA_COLUMN(float, phiC12),  // atan2(c12y, c12x)
                       SOA_COLUMN(float, thetaC01),  // atan2(|c01_xy|, c01z)
-                      SOA_COLUMN(float, thetaC12))  // atan2(|c12_xy|, c12z)
+                      SOA_COLUMN(float, thetaC12),  // atan2(|c12_xy|, c12z)
+                      // P2.6c. The two DENSE incidence keys of this node's "in" side: the dense
+                      // index of its last MD and of its outer Segment (ChainPrefixKeyModules in
+                      // ChainGraph.h defines the dense numbering). These are exactly the keys the
+                      // E1 and E2 junction-degree lookups need, and both of those lookups sit in
+                      // per-EDGE loops (ChainEdges.h K5 and ChainGate.h K7a), where recovering the
+                      // key from the raw index would cost two dependent SoA loads plus a module
+                      // lookup on every edge. Stored once per node instead. Appended LAST so no
+                      // pre-existing column's offset within the row moves.
+                      SOA_COLUMN(uint32_t, mdKeyIn),
+                      SOA_COLUMN(uint32_t, lsKeyIn))
 
   using ChainNodesSoA = ChainNodesSoALayout<>;
   using ChainNodes = ChainNodesSoA::View;
