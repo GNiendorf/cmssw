@@ -2208,6 +2208,52 @@ LATER separate pass (same prototype, jet-enriched ntuple) once the machinery exi
     **P3 SHIP** (only after sign-off): port the winner, delete pT5-side AND
     pT3-side together, then produce the final in-LST plots + timing/memory
     benchmarks. CMSSW after, when the maintainer decides.
+  - **2026-08-03 DEPENDENCY AUDIT (audit_ref) — P25BASE DOES NOT SURVIVE
+    DELETION. RE-BASELINE IS MANDATORY.** Measured, 300 evts, no-op gate exact:
+    | tag | eff | dup | fake | nTC |
+    | AUBASE frozen        | .81303 | .05188 | .04636 | 614277 |
+    | pT5-side deps dead   | .81303 | .05188 | .04636 | 614277 |  <- EXACTLY ZERO
+    | partOfPT3 -> false   | .81303 | .05334 | .04652 | 614879 |
+    | pT3 class deleted    | .77432 | .05254 | .04905 | 579968 |
+    | post-deletion pLS    | .82216 | .19732 | .04872 | 674079 |
+    | **FULL post-deletion** | **.81074** | **.21093** | **.05024** | 666875 |
+    **THE FINDING: CrossCleanpLS (in the deletion set) is what holds down the
+    bare-pLS TC universe.** Today isDup removes 13,560 of 14,303 quad pLS/evt,
+    leaving 743 type-8 TCs. Post-deletion only CheckHitspLS PASS 1 survives
+    (pass 2 and CrossCleanpLS both die); ~200 rows/evt come back and are
+    OVERWHELMINGLY DUPLICATES (dup x4.1; fake only +.0024). Efficiency looks
+    benign (-.0023) ONLY because the added pLS rows (+.009) offset the lost pT3
+    rows (-.039) — coincidence, not health. **WHY OUR MACHINERY MISSES IT: our
+    contention only ever inspects the carried rows LST ALREADY LET THROUGH — it
+    has never seen the raw seed universe, so the M16 intent that contention
+    replaces CrossCleanpLS is UNTESTED, not wrong.** CONSEQUENCE FOR PRIORITIES:
+    the pT3 efficiency gap is .005-.009; this is .16 — the bare-seed contention
+    is now the main event. CONSEQUENCE FOR THE pLS CONSTRAINT: "treat pLS
+    identically to LST" cannot be met literally post-deletion, since LST's
+    treatment INCLUDES a crossclean that depends on pT5/pT3 existing; we
+    necessarily supply our own consumption bookkeeping and must prove it retires
+    enough. FREE: the entire pT5-side dependency set measures exactly zero
+    (t3_partOfPT5 and all pT5 routing) — that half of the deletion costs nothing.
+    ALSO FLAGGED: the carried pT3 row SET changes post-deletion in an unmeasured
+    direction (482.6 pT3/evt built, only 129.4 survive to TCs today; all three
+    filters that cut that down lose their pT5 input).
+    **NTUPLE ADDITIONS FOR THE ONE-SHOT 1000-EVT REGEN (audit-validated):**
+    THREE isDup snapshots (CrossCleanpLS writes `= true`, CLOBBERING the 1/2
+    bitmask, so no single snapshot recovers pass-1): pLS_isDupAlgSelf (end of
+    pixelLineSegmentCleaning = THE post-deletion value), pLS_isDupAlgPass2,
+    pLS_isDupAlgFinal; differences give the consumption set and pass-2 set.
+    Plus pLS_score (decides which family member pass 1 keeps; -RD has no
+    principled ranking today), pT3_isDupAlgSelf/Final and pT5_isDupAlg (make the
+    carried-set change measurable), tc_hitIdx + tc_hitType (generic per-TC hit
+    content replacing the t5_hitIndices/pT3_otHitIndices routing that dies),
+    tc_plsIdx for types 5 and 7 as well as 8, t3_partOfT5 (exists in the SoA,
+    never written). AND a SECOND 1000-evt ntuple from a build with the
+    PixelTriplet.h:721/:770 pT5 skips disabled — pT3s never BUILT cannot be
+    recovered from any flag.
+    IN-LST PORT: only two hard deps on deleted SoAs (ChainArbitrate.h:157-158
+    partOfPT5/PT3; ChainAttach.h:1081/1084 + ChainParallel.h:176/179
+    pixelSegmentIndices). The port has the IDENTICAL type-8 exposure —
+    arbitrateChains runs after CrossCleanpLS.
   - **QUEUED: POST-INTEGRATION SIMPLIFYING PASS (maintainer, 2026-08-02).**
     After integration + timing/memory are done, one pass re-judging marginal
     complexity. FIRST CANDIDATE: chain extension (-EX) — maintainer reaction to
