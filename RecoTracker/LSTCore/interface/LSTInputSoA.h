@@ -42,7 +42,17 @@ namespace lst {
                       SOA_COLUMN(float, pz),
                       SOA_COLUMN(float, etaErr),
                       SOA_COLUMN(float, eta),
-                      SOA_COLUMN(float, phi))
+                      SOA_COLUMN(float, phi),
+                      // Global position of the seed's INNERMOST rec hit, see_hitIdx[iSeed][0].
+                      // The hits SoA cannot supply it: a pixel seed's four rows there carry
+                      // TRAJECTORY quantities (r3PCA, then (pt, eta, phi), then r3LH), not measured
+                      // hit positions. Chain-tracking attach feature 17 (zResidAtInnermost) and the
+                      // rt0 it references are defined on the real innermost hit
+                      // (prototype/PixelAttach.cc, the ntuple's pLS_hit0_{x,y,z}), so it is carried
+                      // explicitly. Written by prepareInput, read only by ChainAttach.h.
+                      SOA_COLUMN(float, hit0X),
+                      SOA_COLUMN(float, hit0Y),
+                      SOA_COLUMN(float, hit0Z))
 
   GENERATE_SOA_BLOCKS(LSTInputSoALayout, SOA_BLOCK(hits, HitsBaseSoALayout), SOA_BLOCK(pixelSeeds, PixelSeedsSoALayout))
 

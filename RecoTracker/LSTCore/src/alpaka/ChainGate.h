@@ -16,6 +16,7 @@
 #include "RecoTracker/LSTCore/interface/SegmentsSoA.h"
 #include "RecoTracker/LSTCore/interface/TripletsSoA.h"
 
+#include "Chain2NetworkWeights.h"
 #include "Chain3NetworkWeights.h"
 #include "ChainEdges.h"
 #include "ChainWeld.h"
@@ -474,6 +475,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                   ChainConfig cfg) const {
       static_assert(dnn::chain3mlp::kInput == Params_ChainFeat::kFeatures,
                     "Chain3NetworkWeights.h input size does not match the frozen feature contract");
+      static_assert(dnn::chainmlp::kInput == Params_ChainFeat::kFeatures,
+                    "Chain2NetworkWeights.h input size does not match the frozen feature contract");
       static_assert(dnn::chain3mlp::kOutput == 3, "the chain3 gate must have 3 outputs");
 
       uint32_t const nChains = static_cast<uint32_t>(chains.metadata().size());
@@ -516,6 +519,34 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         chains.marginP()[c] = mP;
         chains.marginD()[c] = mD;
         chains.marginX()[c] = mX;
+
+        // --- K7b': the a2 2-CLASS head (prototype/ChainInference.cc runChainInference) ---------
+        // Not a gate, not a kill, not in the -BK 1 order key. Its only live consumer is attach
+        // pair feature 11, and the reference computes it for EVERY chain from the same feature row
+        // regardless of -G mode, so it is evaluated here beside the 3-class head. It reads the
+        // full 25-column contract in order (no kSrcCol gather, kInput == kFeatures).
+        {
+          float y[dnn::chainmlp::kInput];
+          for (int i = 0; i < dnn::chainmlp::kInput; ++i) {
+            float v = chains.features()[c][i];
+            if (dnn::chainmlp::kLog10p1[i])
+              v = alpaka::math::log10(acc, 1.f + v);
+            v = chainMinf(chainMaxf(v, dnn::chainmlp::kClipLo[i]), dnn::chainmlp::kClipHi[i]);
+            y[i] = (v - dnn::chainmlp::kFeatMean[i]) / dnn::chainmlp::kFeatStd[i];
+          }
+          float y1[dnn::chainmlp::kHidden];
+          float y2[dnn::chainmlp::kHidden];
+          linear_layer<dnn::chainmlp::kInput, dnn::chainmlp::kHidden>(
+              y, y1, dnn::chainmlp::wgt_l1, dnn::chainmlp::bias_l1);
+          relu_activation<dnn::chainmlp::kHidden>(y1);
+          linear_layer<dnn::chainmlp::kHidden, dnn::chainmlp::kHidden>(
+              y1, y2, dnn::chainmlp::wgt_l2, dnn::chainmlp::bias_l2);
+          relu_activation<dnn::chainmlp::kHidden>(y2);
+          float logit2 = dnn::chainmlp::bias_out;
+          for (int j = 0; j < dnn::chainmlp::kHidden; ++j)
+            logit2 += y2[j] * dnn::chainmlp::wgt_out[j];
+          chains.gateLogit2()[c] = logit2;
+        }
 
         // --- K7c: the -G 6 branch kill ------------------------------------------------------
         int const nL = chains.nLayers()[c];

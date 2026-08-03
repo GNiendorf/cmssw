@@ -126,6 +126,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     std::vector<float> see_stateTrajGlbPy;
     std::vector<float> see_stateTrajGlbPz;
     std::vector<int> see_q;
+    std::vector<float> see_hit0X;
+    std::vector<float> see_hit0Y;
+    std::vector<float> see_hit0Z;
     std::vector<std::vector<int>> see_hitIdx;
     std::vector<std::vector<int>> see_hitType;
     TrajectorySeedCollection see_seeds;
@@ -213,6 +216,19 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
         see_stateTrajGlbPy.push_back(stateGlobal.momentum().y());
         see_stateTrajGlbPz.push_back(stateGlobal.momentum().z());
         see_q.push_back(charge);
+        // Chain-tracking attach (P2.4) needs the seed's INNERMOST rec-hit global position; the
+        // LST hits SoA cannot supply it (its pixel rows carry trajectory quantities).
+        float hit0X = 0.f, hit0Y = 0.f, hit0Z = 0.f;
+        if (seed.nHits() > 0) {
+          auto const& firstHit = *seed.recHits().begin();
+          auto const gp = firstHit.globalPosition();
+          hit0X = gp.x();
+          hit0Y = gp.y();
+          hit0Z = gp.z();
+        }
+        see_hit0X.push_back(hit0X);
+        see_hit0Y.push_back(hit0Y);
+        see_hit0Z.push_back(hit0Z);
         see_hitIdx.emplace_back(std::move(hitIdx));
         see_hitType.emplace_back(std::move(hitType));
         see_seeds.push_back(seed);
@@ -241,6 +257,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
                                         ph2_x,
                                         ph2_y,
                                         ph2_z,
+                                        see_hit0X,
+                                        see_hit0Y,
+                                        see_hit0Z,
                                         ph2_hits,
                                         ptCut_,
                                         iEvent.queue());

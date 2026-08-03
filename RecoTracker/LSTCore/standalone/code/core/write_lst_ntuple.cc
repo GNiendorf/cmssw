@@ -2365,11 +2365,16 @@ void setTrackCandidateBranches(LSTEvent* event,
     ana.tx->pushbackToBranch<float>("tc_eta", eta);
     ana.tx->pushbackToBranch<float>("tc_phi", phi);
     ana.tx->pushbackToBranch<int>("tc_type", type);
+    // P2.4: a chain row can be type 7 too (an attach-upgraded chain), and its directObjectIndex is
+    // a CHAIN row, not a pT5 row, so the object-index lookup must be skipped for it exactly as it
+    // already is for the chain-backed T5 / T4 rows below.
+    bool const chainRowTC = isChainTCRow(event, tc_idx);
     if (type == LSTObjType::pT5) {
       if (ana.pt5_branches)
         ana.tx->pushbackToBranch<int>(
             "tc_pt5Idx",
-            (ana.pt5_branches ? pt5_idx_map[trackCandidatesExtended.directObjectIndices()[tc_idx]] : -999));
+            ((ana.pt5_branches && !chainRowTC) ? pt5_idx_map[trackCandidatesExtended.directObjectIndices()[tc_idx]]
+                                               : -999));
       if (ana.pt3_branches)
         ana.tx->pushbackToBranch<int>("tc_pt3Idx", -999);
       if (ana.t5_branches)
@@ -2956,6 +2961,20 @@ void setT4DNNBranches(LSTEvent* event) {
 // CHAIN, not by a Quintuplet or a Quadruplet, so their kinematics come from ChainsSoA (K10 wrote
 // them there: pt = lower median of the member t3_pt, eta / phi from the innermost member T3) and
 // their hits come from the TC row itself.
+// Chain TC rows are APPENDED after the surviving carried rows, so the chain block is the last
+// nChainTCs rows of the collection. P2.4 makes the row TYPE ambiguous on its own -- an attached
+// chain is type 7, the same label a carried pT5 row would carry -- so provenance is taken from the
+// row range rather than from the type.
+bool isChainTCRow(LSTEvent* event, unsigned int idx) {
+  if (!ana.use_chain_tracking)
+    return false;
+  auto const& base = event->getTrackCandidatesBase();
+  auto const& chains = event->getChains();
+  unsigned int const nTC = base.nTrackCandidates();
+  unsigned int const nChainTC = chains.nChainTCs();
+  return nChainTC <= nTC && idx >= nTC - nChainTC;
+}
+
 std::tuple<float, float, float, std::vector<unsigned int>, std::vector<HitType>> parseChainTC(LSTEvent* event,
                                                                                               unsigned int idx) {
   auto const& trackCandidatesExtended = event->getTrackCandidatesExtended();
@@ -2984,35 +3003,35 @@ std::tuple<int, float, float, float, int, std::vector<int>> parseTrackCandidate(
   float pt, eta, phi;
   std::vector<unsigned int> hit_idx;
   std::vector<HitType> hit_type;
-  switch (type) {
-    case LSTObjType::pT5:
-      std::tie(pt, eta, phi, hit_idx, hit_type) = parsepT5(event, idx);
-      break;
-    case LSTObjType::pT3:
-      std::tie(pt, eta, phi, hit_idx, hit_type) = parsepT3(event, idx);
-      break;
-    case LSTObjType::T5:
-      if (ana.use_chain_tracking)
-        std::tie(pt, eta, phi, hit_idx, hit_type) = parseChainTC(event, idx);
-      else
+  bool const chainRow = isChainTCRow(event, idx);
+  if (chainRow) {
+    // Every chain-backed row -- bare T4 / T5 class and P2.4 attach-upgraded type 7 alike -- takes
+    // its kinematics from ChainsSoA and its hits from the row (which for type 7 already carries the
+    // attached pLS's pixel hits in the two pixel layer slots).
+    std::tie(pt, eta, phi, hit_idx, hit_type) = parseChainTC(event, idx);
+  } else {
+    switch (type) {
+      case LSTObjType::pT5:
+        std::tie(pt, eta, phi, hit_idx, hit_type) = parsepT5(event, idx);
+        break;
+      case LSTObjType::pT3:
+        std::tie(pt, eta, phi, hit_idx, hit_type) = parsepT3(event, idx);
+        break;
+      case LSTObjType::T5:
         std::tie(pt, eta, phi, hit_idx, hit_type) = parseT5(event, idx, trk_ph2_x, trk_ph2_y, trk_ph2_z);
-      break;
-    case LSTObjType::T4:
-      if (ana.use_chain_tracking)
-        std::tie(pt, eta, phi, hit_idx, hit_type) = parseChainTC(event, idx);
-      else
+        break;
+      case LSTObjType::T4:
         std::tie(pt, eta, phi, hit_idx, hit_type) = parseT4(event, idx, trk_ph2_x, trk_ph2_y, trk_ph2_z);
-      break;
-    case LSTObjType::pLS:
-      std::tie(pt, eta, phi, hit_idx, hit_type) = parsepLS(event, idx);
-      break;
-    default:
-      throw std::logic_error("unsupported type " + std::to_string(type));
+        break;
+      case LSTObjType::pLS:
+        std::tie(pt, eta, phi, hit_idx, hit_type) = parsepLS(event, idx);
+        break;
+      default:
+        throw std::logic_error("unsupported type " + std::to_string(type));
+    }
   }
 
-  if (!ana.use_chain_tracking && (type == LSTObjType::T5 || type == LSTObjType::pT5)) {
-    std::tie(hit_idx, hit_type) = getHitIdxsAndHitTypesFromTC(event, idx);
-  } else if (ana.use_chain_tracking && type == LSTObjType::pT5) {
+  if (!chainRow && (type == LSTObjType::T5 || type == LSTObjType::pT5)) {
     std::tie(hit_idx, hit_type) = getHitIdxsAndHitTypesFromTC(event, idx);
   }
 
@@ -3044,35 +3063,35 @@ std::tuple<int, float, float, float, int, std::vector<int>, std::vector<float>> 
   float pt, eta, phi;
   std::vector<unsigned int> hit_idx;
   std::vector<HitType> hit_type;
-  switch (type) {
-    case LSTObjType::pT5:
-      std::tie(pt, eta, phi, hit_idx, hit_type) = parsepT5(event, idx);
-      break;
-    case LSTObjType::pT3:
-      std::tie(pt, eta, phi, hit_idx, hit_type) = parsepT3(event, idx);
-      break;
-    case LSTObjType::T5:
-      if (ana.use_chain_tracking)
-        std::tie(pt, eta, phi, hit_idx, hit_type) = parseChainTC(event, idx);
-      else
+  bool const chainRow = isChainTCRow(event, idx);
+  if (chainRow) {
+    // Every chain-backed row -- bare T4 / T5 class and P2.4 attach-upgraded type 7 alike -- takes
+    // its kinematics from ChainsSoA and its hits from the row (which for type 7 already carries the
+    // attached pLS's pixel hits in the two pixel layer slots).
+    std::tie(pt, eta, phi, hit_idx, hit_type) = parseChainTC(event, idx);
+  } else {
+    switch (type) {
+      case LSTObjType::pT5:
+        std::tie(pt, eta, phi, hit_idx, hit_type) = parsepT5(event, idx);
+        break;
+      case LSTObjType::pT3:
+        std::tie(pt, eta, phi, hit_idx, hit_type) = parsepT3(event, idx);
+        break;
+      case LSTObjType::T5:
         std::tie(pt, eta, phi, hit_idx, hit_type) = parseT5(event, idx, trk_ph2_x, trk_ph2_y, trk_ph2_z);
-      break;
-    case LSTObjType::T4:
-      if (ana.use_chain_tracking)
-        std::tie(pt, eta, phi, hit_idx, hit_type) = parseChainTC(event, idx);
-      else
+        break;
+      case LSTObjType::T4:
         std::tie(pt, eta, phi, hit_idx, hit_type) = parseT4(event, idx, trk_ph2_x, trk_ph2_y, trk_ph2_z);
-      break;
-    case LSTObjType::pLS:
-      std::tie(pt, eta, phi, hit_idx, hit_type) = parsepLS(event, idx);
-      break;
-    default:
-      throw std::logic_error("unsupported type " + std::to_string(type));
+        break;
+      case LSTObjType::pLS:
+        std::tie(pt, eta, phi, hit_idx, hit_type) = parsepLS(event, idx);
+        break;
+      default:
+        throw std::logic_error("unsupported type " + std::to_string(type));
+    }
   }
 
-  if (!ana.use_chain_tracking && (type == LSTObjType::T5 || type == LSTObjType::pT5)) {
-    std::tie(hit_idx, hit_type) = getHitIdxsAndHitTypesFromTC(event, idx);
-  } else if (ana.use_chain_tracking && type == LSTObjType::pT5) {
+  if (!chainRow && (type == LSTObjType::T5 || type == LSTObjType::pT5)) {
     std::tie(hit_idx, hit_type) = getHitIdxsAndHitTypesFromTC(event, idx);
   }
 

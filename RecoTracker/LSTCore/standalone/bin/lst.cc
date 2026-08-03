@@ -416,6 +416,33 @@ void run_lst() {
     const auto trk_ph2_clustSize =
         hasClustSize ? trk.getVUS("ph2_clustSize") : std::vector<uint16_t>(trk.getVF("ph2_x").size());
 
+    // Chain-tracking attach (P2.4) needs the global position of every seed's INNERMOST rec hit;
+    // it is not derivable from the LST hits SoA, whose pixel rows carry trajectory quantities. The
+    // resolution here is the same one the ntuple writer uses for its pLS_hit0_* branches.
+    std::vector<float> see_hit0X, see_hit0Y, see_hit0Z;
+    {
+      auto const& see_hitIdx = trk.getVVI("see_hitIdx");
+      auto const& see_hitType = trk.getVVI("see_hitType");
+      auto const& pix_x = trk.getVF("pix_x");
+      auto const& pix_y = trk.getVF("pix_y");
+      auto const& pix_z = trk.getVF("pix_z");
+      auto const& ph2_x = trk.getVF("ph2_x");
+      auto const& ph2_y = trk.getVF("ph2_y");
+      auto const& ph2_z = trk.getVF("ph2_z");
+      see_hit0X.resize(see_hitIdx.size(), 0.f);
+      see_hit0Y.resize(see_hitIdx.size(), 0.f);
+      see_hit0Z.resize(see_hitIdx.size(), 0.f);
+      for (size_t iSeed = 0; iSeed < see_hitIdx.size(); ++iSeed) {
+        if (see_hitIdx[iSeed].empty())
+          continue;
+        int const h = see_hitIdx[iSeed][0];
+        bool const isPixel = static_cast<lst::HitType>(see_hitType[iSeed][0]) == lst::HitType::Pixel;
+        see_hit0X[iSeed] = isPixel ? pix_x[h] : ph2_x[h];
+        see_hit0Y[iSeed] = isPixel ? pix_y[h] : ph2_y[h];
+        see_hit0Z[iSeed] = isPixel ? pix_z[h] : ph2_z[h];
+      }
+    }
+
     auto lstInputHC = prepareInput(trk.getVF("see_px"),
                                    trk.getVF("see_py"),
                                    trk.getVF("see_pz"),
@@ -438,6 +465,9 @@ void run_lst() {
                                    trk.getVF("ph2_x"),
                                    trk.getVF("ph2_y"),
                                    trk.getVF("ph2_z"),
+                                   see_hit0X,
+                                   see_hit0Y,
+                                   see_hit0Z,
                                    ana.ptCut,
                                    queues[0]);
 

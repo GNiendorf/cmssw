@@ -105,6 +105,12 @@ std::tuple<int, float, float, float, int, std::vector<int>, std::vector<float>> 
     std::vector<std::vector<int>> const& trk_pix_simHitIdx,
     float& percent_matched,
     float matchfrac = 0.75);
+// True iff track candidate row `idx` was emitted by the chain pipeline rather than carried over
+// from LST's own builders. P2.4 makes the row TYPE insufficient on its own (an attach-upgraded
+// chain is type 7, the same label a carried pT5 row carries), so provenance comes from the row
+// range: chain rows are the last nChainTCs entries of the collection.
+bool isChainTCRow(LSTEvent* event, unsigned int idx);
+
 std::tuple<float, float, float, std::vector<unsigned int>, std::vector<lst::HitType>> parsepT5(LSTEvent* event,
                                                                                                unsigned int);
 std::tuple<float, float, float, std::vector<unsigned int>, std::vector<lst::HitType>> parsepT3(LSTEvent* event,

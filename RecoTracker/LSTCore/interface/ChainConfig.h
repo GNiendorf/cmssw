@@ -134,6 +134,28 @@ namespace lst {
     float extendMaxChi2 = 0.f;      // -EXC : own-fit-quality guard, cm^2; 0 = off
     bool extendSegLinked = true;    // -EXS : candidate must be LineSegment-linked to the terminal
 
+    // ------------------------------------------------------------------------------------------
+    // P2.4 -- pixel attach (-A 4, the general pLS -> outer-tracker attach as the DELIVERY path).
+    // ------------------------------------------------------------------------------------------
+    // -a 6.875: the pair-head logit an (accepted chain, pLS) pair must reach to attach. The M19
+    // freeze lowered it from 8 when the head was retrained (r2).
+    float attachTheta = 6.875f;
+    // -AT3 6.0: the bare-T3-target margin. INERT in the freeze (-RT3 0 keeps stage B switched off);
+    // carried because the -RPS predicate reads it.
+    float attachThetaT3 = 6.f;
+    // -RPS 1: also retire a carried bare-pLS (type 8) row whose seed had a scored pair above its
+    // class margin but lost the contention. -RD 1: seed-family dedup of the attach owners, two pLS
+    // being the same seed when they share >= 2 pixel hit rows.
+    bool attachSuppressBarePLS = true;
+    bool attachSeedDedup = true;
+    // -D4 1e9: attach-eligibility dcaXY gate, deliberately OFF (the displaced-with-pixel-seed
+    // population is an upside to claim, not a dilution to guard against).
+    float attachDcaMax = 1e9f;
+    // prototype/PixelAttach.h AttachParams: the analytic prefilter windows. No flag; frozen. They
+    // are ALSO the grid's design inputs (ChainAttach.h derives its cell widths from them).
+    float attachPrefDPhi = 0.4f;
+    float attachPrefDTanL = 0.6f;
+
     // True iff any band delta is live; reproduces the reference's `zOn` short-circuit exactly.
     constexpr bool etaBandActive() const {
       return zEta2 > zEta1 && (zdRI != 0.f || zdR != 0.f || zdR5 != 0.f || zdR6 != 0.f || zdM4 != 0.f ||
@@ -153,6 +175,29 @@ namespace lst {
   // exceed the detector layer count; this is a device-safe stand-in for the reference's `visited`
   // array and has never been reached.
   static constexpr uint32_t kChainMaxNodes = 64;
+
+  // prototype/PixelAttach.h kAttachFeat: the frozen pair-feature contract.
+  static constexpr int kAttachFeatures = 19;
+  // prototype/PixelAttach.cc: only chain targets with at least this many layers bid for a pLS
+  // (v1 scope decision -- chain + pLS is a pT5-class object).
+  static constexpr int kAttachMinLayers = 5;
+
+  // ---- K8a grid geometry (see the derivation block at the top of src/alpaka/ChainAttach.h) -----
+  // The three axes are keyed on the quantities the two frozen windows are written in:
+  //   r    the TARGET's innermost anchor radius, the radius the pLS helix is propagated to
+  //   tanL the tanLambda difference axis, cell width == attachPrefDTanL
+  //   phi  the propagated-direction axis,   cell width chosen against attachPrefDPhi
+  // The r axis uses fixed bins ONLY as a bucketing device: the phi interval a pLS occupies in bin
+  // j is computed against the MEASURED [min, max] innermost radius of the targets that landed in
+  // bin j, so the bin edges never enter the superset argument.
+  static constexpr int kAttachRBins = 9;          // 8 x 16 cm over [0, 128) plus one overflow bin
+  static constexpr float kAttachRBinWidth = 16.f;
+  static constexpr int kAttachTanLBins = 100;     // 0.6-wide, covering [-30, 30]
+  static constexpr float kAttachTanLLo = -30.f;
+  static constexpr int kAttachPhiBins = 16;       // 2 pi / 16 = 0.3927 rad
+  // Absolute pad added to every grid phi interval. It covers the fast-atan2 approximation used in
+  // the grid build (measured max error < 3e-6 rad) plus float rounding, with >4 decades of margin.
+  static constexpr float kAttachPhiPad = 1e-3f;
 
 }  // namespace lst
 

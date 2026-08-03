@@ -9,6 +9,7 @@
 #include "RecoTracker/LSTCore/interface/ChainConfig.h"
 #include "RecoTracker/LSTCore/interface/ChainNodesSoA.h"
 #include "RecoTracker/LSTCore/interface/ChainsSoA.h"
+#include "RecoTracker/LSTCore/interface/LSTInputSoA.h"
 #include "RecoTracker/LSTCore/interface/MiniDoubletsSoA.h"
 #include "RecoTracker/LSTCore/interface/ModulesSoA.h"
 #include "RecoTracker/LSTCore/interface/ObjectRangesSoA.h"
@@ -134,6 +135,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
       uint32_t const nChains = static_cast<uint32_t>(chains.metadata().size());
       for (uint32_t c : cms::alpakatools::uniform_elements(acc, nChains)) {
         chains.tcRow()[c] = -1;
+        chains.attachPls()[c] = -1;  // P2.4: no attach decision yet, and none at all when K8 is off
+        chains.attachLogit()[c] = -1e30f;
         float const score = chains.score()[c];
         int const nL = chains.nLayers()[c];
 
@@ -851,7 +854,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         return;
       uint32_t const nAcc = chains.nAccepted();
       uint32_t row = candsBase.nTrackCandidates();
-      uint32_t nT5 = 0, nT4 = 0;
+      uint32_t nT5 = 0, nT4 = 0, nPT5 = 0;
       for (uint32_t ai = 0; ai < nAcc; ++ai) {
         uint32_t const c = accepted[ai];
         int const nL = chains.nLayers()[c];
@@ -860,12 +863,20 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         if (row >= nAllocated)
           break;
         chains.tcRow()[c] = static_cast<int32_t>(row++);
-        (nL >= 5 ? nT5 : nT4) += 1;
+        // P2.4: an accepted chain that won a pLS is UPGRADED in place, so it is counted in the
+        // pT5 class rather than in T5 -- no extra row is ever created by the attach.
+        if (chains.attachPls()[c] >= 0)
+          ++nPT5;
+        else
+          (nL >= 5 ? nT5 : nT4) += 1;
       }
       chains.nChainTCs() = row - candsBase.nTrackCandidates();
       candsBase.nTrackCandidates() = row;
       candsExtended.nTrackCandidatesT5() = nT5;
       candsExtended.nTrackCandidatesT4() = nT4;
+      // ADD, not assign: ChainSuppressCarriedTCs has already counted whatever carried pT5 rows
+      // survived (none under the frozen -RT5 1), and the attach upgrades are additional.
+      candsExtended.nTrackCandidatespT5() = candsExtended.nTrackCandidatespT5() + nPT5;
     }
   };
 
@@ -909,11 +920,15 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                   MiniDoubletsConst mds,
                                   SegmentsConst segments,
                                   TripletsConst triplets,
+                                  HitsBaseConst hitsBase,
+                                  PixelSeedsConst pixelSeeds,
                                   ChainNodesConst nodes,
                                   ChainItemsConst items,
                                   Chains chains,
                                   TrackCandidatesBase candsBase,
                                   TrackCandidatesExtended candsExtended,
+                                  uint32_t nHits,
+                                  uint16_t pixelModuleIndex,
                                   uint32_t* stats) const {
       uint32_t const nChains = static_cast<uint32_t>(chains.metadata().size());
       for (uint32_t c : cms::alpakatools::uniform_elements(acc, nChains)) {
@@ -953,9 +968,18 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         chains.tcEta()[c] = chainT3Eta(acc, mds, m2);
         chains.tcPhi()[c] = chainHitPhi(acc, mds.anchorX()[m0], mds.anchorY()[m0]);
 
+        // --- P2.4: the attach delivery is an IN-PLACE UPGRADE of this row -----------------------
+        // prototype/main.cc, the -A 4 assembly loop: a granted pLS turns the chain's TC from the
+        // bare class into type 7 with the pLS's PIXEL hits prepended and pt taken from the pixel
+        // seed (better measured than the member-T3 median); eta and phi stay the chain's, nhitOT
+        // stays the chain's outer-tracker count. Nothing is added and nothing is skipped.
+        int32_t const attachedPls = chains.attachPls()[c];
+
         // --- the TC row ------------------------------------------------------------------------
-        candsBase.trackCandidateType()[tc] = (nL >= 5) ? LSTObjType::T5 : LSTObjType::T4;
-        candsBase.pixelSeedIndex()[tc] = static_cast<unsigned int>(-1);  // no pixel seed, as for a T5
+        candsBase.trackCandidateType()[tc] =
+            (attachedPls >= 0) ? LSTObjType::pT5 : ((nL >= 5) ? LSTObjType::T5 : LSTObjType::T4);
+        candsBase.pixelSeedIndex()[tc] =
+            (attachedPls >= 0) ? pixelSeeds.seedIdx()[attachedPls] : static_cast<unsigned int>(-1);
         candsExtended.directObjectIndices()[tc] = c;
         candsExtended.objectIndices()[tc][0] = c;
         candsExtended.objectIndices()[tc][1] = c;
@@ -964,6 +988,29 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
           candsExtended.lowerModuleIndices()[tc][s] = kTCEmptyLowerModule;
           candsBase.hitIndices()[tc][s][0] = kTCEmptyHitIdx;
           candsBase.hitIndices()[tc][s][1] = kTCEmptyHitIdx;
+        }
+        if (attachedPls >= 0) {
+          chains.tcPt()[c] = pixelSeeds.ptIn()[attachedPls];
+          // The seed's DISTINCT pixel hit rows, in seed order, filling the two pixel layer slots.
+          // The reference keeps only the see_hitType == Pixel entries, which is exactly the
+          // kPixelModuleId test here, and a 3-hit seed therefore contributes three rows, not the
+          // duplicated fourth that LST's own bare-pLS rows carry.
+          uint32_t const first = pixelSeeds.firstHit()[attachedPls];
+          uint32_t const nSeedHits = static_cast<uint32_t>(pixelSeeds.nHits()[attachedPls]);
+          uint32_t const nStored = nSeedHits < kMaxPLSHitsInHitsSoA ? nSeedHits : kMaxPLSHitsInHitsSoA;
+          int slotPix = 0;
+          for (uint32_t k = 0; k < nStored && slotPix < Params_TC::kPixelLayerSlots * Params_TC::kHitsPerLayer; ++k) {
+            uint32_t const h = first + k;
+            if (h >= nHits)
+              continue;
+            if (hitsBase.detid()[h] != kPixelModuleId)
+              continue;
+            int const ls = slotPix / Params_TC::kHitsPerLayer;
+            candsExtended.logicalLayers()[tc][ls] = 0;
+            candsExtended.lowerModuleIndices()[tc][ls] = pixelModuleIndex;
+            candsBase.hitIndices()[tc][ls][slotPix % Params_TC::kHitsPerLayer] = h;
+            ++slotPix;
+          }
         }
         for (int k = 0; k < nMD; ++k) {
           uint32_t const md = items.mdItems()[mdBase + k];

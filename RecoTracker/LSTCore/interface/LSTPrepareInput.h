@@ -44,6 +44,14 @@ namespace lst {
                                              std::vector<float> const& ph2_x,
                                              std::vector<float> const& ph2_y,
                                              std::vector<float> const& ph2_z,
+                                             // Global position of see_hitIdx[iSeed][0] for every
+                                             // seed (the seed's INNERMOST rec hit). Resolved by the
+                                             // caller because the pixel-cluster positions are not
+                                             // otherwise an LST input; see the hit0X/Y/Z columns in
+                                             // LSTInputSoA.h for why chain-tracking attach needs it.
+                                             std::vector<float> const& see_hit0X,
+                                             std::vector<float> const& see_hit0Y,
+                                             std::vector<float> const& see_hit0Z,
 #ifndef LST_STANDALONE
                                              std::vector<TrackingRecHit const*> const& ph2_hits,
 #endif
@@ -72,6 +80,9 @@ namespace lst {
     std::vector<int> superbin_vec;
     std::vector<PixelType> pixelType_vec;
     std::vector<char> isQuad_vec;
+    std::vector<float> hit0X_vec;
+    std::vector<float> hit0Y_vec;
+    std::vector<float> hit0Z_vec;
 
     const int hit_size = ph2_x.size();
 
@@ -193,6 +204,9 @@ namespace lst {
         phi_vec.push_back(phi);
         charge_vec.push_back(charge);
         seedIdx_vec.push_back(iSeed);
+        hit0X_vec.push_back(iSeed < see_hit0X.size() ? see_hit0X[iSeed] : 0.f);
+        hit0Y_vec.push_back(iSeed < see_hit0Y.size() ? see_hit0Y[iSeed] : 0.f);
+        hit0Z_vec.push_back(iSeed < see_hit0Z.size() ? see_hit0Z[iSeed] : 0.f);
         deltaPhi_vec.push_back(pixelSegmentDeltaPhiChange);
 
         hitIdxs.push_back(see_hitIdx[iSeed][0]);
@@ -263,6 +277,9 @@ namespace lst {
     std::copy_n(phi_vec.data(), nPixelSeeds, pixelSeeds.phi().data());
     std::copy_n(charge_vec.data(), nPixelSeeds, pixelSeeds.charge().data());
     std::copy_n(seedIdx_vec.data(), nPixelSeeds, pixelSeeds.seedIdx().data());
+    std::copy_n(hit0X_vec.data(), nPixelSeeds, pixelSeeds.hit0X().data());
+    std::copy_n(hit0Y_vec.data(), nPixelSeeds, pixelSeeds.hit0Y().data());
+    std::copy_n(hit0Z_vec.data(), nPixelSeeds, pixelSeeds.hit0Z().data());
     std::copy_n(superbin_vec.data(), nPixelSeeds, pixelSeeds.superbin().data());
     std::copy_n(pixelType_vec.data(), nPixelSeeds, pixelSeeds.pixelType().data());
 

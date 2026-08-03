@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <optional>
+#include <string>
 
 #include "RecoTracker/LSTCore/interface/LSTInputHostCollection.h"
 #include "RecoTracker/LSTCore/interface/ChainEdgesHostCollection.h"
@@ -47,6 +48,11 @@
 
 namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
 
+  // Chain-tracking P2.4 scratch record types; defined in src/alpaka/ChainAttach.h, which only the
+  // implementation translation unit needs to see.
+  struct AttachPlsPre;
+  struct AttachTargetPre;
+
   class LSTEvent {
   private:
     Queue& queue_;
@@ -57,6 +63,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     // triplet compaction and the incidence CSR build; nothing downstream consumes them yet, so the
     // track candidate collection is bit-identical with the flag either way.
     const bool useChainTracking_;
+    // FROZEN chain-tracking configuration. Supplied by LSTProducer's grouped chainTracking PSets in
+    // CMSSW and left at the FREEZE_RECORD defaults documented in ChainConfig.h in the standalone.
+    ChainConfig chainConfig_;
 
     std::array<unsigned int, 6> n_minidoublets_by_layer_barrel_{};
     std::array<unsigned int, 5> n_minidoublets_by_layer_endcap_{};
@@ -77,8 +86,6 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     unsigned int nChainCount_ = 0;   // welded chain count (K6d)
     unsigned int nChainWeldedNodes_ = 0;  // total member nodes over all chains (K6d)
     // Frozen chain-tracking configuration. P2.3 will fill this from the producer parameter set;
-    // at P2.2 it always carries the FREEZE_RECORD defaults documented in ChainConfig.h.
-    ChainConfig chainConfig_{};
 
     //Device stuff
     LSTInputDeviceCollection const* lstInputDC_;  // not owned
@@ -139,12 +146,14 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
              Queue& q,
              const LSTESData<Device>* deviceESData,
              bool reduce_mem_by_full_precompute,
-             bool use_chain_tracking = false)
+             bool use_chain_tracking = false,
+             ChainConfig const& chain_config = ChainConfig{})
         : queue_(q),
           ptCut_(ptCut),
           clustSizeCut_(clustSizeCut),
           reduceMemByFullPrecompute_(reduce_mem_by_full_precompute),
           useChainTracking_(use_chain_tracking),
+          chainConfig_(chain_config),
           nModules_(deviceESData->nModules),
           nLowerModules_(deviceESData->nLowerModules),
           nPixels_(deviceESData->nPixels),
@@ -203,6 +212,21 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     // PHASE THAT CHANGES THE TRACK CANDIDATE COLLECTION. Called at the end of
     // createTrackCandidates, only when useChainTracking_ is true.
     void arbitrateChains(unsigned int nAllocatedTCs);
+
+    // Chain-tracking phase P2.4: K8 pixel attach. Runs inside arbitrateChains, on the K9-accepted
+    // chains and before the extension. Builds the invariant-keyed grid prefilter, scores the
+    // (chain, pLS) candidates with the r2 pair head, resolves the one-pLS-one-owner contention and
+    // the -RD seed-family dedup, and retires the carried pixel rows the attach replaced. The type-7
+    // upgrade itself is applied by ChainEmitTCs.
+    void attachPixels(unsigned int nHits, uint32_t const* accepted);
+    // Env-gated (LST_CHAIN_ATTACH_AUDIT) grid-vs-exhaustive-scan superset verification.
+    void attachGridAudit(unsigned int nTargets,
+                         AttachPlsPre const* plsPre,
+                         AttachTargetPre const* tgtPre,
+                         uint32_t const* offsets,
+                         AttachPlsPre const* items);
+    // Per-event attach counters, formatted for the [CHAIN K8] printout.
+    std::string attachSummary_;
     // Env-gated (LST_CHAIN_TC_DUMP) TC-level parity sidecar; writes nothing otherwise.
     void dumpChainTCs();
     // Optional parity sidecar, enabled by the LST_CHAIN_CHAIN_DUMP environment variable.
