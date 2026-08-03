@@ -1773,6 +1773,26 @@ LATER separate pass (same prototype, jet-enriched ntuple) once the machinery exi
     The comparator change is a bit-level redefinition of a frozen quantity:
     P2.5 re-verifies the frozen scoreboard after the swap.** Dual-flag
     reference harnesses (p21_ref/p22_ref) committed.
+  - **P2.3 LANDED (commit 942764ec681): chains ENTER the TC collection (K9 claim
+    + extension + K10 assembly, frozen replacement mode, attach inert).** GATES:
+    TC multiset EXACT AT SHIPPING FLAGS (19,969/19,969 TCs over 10 events, zero
+    differences; all stage counters digit-identical — no flag-matched build even
+    needed for the set); 300-evt scoreboard IDENTICAL to the frozen-minus-attach
+    reference on every harness row (nhitOT to 6 decimals); OFF-state clean
+    (known -d pLS defect only). a2 head MEASURED unnecessary at this phase
+    (audit: only live consumer is attach f11 -> ports at P2.4). Shipping-flag
+    residual = ULP-level tc_eta/phi (zero decision flips; the P2.1 flags class,
+    attributed two independent ways). K9/extension/assembly are DELIBERATELY
+    serial single-thread kernels (bit-exact parity first; parallelize at P2.6
+    WITH the R3 propose-verify divergence measurement — the port map's parallel
+    form is NOT guaranteed to reach the serial fixed point). CPU cost +2.8
+    ms/evt (parity with the prototype's 2.79); GPU TC stage 27.4 ms/evt = the
+    named P2.6 target. GPU nondeterminism propagates 1:1 into TCs (93.37% chain
+    identity, no claim amplification). Latent hazards fixed: K10 layer-slot
+    fallback above pixel slots (converter-safe); pre-claim reads post-compaction
+    count. scram clean on all 3 backends. Writer parseChainTC path added; tc_*
+    format unchanged (harness untouched). Carried rows verified bit-identical to
+    LST's own (crosscleans run upstream unchanged before compaction).
   - **QUEUED: POST-INTEGRATION SIMPLIFYING PASS (maintainer, 2026-08-02).**
     After integration + timing/memory are done, one pass re-judging marginal
     complexity. FIRST CANDIDATE: chain extension (-EX) — maintainer reaction to
