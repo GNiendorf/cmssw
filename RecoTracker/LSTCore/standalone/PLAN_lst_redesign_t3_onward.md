@@ -1974,6 +1974,31 @@ LATER separate pass (same prototype, jet-enriched ntuple) once the machinery exi
     in, degenerate features out, target-type-conditioned capacity) -> A/B vs
     LST's pT3 delivery incl. displaced strata -> iterate on the gap analysis ->
     flip. Estimate 2-4 rounds.
+  - **pT3-REPLACEMENT TIMING MUST BE LOGGED LIKE-FOR-LIKE (maintainer,
+    2026-08-03; "not convinced our method is better than LST given how many
+    kernels it requires" — legitimate, treat as an open question, not settled).**
+    THE CORRECT COMPARISON, because the naive one flatters us: LST's pT3 stage
+    at 47.2 ms/evt is the SUBSIDISED number (only reachable because pT5 runs
+    first and pre-claims via partOfPT5); in any world where pT5 is replaced the
+    honest baseline for LST's pT3 machinery is its UNSUBSIDISED 161.1 ms/evt.
+    Better still, compare BLOCK-LEVEL: LST pT5+pT3 building as they actually
+    run (~70 ms/evt CPU at s=1) vs our chain block + attach covering both
+    classes. Log this delta explicitly at every P2.4b round. **DECISION RULE
+    (deferred, maintainer): if our general attach cannot approach that
+    block-level cost after the retrain rounds, the pixel map returns as a
+    PREFILTER for the pT3 class (candidate finding only; our head + contention
+    stay the decision-makers, preserving the single-contention-rule property
+    that makes deletion possible), with the M16 conditions attached (retrain on
+    map-selected candidates + displaced strata re-measured, since maps are
+    IP-traced and can kill displaced pairs before the head sees them).**
+    HONEST SCORECARD TO DATE for grid+head vs precomputed maps: earns its
+    complexity on PHYSICS for the pT5 class (large measured displaced gains,
+    which come precisely from not using IP-traced bins) and on MAINTENANCE (no
+    45k superbins / 12 binaries to regenerate per geometry); has NOT earned it
+    on TIMING anywhere yet; unproven either way for the pT3 class. Kernel COUNT
+    is a poor metric (most of the 10 are trivial setup - count/prefix/scatter,
+    precompute; the real work is one scoring kernel + one contention), but the
+    underlying question stands and is answered by measurement, not argument.
   - **QUEUED: POST-INTEGRATION SIMPLIFYING PASS (maintainer, 2026-08-02).**
     After integration + timing/memory are done, one pass re-judging marginal
     complexity. FIRST CANDIDATE: chain extension (-EX) — maintainer reaction to
