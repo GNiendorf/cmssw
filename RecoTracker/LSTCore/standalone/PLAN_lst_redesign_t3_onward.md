@@ -2101,6 +2101,20 @@ LATER separate pass (same prototype, jet-enriched ntuple) once the machinery exi
     IDENTICAL analytic pair list (not merely a superset) — MISSING=0 both
     configurations, same 3529 attachments — so it is a pure 3.4x speedup with
     zero physics delta.
+  - **dxy[10,30) DISPOSITION AGREED (maintainer, 2026-08-03): the band is
+    expected to improve when the DISPLACED CUBE 50 sample enters the tuning
+    rounds, and that is the accepted plan for it — do not burn ttbar rounds
+    chasing it.** Basis: the T4 trace localised the loss to the EDGE SCORER's
+    training composition (positives are 95.7% prompt; essentially nothing beyond
+    vxy 30), i.e. a SAMPLE gap, not a feature/architecture gap. The M19
+    displacement-reweighted retrain within ttbar was a measured NO-GO precisely
+    because ttbar contains too few far-displaced true edges to reweight toward.
+    **CONSISTENCY NOTE (this does NOT reverse the 2026-08-01 "displaced-gun is
+    NOT the fix" rule):** that rule forbids using enrichment as a CRUTCH while
+    establishing the ttbar-baseline comparison against a ttbar-trained LST. The
+    cube/jet phase is a planned later round where BOTH algorithms' discriminators
+    see the same enriched data, so the comparison stays fair. Enrichment is
+    legitimate THERE, illegitimate as a substitute for fixing ttbar-visible gaps.
   - **QUEUED: POST-INTEGRATION SIMPLIFYING PASS (maintainer, 2026-08-02).**
     After integration + timing/memory are done, one pass re-judging marginal
     complexity. FIRST CANDIDATE: chain extension (-EX) — maintainer reaction to
