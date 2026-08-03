@@ -1743,6 +1743,28 @@ LATER separate pass (same prototype, jet-enriched ntuple) once the machinery exi
     (b) md_type ports the ntuple writer's ring formula verbatim (the trained-in
     definition) which differs from geometry moduleType — reconcile at the next
     edge-head retrain, never silently in the port.
+  - **P2.2 LANDED (commit ecfbae082db): weld + trim + features + gate (K6/K7),
+    output-neutral.** ALL GATES PASS on 10 evts: chain multiset exact (43,030
+    chains, keyed by sorted member-T3 list), welded edge SET exact, trim
+    actions + trimmed-MD lists exact, float parity BIT-ZERO at matched -O2
+    (all 25 features + score + dcaXY + 3 logits + margins), kill decisions
+    ZERO flips at both flag sets, OFF-state 139.6M values bit-identical plus
+    an ON-vs-OFF output-neutrality proof. One real transcription bug found and
+    fixed: the reference promotes hits to DOUBLE before differencing —
+    PORTED-FIT RULE for all remaining phases. Chain3 weights verbatim (2087
+    literals verified twice). Timing: P2.2 ~+11-12 ms/evt (chain pipeline
+    total ~+37 ms CPU so far); Chains 1.4 MB (chain collections 22.3 MB/evt,
+    dominated by the known 15.1 MB incidence fix-later). **P2.5 HEADLINE ITEM
+    DISCOVERED: GPU is not run-to-run reproducible (93.3% chain identity
+    between identical invocations; CPU-vs-GPU 92.7% = same level, so the gap
+    is GPU self-nondeterminism, NOT an algorithm difference; 0 kill flips
+    among shared chains).** Cause: the weld comparator's index tie-break is
+    genuinely exercised (36.4k distinct logits among 48.4k eligible edges/evt)
+    x edge numbering permuted by two atomicAdd scatters (LST's own upstream
+    T3 slot assignment + the K1c CSR cursor). Remedies for P2.5: canonical
+    (sorted) CSR slices + upstream T3 slot ordering, OR a physically stable
+    tie-break key — the latter changes a frozen comparator = MAINTAINER
+    DECISION. Dual-flag reference harnesses (p21_ref/p22_ref) committed.
   - **QUEUED: POST-INTEGRATION SIMPLIFYING PASS (maintainer, 2026-08-02).**
     After integration + timing/memory are done, one pass re-judging marginal
     complexity. FIRST CANDIDATE: chain extension (-EX) — maintainer reaction to
