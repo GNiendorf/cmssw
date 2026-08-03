@@ -1875,6 +1875,26 @@ LATER separate pass (same prototype, jet-enriched ntuple) once the machinery exi
     Producer surface: chainTracking.{gate,claim,attach,extension} PSets (33
     params, frozen defaults). Process note: lst_make_tracklooper reports
     success even when a TU fails — read the fresh .make.log.<timestamp>.
+  - **P2.5 LANDED (commit f41c6abb8a4): stable tie-breaks + 100% chain
+    reproducibility + race audit (standalone-only per directive).** 11
+    comparator sites audited: 3 fixed (weld stableId-XOR key, K9 order
+    stableKey, extension argmin on hit rows), 1 measured-counterproductive and
+    documented (-RD swap: +0.7ms CUDA, no gain), 7 stable by construction. GPU
+    run-to-run chains 93.05% -> 100.0000%; stream-count invariance 100%.
+    **FINDING: baseline LST's own GPU TC output is only 95.88% self-identical
+    (pre-existing nondeterminism in carried pT3 rows) — chain tracking IMPROVES
+    GPU reproducibility by retiring the unstable pT5 rows.** CPU-vs-GPU chains
+    99.9352% with residual fully attributed (upstream T3 multiplicity + edge
+    MLP fast-math; zero chain-side ordering). Frozen scoreboard: last-digit
+    moves only (+4 eff tracks, d510 unchanged); prototype-gate mismatch proven
+    pure tie-break redefinition (old binary -> exact PASS). **POLICY WRINKLE:
+    the fix costs +0.97 ms CPU / +0.54 GPU (structural: K6b edge-parallel).
+    The stated rule says back out; it is KEPT for the P2.6 campaign as
+    scaffolding (bit-exact parity guards are worth more during optimization),
+    with BOTH configurations benchmarked at P2.6d and the ship decision =
+    MAINTAINER, morning. Clean backout patch in p25_ref.** Race audit: all
+    parallel-kernel invariants stated + verified (0 stableId collisions /
+    907k edges).
   - **QUEUED: POST-INTEGRATION SIMPLIFYING PASS (maintainer, 2026-08-02).**
     After integration + timing/memory are done, one pass re-judging marginal
     complexity. FIRST CANDIDATE: chain extension (-EX) — maintainer reaction to
