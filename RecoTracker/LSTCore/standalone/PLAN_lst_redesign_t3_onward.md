@@ -2082,6 +2082,25 @@ LATER separate pass (same prototype, jet-enriched ntuple) once the machinery exi
     Cost data for the later timing decision: GPU 4.6 ms/evt for pre+grid+score
     (the extra 34 ms was a serial scaffold kernel); CPU 185-423 ms/evt vs the
     161.1 ms unsubsidised LST pT3 stage.
+  - **2026-08-03 PROTOTYPE SYNCED TO PRODUCTION (t3attach_ref, tag P25BASE) —
+    the campaign baseline.** The P2.5 stable tie-break was ported back into the
+    prototype (K6Weld beats(), K9 order key, extension argmin). Result: the two
+    implementations now agree to 5 decimals on EVERY harness row — proto/prod:
+    eff .81303/.813027, vxy01 .84610/.846099, v15 .80283/.802827, v510
+    .72713/.727129, v1030 .71732/.717320, d15 .56009/.560086, dup
+    .05188/.051883, fake .04636/.046360, nTC 614277 both. So campaign wins
+    transfer to production without a second reconciliation. Baseline wall time
+    126 s / 300 evts (~7 min with bare-T3 attach on) — the campaign can scan
+    broadly, not sparingly. **MAINTAINER GUIDANCE (2026-08-03): the d510 band
+    moved 72/285 -> 71/285 under the new tie-break and this is NOISE — "we don't
+    care to overfit on that". RETIRE the hard d510 = 72 gate used since M19;
+    single-track movements in a 285-track band are not a criterion. Same
+    principle applies to any band whose denominator makes one track worth more
+    than ~0.003 — judge those as curves/trends, never as pass/fail thresholds.**
+    Prefilter result stronger than required: the binned index emits the
+    IDENTICAL analytic pair list (not merely a superset) — MISSING=0 both
+    configurations, same 3529 attachments — so it is a pure 3.4x speedup with
+    zero physics delta.
   - **QUEUED: POST-INTEGRATION SIMPLIFYING PASS (maintainer, 2026-08-02).**
     After integration + timing/memory are done, one pass re-judging marginal
     complexity. FIRST CANDIDATE: chain extension (-EX) — maintainer reaction to
