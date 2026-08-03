@@ -2020,6 +2020,32 @@ LATER separate pass (same prototype, jet-enriched ntuple) once the machinery exi
     LST's pT3-class slice would make us chase tracks we already have. Class-level
     numbers are diagnostics; the gate is total efficiency/fake/dup/length plus
     displaced strata.
+  - **2026-08-03 COURSE CORRECTION (maintainer): GO BACK TO THE PROTOTYPE FOR
+    THE pT3 REPLACEMENT. Production is PARKED (all work committed;
+    useChainTracking defaults false = inert).** Maintainer criticism, accepted:
+    the prototyping phase existed to lock the physics, and the pT3 class was
+    allowed to leave it unvalidated; when candidate volume blocked validation at
+    M16 the correct action was to SOLVE candidate-finding then (a scalar binned
+    prefilter is ~100 lines) or move to the pixel maps so we stood on equal
+    footing with LST — not to design around it and defer. **CORRECTION OF A
+    CLAIM I MADE: the prototype CAN host bare-T3 attach.** Measured basis: ~4.2M
+    pairs/evt to score, prototype scan ~1.7 us/pair = ~7 s/evt = ~35 min per
+    300-evt A/B, and prototype agents run PARALLEL on isolated copies (10
+    variants = same 35 min wall clock). The M16 blocker was DUMP SIZE for
+    training, not scoring throughput. **MAINTAINER DECISION: keeping LST's pT3
+    is OFF THE TABLE — it gets replaced.** The only open question is CANDIDATE
+    FINDING, and both options are evaluated on equal footing in the prototype
+    with the same harness: (1) our grid prefilter -> our head -> contention;
+    (2) LST's pixel map as prefilter (candidates DUMPED from production, no map
+    port needed) -> our head -> contention; against (0) LST's full pT3 stack
+    (map + physics cuts + pt3dnn) as the baseline, already in the ntuple.
+    SEQUENCE: finish the in-flight production A/B (first data point + threshold
+    calibration) -> park production -> build the prototype bare-T3 capability
+    (check fanout3/m16 first: the -AT3/-RT3 general-attach machinery already
+    exists there, validated for chains, blocked for bare T3s on volume only) ->
+    FAN-OUT CAMPAIGN (retrain + feature engineering incl. the T3's own DNN
+    scores, threshold/calibration scans, A/B vs LST pT3 with displaced strata,
+    gap analysis driving rounds) -> integrate the single winning configuration.
   - **QUEUED: POST-INTEGRATION SIMPLIFYING PASS (maintainer, 2026-08-02).**
     After integration + timing/memory are done, one pass re-judging marginal
     complexity. FIRST CANDIDATE: chain extension (-EX) — maintainer reaction to
