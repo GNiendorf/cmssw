@@ -1927,6 +1927,29 @@ LATER separate pass (same prototype, jet-enriched ntuple) once the machinery exi
     for future gates: CPU parity vs the frozen prototype is now ULP-level, not
     exact; the gate of record becomes decision fields + the scoreboard at
     4 decimals.
+  - **P2.6d BENCHMARK RESULT + MAINTAINER RESEQUENCING (2026-08-03).**
+    MEASURED (production builds, lst_timing protocol, -n 200, sequential):
+    GPU ms/evt s=1/4/6/8 -- baseline 4.90/2.40/2.30/2.10, hybrid
+    10.40/4.00/6.90*/3.10, post-deletion preview 7.30/2.80/2.30/2.20 =>
+    **GPU preview is at PARITY at s=6-8** (+0-5%). CPU ms/evt s=1/4/16/32 --
+    baseline 867.8/228.2/61.7/32.7, hybrid +4.8/+5.7/+5.7/+5.8%, preview
+    +2.6/+4.2/+2.3/+2.1% => **CPU is 2-6% SLOWER**. (s=64 unreliable for all
+    three.) Memory: -5.6 MB/evt post-deletion (already measured, P2.6c).
+    **THE SUBSIDY FINDING (load-bearing for sequencing): pT3's present cost is
+    SUBSIDISED by pT5 running ahead of it** — PixelTriplet.h:721/:770 skip any
+    pLS/T3 flagged partOfPT5, so with the pT5 builder deleted those flags are
+    never set and pT3 must evaluate every pair pT5 used to claim: 47.2 -> 161.1
+    ms/evt CPU at s=1, i.e. **a naive P2.7 hands ~114 ms/evt BACK to pT3**. The
+    preview therefore UNDERSTATES the endgame: with pT3 also replaced, its
+    161 ms leaves entirely (rough arithmetic on measured stages: ~890-161 = ~730
+    vs LST 868 = potentially ~16% FASTER on CPU; projection, not a measurement).
+    **MAINTAINER SEQUENCING DECISION: do NOT chase timing now. Finish the
+    ALGORITHM first (pT3 replaced, full pipeline in, expected physics), THEN a
+    dedicated timing campaign to get below LST on both backends, THEN the other
+    samples.** Consequence: **P2.4b (pT3 replacement) is PROMOTED out of the
+    post-integration queue to run BEFORE/WITH P2.7 deletion** — deleting pT5
+    while keeping pT3 is the worst of both worlds. Maintainer also notes GPU is
+    currently the weaker backend relatively (+5% vs CPU's +2% on the preview).
   - **QUEUED: POST-INTEGRATION SIMPLIFYING PASS (maintainer, 2026-08-02).**
     After integration + timing/memory are done, one pass re-judging marginal
     complexity. FIRST CANDIDATE: chain extension (-EX) — maintainer reaction to
