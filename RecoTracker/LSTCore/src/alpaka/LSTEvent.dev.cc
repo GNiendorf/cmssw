@@ -2210,13 +2210,14 @@ void LSTEvent::attachPixels(unsigned int nHits, uint32_t const* accepted, unsign
     uint32_t const* st = stats_h.data();
     auto ms = [](auto a, auto b) { return std::chrono::duration<double, std::milli>(b - a).count(); };
     attachSummary_ = std::format(
-        "targets={} pLS={} gridEntries={} cand={} scored={} picks={} attached={} rdRevoked={} "
+        "targets={} pLS={} gridEntries={} cand={} dup={} scored={} picks={} attached={} rdRevoked={} "
         "carriedRetired={} hashOverflow={} tieRD={} | pre {:.3f} ms | grid {:.3f} ms | "
         "score {:.3f} ms | contend {:.3f} ms | RDdedup {:.3f} ms | suppress {:.3f} ms",
         nTargets,
         pixelSize_,
         nEntries,
         st[1],
+        st[10],
         st[2],
         st[3],
         st[4],

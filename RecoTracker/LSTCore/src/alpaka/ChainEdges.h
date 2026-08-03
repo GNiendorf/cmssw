@@ -35,6 +35,16 @@
 // Nothing here is read by any existing LST stage; the whole file only runs when
 // useChainTracking is true and only writes into ChainNodes / ChainEdges.
 
+// Vectorise the LANE loop of the batched MLP primitives below. Vectorising across batch lanes
+// cannot change any lane's arithmetic, so this is bit-neutral by construction; it exists purely to
+// stop GCC completely unrolling the lane body and spilling the accumulators (see chainLinearBatch).
+// Only the host compilers see it: the device backends run the unbatched B == 1 path.
+#if defined(__GNUC__) && !defined(__CUDACC__) && !defined(__HIP__)
+#define CHAIN_LANE_SIMD _Pragma("omp simd")
+#else
+#define CHAIN_LANE_SIMD
+#endif
+
 namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
 
   // ------------------------------------------------------------------------------------------
@@ -88,6 +98,94 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
       return (x > 0.f) ? chainfeat::kBig : -chainfeat::kBig;
     return x;
   }
+
+  // ------------------------------------------------------------------------------------------
+  // Batched MLP primitives (P2.6b), shared by the edge head here and by the pixel-attach head in
+  // ChainAttach.h.
+  //
+  // One evaluation of these small heads is LATENCY bound, not throughput bound: each hidden unit
+  // accumulates its inputs in a single serial chain, so the vector unit spends most of its cycles
+  // waiting on the previous multiply-add. These take a TRANSPOSED batch -- inT[j * B + b] is input
+  // j of row b -- and evaluate B rows at once, which supplies B independent accumulator chains.
+  //
+  // The per-row operation order is untouched: for any (row, unit) the accumulation still starts at
+  // the bias and runs over j ascending, exactly as NeuralNetwork.h linear_layer does, so every lane
+  // is BIT-IDENTICAL to the unbatched result and no head's decisions can move.
+  //
+  // Three details are load-bearing for the SPEED, all three MEASURED in p26b_ref/mlpbench.cc (a
+  // standalone harness at the production flags; every variant there is checked lane-for-lane
+  // against the plain-loop form, so none of this trades accuracy for time):
+  //   - __restrict__. Without it the compiler must assume the staging block and the output block
+  //     overlap, which forbids keeping an accumulator in a register at all.
+  //   - unit blocking. kBlk units are accumulated at a time so the kBlk x B accumulators live in
+  //     vector registers for the whole input loop and the only traffic per block is the B-wide
+  //     input row. One unit at a time would be latency-bound again; all of them at once spills.
+  //   - CHAIN_LANE_SIMD on the lane loop. This is the big one: left to itself GCC COMPLETELY
+  //     UNROLLS the 16-iteration lane body before the vectoriser ever runs, scalarises the
+  //     accumulators and spills them. The plain-loop form measured 2.4x (edge) to 3.6x (attach)
+  //     SLOWER than the unbatched head; pinning the lane loop turns it into 1.7x / 6.0x FASTER.
+  // Callers instantiate this only with B > 1 (the batched host path); the unbatched B == 1 case
+  // stays on the original NeuralNetwork.h primitives so device code generation does not move.
+  template <int IN_FEATURES, int OUT_FEATURES, int B>
+  ALPAKA_FN_ACC ALPAKA_FN_INLINE void chainLinearBatch(float const* __restrict__ inT,
+                                                       float* __restrict__ outT,
+                                                       float const (&weights)[IN_FEATURES][OUT_FEATURES],
+                                                       float const (&biases)[OUT_FEATURES]) {
+    constexpr int kBlk = 8;
+    static_assert(OUT_FEATURES % kBlk == 0, "unit blocking needs a multiple of the block width");
+    for (int i0 = 0; i0 < OUT_FEATURES; i0 += kBlk) {
+      float acc[kBlk][B];
+      for (int c = 0; c < kBlk; ++c) {
+        CHAIN_LANE_SIMD
+        for (int b = 0; b < B; ++b)
+          acc[c][b] = biases[i0 + c];
+      }
+      for (int j = 0; j < IN_FEATURES; ++j) {
+        float const* __restrict__ in = inT + j * B;
+        for (int c = 0; c < kBlk; ++c) {
+          float const w = weights[j][i0 + c];
+          CHAIN_LANE_SIMD
+          for (int b = 0; b < B; ++b)
+            acc[c][b] += in[b] * w;
+        }
+      }
+      for (int c = 0; c < kBlk; ++c) {
+        CHAIN_LANE_SIMD
+        for (int b = 0; b < B; ++b)
+          outT[(i0 + c) * B + b] = acc[c][b];
+      }
+    }
+  }
+
+  template <int FEATURES, int B>
+  ALPAKA_FN_ACC ALPAKA_FN_INLINE void chainReluBatch(float* __restrict__ t) {
+    CMS_UNROLL_LOOP
+    for (int i = 0; i < FEATURES * B; ++i)
+      t[i] = (t[i] > 0.f) ? t[i] : 0.f;
+  }
+
+  // The single-output tail shared by the chain heads: out[b] = bias + sum_j inT[j][b] * w[j].
+  // One B-wide accumulator, so the input loop is a single register-resident chain per lane.
+  template <int FEATURES, int B>
+  ALPAKA_FN_ACC ALPAKA_FN_INLINE void chainDotBatch(float const* __restrict__ inT,
+                                                    float* __restrict__ out,
+                                                    float const (&weights)[FEATURES],
+                                                    float bias) {
+    float acc[B];
+    for (int b = 0; b < B; ++b)
+      acc[b] = bias;
+    CMS_UNROLL_LOOP
+    for (int j = 0; j < FEATURES; ++j) {
+      float const w = weights[j];
+      for (int b = 0; b < B; ++b)
+        acc[b] += inT[j * B + b] * w;
+    }
+    for (int b = 0; b < B; ++b)
+      out[b] = acc[b];
+  }
+
+  // How many edges the host backends push through the edge head at a time (see K5).
+  static constexpr int kChainEdgeBatch = 16;
 
   // ------------------------------------------------------------------------------------------
   // MiniDoublet detector categories.
@@ -315,7 +413,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
   // edgeFeatOut is a debug tap: when non-null the 14 edge floats are also written to
   // edgeFeatOut[e * kChainEdgeFeatures + k]. It is nullptr in normal running.
   struct ChainEdgeInference {
-    ALPAKA_FN_ACC void operator()(Acc1D const& acc,
+    template <typename TAcc>
+    ALPAKA_FN_ACC void operator()(TAcc const& acc,
                                   ModulesConst modules,
                                   MiniDoubletsConst mds,
                                   SegmentsConst segments,
@@ -327,6 +426,53 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                   float* edgeFeatOut) const {
       static_assert(dnn::edgemlp::kInput == 2 * Params_ChainNode::kFeatures + kChainEdgeFeatures,
                     "EdgeNetworkWeights.h input size does not match the frozen feature layout");
+
+      // P2.6b. On the host backends the head runs kB edges at a time: the 40 preprocessed inputs of
+      // each surviving edge are staged TRANSPOSED into xT and retired in blocks, which interleaves
+      // kB independent accumulator chains through the 40->32->32->1 evaluation. Nothing about an
+      // individual edge changes -- its features, its preprocessing and its per-unit accumulation
+      // order are the same statements as before -- so every logit is bit-identical. The device path
+      // takes kB == 1 and is the previous code exactly.
+      constexpr int kB = cms::alpakatools::requires_single_thread_per_block_v<TAcc> ? kChainEdgeBatch : 1;
+      // Named kNet / kHid rather than kIn / kH: the edge loop below already uses kIn for the inner
+      // node's signed curvature.
+      constexpr int kNet = dnn::edgemlp::kInput;
+      constexpr int kHid = dnn::edgemlp::kHidden;
+
+      alignas(64) float xT[kNet * kB];
+      uint32_t rowB[kB];
+      float logits[kB];
+      int nb = 0;
+      for (int i = 0; i < kNet * kB; ++i)
+        xT[i] = 0.f;  // the tail lanes of a partial block are evaluated and discarded
+
+      auto flush = [&]() {
+        alignas(64) float h1[kHid * kB];
+        alignas(64) float h2[kHid * kB];
+        if constexpr (kB == 1) {
+          // Unbatched (device) path: the original statements, on the shared primitives, so this
+          // backend's code generation is exactly what it was.
+          linear_layer<kNet, kHid>(xT, h1, dnn::edgemlp::wgt_l1, dnn::edgemlp::bias_l1);
+          relu_activation<kHid>(h1);
+          linear_layer<kHid, kHid>(h1, h2, dnn::edgemlp::wgt_l2, dnn::edgemlp::bias_l2);
+          relu_activation<kHid>(h2);
+          // Single output unit, NO sigmoid: K6 needs the logit (log-odds) so chain scores are sums.
+          float logit = dnn::edgemlp::bias_out;
+          CMS_UNROLL_LOOP
+          for (int j = 0; j < kHid; ++j)
+            logit += h2[j] * dnn::edgemlp::wgt_out[j];
+          logits[0] = logit;
+        } else {
+          chainLinearBatch<kNet, kHid, kB>(xT, h1, dnn::edgemlp::wgt_l1, dnn::edgemlp::bias_l1);
+          chainReluBatch<kHid, kB>(h1);
+          chainLinearBatch<kHid, kHid, kB>(h1, h2, dnn::edgemlp::wgt_l2, dnn::edgemlp::bias_l2);
+          chainReluBatch<kHid, kB>(h2);
+          chainDotBatch<kHid, kB>(h2, logits, dnn::edgemlp::wgt_out, dnn::edgemlp::bias_out);
+        }
+        for (int b = 0; b < nb; ++b)
+          edges.logOdds()[rowB[b]] = logits[b];
+        nb = 0;
+      };
 
       uint32_t const nEdges = static_cast<uint32_t>(edges.metadata().size());
 
@@ -396,47 +542,36 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
             edgeFeatOut[static_cast<size_t>(e) * kChainEdgeFeatures + i] = ef[i];
         }
 
-        // Assemble in the frozen training order: ni_00..ni_12, no_00..no_12, ef_00..ef_13.
-        float x[dnn::edgemlp::kInput];
+        // Assemble in the frozen training order: ni_00..ni_12, no_00..no_12, ef_00..ef_13, into
+        // this row's lane of the transposed staging block.
+        float* x = xT + nb;
         CMS_UNROLL_LOOP
         for (int i = 0; i < Params_ChainNode::kFeatures; ++i) {
-          x[i] = nodes.features()[inner][i];
-          x[Params_ChainNode::kFeatures + i] = nodes.features()[outer][i];
+          x[i * kB] = nodes.features()[inner][i];
+          x[(Params_ChainNode::kFeatures + i) * kB] = nodes.features()[outer][i];
         }
         CMS_UNROLL_LOOP
         for (int i = 0; i < kChainEdgeFeatures; ++i)
-          x[2 * Params_ChainNode::kFeatures + i] = ef[i];
+          x[(2 * Params_ChainNode::kFeatures + i) * kB] = ef[i];
 
         // Per-input preprocessing baked into the generated header, in this order:
         // optional log10(1 + x) -> clip -> standardize.
         CMS_UNROLL_LOOP
         for (int i = 0; i < dnn::edgemlp::kInput; ++i) {
-          float v = x[i];
+          float v = x[i * kB];
           if (dnn::edgemlp::kLog10p1[i])
             v = alpaka::math::log10(acc, 1.f + v);
           v = chainMinf(chainMaxf(v, dnn::edgemlp::kClipLo[i]), dnn::edgemlp::kClipHi[i]);
-          x[i] = (v - dnn::edgemlp::kFeatMean[i]) / dnn::edgemlp::kFeatStd[i];
+          x[i * kB] = (v - dnn::edgemlp::kFeatMean[i]) / dnn::edgemlp::kFeatStd[i];
         }
 
-        float x1[dnn::edgemlp::kHidden];
-        float x2[dnn::edgemlp::kHidden];
-
-        linear_layer<dnn::edgemlp::kInput, dnn::edgemlp::kHidden>(
-            x, x1, dnn::edgemlp::wgt_l1, dnn::edgemlp::bias_l1);
-        relu_activation<dnn::edgemlp::kHidden>(x1);
-
-        linear_layer<dnn::edgemlp::kHidden, dnn::edgemlp::kHidden>(
-            x1, x2, dnn::edgemlp::wgt_l2, dnn::edgemlp::bias_l2);
-        relu_activation<dnn::edgemlp::kHidden>(x2);
-
-        // Single output unit, NO sigmoid: K6 needs the logit (log-odds) so chain scores are sums.
-        float logit = dnn::edgemlp::bias_out;
-        CMS_UNROLL_LOOP
-        for (int j = 0; j < dnn::edgemlp::kHidden; ++j)
-          logit += x2[j] * dnn::edgemlp::wgt_out[j];
-
-        edges.logOdds()[e] = logit;
+        rowB[nb] = e;
+        ++nb;
+        if (nb == kB)
+          flush();
       }
+      if (nb > 0)
+        flush();
     }
   };
 

@@ -109,7 +109,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     // Diagnostic counters (never read by a decision):
     //   0 grid entries   1 candidates iterated   2 pairs scored   3 per-target picks
     //   4 attached after contention   5 -RD revocations   6 carried rows retired
-    //   7 seed-dedup owner-slot overflows
+    //   7 seed-dedup owner-slot overflows   9 -RD logit-tie census
+    //  10 grid candidates skipped as a repeat of the same pLS inside one target's cell walk
     constexpr uint32_t kStats = 12u;
   }  // namespace chainattach
 
@@ -125,6 +126,25 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
   }
 
   ALPAKA_FN_ACC ALPAKA_FN_INLINE float attachFabs(float v) { return (v < 0.f) ? -v : v; }
+
+  // The frozen per-input preprocessing of the r2 head for ONE input index: the Features.cc sanitize
+  // followed by the generated header's optional log10(1 + x), clip and standardize, in that order.
+  //
+  // P2.6b. This is the SINGLE definition of that chain. Twelve of the nineteen pair features are
+  // pure per-pLS or per-target quantities, so their preprocessed value is a property of the pLS or
+  // of the target and is computed ONCE, in the pre-record kernels, instead of ~150 times per pLS in
+  // the scoring loop (that included the head's one log10). The per-pair features go through the same
+  // function template, with the same compile-time index, so the hoisted and the on-the-fly halves
+  // of the input vector cannot drift from one another or from the frozen contract.
+  template <int I, typename TAcc>
+  ALPAKA_FN_ACC ALPAKA_FN_INLINE float attachStdz(TAcc const& acc, float raw) {
+    static_assert(I >= 0 && I < dnn::attachmlp::kInput, "attach feature index outside the head input");
+    float v = attachSanitize(raw);
+    if (dnn::attachmlp::kLog10p1[I])
+      v = alpaka::math::log10(acc, 1.f + v);
+    v = chainMinf(chainMaxf(v, dnn::attachmlp::kClipLo[I]), dnn::attachmlp::kClipHi[I]);
+    return (v - dnn::attachmlp::kFeatMean[I]) / dnn::attachmlp::kFeatStd[I];
+  }
 
   // Fibonacci hash of a hit index onto the -RD scratch table.
   ALPAKA_FN_ACC ALPAKA_FN_INLINE uint32_t attachSeedHash(uint32_t key) {
@@ -143,21 +163,31 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
   // Also the GRID ITEM type: the scatter writes the whole record into the cell, so the candidate
   // loop reads one contiguous array instead of chasing 18.4k scattered 72-byte records through the
   // cache. That is the single biggest term in the attach wall time.
+  //
+  // P2.6b: the seven pair-invariant pLS features (log10Pt, ptErrRel, etaErr, charge, isQuad,
+  // log10R, plsDeltaPhi) are stored ALREADY PREPROCESSED in xs[0..6] instead of raw -- they are
+  // read by nothing else -- so the record does not grow and the scoring loop assembles those
+  // inputs with a copy. phiMask is the 16-bit phi-cell set this copy of the record was scattered
+  // under, which is what makes the multi-cell duplicate suppression in K8b exact.
   struct AttachPlsPre {
     uint32_t row;  // the pLS row this record belongs to
-    float log10Pt, ptErrRel, etaErr, charge, isQuad, log10R, plsDeltaPhi;
+    float xs[7];   // head inputs 0..6, preprocessed (attachStdz<0..6>)
     float tanLambda;    // pz / max(pt, eps)
     float kappaSigned;  // rotSign / max(circleRadius, eps)
     float rotSign;      // -charge
     float phi;          // the dPhi fallback direction
     float cx, cy, r, d;
     float hit0z, rt0;
+    uint16_t phiMask;  // set by the grid scatter; 0 in the per-pLS array
   };
 
   // Per-target record, prototype/PixelAttach.cc TargetPre restricted to the chain kind.
+  // xs[0..4] are head inputs 7..11 preprocessed; fitKappa and tanLambda stay raw as well because
+  // the per-pair features dKappa and dTanLambda are built from them.
   struct AttachTargetPre {
     float rtInner, zInner, chordPhi, tanLambda;
-    float fitKappa, innermostLayer, nLayersF, gateLogit;
+    float fitKappa;
+    float xs[5];  // head inputs 7..11, preprocessed (attachStdz<7..11>)
     float rotSign, centerX, centerY;
     uint32_t chain;
     uint8_t centerValid;
@@ -241,6 +271,16 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
   static constexpr uint32_t kAttachCells =
       static_cast<uint32_t>(kAttachRBins) * kAttachTanLBins * kAttachPhiBins;
 
+  // The phi-cell set of one pLS fits in a 16-bit word (kAttachPhiBins == 16); this is its mask.
+  static_assert(kAttachPhiBins <= 16, "the phi-cell set is carried in a uint16_t");
+  static constexpr uint32_t kAttachPhiCellMask = (kAttachPhiBins >= 32) ? 0xFFFFFFFFu
+                                                                       : ((1u << kAttachPhiBins) - 1u);
+
+  // How many surviving pairs the host backends evaluate through the r2 head at a time. 24 hidden
+  // units x 16 lanes is 384 accumulators, which the AVX-512 register file plus L1 absorbs; the
+  // device path uses 1 (see ChainAttachScore).
+  static constexpr int kAttachScoreBatch = 16;
+
   // The 16-bit set of phi cells pLS `pls` can serve for r bin [rLo, rHi]. Returns 0 when the bin
   // holds no target. Building a MASK rather than emitting intervals removes the arc / fallback
   // overlap for free, so the count pass and the scatter pass agree by construction.
@@ -307,16 +347,17 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
       for (uint32_t p : cms::alpakatools::uniform_elements(acc, nPls)) {
         AttachPlsPre o;
         float const pt = chainMaxf(pixelSeeds.ptIn()[p], chainattach::kEps);
-        o.log10Pt = alpaka::math::log10(acc, pt);
-        o.ptErrRel = pixelSeeds.ptErr()[p] / pt;
-        o.etaErr = pixelSeeds.etaErr()[p];
-        o.charge = static_cast<float>(pixelSeeds.charge()[p]);
-        o.isQuad = pixelSeeds.isQuad()[p] ? 1.f : 0.f;
+        float const charge = static_cast<float>(pixelSeeds.charge()[p]);
         float const r = chainMaxf(pixelSegments.circleRadius()[p], chainattach::kEps);
-        o.log10R = alpaka::math::log10(acc, r);
-        o.plsDeltaPhi = pixelSeeds.deltaPhi()[p];
+        o.xs[0] = attachStdz<0>(acc, alpaka::math::log10(acc, pt));
+        o.xs[1] = attachStdz<1>(acc, pixelSeeds.ptErr()[p] / pt);
+        o.xs[2] = attachStdz<2>(acc, pixelSeeds.etaErr()[p]);
+        o.xs[3] = attachStdz<3>(acc, charge);
+        o.xs[4] = attachStdz<4>(acc, pixelSeeds.isQuad()[p] ? 1.f : 0.f);
+        o.xs[5] = attachStdz<5>(acc, alpaka::math::log10(acc, r));
+        o.xs[6] = attachStdz<6>(acc, pixelSeeds.deltaPhi()[p]);
         o.tanLambda = pixelSeeds.pz()[p] / pt;
-        o.rotSign = (o.charge > 0.f) ? -1.f : 1.f;
+        o.rotSign = (charge > 0.f) ? -1.f : 1.f;
         o.kappaSigned = o.rotSign / r;
         o.phi = pixelSeeds.phi()[p];
         o.cx = pixelSegments.circleCenterX()[p];
@@ -327,6 +368,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         float const hx = pixelSeeds.hit0X()[p], hy = pixelSeeds.hit0Y()[p];
         o.rt0 = alpaka::math::sqrt(acc, hx * hx + hy * hy);
         o.row = p;
+        o.phiMask = 0u;  // only the scattered copies carry a cell set
         out[p] = o;
       }
     }
@@ -474,10 +516,12 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         }
 
         o.fitKappa = chains.features()[c][7];
-        o.innermostLayer = chains.features()[c][10];
-        o.nLayersF = chains.features()[c][1];
-        o.gateLogit = chains.gateLogit2()[c];
         o.rotSign = (o.fitKappa >= 0.f) ? 1.f : -1.f;
+        o.xs[0] = attachStdz<7>(acc, o.fitKappa);
+        o.xs[1] = attachStdz<8>(acc, o.tanLambda);
+        o.xs[2] = attachStdz<9>(acc, chains.features()[c][10]);   // innermostLayer
+        o.xs[3] = attachStdz<10>(acc, chains.features()[c][1]);   // nLayers
+        o.xs[4] = attachStdz<11>(acc, chains.gateLogit2()[c]);    // chain gate logit
         out[t] = o;
       }
     }
@@ -550,7 +594,11 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
               continue;
             uint32_t const cell = attachCellId(rb, tb, pb);
             uint32_t const slot = alpaka::atomicAdd(acc, &cursor[cell], 1u, alpaka::hierarchy::Threads{});
-            itemsOut[offsets[cell] + slot] = pls[p];
+            AttachPlsPre& dst = itemsOut[offsets[cell] + slot];
+            dst = pls[p];
+            // The whole phi-cell set this pLS occupies for this r bin travels with the copy: K8b
+            // uses it to keep only the FIRST occurrence of the pLS in a target's cell walk.
+            dst.phiMask = static_cast<uint16_t>(mask);
           }
         }
       }
@@ -558,17 +606,25 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
   };
 
   // ------------------------------------------------------------------------------------------
-  // The 19 frozen pair features, prototype/PixelAttach.cc evalPair. Returns false when the pair
-  // fails the analytic prefilter; the arithmetic, its order and the sanitize pass are transcribed
-  // verbatim, so a candidate that reaches this function is decided exactly as the reference decides
-  // it. `dTanL` is passed in because the caller has already computed it for the cheap early exit.
+  // The 19 frozen pair features, prototype/PixelAttach.cc evalPair, delivered ALREADY PREPROCESSED
+  // (see attachStdz). Returns false when the pair fails the analytic prefilter; the arithmetic, its
+  // order and the sanitize pass are transcribed verbatim, so a candidate that reaches this function
+  // is decided exactly as the reference decides it. `dTanL` is passed in because the caller has
+  // already computed it for the cheap early exit.
+  //
+  // The 19 outputs are written to xOut[i * xStride], so the caller can stage a batch of pairs
+  // TRANSPOSED (input-major) without a second pass. phiDirOut is the direction of motion at the
+  // target radius, exported for the audit kernel.
+  static_assert(dnn::attachmlp::kInput == kAttachFeatures,
+                "AttachNetworkWeights.h input size does not match the frozen pair-feature layout");
   template <typename TAcc>
-  ALPAKA_FN_ACC ALPAKA_FN_INLINE bool attachEvalPair(TAcc const& acc,
-                                                     AttachPlsPre const& pls,
-                                                     AttachTargetPre const& cp,
-                                                     float dTanL,
-                                                     ChainConfig const& cfg,
-                                                     float* fOut) {
+  ALPAKA_FN_ACC ALPAKA_FN_INLINE bool attachEvalPairX(TAcc const& acc,
+                                                      AttachPlsPre const& pls,
+                                                      AttachTargetPre const& cp,
+                                                      float dTanL,
+                                                      ChainConfig const& cfg,
+                                                      float* xOut,
+                                                      int xStride) {
       float const absDTanL = attachFabs(dTanL);
       if (absDTanL >= cfg.attachPrefDTanL)
         return false;
@@ -585,36 +641,29 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
       }
       float const zResid = pls.hit0z + pls.tanLambda * (cp.rtInner - pls.rt0) - cp.zInner;
 
-      fOut[0] = pls.log10Pt;
-      fOut[1] = pls.ptErrRel;
-      fOut[2] = pls.etaErr;
-      fOut[3] = pls.charge;
-      fOut[4] = pls.isQuad;
-      fOut[5] = pls.log10R;
-      fOut[6] = pls.plsDeltaPhi;
-      fOut[7] = cp.fitKappa;
-      fOut[8] = cp.tanLambda;
-      fOut[9] = cp.innermostLayer;
-      fOut[10] = cp.nLayersF;
-      fOut[11] = cp.gateLogit;
-      fOut[12] = chargeAgree;
-      fOut[13] = dKappa;
-      fOut[14] = dTanL;
-      fOut[15] = dPhi;
-      fOut[16] = centerDist;
-      fOut[17] = zResid;
-      fOut[18] = 0.f;  // targetType: chain target (-RT3 0, so the bare-T3 kind does not exist)
-      for (int i = 0; i < kAttachFeatures; ++i)
-        fOut[i] = attachSanitize(fOut[i]);
+      // 0..6 per-pLS and 7..11 per-target: hoisted into the pre-records, copied here.
+      CMS_UNROLL_LOOP
+      for (int i = 0; i < 7; ++i)
+        xOut[i * xStride] = pls.xs[i];
+      CMS_UNROLL_LOOP
+      for (int i = 0; i < 5; ++i)
+        xOut[(7 + i) * xStride] = cp.xs[i];
+      xOut[12 * xStride] = attachStdz<12>(acc, chargeAgree);
+      xOut[13 * xStride] = attachStdz<13>(acc, dKappa);
+      xOut[14 * xStride] = attachStdz<14>(acc, dTanL);
+      xOut[15 * xStride] = attachStdz<15>(acc, dPhi);
+      xOut[16 * xStride] = attachStdz<16>(acc, centerDist);
+      xOut[17 * xStride] = attachStdz<17>(acc, zResid);
+      // targetType: chain target (-RT3 0, so the bare-T3 kind does not exist)
+      xOut[18 * xStride] = attachStdz<18>(acc, 0.f);
       return true;
   }
 
-  // The r2 pair head's linear layer. Mathematically and BIT-EXACTLY the shared
+  // The r2 pair head's linear layer, unbatched. Mathematically and BIT-EXACTLY the shared
   // src/alpaka/NeuralNetwork.h linear_layer -- each output accumulates the same products in the
   // same j order -- but with the loops interchanged so the vector unit runs across the OUTPUT
   // index and the weight reads are contiguous. The shared template is left untouched so no other
-  // network's code generation moves; this head alone is evaluated ~120k times per event and is the
-  // attach stage's dominant cost.
+  // network's code generation moves. This is the form the device path uses.
   template <int IN_FEATURES, int OUT_FEATURES>
   ALPAKA_FN_ACC ALPAKA_FN_INLINE void attachLinear(float const (&input)[IN_FEATURES],
                                                    float (&output)[OUT_FEATURES],
@@ -631,31 +680,32 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     }
   }
 
-  // The r2 pair head, prototype/AttachInference.cc attachLogit.
-  template <typename TAcc>
-  ALPAKA_FN_ACC ALPAKA_FN_INLINE float attachHeadLogit(TAcc const& acc, float const* f) {
-    static_assert(dnn::attachmlp::kInput <= kAttachFeatures,
-                  "AttachNetworkWeights.h input size exceeds the frozen pair-feature layout");
-    float x[dnn::attachmlp::kInput];
-    for (int i = 0; i < dnn::attachmlp::kInput; ++i) {
-      float v = f[i];
-      if (dnn::attachmlp::kLog10p1[i])
-        v = alpaka::math::log10(acc, 1.f + v);
-      v = chainMinf(chainMaxf(v, dnn::attachmlp::kClipLo[i]), dnn::attachmlp::kClipHi[i]);
-      x[i] = (v - dnn::attachmlp::kFeatMean[i]) / dnn::attachmlp::kFeatStd[i];
+  // The r2 pair head over a BATCH of B pairs, prototype/AttachInference.cc attachLogit, on the
+  // shared batched primitives of ChainEdges.h (which carry the bit-identity argument). B == 1 is
+  // the previous unbatched code verbatim and is what the device path instantiates.
+  template <int B>
+  ALPAKA_FN_ACC ALPAKA_FN_INLINE void attachHeadBatch(float const (&xT)[dnn::attachmlp::kInput * B],
+                                                      float (&logits)[B]) {
+    constexpr int kIn = dnn::attachmlp::kInput;
+    constexpr int kH = dnn::attachmlp::kHidden;
+    alignas(64) float h1[kH * B];
+    alignas(64) float h2[kH * B];
+    if constexpr (B == 1) {
+      attachLinear<kIn, kH>(xT, h1, dnn::attachmlp::wgt_l1, dnn::attachmlp::bias_l1);
+      relu_activation<kH>(h1);
+      attachLinear<kH, kH>(h1, h2, dnn::attachmlp::wgt_l2, dnn::attachmlp::bias_l2);
+      relu_activation<kH>(h2);
+      float logit = dnn::attachmlp::bias_out;
+      for (int j = 0; j < kH; ++j)
+        logit += h2[j] * dnn::attachmlp::wgt_out[j];
+      logits[0] = logit;
+    } else {
+      chainLinearBatch<kIn, kH, B>(xT, h1, dnn::attachmlp::wgt_l1, dnn::attachmlp::bias_l1);
+      chainReluBatch<kH, B>(h1);
+      chainLinearBatch<kH, kH, B>(h1, h2, dnn::attachmlp::wgt_l2, dnn::attachmlp::bias_l2);
+      chainReluBatch<kH, B>(h2);
+      chainDotBatch<kH, B>(h2, logits, dnn::attachmlp::wgt_out, dnn::attachmlp::bias_out);
     }
-    float x1[dnn::attachmlp::kHidden];
-    float x2[dnn::attachmlp::kHidden];
-    attachLinear<dnn::attachmlp::kInput, dnn::attachmlp::kHidden>(
-        x, x1, dnn::attachmlp::wgt_l1, dnn::attachmlp::bias_l1);
-    relu_activation<dnn::attachmlp::kHidden>(x1);
-    attachLinear<dnn::attachmlp::kHidden, dnn::attachmlp::kHidden>(
-        x1, x2, dnn::attachmlp::wgt_l2, dnn::attachmlp::bias_l2);
-    relu_activation<dnn::attachmlp::kHidden>(x2);
-    float logit = dnn::attachmlp::bias_out;
-    for (int j = 0; j < dnn::attachmlp::kHidden; ++j)
-      logit += x2[j] * dnn::attachmlp::wgt_out[j];
-    return logit;
   }
 
   // Monotone float -> uint32 order key, used for the lock-free per-pLS best-logit reduction.
@@ -675,8 +725,29 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
   // plsBest is the per-pLS maximum over every SCORED pair before any threshold -- the -RPS
   // predicate's input. It is a max, so the atomic is order-independent and the result is
   // deterministic on every backend.
+  //
+  // P2.6b, two changes, both output-neutral:
+  //
+  // (1) DUPLICATE SUPPRESSION. A pLS occupies every phi cell its direction range touches, so a
+  //     target that scans nPb cells sees the same pLS up to nPb times (1.20 candidates per unique
+  //     pair, measured by the P2.4 audit). Scoring it twice cannot change anything -- the pair
+  //     produces the same logit, the plsBest reduction is a max and the per-target pick is an
+  //     argmax under a strict total order -- so only the FIRST occurrence in the walk is kept. The
+  //     test is exact and carries no geometric assumption: the item copy carries the phi-cell MASK
+  //     it was scattered under, and the walk position of the pLS's lowest scanned cell is read off
+  //     that mask directly. Both the r bin and the tanLambda bin are single-valued over a scan (the
+  //     target's own r bin; the pLS's own tanLambda bin), so the phi walk is the only axis that can
+  //     repeat. The check runs BEFORE the predicate, so the duplicate costs neither an atan2 nor a
+  //     head evaluation.
+  //
+  // (2) BATCHING (host backends only, kB > 1). The head is 19->24->24->1 with a serial dependency
+  //     down each unit's accumulation; one pair leaves the vector unit mostly idle. Survivors are
+  //     staged transposed into xT and evaluated kB at a time, which interleaves kB independent
+  //     accumulator chains without touching the per-pair operation order (see attachHeadBatch).
+  //     The device path takes kB == 1 and is unchanged.
   struct ChainAttachScore {
-    ALPAKA_FN_ACC void operator()(Acc1D const& acc,
+    template <typename TAcc>
+    ALPAKA_FN_ACC void operator()(TAcc const& acc,
                                   AttachPlsPre const* pls,
                                   AttachTargetPre const* tgt,
                                   uint32_t nTargets,
@@ -687,11 +758,41 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                   uint32_t* plsBest,
                                   uint32_t* stats,
                                   ChainConfig cfg) const {
+      constexpr int kB = cms::alpakatools::requires_single_thread_per_block_v<TAcc> ? kAttachScoreBatch : 1;
+      constexpr int kIn = dnn::attachmlp::kInput;
+
+      alignas(64) float xT[kIn * kB];
+      int32_t rowB[kB];
+      float logits[kB];
+      for (int i = 0; i < kIn * kB; ++i)
+        xT[i] = 0.f;  // the tail lanes of a partial batch are evaluated and discarded
+
       for (uint32_t t : cms::alpakatools::uniform_elements(acc, nTargets)) {
         AttachTargetPre const cp = tgt[t];
         int32_t bestPls = -1;
         float bestLogit = kAttachNoLogit;
-        uint32_t nCand = 0, nScored = 0;
+        uint32_t nCand = 0, nScored = 0, nDup = 0;
+        int nb = 0;
+
+        // Retire a staged batch: the pairs are reduced in staging order, which is immaterial
+        // because both reductions below are order-independent maxima.
+        auto flush = [&]() {
+          attachHeadBatch<kB>(xT, logits);
+          for (int b = 0; b < nb; ++b) {
+            float const lo = logits[b];
+            int32_t const p = rowB[b];
+            alpaka::atomicMax(
+                acc, &plsBest[static_cast<uint32_t>(p)], attachOrderFloat(lo), alpaka::hierarchy::Threads{});
+            if (lo < cfg.attachTheta)
+              continue;
+            if (bestPls < 0 || lo > bestLogit || (lo == bestLogit && p < bestPls)) {
+              bestPls = p;
+              bestLogit = lo;
+            }
+          }
+          nScored += static_cast<uint32_t>(nb);
+          nb = 0;
+        };
 
         int const rb = attachRBin(cp.rtInner);
         int const tbLo = attachTanLBin(cp.tanLambda - cfg.attachPrefDTanL, cfg.attachPrefDTanL);
@@ -708,32 +809,39 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         for (int tb = tbLo; tb <= tbHi; ++tb) {
           for (int k = 0; k < nPb; ++k) {
             int const pb = (pbLo + k) % kAttachPhiBins;
+            // Bits of the pLS mask below the current walk position, i.e. the cells of THIS scan
+            // that were visited earlier and would already have supplied the same pLS.
+            uint32_t const earlier = (1u << k) - 1u;
             uint32_t const cell = attachCellId(rb, tb, pb);
             uint32_t const b = offsets[cell], e = offsets[cell + 1u];
             for (uint32_t i = b; i < e; ++i) {
               AttachPlsPre const& pp = items[i];
               uint32_t const p = pp.row;
               ++nCand;
-              float const dTanL = pp.tanLambda - cp.tanLambda;
-              float f[kAttachFeatures];
-              if (!attachEvalPair(acc, pp, cp, dTanL, cfg, f))
+              uint32_t const m = pp.phiMask;
+              uint32_t const rot = ((m >> pbLo) | (m << (kAttachPhiBins - pbLo))) & (kAttachPhiCellMask);
+              if ((rot & earlier) != 0u) {
+                ++nDup;
                 continue;
-              float const lo = attachHeadLogit(acc, f);
-              ++nScored;
-              alpaka::atomicMax(acc, &plsBest[p], attachOrderFloat(lo), alpaka::hierarchy::Threads{});
-              if (lo < cfg.attachTheta)
-                continue;
-              if (bestPls < 0 || lo > bestLogit || (lo == bestLogit && static_cast<int32_t>(p) < bestPls)) {
-                bestPls = static_cast<int32_t>(p);
-                bestLogit = lo;
               }
+              float const dTanL = pp.tanLambda - cp.tanLambda;
+              if (!attachEvalPairX(acc, pp, cp, dTanL, cfg, xT + nb, kB))
+                continue;
+              rowB[nb] = static_cast<int32_t>(p);
+              ++nb;
+              if (nb == kB)
+                flush();
             }
           }
         }
+        if (nb > 0)
+          flush();
+
         tgtPls[t] = bestPls;
         tgtLogit[t] = bestLogit;
         alpaka::atomicAdd(acc, &stats[1], nCand, alpaka::hierarchy::Threads{});
         alpaka::atomicAdd(acc, &stats[2], nScored, alpaka::hierarchy::Threads{});
+        alpaka::atomicAdd(acc, &stats[10], nDup, alpaka::hierarchy::Threads{});
         if (bestPls >= 0)
           alpaka::atomicAdd(acc, &stats[3], 1u, alpaka::hierarchy::Threads{});
       }
@@ -1063,7 +1171,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
             for (uint32_t i = offsets[cell]; i < offsets[cell + 1u]; ++i) {
               ++nCand;
               float f[kAttachFeatures];
-              if (attachEvalPair(acc, items[i], cp, items[i].tanLambda - cp.tanLambda, cfg, f))
+              if (attachEvalPairX(acc, items[i], cp, items[i].tanLambda - cp.tanLambda, cfg, f, 1))
                 ++nGridPass;
             }
           }
@@ -1071,7 +1179,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         uint32_t nExact = 0, nMissing = 0;
         for (uint32_t p = 0; p < nPls; ++p) {
           float f[kAttachFeatures];
-          if (!attachEvalPair(acc, pls[p], cp, pls[p].tanLambda - cp.tanLambda, cfg, f))
+          if (!attachEvalPairX(acc, pls[p], cp, pls[p].tanLambda - cp.tanLambda, cfg, f, 1))
             continue;
           ++nExact;
           bool found = false;
