@@ -2169,6 +2169,39 @@ LATER separate pass (same prototype, jet-enriched ntuple) once the machinery exi
     non-negotiable for the new pass. No deltaR/proximity criteria either (LST's
     CrossCleanpT3 uses a dR^2 < 1e-5 pixel-direction test; we do NOT copy that
     shape — structural only).
+  - **ROADMAP REVISED (maintainer, 2026-08-03; supersedes the 2026-08-03 canonical
+    list): CMSSW IS DEFERRED ENTIRELY until the complete algorithm ships. The
+    target is: full algorithm in, ALL redundant LST code ripped out, comparison
+    PLOTS of the final in-LST code vs current LST, and TIMING + MEMORY benchmarks
+    of the complete code with the redundant LST machinery gone.** (Bonus: after
+    deletion the benchmarks stop being "builders-off previews with invalid
+    physics" and become real measurements.) THREE PHASES:
+    **P1 AUDIT + RE-BASELINE (blocks everything).** (a) DEPENDENCY AUDIT: every
+    LST-produced quantity our algorithm consumes, classified as survives-deletion
+    / dies-with-deletion / changes-meaning. KNOWN LIVE CASES: our K9 consumes
+    `t3_partOfPT5` and `t3_partOfPT3`, which are set by the very builders we
+    delete (same trap class as the pT5->pT3 subsidy); and the pLS `isDup` flags
+    mix seed SELF-cleaning (which we keep) with CONSUMPTION crosscleaning (which
+    we replace) — the algorithmic flag is NOT in the ntuple today (only the
+    truth-level `pLS_isDuplicate` is; precedent for adding it = `t5_isDupBitmask`,
+    writer line 1702) and separating the two causes needs TWO snapshots (after
+    seed self-cleaning, and at the end; the difference IS the consumption set).
+    (b) Batched ntupler additions so we regenerate ONCE. (c) Regenerate at 1000
+    evts for TRAINING + FINAL VALIDATION, keep 300 as the ITERATION sample
+    (A/B/C each ran dozens of 13-min 300-evt A/Bs; 1000 evts = ~45 min and the
+    fan-out loses its throughput). (d) Re-establish the baseline on both.
+    **P2 PHYSICS FAN-OUT** (informed by A/B/C): eta calibration (the biggest
+    miscalibration found — global margin delivers 73/94/420 barrel/trans/endcap
+    vs LST's 322/139/127, per-region thresholds 4.6 logit units apart, and the
+    barrel is where LST's unique tracks AND our only purity deficit are);
+    universe conditioning at ENUMERATION (C's idea: enumerate only T3s whose hits
+    survive the claim unclaimed, instead of enumerate-then-veto — attacks the
+    90% redundancy at the root); RECOMPUTE A's ceiling under the changed universe
+    (it was measured on the unconditioned universe with shared-unit vetoes);
+    consolidate A's and C's bare-T3 heads rather than rebuilding.
+    **P3 SHIP**: port the winner, delete pT5-side AND pT3-side together, then
+    produce the plots + timing/memory benchmarks. CMSSW after, when the
+    maintainer decides.
   - **QUEUED: POST-INTEGRATION SIMPLIFYING PASS (maintainer, 2026-08-02).**
     After integration + timing/memory are done, one pass re-judging marginal
     complexity. FIRST CANDIDATE: chain extension (-EX) — maintainer reaction to
