@@ -4,6 +4,7 @@
 
 #include "LSTEvent.h"
 
+#include "ChainArbitrate.h"
 #include "ChainEdges.h"
 #include "ChainGate.h"
 #include "ChainGraph.h"
@@ -101,6 +102,7 @@ void LSTEvent::resetEventSync() {
   chainEdgesDC_.reset();
   chainsDC_.reset();
   chainItemsDC_.reset();
+  chainsHC_.reset();
   nChainNodes_ = 0;
   nChainE1Edges_ = 0;
   nChainE2Edges_ = 0;
@@ -1211,6 +1213,282 @@ void LSTEvent::buildChains() {
   dumpChains();
 }
 
+void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
+  // Chain-tracking phase P2.3 (port map section 5): the FIRST physics-changing stage. It runs at
+  // the very end of createTrackCandidates, after every baseline crossclean and every baseline
+  // Add*asTrackCandidate, so the carried pT3 and bare-pLS rows are bit-identical to what LST
+  // builds; only then are the replaced classes removed and the accepted chains appended.
+  bool const timing = chainTimingEnabled();
+  auto stamp = [&]() {
+    if (timing)
+      alpaka::wait(queue_);
+    return std::chrono::steady_clock::now();
+  };
+  auto const t0 = stamp();
+
+  auto const serial_workDiv = cms::alpakatools::make_workdiv<Acc1D>(1, 1);
+  auto const chainFlat_workDiv = cms::alpakatools::make_workdiv<Acc1D>(max_blocks, 256);
+  auto const chainScan_workDiv = cms::alpakatools::make_workdiv<Acc1D>(1, kChainScanBlockThreads);
+
+  // The -RT5 1 wholesale drop of the carried type-7 rows plus the removal of the LST T5 / T4 rows
+  // whose class the chain pipeline now builds. Runs even with zero chains: the mode is defined by
+  // the configuration, not by how many chains an event happened to weld.
+  alpaka::exec<Acc1D>(queue_,
+                      serial_workDiv,
+                      ChainCompactCarriedTCs{},
+                      trackCandidatesBaseDC_->view(),
+                      trackCandidatesExtendedDC_->view(),
+                      chainConfig_);
+  auto const t1 = stamp();
+
+  if (nChainCount_ == 0 || !chainsDC_.has_value())
+    return;
+
+  unsigned int const nHits = static_cast<unsigned int>(lstInputDC_->const_view().hits().metadata().size());
+  unsigned int const nMDall = static_cast<unsigned int>(miniDoubletsDC_->view().miniDoublets().metadata().size());
+
+  // K9-0 / K9-1: the claim universe and the order key + candidate mask.
+  auto claimHits_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, 6u * nChainWeldedNodes_);
+  alpaka::exec<Acc1D>(queue_,
+                      chainFlat_workDiv,
+                      ChainBuildClaimHits{},
+                      miniDoubletsDC_->const_view().miniDoublets(),
+                      chainItemsDC_->const_view(),
+                      chainsDC_->view(),
+                      claimHits_buf.data());
+  alpaka::exec<Acc1D>(queue_,
+                      chainFlat_workDiv,
+                      ChainOrderAndSelect{},
+                      tripletsDC_->const_view().triplets(),
+                      chainNodesDC_->const_view(),
+                      chainItemsDC_->const_view(),
+                      chainsDC_->view(),
+                      chainConfig_);
+  auto const t2 = stamp();
+
+  // K9a / K9b / K9c: pre-claim, greedy claim, braid. Serial by construction (see ChainArbitrate.h).
+  auto owner_buf = cms::alpakatools::make_device_buffer<int32_t[]>(queue_, nHits);
+  auto order_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, nChainCount_);
+  auto orderScratch_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, nChainCount_);
+  auto accepted_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, nChainCount_);
+  auto braidCount_buf = cms::alpakatools::make_device_buffer<int32_t[]>(queue_, nChainCount_);
+  constexpr uint32_t kBraidTouchedCapacity = 4096u;  // >= the largest per-chain claim-hit count
+  auto braidTouched_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, kBraidTouchedCapacity);
+  auto stats_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, kChainArbStats);
+  alpaka::memset(queue_, stats_buf, 0u);
+
+  alpaka::exec<Acc1D>(queue_,
+                      serial_workDiv,
+                      ChainArbitrateSerial{},
+                      miniDoubletsDC_->const_view().miniDoublets(),
+                      tripletsDC_->const_view().triplets(),
+                      segmentsDC_->const_view().segments(),
+                      chainNodesDC_->const_view(),
+                      chainItemsDC_->const_view(),
+                      chainsDC_->view(),
+                      claimHits_buf.data(),
+                      trackCandidatesBaseDC_->const_view(),
+                      trackCandidatesExtendedDC_->const_view(),
+                      owner_buf.data(),
+                      nHits,
+                      order_buf.data(),
+                      orderScratch_buf.data(),
+                      accepted_buf.data(),
+                      braidCount_buf.data(),
+                      braidTouched_buf.data(),
+                      kBraidTouchedCapacity,
+                      chainConfig_);
+  auto const t3 = stamp();
+
+  // EX: chain extension at assembly. Needs the claimed-hit map and the MD -> outgoing-LineSegment
+  // adjacency (-EXS 1).
+  if (chainConfig_.extendMode > 0) {
+    auto claimedHit_buf = cms::alpakatools::make_device_buffer<uint8_t[]>(queue_, nHits);
+    alpaka::exec<Acc1D>(
+        queue_, chainFlat_workDiv, ChainMarkClaimedHits{}, owner_buf.data(), claimedHit_buf.data(), nHits);
+
+    auto segCounts_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, nMDall);
+    auto segOffsets_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, nMDall + 1u);
+    auto segCursor_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, nMDall);
+    alpaka::memset(queue_, segCounts_buf, 0u);
+    alpaka::memset(queue_, segCursor_buf, 0u);
+    alpaka::exec<Acc1D>(queue_,
+                        chainFlat_workDiv,
+                        ChainSegCount{},
+                        modules_.const_view().modules(),
+                        segmentsDC_->const_view().segments(),
+                        segmentsDC_->const_view().segmentsOccupancy(),
+                        rangesDC_->const_view(),
+                        segCounts_buf.data());
+    auto nSegOT_buf_d = cms::alpakatools::make_device_buffer<uint32_t>(queue_);
+    alpaka::exec<Acc1D>(queue_,
+                        chainScan_workDiv,
+                        ChainSegPrefix{},
+                        segCounts_buf.data(),
+                        segOffsets_buf.data(),
+                        nSegOT_buf_d.data(),
+                        nMDall);
+
+    auto nSegOT_buf_h = cms::alpakatools::make_host_buffer<uint32_t>(queue_);
+    alpaka::memcpy(queue_, nSegOT_buf_h, nSegOT_buf_d);
+    alpaka::wait(queue_);  // the adjacency payload size
+    uint32_t const nSegOT = std::max(1u, *nSegOT_buf_h.data());
+
+    auto segItems_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, nSegOT);
+    alpaka::exec<Acc1D>(queue_,
+                        chainFlat_workDiv,
+                        ChainSegScatter{},
+                        modules_.const_view().modules(),
+                        segmentsDC_->const_view().segments(),
+                        segmentsDC_->const_view().segmentsOccupancy(),
+                        rangesDC_->const_view(),
+                        segOffsets_buf.data(),
+                        segCursor_buf.data(),
+                        segItems_buf.data());
+    alpaka::exec<Acc1D>(
+        queue_, chainFlat_workDiv, ChainSegSort{}, segOffsets_buf.data(), segItems_buf.data(), nMDall);
+
+    alpaka::exec<Acc1D>(queue_,
+                        serial_workDiv,
+                        ChainExtendSerial{},
+                        modules_.const_view().modules(),
+                        miniDoubletsDC_->const_view().miniDoublets(),
+                        segmentsDC_->const_view().segments(),
+                        chainItemsDC_->view(),
+                        chainsDC_->view(),
+                        accepted_buf.data(),
+                        claimedHit_buf.data(),
+                        nHits,
+                        segOffsets_buf.data(),
+                        segItems_buf.data(),
+                        nMDall,
+                        stats_buf.data(),
+                        chainConfig_);
+    alpaka::wait(queue_);  // the scratch buffers above die with this scope
+  }
+  auto const t4 = stamp();
+
+  // K10: row assignment then emission.
+  alpaka::exec<Acc1D>(queue_,
+                      serial_workDiv,
+                      ChainAssignTCRows{},
+                      trackCandidatesBaseDC_->view(),
+                      trackCandidatesExtendedDC_->view(),
+                      chainsDC_->view(),
+                      accepted_buf.data(),
+                      nAllocatedTCs);
+  alpaka::exec<Acc1D>(queue_,
+                      chainFlat_workDiv,
+                      ChainEmitTCs{},
+                      modules_.const_view().modules(),
+                      miniDoubletsDC_->const_view().miniDoublets(),
+                      segmentsDC_->const_view().segments(),
+                      tripletsDC_->const_view().triplets(),
+                      chainNodesDC_->const_view(),
+                      chainItemsDC_->const_view(),
+                      chainsDC_->view(),
+                      trackCandidatesBaseDC_->view(),
+                      trackCandidatesExtendedDC_->view(),
+                      stats_buf.data());
+  auto const t5 = stamp();
+
+  if (timing || objectsStatistics_) {
+    auto stats_h = cms::alpakatools::make_host_buffer<uint32_t[]>(queue_, kChainArbStats);
+    auto nAcc_h = cms::alpakatools::make_host_buffer<uint32_t>(queue_);
+    auto nTC_h = cms::alpakatools::make_host_buffer<uint32_t>(queue_);
+    alpaka::memcpy(queue_, stats_h, stats_buf);
+    alpaka::memcpy(queue_, nAcc_h, cms::alpakatools::make_device_view(queue_, chainsDC_->view().nAccepted()));
+    alpaka::memcpy(queue_, nTC_h, cms::alpakatools::make_device_view(queue_, chainsDC_->view().nChainTCs()));
+    alpaka::wait(queue_);
+    uint32_t const* s = stats_h.data();
+    lstWarning(std::format(
+        "[CHAIN K9] accepted={} chainTCs={} | extend examined={} cand={} outer={} noFit={} rejChi2={} "
+        "rejUniq={} rejFit={} | TC slot fallbacks={} overflow={}",
+        *nAcc_h.data(),
+        *nTC_h.data(),
+        s[0],
+        s[2],
+        s[3],
+        s[1],
+        s[5],
+        s[4],
+        s[6],
+        s[7],
+        s[8]));
+    if (timing) {
+      auto ms = [](auto a, auto b) { return std::chrono::duration<double, std::milli>(b - a).count(); };
+      lstWarning(std::format("[CHAIN TIMING] compact {:.3f} ms | K9 prep {:.3f} ms | K9 claim {:.3f} ms | "
+                             "extend {:.3f} ms | K10 assemble {:.3f} ms | total {:.3f} ms",
+                             ms(t0, t1),
+                             ms(t1, t2),
+                             ms(t2, t3),
+                             ms(t3, t4),
+                             ms(t4, t5),
+                             ms(t0, t5)));
+    }
+  }
+
+  dumpChainTCs();
+}
+
+void LSTEvent::dumpChainTCs() {
+  // Parity sidecar for the P2.3 gate (a). Off unless LST_CHAIN_TC_DUMP names an output file.
+  // One record per event holding, for EVERY track candidate row, its type and its outer-tracker
+  // hit rows in the tracking-ntuple numbering -- exactly the content the reference writes into its
+  // tc_type / tc_hitOT branches under PROTO_DUMP_TCHITS, so the two multisets compare directly.
+  char const* path = std::getenv("LST_CHAIN_TC_DUMP");
+  if (path == nullptr || *path == '\0' || !trackCandidatesBaseDC_.has_value())
+    return;
+
+  alpaka::wait(queue_);
+
+  auto base = getTrackCandidatesBase();
+  auto ext = getTrackCandidatesExtended();
+  uint32_t const nTC = base.nTrackCandidates();
+
+  unsigned int const nHitsTotal = static_cast<unsigned int>(lstInputDC_->const_view().hits().metadata().size());
+  std::vector<unsigned int> hitIdx(nHitsTotal);
+  {
+    auto host_view = cms::alpakatools::make_host_view(hitIdx.data(), nHitsTotal);
+    auto dev_view = cms::alpakatools::make_device_view(queue_, lstInputDC_->const_view().hits().idxs(), nHitsTotal);
+    alpaka::memcpy(queue_, host_view, dev_view);
+    alpaka::wait(queue_);
+  }
+
+  static std::atomic<uint32_t> tcEventCounter{0};
+  uint32_t const ievt = tcEventCounter.fetch_add(1);
+  static std::mutex tcDumpMutex;
+  std::lock_guard<std::mutex> lock(tcDumpMutex);
+  std::FILE* f = std::fopen(path, (ievt == 0) ? "wb" : "ab");
+  if (f == nullptr)
+    return;
+  auto put32 = [&](uint32_t v) { std::fwrite(&v, sizeof(v), 1, f); };
+
+  put32(0x50323354u);  // 'P23T'
+  put32(ievt);
+  put32(nTC);
+  for (uint32_t t = 0; t < nTC; ++t) {
+    std::vector<uint32_t> ot;
+    for (int s = 0; s < Params_TC::kLayers; ++s) {
+      if (ext.lowerModuleIndices()[t][s] == kTCEmptyLowerModule)
+        continue;
+      if (ext.logicalLayers()[t][s] == 0)
+        continue;  // pixel layer slot
+      for (int q = 0; q < Params_TC::kHitsPerLayer; ++q) {
+        unsigned int const h = base.hitIndices()[t][s][q];
+        if (h == kTCEmptyHitIdx)
+          continue;
+        ot.push_back(hitIdx[h]);
+      }
+    }
+    put32(static_cast<uint32_t>(base.trackCandidateType()[t]));
+    put32(static_cast<uint32_t>(ot.size()));
+    for (uint32_t h : ot)
+      put32(h);
+  }
+  std::fclose(f);
+}
+
 void LSTEvent::dumpChains() {
   // Parity sidecar for the P2.2 gate. Off unless LST_CHAIN_CHAIN_DUMP names an output file; the
   // ntuple and the track candidate collection are untouched either way. Record layout is
@@ -1450,6 +1728,13 @@ void LSTEvent::createTrackCandidates(bool no_pls_dupclean, bool tc_pls_triplets)
   auto const* counts = nSurvivingTCs_host.data();
   constexpr unsigned int nMaxTC = n_max_nonpixel_track_candidates + n_max_pixel_track_candidates;
   unsigned int nTotal = std::min(counts[0] + counts[1] + counts[2] + counts[3] + counts[4], nMaxTC);
+  // Chain tracking (P2.3) runs the whole baseline sequence first -- so every crossclean sees the
+  // collection it sees at baseline and the carried pT3 / bare-pLS rows stay bit-identical -- and
+  // only afterwards drops the replaced classes and appends the accepted chains. The baseline rows
+  // and the chain rows therefore coexist for the length of createTrackCandidates, and the buffer
+  // carries headroom for one TC per welded chain (the K9-accepted set is a subset of them).
+  unsigned int const nChainTCHeadroom = useChainTracking_ ? nChainCount_ : 0u;
+  nTotal += nChainTCHeadroom;
   if (nTotal == 0)
     nTotal = 1;  // avoid zero-size allocation
 
@@ -1579,6 +1864,12 @@ void LSTEvent::createTrackCandidates(bool no_pls_dupclean, bool tc_pls_triplets)
                       tc_pls_triplets,
                       nTotal);
 
+  // Chain tracking phase P2.3: the carried-row compaction (-RT5 1 plus the T5/T4 class
+  // replacement), the K9 hit claim, the chain extension and the K10 assembly. Everything above
+  // this line ran exactly as it does at baseline.
+  if (useChainTracking_)
+    arbitrateChains(nTotal);
+
   // Check if either n_max_pixel_track_candidates or n_max_nonpixel_track_candidates was reached
   auto nTrackCanTotalHost_buf = cms::alpakatools::make_host_buffer<unsigned int>(queue_);
   alpaka::memcpy(queue_,
@@ -1587,7 +1878,7 @@ void LSTEvent::createTrackCandidates(bool no_pls_dupclean, bool tc_pls_triplets)
   alpaka::wait(queue_);  // wait to get the value before using it
 
   auto nTrackCandidatesTotal = *nTrackCanTotalHost_buf.data();
-  if (nTrackCandidatesTotal > nMaxTC) {
+  if (nTrackCandidatesTotal > nMaxTC + nChainTCHeadroom) {
     lstWarning(
         "\
         ****************************************************************************************************\n\
@@ -2731,6 +3022,24 @@ TrackCandidatesExtendedConst LSTEvent::getTrackCandidatesExtended(bool sync) {
   return trackCandidatesExtendedHC_->const_view();
 }
 template TrackCandidatesExtendedConst LSTEvent::getTrackCandidatesExtended<>(bool);
+
+template <typename TDev>
+ChainsConst LSTEvent::getChains(bool sync) {
+  // Host view of the welded chains. The standalone ntuple writer needs it to give a chain TC its
+  // pt / eta / phi, which live in ChainsSoA rather than in any object the TC row points at.
+  if constexpr (std::is_same_v<TDev, DevHost>) {
+    return chainsDC_->const_view();
+  } else {
+    if (!chainsHC_) {
+      chainsHC_.emplace(
+          cms::alpakatools::CopyToHost<::PortableCollection<TDev, ChainsSoA>>::copyAsync(queue_, *chainsDC_));
+      if (sync)
+        alpaka::wait(queue_);  // host consumers expect filled data
+    }
+  }
+  return chainsHC_->const_view();
+}
+template ChainsConst LSTEvent::getChains<>(bool);
 
 std::unique_ptr<TrackCandidatesBaseDeviceCollection> LSTEvent::releaseTrackCandidatesBaseDeviceCollection() {
   return std::make_unique<TrackCandidatesBaseDeviceCollection>(std::move(trackCandidatesBaseDC_.value()));

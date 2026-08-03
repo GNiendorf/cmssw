@@ -6,9 +6,10 @@
 namespace lst {
 
   // FROZEN chain-tracking configuration (standalone/fanout5/final/FREEZE_RECORD.txt, resolved
-  // ANCHOR + CTL + FLAGSHIP + M19 with later flags winning). Every field below is a P2.2-scope
-  // knob; the claim / attach knobs (-F -FC -W -B -BK -BT -PU -WE -WZ -EX -a) belong to P2.3/P2.4
-  // and are deliberately absent.
+  // ANCHOR + CTL + FLAGSHIP + M19 with later flags winning). Fields are grouped by the port-map
+  // phase that introduced them: P2.2 = weld / trim / gate, P2.3 = claim + extension + assembly.
+  // The attach knobs (-a -AT3 -RPS -RD -D4) belong to P2.4 and are still deliberately absent;
+  // P2.3 runs with attach INERT, which is what makes -RPS / -RD irrelevant here.
   //
   // Kept as a plain struct with frozen defaults rather than as bare constexpr so that P2.3 can
   // fill it from the LSTProducer parameter set (port map section 3.3) with no kernel change; the
@@ -63,6 +64,76 @@ namespace lst {
     // chain (prototype main.cc kGateKill).
     float gateKill = 1e9f;
 
+    // ------------------------------------------------------------------------------------------
+    // P2.3 -- K9 hit-claim arbitration.
+    // ------------------------------------------------------------------------------------------
+    // prototype/main.cc kNoCutTheta: with -G 6 the gate is a KILL (score -= gateKill), so K9's
+    // base per-length threshold must pass every live chain while still rejecting a killed one.
+    float noCutTheta = -1e5f;
+    // -U4 / -U5 / -U6: the per-length acceptance thresholds of the EXEMPT (large-dcaXY) branch,
+    // which K9 applies through ArbitrationParams::altThreshold. Live on chains.score, i.e. on the
+    // legacy sum-logit scale, which is why they are 0 rather than noCutTheta.
+    float thetaExempt4 = 0.f;
+    float thetaExempt5 = 0.f;
+    float thetaExempt6 = 0.f;
+
+    // Pixel-consumed drop (the structural mimic of CrossCleanT5 / CrossCleanpT3). -RT5 1 removes
+    // every carried type-7 row, so the partOfPT5 half would be killing chains for colliding with
+    // rows that no longer exist -- it is therefore OFF. -RT3 0 keeps the pT3 rows, so the
+    // partOfPT3 half stays ON.
+    bool dropPixelConsumed = true;
+    bool dropPartOfPT5 = false;  // == !replacePT5
+    bool dropPartOfPT3 = true;   // == !replacePT3
+
+    // -B 10 / -BK 1 / -BT 5: the K9 best-first ORDER key. Never a threshold (M9 lesson):
+    //   orderKey = score - orderAlpha * max(0, orderHinge - marginX)
+    // -BK is compile-time 1 (the 3-class mX hinge); modes 0 and 2..11 are dead experiments.
+    float orderAlpha = 10.f;
+    float orderHinge = 5.f;
+
+    // -F 0.20 / -FC 1 / -FCX 0: the candidate-relative claim tolerance. -FC is expressed in MD
+    // units for physics readability; the claim universe is HITS (-H 1 is compile-time true) and
+    // every MD contributes 2 of them, so the budget doubles.
+    float maxClaimedFrac = 0.20f;
+    int maxClaimedMDs = 1;
+    bool claimCountExclusive = false;
+
+    // -W 0.50: owner-relative braid kill. -WE 0.20 / -WZ 1.5 / -WN off: the BAND-AWARE braid --
+    // candidates with |eta(innermost T3)| >= braidAltEta and nNodes <= braidAltMaxNodes use the
+    // tight fraction. -FB / -FBC 0: the same band's own claim tolerance (claimItemsAltMDs == -2
+    // and claimFracAlt <= 0 mean "band uses the global value").
+    float braidFrac = 0.5f;
+    float braidFracAlt = 0.20f;
+    float braidAltEta = 1.5f;
+    float braidAltMaxNodes = 1e9f;
+    float claimFracAlt = 0.f;
+    int claimItemsAltMDs = 0;
+
+    // -PU 1: claim-universe unification. The kept carried pixel rows' outer-tracker hits are
+    // pre-claimed before the greedy walk. Mode 2 (pixel owners also join the braid) is not in the
+    // freeze, so pixel owners only supply claimed slots to the maxClaimedFrac test.
+    bool preClaim = true;
+
+    // -RT5 1 / -RT3 0: wholesale class replacement. At P2.3 attach is inert, so replacePT5 only
+    // means "drop every carried type-7 row"; the chains deliver the pT5 class as bare chain TCs.
+    bool replacePT5 = true;
+    bool replacePT3 = false;
+
+    // ------------------------------------------------------------------------------------------
+    // P2.3 -- chain extension at assembly (-EX family, prototype/Extend.h).
+    // ------------------------------------------------------------------------------------------
+    int extendMode = 1;             // -EX  : 0 off, 1 outer end only, 2 inner only, 3 both
+    float extendWindow = 0.25f;     // -EXW : xy (circle) residual window, cm
+    float extendRzWindow = 2.f;     // -EXR : separate |rz| window, cm; > 0 splits the test
+    float extendChi2Factor = 2.f;   // -EXF : refit chi2/hit <= factor * max(chi2Full, window^2)
+    float extendUniqMargin = 0.f;   // -EXU : runner-up ambiguity guard, cm; 0 = off
+    float extendMaxDist = 60.f;     // -EXD : max 3D distance terminal MD -> candidate MD, cm
+    int extendMaxJump = 1;          // -EXJ : max md layer jump from the terminal layer
+    int extendMaxPerEnd = 1;        // -EXN : max MDs appended per chain end
+    int extendMinLayers = 4;        // -EXL : chains below this many layers are never touched
+    float extendMaxChi2 = 0.f;      // -EXC : own-fit-quality guard, cm^2; 0 = off
+    bool extendSegLinked = true;    // -EXS : candidate must be LineSegment-linked to the terminal
+
     // True iff any band delta is live; reproduces the reference's `zOn` short-circuit exactly.
     constexpr bool etaBandActive() const {
       return zEta2 > zEta1 && (zdRI != 0.f || zdR != 0.f || zdR5 != 0.f || zdR6 != 0.f || zdM4 != 0.f ||
@@ -72,6 +143,12 @@ namespace lst {
 
   // prototype/Stages.h kWeldSweeps.
   static constexpr int kChainWeldSweeps = 3;
+  // prototype/K9K10.cc k10AssembleChainTCs: a chain shorter than this emits no TC.
+  static constexpr int kChainTCMinLayers = 4;
+  // -H 1 is FROZEN: the claim universe is hit rows, not MiniDoublets.
+  static constexpr bool kChainHitLevelClaim = true;
+  // prototype/Extend.cc kMaxLayer: md_layer is 1-6 barrel, 7-11 endcap.
+  static constexpr int kChainMaxMdLayer = 12;
   // Cycle guard for the weld path walk. Edges point strictly inward -> outward so a chain cannot
   // exceed the detector layer count; this is a device-safe stand-in for the reference's `visited`
   // array and has never been reached.

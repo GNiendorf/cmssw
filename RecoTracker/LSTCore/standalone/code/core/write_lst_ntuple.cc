@@ -2398,7 +2398,10 @@ void setTrackCandidateBranches(LSTEvent* event,
         ana.tx->pushbackToBranch<int>("tc_pt3Idx", -999);
       if (ana.t5_branches)
         ana.tx->pushbackToBranch<int>(
-            "tc_t5Idx", (ana.t5_branches ? t5_idx_map[trackCandidatesExtended.directObjectIndices()[tc_idx]] : -999));
+            "tc_t5Idx",
+            ((ana.t5_branches && !ana.use_chain_tracking)
+                 ? t5_idx_map[trackCandidatesExtended.directObjectIndices()[tc_idx]]
+                 : -999));
       if (ana.pls_branches)
         ana.tx->pushbackToBranch<int>("tc_plsIdx", -999);
       if (ana.t4_branches)
@@ -2429,7 +2432,10 @@ void setTrackCandidateBranches(LSTEvent* event,
         ana.tx->pushbackToBranch<int>("tc_plsIdx", -999);
       if (ana.t4_branches)
         ana.tx->pushbackToBranch<int>(
-            "tc_t4Idx", (ana.t4_branches ? t4_idx_map[trackCandidatesExtended.directObjectIndices()[tc_idx]] : -999));
+            "tc_t4Idx",
+            ((ana.t4_branches && !ana.use_chain_tracking)
+                 ? t4_idx_map[trackCandidatesExtended.directObjectIndices()[tc_idx]]
+                 : -999));
     }
 
     ana.tx->pushbackToBranch<int>("tc_isFake", isFake);
@@ -2845,7 +2851,7 @@ void setT5DNNBranches(LSTEvent* event) {
   std::unordered_set<unsigned int> t5s_used_in_tc;
 
   for (unsigned int idx = 0; idx < trackCandidatesBase.nTrackCandidates(); idx++) {
-    if (trackCandidatesBase.trackCandidateType()[idx] == LSTObjType::T5) {
+    if (!ana.use_chain_tracking && trackCandidatesBase.trackCandidateType()[idx] == LSTObjType::T5) {
       unsigned int objIdx = trackCandidatesExtended.directObjectIndices()[idx];
       t5s_used_in_tc.insert(objIdx);
       t5_tc_index_map[objIdx] = idx;
@@ -2907,7 +2913,7 @@ void setT4DNNBranches(LSTEvent* event) {
   std::unordered_set<unsigned int> t4s_used_in_tc;
 
   for (unsigned int idx = 0; idx < trackCandidatesBase.nTrackCandidates(); idx++) {
-    if (trackCandidatesBase.trackCandidateType()[idx] == LSTObjType::T4) {
+    if (!ana.use_chain_tracking && trackCandidatesBase.trackCandidateType()[idx] == LSTObjType::T4) {
       unsigned int objIdx = trackCandidatesExtended.directObjectIndices()[idx];
       t4s_used_in_tc.insert(objIdx);
       t4_tc_index_map[objIdx] = idx;
@@ -2946,6 +2952,20 @@ void setT4DNNBranches(LSTEvent* event) {
 }
 
 //________________________________________________________________________________________________________________________________
+// Chain-tracking (P2.3) track candidates carry the T5 / T4 class label but are backed by a welded
+// CHAIN, not by a Quintuplet or a Quadruplet, so their kinematics come from ChainsSoA (K10 wrote
+// them there: pt = lower median of the member t3_pt, eta / phi from the innermost member T3) and
+// their hits come from the TC row itself.
+std::tuple<float, float, float, std::vector<unsigned int>, std::vector<HitType>> parseChainTC(LSTEvent* event,
+                                                                                              unsigned int idx) {
+  auto const& trackCandidatesExtended = event->getTrackCandidatesExtended();
+  auto const& chains = event->getChains();
+  unsigned int const chainIdx = trackCandidatesExtended.directObjectIndices()[idx];
+  auto [hit_idx, hit_type] = getHitIdxsAndHitTypesFromTC(event, idx);
+  return {chains.tcPt()[chainIdx], chains.tcEta()[chainIdx], chains.tcPhi()[chainIdx], hit_idx, hit_type};
+}
+
+//________________________________________________________________________________________________________________________________
 std::tuple<int, float, float, float, int, std::vector<int>> parseTrackCandidate(
     LSTEvent* event,
     unsigned int idx,
@@ -2972,10 +2992,16 @@ std::tuple<int, float, float, float, int, std::vector<int>> parseTrackCandidate(
       std::tie(pt, eta, phi, hit_idx, hit_type) = parsepT3(event, idx);
       break;
     case LSTObjType::T5:
-      std::tie(pt, eta, phi, hit_idx, hit_type) = parseT5(event, idx, trk_ph2_x, trk_ph2_y, trk_ph2_z);
+      if (ana.use_chain_tracking)
+        std::tie(pt, eta, phi, hit_idx, hit_type) = parseChainTC(event, idx);
+      else
+        std::tie(pt, eta, phi, hit_idx, hit_type) = parseT5(event, idx, trk_ph2_x, trk_ph2_y, trk_ph2_z);
       break;
     case LSTObjType::T4:
-      std::tie(pt, eta, phi, hit_idx, hit_type) = parseT4(event, idx, trk_ph2_x, trk_ph2_y, trk_ph2_z);
+      if (ana.use_chain_tracking)
+        std::tie(pt, eta, phi, hit_idx, hit_type) = parseChainTC(event, idx);
+      else
+        std::tie(pt, eta, phi, hit_idx, hit_type) = parseT4(event, idx, trk_ph2_x, trk_ph2_y, trk_ph2_z);
       break;
     case LSTObjType::pLS:
       std::tie(pt, eta, phi, hit_idx, hit_type) = parsepLS(event, idx);
@@ -2984,7 +3010,9 @@ std::tuple<int, float, float, float, int, std::vector<int>> parseTrackCandidate(
       throw std::logic_error("unsupported type " + std::to_string(type));
   }
 
-  if (type == LSTObjType::T5 || type == LSTObjType::pT5) {
+  if (!ana.use_chain_tracking && (type == LSTObjType::T5 || type == LSTObjType::pT5)) {
+    std::tie(hit_idx, hit_type) = getHitIdxsAndHitTypesFromTC(event, idx);
+  } else if (ana.use_chain_tracking && type == LSTObjType::pT5) {
     std::tie(hit_idx, hit_type) = getHitIdxsAndHitTypesFromTC(event, idx);
   }
 
@@ -3024,10 +3052,16 @@ std::tuple<int, float, float, float, int, std::vector<int>, std::vector<float>> 
       std::tie(pt, eta, phi, hit_idx, hit_type) = parsepT3(event, idx);
       break;
     case LSTObjType::T5:
-      std::tie(pt, eta, phi, hit_idx, hit_type) = parseT5(event, idx, trk_ph2_x, trk_ph2_y, trk_ph2_z);
+      if (ana.use_chain_tracking)
+        std::tie(pt, eta, phi, hit_idx, hit_type) = parseChainTC(event, idx);
+      else
+        std::tie(pt, eta, phi, hit_idx, hit_type) = parseT5(event, idx, trk_ph2_x, trk_ph2_y, trk_ph2_z);
       break;
     case LSTObjType::T4:
-      std::tie(pt, eta, phi, hit_idx, hit_type) = parseT4(event, idx, trk_ph2_x, trk_ph2_y, trk_ph2_z);
+      if (ana.use_chain_tracking)
+        std::tie(pt, eta, phi, hit_idx, hit_type) = parseChainTC(event, idx);
+      else
+        std::tie(pt, eta, phi, hit_idx, hit_type) = parseT4(event, idx, trk_ph2_x, trk_ph2_y, trk_ph2_z);
       break;
     case LSTObjType::pLS:
       std::tie(pt, eta, phi, hit_idx, hit_type) = parsepLS(event, idx);
@@ -3036,7 +3070,9 @@ std::tuple<int, float, float, float, int, std::vector<int>, std::vector<float>> 
       throw std::logic_error("unsupported type " + std::to_string(type));
   }
 
-  if (type == LSTObjType::T5 || type == LSTObjType::pT5) {
+  if (!ana.use_chain_tracking && (type == LSTObjType::T5 || type == LSTObjType::pT5)) {
+    std::tie(hit_idx, hit_type) = getHitIdxsAndHitTypesFromTC(event, idx);
+  } else if (ana.use_chain_tracking && type == LSTObjType::pT5) {
     std::tie(hit_idx, hit_type) = getHitIdxsAndHitTypesFromTC(event, idx);
   }
 

@@ -63,7 +63,27 @@ namespace lst {
                       SOA_COLUMN(float, marginD),  // zDisp   - zFake
                       SOA_COLUMN(float, marginX),  // max(zPrompt, zDisp) - zFake
                       SOA_COLUMN(Params_ChainFeat::ArrayFxFeat, features),
-                      SOA_SCALAR(uint32_t, nChains))
+                      // ---- P2.3 (K9 claim + K10 assembly) --------------------------------------
+                      // K9 best-first ordering key, score - alpha * hinge(marginX). Never a
+                      // threshold: acceptance always cuts on score.
+                      SOA_COLUMN(float, orderKey),
+                      // Deduped claim-universe hit rows of this chain live at
+                      // ChainClaimHits[6 * nodeOffset, 6 * nodeOffset + nClaimHits); 2 hits per MD
+                      // and nMDs <= 3 * nNodes make 6 * nNodes an exact bound, so the region
+                      // inherits the nodeOffset addressing of ChainItemsSoA with no second prefix.
+                      SOA_COLUMN(uint16_t, nClaimHits),
+                      // bit0 K9 candidate (passed theta + the pixel-consumed drop), bit1 accepted.
+                      SOA_COLUMN(uint8_t, claimFlags),
+                      // K10: TC kinematics of an accepted chain. pt = LOWER median of the member
+                      // t3_pt, eta/phi = the innermost member T3's (prototype k10AssembleChainTCs).
+                      SOA_COLUMN(float, tcPt),
+                      SOA_COLUMN(float, tcEta),
+                      SOA_COLUMN(float, tcPhi),
+                      // Row this chain occupies in TrackCandidatesBase, or -1 if it emits no TC.
+                      SOA_COLUMN(int32_t, tcRow),
+                      SOA_SCALAR(uint32_t, nChains),
+                      SOA_SCALAR(uint32_t, nAccepted),
+                      SOA_SCALAR(uint32_t, nChainTCs))
 
   using ChainsSoA = ChainsSoALayout<>;
   using Chains = ChainsSoA::View;
@@ -78,6 +98,10 @@ namespace lst {
   using ChainItemsSoA = ChainItemsSoALayout<>;
   using ChainItems = ChainItemsSoA::View;
   using ChainItemsConst = ChainItemsSoA::ConstView;
+
+  // K9 claim-flag bits (ChainsSoA::claimFlags).
+  static constexpr uint8_t kChainClaimCandidate = 0x1;
+  static constexpr uint8_t kChainClaimAccepted = 0x2;
 
   // Chain flag bits.
   static constexpr uint8_t kChainFlagKilled = 0x1;

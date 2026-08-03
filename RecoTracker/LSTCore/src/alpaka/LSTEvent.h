@@ -117,6 +117,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     std::optional<PixelTripletsHostCollection> pixelTripletsHC_;
     std::optional<PixelQuintupletsHostCollection> pixelQuintupletsHC_;
     std::optional<QuadrupletsHostCollection> quadrupletsHC_;
+    // Chain tracking (P2.3): a chain TC's pt / eta / phi live in ChainsSoA rather than in any
+    // object the TC row points at, so the ntuple writer needs a host view of the chains.
+    std::optional<ChainsHostCollection> chainsHC_;
 
     const uint16_t nModules_;
     const uint16_t nLowerModules_;
@@ -194,6 +197,14 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     // gate + the -G 6 kill. Only called when useChainTracking_ is true; NOTHING consumes the kill
     // bit yet, so this phase is output-neutral like P2.0 and P2.1.
     void buildChains();
+
+    // Chain-tracking phase P2.3: K9 hit-claim arbitration, chain extension and K10 assembly, plus
+    // the carried-row compaction that retires the classes the chains replace. THIS IS THE FIRST
+    // PHASE THAT CHANGES THE TRACK CANDIDATE COLLECTION. Called at the end of
+    // createTrackCandidates, only when useChainTracking_ is true.
+    void arbitrateChains(unsigned int nAllocatedTCs);
+    // Env-gated (LST_CHAIN_TC_DUMP) TC-level parity sidecar; writes nothing otherwise.
+    void dumpChainTCs();
     // Optional parity sidecar, enabled by the LST_CHAIN_CHAIN_DUMP environment variable.
     void dumpChains();
 
@@ -273,6 +284,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     TrackCandidatesBaseConst getTrackCandidatesBase(bool sync = true);
     template <typename TDev = Device>
     TrackCandidatesExtendedConst getTrackCandidatesExtended(bool sync = true);
+    template <typename TDev = Device>
+    ChainsConst getChains(bool sync = true);
     std::unique_ptr<TrackCandidatesBaseDeviceCollection> releaseTrackCandidatesBaseDeviceCollection();
     template <typename TSoA, typename TDev = Device>
     typename TSoA::ConstView getModules(bool sync = true);
