@@ -201,6 +201,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     // Optional parity sidecar, enabled by the LST_CHAIN_EDGE_DUMP environment variable. Writes
     // the per-event edge set and logits to a binary file and touches no ntuple branch.
     void dumpChainEdges();
+    // Optional determinism sidecar, enabled by the LST_CHAIN_NODE_DUMP environment variable. Writes
+    // the per-event node identity table (stableId plus the six hit rows it is built from), which is
+    // what the P2.5 weld-tie uniqueness census and the CPU-vs-GPU node-set attribution consume.
+    void dumpChainNodes();
 
     // Chain-tracking phase P2.2: K6a-K6f weld + terminal trim, K7a-K7c chain features + 3-class
     // gate + the -G 6 kill. Only called when useChainTracking_ is true; NOTHING consumes the kill

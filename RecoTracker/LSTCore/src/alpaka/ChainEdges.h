@@ -219,6 +219,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         edges.outer()[e] = outer;
         edges.type()[e] = type;
         edges.logOdds()[e] = 0.f;
+        // The stable weld tie-break (ChainWeld.h). XOR is a bijection in each argument, so with a
+        // collision-free node stableId the tie word is distinct for any two edges that share an
+        // endpoint - which is exactly the uniqueness the argmax needs, in either direction.
+        edges.tie()[e] = nodes.stableId()[inner] ^ nodes.stableId()[outer];
       }
     }
   };

@@ -36,12 +36,20 @@ namespace lst {
   // nodes), so recomputing would triple the transcendental work for 2.9 MB of savings.
   // The four chord-angle columns are the per-node quantities the EDGE feature build needs
   // (prototype/Features.cc computeEdgeFeatures hoists exactly these out of the edge loop).
+  //
+  // stableId is the phase P2.5 determinism anchor. The dense node index, the sparse triplet index
+  // it maps to, and every CSR slot derived from them are handed out by atomicAdd, so they permute
+  // between two identical runs and between the CPU and CUDA backends. stableId is instead a mix of
+  // the six hit ROWS of the node's three MDs (anchor and outer hit of md0, md1, md2). Hit rows are
+  // the input order of the hit collection, which is fixed by the event data alone, so stableId is
+  // identical run to run and backend to backend. Its only consumer is the weld tie-break.
   GENERATE_SOA_LAYOUT(ChainNodesSoALayout,
                       SOA_COLUMN(uint32_t, tripletIndex),  // dense node index -> sparse triplet index
                       SOA_COLUMN(uint32_t, mdT3OutItems),  // payload of ChainIncidence(MD).t3OutOffsets
                       SOA_COLUMN(uint32_t, mdT3InItems),   // payload of ChainIncidence(MD).t3InOffsets
                       SOA_COLUMN(uint32_t, lsT3OutItems),  // payload of ChainIncidence(LS).t3OutOffsets
                       SOA_COLUMN(uint32_t, lsT3InItems),   // payload of ChainIncidence(LS).t3InOffsets
+                      SOA_COLUMN(uint32_t, stableId),      // K1c, run/backend-invariant node identity
                       SOA_COLUMN(Params_ChainNode::ArrayFxFeat, features),  // K3, frozen 13-float row
                       SOA_COLUMN(float, phiC01),  // atan2(c01y, c01x)
                       SOA_COLUMN(float, phiC12),  // atan2(c12y, c12x)

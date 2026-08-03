@@ -195,6 +195,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                   int32_t* braidCount,
                                   uint32_t* braidTouched,
                                   uint32_t braidTouchedCapacity,
+                                  uint32_t* stats,
                                   ChainConfig cfg) const {
       if (!cms::alpakatools::once_per_grid(acc))
         return;
@@ -207,9 +208,13 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         if (chains.claimFlags()[c] & kChainClaimCandidate)
           order[n++] = c;
 
-      // Bottom-up merge sort: key desc, index asc. Stable merges over an index-ascending input
-      // reproduce prototype/K9K10.cc's std::sort comparator exactly (that comparator is a strict
-      // total order, so the sorted sequence is unique and the algorithm choice cannot matter).
+      // Bottom-up merge sort: orderKey desc, stableKey asc, chain index asc. The reference
+      // (prototype/K9K10.cc) breaks an exact orderKey tie on the chain index; P2.5 replaces that
+      // second key with the chain's stableKey, because the chain index descends from LST's atomicAdd
+      // triplet slots and therefore permutes between two identical runs and between backends, while
+      // exact orderKey ties really do occur (~40-56 adjacent tied pairs per event, stats[9]). The
+      // index remains as a third key so the comparator is a strict total order even in the
+      // vanishingly unlikely event of a stableKey hash collision between two chains.
       uint32_t* src = order;
       uint32_t* dst = orderScratch;
       for (uint32_t width = 1; width < n; width *= 2u) {
@@ -224,7 +229,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
           while (i < mid && j < hi) {
             uint32_t const a = src[i], b = src[j];
             float const ka = chains.orderKey()[a], kb = chains.orderKey()[b];
-            bool const aFirst = (ka != kb) ? (ka > kb) : (a < b);
+            uint32_t const sa = chains.stableKey()[a], sb = chains.stableKey()[b];
+            bool const aFirst = (ka != kb) ? (ka > kb) : ((sa != sb) ? (sa < sb) : (a < b));
             dst[k++] = aFirst ? src[i++] : src[j++];
           }
           while (i < mid)
@@ -239,6 +245,14 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
       if (src != order)
         for (uint32_t i = 0; i < n; ++i)
           order[i] = src[i];
+
+      // P2.5 tie-exercise census. The comparator above falls back to the chain index, which is a
+      // volatile numbering (it descends from LST's atomicAdd triplet slots), so the sorted sequence
+      // is only run-independent if exact orderKey ties never occur. Counting the adjacent equal
+      // pairs in the finished order measures exactly that, at the cost of one serial pass.
+      for (uint32_t i = 0; i + 1u < n; ++i)
+        if (chains.orderKey()[order[i]] == chains.orderKey()[order[i + 1u]])
+          ++stats[9];
 
       // --- 2) -PU 1 pre-claim ----------------------------------------------------------------
       for (uint32_t h = 0; h < nOwner; ++h)
@@ -692,6 +706,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
 
             int32_t bestMd = -1;
             double bestRes = 1e30, secondRes = 1e30;
+            // Stable tie-break operand for the argmin below, see the comparison site.
+            uint64_t bestHitKey = ~0ull;
 
             // -EXS 1: only MDs the detector already declared segment-compatible with the terminal.
             uint32_t const nb = outer ? segOffsets[tMd] : 0u;
@@ -734,10 +750,21 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                 if (res > win)
                   continue;
               }
-              if (res < bestRes) {
+              // The reference keeps the FIRST of an exact residual tie, walking the neighbours in
+              // ascending LineSegment index -- and LST hands out LineSegment indices by atomicAdd,
+              // so that rule permutes run to run. Exact ties do occur (1-2 per event, stats[10]), so
+              // P2.5 decides them on the candidate MD's own hit rows instead, which are input-
+              // ordered and identical on both backends. ha/hb are already loaded above, so the
+              // stable operand costs no extra memory traffic.
+              uint64_t const hitKey = (static_cast<uint64_t>(ha) << 32) | static_cast<uint64_t>(hb);
+              bool const better = (res < bestRes) || (res == bestRes && bestMd >= 0 && hitKey < bestHitKey);
+              if (res == bestRes && bestMd >= 0)
+                ++stats[10];
+              if (better) {
                 secondRes = bestRes;
                 bestRes = res;
                 bestMd = static_cast<int32_t>(m);
+                bestHitKey = hitKey;
               } else if (res < secondRes) {
                 secondRes = res;
               }

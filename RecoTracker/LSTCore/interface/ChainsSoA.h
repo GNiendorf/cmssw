@@ -89,6 +89,18 @@ namespace lst {
                       // one-pLS-one-owner contention and the -RD seed-family dedup, or -1.
                       SOA_COLUMN(int32_t, attachPls),
                       SOA_COLUMN(float, attachLogit),
+                      // ---- P2.5 (determinism) --------------------------------------------------
+                      // K6e. The run- and backend-invariant identity of the chain: the stableId
+                      // (ChainNodesSoA.h) of its PRE-trim head node. Heads are unique across chains
+                      // because the welded graph has in/out degree <= 1, so this names the chain.
+                      // Consumers are the K9 claim-order tie-break and the attach -RD dedup order,
+                      // both of which used to fall back to the chain index -- a numbering that
+                      // permutes between two identical runs.
+                      // It is appended LAST on purpose: inserting it mid-layout shifted every later
+                      // column's base address and cost the single-threaded CUDA contend kernel about
+                      // 1 ms/event, with no change in the work it did. Kept here, every pre-existing
+                      // column keeps its P2.4 offset and that regression disappears.
+                      SOA_COLUMN(uint32_t, stableKey),
                       SOA_SCALAR(uint32_t, nChains),
                       SOA_SCALAR(uint32_t, nAccepted),
                       SOA_SCALAR(uint32_t, nChainTCs),

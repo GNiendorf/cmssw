@@ -29,6 +29,7 @@ namespace lst {
                       SOA_COLUMN(uint32_t, outer),  // dense chain-node index of the outer triplet
                       SOA_COLUMN(uint8_t, type),    // 0 = hole, 1 = E1 (shared MD), 2 = E2 (shared LS)
                       SOA_COLUMN(float, logOdds),   // K5 edge-MLP logit; the quantity K6 will sum
+                      SOA_COLUMN(uint32_t, tie),    // K2 stable weld tie-break, see ChainWeld.h
                       SOA_SCALAR(uint32_t, nE1Exact),
                       SOA_SCALAR(uint32_t, nE2Exact))
 

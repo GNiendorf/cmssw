@@ -691,6 +691,7 @@ void LSTEvent::buildChainIncidence() {
                       ChainScatterIncidence{},
                       segmentsDC_->const_view().segments(),
                       tripletsDC_->const_view().triplets(),
+                      miniDoubletsDC_->const_view().miniDoublets(),
                       chainNodesDC_->view(),
                       chainMdIncidenceDC_->view(),
                       chainLsIncidenceDC_->view());
@@ -953,6 +954,7 @@ void LSTEvent::buildChainEdges() {
     }
   }
   dumpChainEdges();
+  dumpChainNodes();
   buildChains();
 }
 
@@ -1022,6 +1024,70 @@ void LSTEvent::dumpChainEdges() {
   std::fclose(f);
 }
 
+void LSTEvent::dumpChainNodes() {
+  // Determinism sidecar for the P2.5 gates. Off unless LST_CHAIN_NODE_DUMP names an output file.
+  // One record per event carrying, for every chain node in dense node order, its stableId and the
+  // six hit rows that stableId is built from. Two things read it:
+  //   - the weld-tie uniqueness census (p25_ref/p25_nodes.py tie): joined with the LST_CHAIN_EDGE_DUMP
+  //     edge list it proves that no node has two neighbours sharing a stableId, which is exactly the
+  //     condition under which the packed weld key is unique inside a node's incident-edge list;
+  //   - the CPU-vs-GPU attribution (p25_nodes.py attrib): the node set is compared on hit rows, so a
+  //     chain that exists on one backend only can be traced to a missing upstream triplet.
+  char const* path = std::getenv("LST_CHAIN_NODE_DUMP");
+  if (path == nullptr || *path == '\0' || !chainNodesDC_.has_value() || nChainNodes_ == 0)
+    return;
+
+  alpaka::wait(queue_);
+
+  auto pullTo = [&](auto* hostPtr, auto column, unsigned int n) {
+    auto host_view = cms::alpakatools::make_host_view(hostPtr, n);
+    auto dev_view = cms::alpakatools::make_device_view(queue_, column, n);
+    alpaka::memcpy(queue_, host_view, dev_view);
+    alpaka::wait(queue_);
+  };
+
+  uint32_t const nNodes = nChainNodes_;
+  std::vector<uint32_t> tripletIndex(nNodes), stableId(nNodes);
+  pullTo(tripletIndex.data(), chainNodesDC_->view().tripletIndex(), nNodes);
+  pullTo(stableId.data(), chainNodesDC_->view().stableId(), nNodes);
+
+  unsigned int const nT3 = static_cast<unsigned int>(tripletsDC_->view().triplets().metadata().size());
+  unsigned int const nLS = static_cast<unsigned int>(segmentsDC_->view().segments().metadata().size());
+  unsigned int const nMD = static_cast<unsigned int>(miniDoubletsDC_->view().miniDoublets().metadata().size());
+  std::vector<ArrayUx2> t3Seg(nT3);
+  std::vector<Params_LS::ArrayUxLayers> lsMD(nLS);
+  std::vector<unsigned int> mdAnchor(nMD), mdOuter(nMD);
+  pullTo(t3Seg.data(), tripletsDC_->view().triplets().segmentIndices(), nT3);
+  pullTo(lsMD.data(), segmentsDC_->view().segments().mdIndices(), nLS);
+  pullTo(mdAnchor.data(), miniDoubletsDC_->view().miniDoublets().anchorHitIndices(), nMD);
+  pullTo(mdOuter.data(), miniDoubletsDC_->view().miniDoublets().outerHitIndices(), nMD);
+
+  static std::atomic<uint32_t> nodeEventCounter{0};
+  uint32_t const ievt = nodeEventCounter.fetch_add(1);
+  static std::mutex nodeDumpMutex;
+  std::lock_guard<std::mutex> lock(nodeDumpMutex);
+  std::FILE* f = std::fopen(path, (ievt == 0) ? "wb" : "ab");
+  if (f == nullptr)
+    return;
+  auto put32 = [&](uint32_t v) { std::fwrite(&v, sizeof(v), 1, f); };
+
+  put32(0x5032354Eu);  // 'P25N'
+  put32(ievt);
+  put32(nNodes);
+  for (uint32_t n = 0; n < nNodes; ++n) {
+    uint32_t const t3 = tripletIndex[n];
+    unsigned int const innerSeg = t3Seg[t3][0];
+    unsigned int const outerSeg = t3Seg[t3][1];
+    unsigned int const md[3] = {lsMD[innerSeg][0], lsMD[innerSeg][1], lsMD[outerSeg][1]};
+    put32(stableId[n]);
+    for (int k = 0; k < 3; ++k) {
+      put32(mdAnchor[md[k]]);
+      put32(mdOuter[md[k]]);
+    }
+  }
+  std::fclose(f);
+}
+
 void LSTEvent::buildChains() {
   // Phase P2.2. K6a/K6b weld the edge graph into disjoint simple paths, K6c-K6e emit them as
   // chains, K6f trims a parasitic terminal, K7a builds the 25 frozen chain features plus the chain
@@ -1067,11 +1133,11 @@ void LSTEvent::buildChains() {
                         chainFlat_workDiv,
                         ChainWeldMutual{},
                         chainEdgesDC_->const_view(),
-                        nChainNodes_,
                         outWeld_buf.data(),
                         inWeld_buf.data(),
                         bestOut_buf.data(),
-                        bestIn_buf.data());
+                        bestIn_buf.data(),
+                        chainConfig_.thetaEdge);
   }
 
   auto const t1 = stamp();
@@ -1298,6 +1364,7 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
                       braidCount_buf.data(),
                       braidTouched_buf.data(),
                       kBraidTouchedCapacity,
+                      stats_buf.data(),
                       chainConfig_);
   auto const t3 = stamp();
 
@@ -1414,7 +1481,7 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
     uint32_t const* s = stats_h.data();
     lstWarning(std::format(
         "[CHAIN K9] accepted={} chainTCs={} | extend examined={} cand={} outer={} noFit={} rejChi2={} "
-        "rejUniq={} rejFit={} | TC slot fallbacks={} overflow={}",
+        "rejUniq={} rejFit={} | TC slot fallbacks={} overflow={} | tieK9order={} tieExtend={}",
         *nAcc_h.data(),
         *nTC_h.data(),
         s[0],
@@ -1425,7 +1492,9 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
         s[4],
         s[6],
         s[7],
-        s[8]));
+        s[8],
+        s[9],
+        s[10]));
     if (timing) {
       auto ms = [](auto a, auto b) { return std::chrono::duration<double, std::milli>(b - a).count(); };
       lstWarning(std::format("[CHAIN TIMING] compact {:.3f} ms | K9 prep {:.3f} ms | K9 claim {:.3f} ms | "
@@ -1441,7 +1510,6 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
     }
   }
 
-  dumpChainTCs();
 }
 
 void LSTEvent::attachPixels(unsigned int nHits, uint32_t const* accepted) {
@@ -1629,8 +1697,8 @@ void LSTEvent::attachPixels(unsigned int nHits, uint32_t const* accepted) {
     auto ms = [](auto a, auto b) { return std::chrono::duration<double, std::milli>(b - a).count(); };
     attachSummary_ = std::format(
         "targets={} pLS={} gridEntries={} cand={} scored={} picks={} attached={} rdRevoked={} "
-        "carriedRetired={} hashOverflow={} | pre {:.3f} ms | grid {:.3f} ms | score {:.3f} ms | "
-        "contend+suppress {:.3f} ms",
+        "carriedRetired={} hashOverflow={} tieRD={} | pre {:.3f} ms | grid {:.3f} ms | "
+        "score {:.3f} ms | contend+suppress {:.3f} ms",
         nTargets,
         pixelSize_,
         nEntries,
@@ -1641,6 +1709,7 @@ void LSTEvent::attachPixels(unsigned int nHits, uint32_t const* accepted) {
         st[5],
         st[6],
         st[7],
+        st[9],
         ms(a0, a1),
         ms(a1, a2),
         ms(a2, a3),
@@ -2131,6 +2200,11 @@ void LSTEvent::createTrackCandidates(bool no_pls_dupclean, bool tc_pls_triplets)
   // this line ran exactly as it does at baseline.
   if (useChainTracking_)
     arbitrateChains(nTotal);
+
+  // The TC parity sidecar is written here rather than at the end of arbitrateChains so that it also
+  // covers the flag-OFF collection. That leg is what measures the pre-existing LST reproducibility
+  // floor at hit level: without it the flag-ON number has nothing to be compared against.
+  dumpChainTCs();
 
   // Check if either n_max_pixel_track_candidates or n_max_nonpixel_track_candidates was reached
   auto nTrackCanTotalHost_buf = cms::alpakatools::make_host_buffer<unsigned int>(queue_);

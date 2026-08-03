@@ -43,23 +43,30 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
   // ------------------------------------------------------------------------------------------
   // The packed weld key.
   //
-  // prototype/K6Weld.cc beats(a, b) is "higher logOdds first, lower edge index on ties". The
-  // packed 64-bit key reproduces that as a single unsigned total order:
+  // prototype/K6Weld.cc beats(a, b) is "higher logOdds first, lower EDGE INDEX on ties". Phase P2.5
+  // replaces the second half of that rule: the edge index is a position in the K2 enumeration,
+  // whose CSR slices are filled by an atomicAdd cursor over a node numbering that itself descends
+  // from LST's atomicAdd triplet slots, so it permutes between two identical runs and between the
+  // CPU and CUDA backends. Exact-logit ties are common (~1e4 same-key adjacent pairs per event,
+  // duplicate feature rows give bit-identical MLP outputs), so that made the welded chain set
+  // run-dependent. The tie operand is now ChainEdges::tie, the XOR of the two endpoints' stableId
+  // (ChainNodesSoA.h), which is a function of hit rows alone and therefore fixed by the event data.
+  //
+  // The packed 64-bit key is a single unsigned total order:
   //   high word = the standard monotone float -> uint32 map, so a larger float is a larger word;
-  //   low  word = ~edgeIdx, so a SMALLER index is a LARGER word and therefore wins a tie.
+  //   low  word = the stable tie word, larger wins.
   // Key 0 is a safe "no edge" sentinel: only edges with logOdds >= thetaEdge (0 in the frozen
   // configuration) take part, and every non-negative float maps to a high word >= 0x80000000.
+  //
+  // The key is no longer decodable back to an edge index. It does not need to be: K6b is now
+  // edge-parallel and each edge tests whether it is itself the argmax at both of its endpoints.
   ALPAKA_FN_ACC ALPAKA_FN_INLINE uint32_t chainOrderFloat(float x) {
     uint32_t const b = std::bit_cast<uint32_t>(x);
     return (b >> 31) ? (b ^ 0xffffffffu) : (b ^ 0x80000000u);
   }
 
-  ALPAKA_FN_ACC ALPAKA_FN_INLINE uint64_t chainWeldKey(float logOdds, uint32_t edgeIdx) {
-    return (static_cast<uint64_t>(chainOrderFloat(logOdds)) << 32) | static_cast<uint64_t>(~edgeIdx);
-  }
-
-  ALPAKA_FN_ACC ALPAKA_FN_INLINE uint32_t chainWeldKeyEdge(uint64_t key) {
-    return ~static_cast<uint32_t>(key & 0xffffffffu);
+  ALPAKA_FN_ACC ALPAKA_FN_INLINE uint64_t chainWeldKey(float logOdds, uint32_t tie) {
+    return (static_cast<uint64_t>(chainOrderFloat(logOdds)) << 32) | static_cast<uint64_t>(tie);
   }
 
   // ------------------------------------------------------------------------------------------
@@ -86,31 +93,56 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         uint32_t const m = edges.outer()[e];
         if (outWeld[n] != -1 || inWeld[m] != -1)
           continue;  // tail's out-slot or head's in-slot already taken
-        uint64_t const key = chainWeldKey(lo, e);
+        uint64_t const key = chainWeldKey(lo, edges.tie()[e]);
         alpaka::atomicMax(acc, &bestOut[n], key, alpaka::hierarchy::Threads{});
         alpaka::atomicMax(acc, &bestIn[m], key, alpaka::hierarchy::Threads{});
       }
     }
   };
 
-  // K6b. Apply the mutual-best pairs. bestOut is unique per tail and bestIn unique per head, so
-  // the mutual set is conflict-free and can be applied wholesale with no atomic.
+  // K6b. Apply the mutual-best pairs, edge-parallel: an edge is welded exactly when it is the
+  // argmax of its tail's out-slot AND of its head's in-slot, which is the definition of a mutual
+  // best pair. Walking edges instead of nodes is what lets the packed key carry a stable tie word
+  // rather than the edge index -- the node-parallel form had to decode the winner out of the key.
+  //
+  // No atomic is needed and the two stores cannot race: the key is unique inside each node's
+  // incident-edge list (chainWeldKey, see the header note), so at most one edge per node satisfies
+  // bestOut[n] == key and at most one satisfies bestIn[m] == key.
+  //
+  // The type and thetaEdge gates mirror K6a exactly, so an ineligible row can never collide with
+  // the 0 sentinel. The weld-slot gates are deliberately NOT repeated: an edge whose tail or head
+  // was welded in an earlier sweep was skipped by K6a, so that node's best-key is still 0 and the
+  // equality test rejects it anyway. Not reading the weld slots also removes the only
+  // read-after-write pair this kernel would otherwise have had.
   struct ChainWeldMutual {
     ALPAKA_FN_ACC void operator()(Acc1D const& acc,
                                   ChainEdgesConst edges,
-                                  uint32_t nNodes,
                                   int32_t* outWeld,
                                   int32_t* inWeld,
                                   uint64_t const* bestOut,
-                                  uint64_t const* bestIn) const {
-      for (uint32_t n : cms::alpakatools::uniform_elements(acc, nNodes)) {
-        uint64_t const key = bestOut[n];
-        if (key == 0u)
+                                  uint64_t const* bestIn,
+                                  float thetaEdge) const {
+      uint32_t const nEdges = static_cast<uint32_t>(edges.metadata().size());
+
+      for (uint32_t e : cms::alpakatools::uniform_elements(acc, nEdges)) {
+        if (edges.type()[e] == 0u)
+          continue;  // enumeration hole: its logOdds column was never given a meaning
+        uint32_t const n = edges.inner()[e];
+        uint64_t const bestKey = bestOut[n];
+        // The tail either has no eligible edge in this sweep or was welded in an earlier one; K6a
+        // left the 0 sentinel either way and no key can match it. Testing that before the logOdds
+        // and tie loads keeps the later sweeps -- where nearly every tail is already welded -- at
+        // two loads per edge, which is what makes walking edges instead of nodes here free.
+        if (bestKey == 0u)
           continue;
-        uint32_t const e = chainWeldKeyEdge(key);
+        float const lo = edges.logOdds()[e];
+        if (lo < thetaEdge)
+          continue;
+        if (bestKey != chainWeldKey(lo, edges.tie()[e]))
+          continue;
         uint32_t const m = edges.outer()[e];
-        if (bestIn[m] != key)
-          continue;  // the head prefers a different edge
+        if (bestIn[m] != bestKey)
+          continue;
         outWeld[n] = static_cast<int32_t>(e);
         inWeld[m] = static_cast<int32_t>(e);
       }
@@ -272,6 +304,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
           ++nLayers;
 
         chains.nodeOffset()[c] = off;
+        chains.stableKey()[c] = nodes.stableId()[n];  // the head node names the chain, see ChainsSoA.h
         chains.nNodes()[c] = static_cast<uint16_t>(nChainNodes);
         chains.nMDs()[c] = static_cast<uint16_t>(nMD);
         chains.nLayers()[c] = static_cast<uint8_t>(nLayers);

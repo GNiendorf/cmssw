@@ -1,0 +1,581 @@
+diff --git a/RecoTracker/LSTCore/interface/ChainEdgesSoA.h b/RecoTracker/LSTCore/interface/ChainEdgesSoA.h
+index 81b7770ab2b..4a8fe2c6e28 100644
+--- a/RecoTracker/LSTCore/interface/ChainEdgesSoA.h
++++ b/RecoTracker/LSTCore/interface/ChainEdgesSoA.h
+@@ -29,6 +29,7 @@ namespace lst {
+                       SOA_COLUMN(uint32_t, outer),  // dense chain-node index of the outer triplet
+                       SOA_COLUMN(uint8_t, type),    // 0 = hole, 1 = E1 (shared MD), 2 = E2 (shared LS)
+                       SOA_COLUMN(float, logOdds),   // K5 edge-MLP logit; the quantity K6 will sum
++                      SOA_COLUMN(uint32_t, tie),    // K2 stable weld tie-break, see ChainWeld.h
+                       SOA_SCALAR(uint32_t, nE1Exact),
+                       SOA_SCALAR(uint32_t, nE2Exact))
+ 
+diff --git a/RecoTracker/LSTCore/interface/ChainNodesSoA.h b/RecoTracker/LSTCore/interface/ChainNodesSoA.h
+index 13549b2c6b9..52c3438c3f9 100644
+--- a/RecoTracker/LSTCore/interface/ChainNodesSoA.h
++++ b/RecoTracker/LSTCore/interface/ChainNodesSoA.h
+@@ -36,12 +36,20 @@ namespace lst {
+   // nodes), so recomputing would triple the transcendental work for 2.9 MB of savings.
+   // The four chord-angle columns are the per-node quantities the EDGE feature build needs
+   // (prototype/Features.cc computeEdgeFeatures hoists exactly these out of the edge loop).
++  //
++  // stableId is the phase P2.5 determinism anchor. The dense node index, the sparse triplet index
++  // it maps to, and every CSR slot derived from them are handed out by atomicAdd, so they permute
++  // between two identical runs and between the CPU and CUDA backends. stableId is instead a mix of
++  // the six hit ROWS of the node's three MDs (anchor and outer hit of md0, md1, md2). Hit rows are
++  // the input order of the hit collection, which is fixed by the event data alone, so stableId is
++  // identical run to run and backend to backend. Its only consumer is the weld tie-break.
+   GENERATE_SOA_LAYOUT(ChainNodesSoALayout,
+                       SOA_COLUMN(uint32_t, tripletIndex),  // dense node index -> sparse triplet index
+                       SOA_COLUMN(uint32_t, mdT3OutItems),  // payload of ChainIncidence(MD).t3OutOffsets
+                       SOA_COLUMN(uint32_t, mdT3InItems),   // payload of ChainIncidence(MD).t3InOffsets
+                       SOA_COLUMN(uint32_t, lsT3OutItems),  // payload of ChainIncidence(LS).t3OutOffsets
+                       SOA_COLUMN(uint32_t, lsT3InItems),   // payload of ChainIncidence(LS).t3InOffsets
++                      SOA_COLUMN(uint32_t, stableId),      // K1c, run/backend-invariant node identity
+                       SOA_COLUMN(Params_ChainNode::ArrayFxFeat, features),  // K3, frozen 13-float row
+                       SOA_COLUMN(float, phiC01),  // atan2(c01y, c01x)
+                       SOA_COLUMN(float, phiC12),  // atan2(c12y, c12x)
+diff --git a/RecoTracker/LSTCore/interface/ChainsSoA.h b/RecoTracker/LSTCore/interface/ChainsSoA.h
+index 6a7faae01d9..dc6a3efcd0b 100644
+--- a/RecoTracker/LSTCore/interface/ChainsSoA.h
++++ b/RecoTracker/LSTCore/interface/ChainsSoA.h
+@@ -89,6 +89,18 @@ namespace lst {
+                       // one-pLS-one-owner contention and the -RD seed-family dedup, or -1.
+                       SOA_COLUMN(int32_t, attachPls),
+                       SOA_COLUMN(float, attachLogit),
++                      // ---- P2.5 (determinism) --------------------------------------------------
++                      // K6e. The run- and backend-invariant identity of the chain: the stableId
++                      // (ChainNodesSoA.h) of its PRE-trim head node. Heads are unique across chains
++                      // because the welded graph has in/out degree <= 1, so this names the chain.
++                      // Consumers are the K9 claim-order tie-break and the attach -RD dedup order,
++                      // both of which used to fall back to the chain index -- a numbering that
++                      // permutes between two identical runs.
++                      // It is appended LAST on purpose: inserting it mid-layout shifted every later
++                      // column's base address and cost the single-threaded CUDA contend kernel about
++                      // 1 ms/event, with no change in the work it did. Kept here, every pre-existing
++                      // column keeps its P2.4 offset and that regression disappears.
++                      SOA_COLUMN(uint32_t, stableKey),
+                       SOA_SCALAR(uint32_t, nChains),
+                       SOA_SCALAR(uint32_t, nAccepted),
+                       SOA_SCALAR(uint32_t, nChainTCs),
+diff --git a/RecoTracker/LSTCore/src/alpaka/ChainArbitrate.h b/RecoTracker/LSTCore/src/alpaka/ChainArbitrate.h
+index cc1be7974a1..a63db2e7656 100644
+--- a/RecoTracker/LSTCore/src/alpaka/ChainArbitrate.h
++++ b/RecoTracker/LSTCore/src/alpaka/ChainArbitrate.h
+@@ -195,6 +195,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+                                   int32_t* braidCount,
+                                   uint32_t* braidTouched,
+                                   uint32_t braidTouchedCapacity,
++                                  uint32_t* stats,
+                                   ChainConfig cfg) const {
+       if (!cms::alpakatools::once_per_grid(acc))
+         return;
+@@ -207,9 +208,13 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+         if (chains.claimFlags()[c] & kChainClaimCandidate)
+           order[n++] = c;
+ 
+-      // Bottom-up merge sort: key desc, index asc. Stable merges over an index-ascending input
+-      // reproduce prototype/K9K10.cc's std::sort comparator exactly (that comparator is a strict
+-      // total order, so the sorted sequence is unique and the algorithm choice cannot matter).
++      // Bottom-up merge sort: orderKey desc, stableKey asc, chain index asc. The reference
++      // (prototype/K9K10.cc) breaks an exact orderKey tie on the chain index; P2.5 replaces that
++      // second key with the chain's stableKey, because the chain index descends from LST's atomicAdd
++      // triplet slots and therefore permutes between two identical runs and between backends, while
++      // exact orderKey ties really do occur (~40-56 adjacent tied pairs per event, stats[9]). The
++      // index remains as a third key so the comparator is a strict total order even in the
++      // vanishingly unlikely event of a stableKey hash collision between two chains.
+       uint32_t* src = order;
+       uint32_t* dst = orderScratch;
+       for (uint32_t width = 1; width < n; width *= 2u) {
+@@ -224,7 +229,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+           while (i < mid && j < hi) {
+             uint32_t const a = src[i], b = src[j];
+             float const ka = chains.orderKey()[a], kb = chains.orderKey()[b];
+-            bool const aFirst = (ka != kb) ? (ka > kb) : (a < b);
++            uint32_t const sa = chains.stableKey()[a], sb = chains.stableKey()[b];
++            bool const aFirst = (ka != kb) ? (ka > kb) : ((sa != sb) ? (sa < sb) : (a < b));
+             dst[k++] = aFirst ? src[i++] : src[j++];
+           }
+           while (i < mid)
+@@ -240,6 +246,14 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+         for (uint32_t i = 0; i < n; ++i)
+           order[i] = src[i];
+ 
++      // P2.5 tie-exercise census. The comparator above falls back to the chain index, which is a
++      // volatile numbering (it descends from LST's atomicAdd triplet slots), so the sorted sequence
++      // is only run-independent if exact orderKey ties never occur. Counting the adjacent equal
++      // pairs in the finished order measures exactly that, at the cost of one serial pass.
++      for (uint32_t i = 0; i + 1u < n; ++i)
++        if (chains.orderKey()[order[i]] == chains.orderKey()[order[i + 1u]])
++          ++stats[9];
++
+       // --- 2) -PU 1 pre-claim ----------------------------------------------------------------
+       for (uint32_t h = 0; h < nOwner; ++h)
+         owner[h] = chainarb::kFree;
+@@ -692,6 +706,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+ 
+             int32_t bestMd = -1;
+             double bestRes = 1e30, secondRes = 1e30;
++            // Stable tie-break operand for the argmin below, see the comparison site.
++            uint64_t bestHitKey = ~0ull;
+ 
+             // -EXS 1: only MDs the detector already declared segment-compatible with the terminal.
+             uint32_t const nb = outer ? segOffsets[tMd] : 0u;
+@@ -734,10 +750,21 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+                 if (res > win)
+                   continue;
+               }
+-              if (res < bestRes) {
++              // The reference keeps the FIRST of an exact residual tie, walking the neighbours in
++              // ascending LineSegment index -- and LST hands out LineSegment indices by atomicAdd,
++              // so that rule permutes run to run. Exact ties do occur (1-2 per event, stats[10]), so
++              // P2.5 decides them on the candidate MD's own hit rows instead, which are input-
++              // ordered and identical on both backends. ha/hb are already loaded above, so the
++              // stable operand costs no extra memory traffic.
++              uint64_t const hitKey = (static_cast<uint64_t>(ha) << 32) | static_cast<uint64_t>(hb);
++              bool const better = (res < bestRes) || (res == bestRes && bestMd >= 0 && hitKey < bestHitKey);
++              if (res == bestRes && bestMd >= 0)
++                ++stats[10];
++              if (better) {
+                 secondRes = bestRes;
+                 bestRes = res;
+                 bestMd = static_cast<int32_t>(m);
++                bestHitKey = hitKey;
+               } else if (res < secondRes) {
+                 secondRes = res;
+               }
+diff --git a/RecoTracker/LSTCore/src/alpaka/ChainAttach.h b/RecoTracker/LSTCore/src/alpaka/ChainAttach.h
+index 5a015b41356..febdc82d50e 100644
+--- a/RecoTracker/LSTCore/src/alpaka/ChainAttach.h
++++ b/RecoTracker/LSTCore/src/alpaka/ChainAttach.h
+@@ -813,13 +813,33 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+         // Selection pass: (logit desc, chain row asc). `order` starts chain-row ascending because
+         // the K9 accepted order is not, so the second key is applied explicitly. The reference gets
+         // the same sequence from std::sort over the same strict total order.
++        //
++        // P2.5 classification: the chain row IS a volatile numbering, so an exact attachLogit tie
++        // here is decided by a run-dependent quantity. stats[9] ("tieRD" in the [CHAIN K8] line)
++        // counts every such tie comparison: 4 over 20 CUDA events, none on 18 of the 20, i.e.
++        // ~0.2 per event against ~1.6e5 comparisons. It is exercised, but the fix was MEASURED and
++        // is not free: substituting chains.stableKey() for the row here costs ~0.7 ms/event on
++        // CUDA, because this kernel runs single-threaded on the device and the compiler speculates
++        // the extra global load on every one of the O(nOwners^2) comparisons, tie or not. Under the
++        // "no timing spent on determinism" rule that buys back nothing measurable -- the GPU
++        // run-to-run TC identity is the same either way (99.67% vs 99.68%, both set by LST's own
++        // upstream pT3 instability) -- so the volatile key stays and the residual is accepted and
++        // recorded here. The stableKey column exists; swapping it in is a one-line change if the
++        // trade is ever judged worthwhile.
++        // The incumbent's logit is a loop invariant between swaps and is carried in a register,
++        // which is why the comparison is cheaper here than the two loads the reference does.
+         for (uint32_t i = 0; i < nOwners; ++i) {
+           uint32_t best = i;
++          float lb = chains.attachLogit()[order[best]];
+           for (uint32_t j = i + 1; j < nOwners; ++j) {
+-            float const lj = chains.attachLogit()[order[j]], lb = chains.attachLogit()[order[best]];
++            float const lj = chains.attachLogit()[order[j]];
+             bool const jFirst = (lj != lb) ? (lj > lb) : (order[j] < order[best]);
+-            if (jFirst)
++            if (lj == lb)
++              ++stats[9];  // tie census; this kernel is once_per_grid, so no atomic is needed
++            if (jFirst) {
+               best = j;
++              lb = lj;
++            }
+           }
+           uint32_t const tmp = order[i];
+           order[i] = order[best];
+diff --git a/RecoTracker/LSTCore/src/alpaka/ChainEdges.h b/RecoTracker/LSTCore/src/alpaka/ChainEdges.h
+index 56520326d12..fae9a9ffa16 100644
+--- a/RecoTracker/LSTCore/src/alpaka/ChainEdges.h
++++ b/RecoTracker/LSTCore/src/alpaka/ChainEdges.h
+@@ -219,6 +219,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+         edges.outer()[e] = outer;
+         edges.type()[e] = type;
+         edges.logOdds()[e] = 0.f;
++        // The stable weld tie-break (ChainWeld.h). XOR is a bijection in each argument, so with a
++        // collision-free node stableId the tie word is distinct for any two edges that share an
++        // endpoint - which is exactly the uniqueness the argmax needs, in either direction.
++        edges.tie()[e] = nodes.stableId()[inner] ^ nodes.stableId()[outer];
+       }
+     }
+   };
+diff --git a/RecoTracker/LSTCore/src/alpaka/ChainGraph.h b/RecoTracker/LSTCore/src/alpaka/ChainGraph.h
+index ec51adb4d27..3daa617fe47 100644
+--- a/RecoTracker/LSTCore/src/alpaka/ChainGraph.h
++++ b/RecoTracker/LSTCore/src/alpaka/ChainGraph.h
+@@ -6,6 +6,7 @@
+ #include "RecoTracker/LSTCore/interface/alpaka/Common.h"
+ #include "RecoTracker/LSTCore/interface/ChainIncidenceSoA.h"
+ #include "RecoTracker/LSTCore/interface/ChainNodesSoA.h"
++#include "RecoTracker/LSTCore/interface/MiniDoubletsSoA.h"
+ #include "RecoTracker/LSTCore/interface/ModulesSoA.h"
+ #include "RecoTracker/LSTCore/interface/ObjectRangesSoA.h"
+ #include "RecoTracker/LSTCore/interface/SegmentsSoA.h"
+@@ -189,15 +190,50 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+     }
+   };
+ 
++  // Bijective 32-bit avalanche (the splitmix32 finalizer). Used to build the stable node identity
++  // below: it is a permutation of uint32, so mixing cannot lose information, and it destroys the
++  // strong positional structure of hit rows (neighbouring MDs differ in one low bit) that a plain
++  // XOR or shift-add would leave intact.
++  ALPAKA_FN_ACC ALPAKA_FN_INLINE uint32_t chainMix32(uint32_t x) {
++    x ^= x >> 16;
++    x *= 0x7feb352du;
++    x ^= x >> 15;
++    x *= 0x846ca68bu;
++    x ^= x >> 16;
++    return x;
++  }
++
++  // The run- and backend-invariant identity of a chain node, see ChainNodesSoA.h. The six hit rows
++  // of the node's three MDs are folded in a fixed positional order, so no two nodes with different
++  // hit content can alias through a coincidental permutation.
++  ALPAKA_FN_ACC ALPAKA_FN_INLINE uint32_t chainNodeStableId(
++      MiniDoubletsConst mds, uint32_t md0, uint32_t md1, uint32_t md2) {
++    uint32_t s = 0x9e3779b9u;
++    uint32_t const h[6] = {static_cast<uint32_t>(mds.anchorHitIndices()[md0]),
++                           static_cast<uint32_t>(mds.outerHitIndices()[md0]),
++                           static_cast<uint32_t>(mds.anchorHitIndices()[md1]),
++                           static_cast<uint32_t>(mds.outerHitIndices()[md1]),
++                           static_cast<uint32_t>(mds.anchorHitIndices()[md2]),
++                           static_cast<uint32_t>(mds.outerHitIndices()[md2])};
++    for (int k = 0; k < 6; ++k)
++      s = chainMix32(s ^ h[k]);
++    return s;
++  }
++
+   // K1c. Fill the four CSR payloads. Arrival order within a key slice is irrelevant: the edge set
+   // of a key is the full cross product of its in-slice and its out-slice, which is invariant under
+   // permutation of either slice.
+   //
+   // The count columns arrive here zeroed again and are reused as the per-key write cursors.
++  //
++  // The same pass writes the node's stableId: every index it needs is already loaded here, so the
++  // determinism anchor costs one extra MD load (the middle MD) and one write per node, once per
++  // event, instead of anything inside the weld sweeps.
+   struct ChainScatterIncidence {
+     ALPAKA_FN_ACC void operator()(Acc1D const& acc,
+                                   SegmentsConst segments,
+                                   TripletsConst triplets,
++                                  MiniDoubletsConst mds,
+                                   ChainNodes nodes,
+                                   ChainIncidence mdIncidence,
+                                   ChainIncidence lsIncidence) const {
+@@ -209,6 +245,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+         uint32_t const outerSegmentIndex = triplets.segmentIndices()[t3][1];
+         uint32_t const firstMDIndex = segments.mdIndices()[innerSegmentIndex][0];
+         uint32_t const lastMDIndex = segments.mdIndices()[outerSegmentIndex][1];
++        uint32_t const midMDIndex = segments.mdIndices()[innerSegmentIndex][1];
++
++        nodes.stableId()[node] = chainNodeStableId(mds, firstMDIndex, midMDIndex, lastMDIndex);
+ 
+         uint32_t slot;
+ 
+diff --git a/RecoTracker/LSTCore/src/alpaka/ChainWeld.h b/RecoTracker/LSTCore/src/alpaka/ChainWeld.h
+index 608bae95176..02b153b412d 100644
+--- a/RecoTracker/LSTCore/src/alpaka/ChainWeld.h
++++ b/RecoTracker/LSTCore/src/alpaka/ChainWeld.h
+@@ -43,23 +43,30 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+   // ------------------------------------------------------------------------------------------
+   // The packed weld key.
+   //
+-  // prototype/K6Weld.cc beats(a, b) is "higher logOdds first, lower edge index on ties". The
+-  // packed 64-bit key reproduces that as a single unsigned total order:
++  // prototype/K6Weld.cc beats(a, b) is "higher logOdds first, lower EDGE INDEX on ties". Phase P2.5
++  // replaces the second half of that rule: the edge index is a position in the K2 enumeration,
++  // whose CSR slices are filled by an atomicAdd cursor over a node numbering that itself descends
++  // from LST's atomicAdd triplet slots, so it permutes between two identical runs and between the
++  // CPU and CUDA backends. Exact-logit ties are common (~1e4 same-key adjacent pairs per event,
++  // duplicate feature rows give bit-identical MLP outputs), so that made the welded chain set
++  // run-dependent. The tie operand is now ChainEdges::tie, the XOR of the two endpoints' stableId
++  // (ChainNodesSoA.h), which is a function of hit rows alone and therefore fixed by the event data.
++  //
++  // The packed 64-bit key is a single unsigned total order:
+   //   high word = the standard monotone float -> uint32 map, so a larger float is a larger word;
+-  //   low  word = ~edgeIdx, so a SMALLER index is a LARGER word and therefore wins a tie.
++  //   low  word = the stable tie word, larger wins.
+   // Key 0 is a safe "no edge" sentinel: only edges with logOdds >= thetaEdge (0 in the frozen
+   // configuration) take part, and every non-negative float maps to a high word >= 0x80000000.
++  //
++  // The key is no longer decodable back to an edge index. It does not need to be: K6b is now
++  // edge-parallel and each edge tests whether it is itself the argmax at both of its endpoints.
+   ALPAKA_FN_ACC ALPAKA_FN_INLINE uint32_t chainOrderFloat(float x) {
+     uint32_t const b = std::bit_cast<uint32_t>(x);
+     return (b >> 31) ? (b ^ 0xffffffffu) : (b ^ 0x80000000u);
+   }
+ 
+-  ALPAKA_FN_ACC ALPAKA_FN_INLINE uint64_t chainWeldKey(float logOdds, uint32_t edgeIdx) {
+-    return (static_cast<uint64_t>(chainOrderFloat(logOdds)) << 32) | static_cast<uint64_t>(~edgeIdx);
+-  }
+-
+-  ALPAKA_FN_ACC ALPAKA_FN_INLINE uint32_t chainWeldKeyEdge(uint64_t key) {
+-    return ~static_cast<uint32_t>(key & 0xffffffffu);
++  ALPAKA_FN_ACC ALPAKA_FN_INLINE uint64_t chainWeldKey(float logOdds, uint32_t tie) {
++    return (static_cast<uint64_t>(chainOrderFloat(logOdds)) << 32) | static_cast<uint64_t>(tie);
+   }
+ 
+   // ------------------------------------------------------------------------------------------
+@@ -86,31 +93,56 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+         uint32_t const m = edges.outer()[e];
+         if (outWeld[n] != -1 || inWeld[m] != -1)
+           continue;  // tail's out-slot or head's in-slot already taken
+-        uint64_t const key = chainWeldKey(lo, e);
++        uint64_t const key = chainWeldKey(lo, edges.tie()[e]);
+         alpaka::atomicMax(acc, &bestOut[n], key, alpaka::hierarchy::Threads{});
+         alpaka::atomicMax(acc, &bestIn[m], key, alpaka::hierarchy::Threads{});
+       }
+     }
+   };
+ 
+-  // K6b. Apply the mutual-best pairs. bestOut is unique per tail and bestIn unique per head, so
+-  // the mutual set is conflict-free and can be applied wholesale with no atomic.
++  // K6b. Apply the mutual-best pairs, edge-parallel: an edge is welded exactly when it is the
++  // argmax of its tail's out-slot AND of its head's in-slot, which is the definition of a mutual
++  // best pair. Walking edges instead of nodes is what lets the packed key carry a stable tie word
++  // rather than the edge index -- the node-parallel form had to decode the winner out of the key.
++  //
++  // No atomic is needed and the two stores cannot race: the key is unique inside each node's
++  // incident-edge list (chainWeldKey, see the header note), so at most one edge per node satisfies
++  // bestOut[n] == key and at most one satisfies bestIn[m] == key.
++  //
++  // The type and thetaEdge gates mirror K6a exactly, so an ineligible row can never collide with
++  // the 0 sentinel. The weld-slot gates are deliberately NOT repeated: an edge whose tail or head
++  // was welded in an earlier sweep was skipped by K6a, so that node's best-key is still 0 and the
++  // equality test rejects it anyway. Not reading the weld slots also removes the only
++  // read-after-write pair this kernel would otherwise have had.
+   struct ChainWeldMutual {
+     ALPAKA_FN_ACC void operator()(Acc1D const& acc,
+                                   ChainEdgesConst edges,
+-                                  uint32_t nNodes,
+                                   int32_t* outWeld,
+                                   int32_t* inWeld,
+                                   uint64_t const* bestOut,
+-                                  uint64_t const* bestIn) const {
+-      for (uint32_t n : cms::alpakatools::uniform_elements(acc, nNodes)) {
+-        uint64_t const key = bestOut[n];
+-        if (key == 0u)
++                                  uint64_t const* bestIn,
++                                  float thetaEdge) const {
++      uint32_t const nEdges = static_cast<uint32_t>(edges.metadata().size());
++
++      for (uint32_t e : cms::alpakatools::uniform_elements(acc, nEdges)) {
++        if (edges.type()[e] == 0u)
++          continue;  // enumeration hole: its logOdds column was never given a meaning
++        uint32_t const n = edges.inner()[e];
++        uint64_t const bestKey = bestOut[n];
++        // The tail either has no eligible edge in this sweep or was welded in an earlier one; K6a
++        // left the 0 sentinel either way and no key can match it. Testing that before the logOdds
++        // and tie loads keeps the later sweeps -- where nearly every tail is already welded -- at
++        // two loads per edge, which is what makes walking edges instead of nodes here free.
++        if (bestKey == 0u)
++          continue;
++        float const lo = edges.logOdds()[e];
++        if (lo < thetaEdge)
++          continue;
++        if (bestKey != chainWeldKey(lo, edges.tie()[e]))
+           continue;
+-        uint32_t const e = chainWeldKeyEdge(key);
+         uint32_t const m = edges.outer()[e];
+-        if (bestIn[m] != key)
+-          continue;  // the head prefers a different edge
++        if (bestIn[m] != bestKey)
++          continue;
+         outWeld[n] = static_cast<int32_t>(e);
+         inWeld[m] = static_cast<int32_t>(e);
+       }
+@@ -272,6 +304,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+           ++nLayers;
+ 
+         chains.nodeOffset()[c] = off;
++        chains.stableKey()[c] = nodes.stableId()[n];  // the head node names the chain, see ChainsSoA.h
+         chains.nNodes()[c] = static_cast<uint16_t>(nChainNodes);
+         chains.nMDs()[c] = static_cast<uint16_t>(nMD);
+         chains.nLayers()[c] = static_cast<uint8_t>(nLayers);
+diff --git a/RecoTracker/LSTCore/src/alpaka/LSTEvent.dev.cc b/RecoTracker/LSTCore/src/alpaka/LSTEvent.dev.cc
+index cccec8e27c2..237cef513a2 100644
+--- a/RecoTracker/LSTCore/src/alpaka/LSTEvent.dev.cc
++++ b/RecoTracker/LSTCore/src/alpaka/LSTEvent.dev.cc
+@@ -691,6 +691,7 @@ void LSTEvent::buildChainIncidence() {
+                       ChainScatterIncidence{},
+                       segmentsDC_->const_view().segments(),
+                       tripletsDC_->const_view().triplets(),
++                      miniDoubletsDC_->const_view().miniDoublets(),
+                       chainNodesDC_->view(),
+                       chainMdIncidenceDC_->view(),
+                       chainLsIncidenceDC_->view());
+@@ -953,6 +954,7 @@ void LSTEvent::buildChainEdges() {
+     }
+   }
+   dumpChainEdges();
++  dumpChainNodes();
+   buildChains();
+ }
+ 
+@@ -1022,6 +1024,70 @@ void LSTEvent::dumpChainEdges() {
+   std::fclose(f);
+ }
+ 
++void LSTEvent::dumpChainNodes() {
++  // Determinism sidecar for the P2.5 gates. Off unless LST_CHAIN_NODE_DUMP names an output file.
++  // One record per event carrying, for every chain node in dense node order, its stableId and the
++  // six hit rows that stableId is built from. Two things read it:
++  //   - the weld-tie uniqueness census (p25_ref/p25_nodes.py tie): joined with the LST_CHAIN_EDGE_DUMP
++  //     edge list it proves that no node has two neighbours sharing a stableId, which is exactly the
++  //     condition under which the packed weld key is unique inside a node's incident-edge list;
++  //   - the CPU-vs-GPU attribution (p25_nodes.py attrib): the node set is compared on hit rows, so a
++  //     chain that exists on one backend only can be traced to a missing upstream triplet.
++  char const* path = std::getenv("LST_CHAIN_NODE_DUMP");
++  if (path == nullptr || *path == '\0' || !chainNodesDC_.has_value() || nChainNodes_ == 0)
++    return;
++
++  alpaka::wait(queue_);
++
++  auto pullTo = [&](auto* hostPtr, auto column, unsigned int n) {
++    auto host_view = cms::alpakatools::make_host_view(hostPtr, n);
++    auto dev_view = cms::alpakatools::make_device_view(queue_, column, n);
++    alpaka::memcpy(queue_, host_view, dev_view);
++    alpaka::wait(queue_);
++  };
++
++  uint32_t const nNodes = nChainNodes_;
++  std::vector<uint32_t> tripletIndex(nNodes), stableId(nNodes);
++  pullTo(tripletIndex.data(), chainNodesDC_->view().tripletIndex(), nNodes);
++  pullTo(stableId.data(), chainNodesDC_->view().stableId(), nNodes);
++
++  unsigned int const nT3 = static_cast<unsigned int>(tripletsDC_->view().triplets().metadata().size());
++  unsigned int const nLS = static_cast<unsigned int>(segmentsDC_->view().segments().metadata().size());
++  unsigned int const nMD = static_cast<unsigned int>(miniDoubletsDC_->view().miniDoublets().metadata().size());
++  std::vector<ArrayUx2> t3Seg(nT3);
++  std::vector<Params_LS::ArrayUxLayers> lsMD(nLS);
++  std::vector<unsigned int> mdAnchor(nMD), mdOuter(nMD);
++  pullTo(t3Seg.data(), tripletsDC_->view().triplets().segmentIndices(), nT3);
++  pullTo(lsMD.data(), segmentsDC_->view().segments().mdIndices(), nLS);
++  pullTo(mdAnchor.data(), miniDoubletsDC_->view().miniDoublets().anchorHitIndices(), nMD);
++  pullTo(mdOuter.data(), miniDoubletsDC_->view().miniDoublets().outerHitIndices(), nMD);
++
++  static std::atomic<uint32_t> nodeEventCounter{0};
++  uint32_t const ievt = nodeEventCounter.fetch_add(1);
++  static std::mutex nodeDumpMutex;
++  std::lock_guard<std::mutex> lock(nodeDumpMutex);
++  std::FILE* f = std::fopen(path, (ievt == 0) ? "wb" : "ab");
++  if (f == nullptr)
++    return;
++  auto put32 = [&](uint32_t v) { std::fwrite(&v, sizeof(v), 1, f); };
++
++  put32(0x5032354Eu);  // 'P25N'
++  put32(ievt);
++  put32(nNodes);
++  for (uint32_t n = 0; n < nNodes; ++n) {
++    uint32_t const t3 = tripletIndex[n];
++    unsigned int const innerSeg = t3Seg[t3][0];
++    unsigned int const outerSeg = t3Seg[t3][1];
++    unsigned int const md[3] = {lsMD[innerSeg][0], lsMD[innerSeg][1], lsMD[outerSeg][1]};
++    put32(stableId[n]);
++    for (int k = 0; k < 3; ++k) {
++      put32(mdAnchor[md[k]]);
++      put32(mdOuter[md[k]]);
++    }
++  }
++  std::fclose(f);
++}
++
+ void LSTEvent::buildChains() {
+   // Phase P2.2. K6a/K6b weld the edge graph into disjoint simple paths, K6c-K6e emit them as
+   // chains, K6f trims a parasitic terminal, K7a builds the 25 frozen chain features plus the chain
+@@ -1067,11 +1133,11 @@ void LSTEvent::buildChains() {
+                         chainFlat_workDiv,
+                         ChainWeldMutual{},
+                         chainEdgesDC_->const_view(),
+-                        nChainNodes_,
+                         outWeld_buf.data(),
+                         inWeld_buf.data(),
+                         bestOut_buf.data(),
+-                        bestIn_buf.data());
++                        bestIn_buf.data(),
++                        chainConfig_.thetaEdge);
+   }
+ 
+   auto const t1 = stamp();
+@@ -1298,6 +1364,7 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
+                       braidCount_buf.data(),
+                       braidTouched_buf.data(),
+                       kBraidTouchedCapacity,
++                      stats_buf.data(),
+                       chainConfig_);
+   auto const t3 = stamp();
+ 
+@@ -1414,7 +1481,7 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
+     uint32_t const* s = stats_h.data();
+     lstWarning(std::format(
+         "[CHAIN K9] accepted={} chainTCs={} | extend examined={} cand={} outer={} noFit={} rejChi2={} "
+-        "rejUniq={} rejFit={} | TC slot fallbacks={} overflow={}",
++        "rejUniq={} rejFit={} | TC slot fallbacks={} overflow={} | tieK9order={} tieExtend={}",
+         *nAcc_h.data(),
+         *nTC_h.data(),
+         s[0],
+@@ -1425,7 +1492,9 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
+         s[4],
+         s[6],
+         s[7],
+-        s[8]));
++        s[8],
++        s[9],
++        s[10]));
+     if (timing) {
+       auto ms = [](auto a, auto b) { return std::chrono::duration<double, std::milli>(b - a).count(); };
+       lstWarning(std::format("[CHAIN TIMING] compact {:.3f} ms | K9 prep {:.3f} ms | K9 claim {:.3f} ms | "
+@@ -1441,7 +1510,6 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
+     }
+   }
+ 
+-  dumpChainTCs();
+ }
+ 
+ void LSTEvent::attachPixels(unsigned int nHits, uint32_t const* accepted) {
+@@ -1629,8 +1697,8 @@ void LSTEvent::attachPixels(unsigned int nHits, uint32_t const* accepted) {
+     auto ms = [](auto a, auto b) { return std::chrono::duration<double, std::milli>(b - a).count(); };
+     attachSummary_ = std::format(
+         "targets={} pLS={} gridEntries={} cand={} scored={} picks={} attached={} rdRevoked={} "
+-        "carriedRetired={} hashOverflow={} | pre {:.3f} ms | grid {:.3f} ms | score {:.3f} ms | "
+-        "contend+suppress {:.3f} ms",
++        "carriedRetired={} hashOverflow={} tieRD={} | pre {:.3f} ms | grid {:.3f} ms | "
++        "score {:.3f} ms | contend+suppress {:.3f} ms",
+         nTargets,
+         pixelSize_,
+         nEntries,
+@@ -1641,6 +1709,7 @@ void LSTEvent::attachPixels(unsigned int nHits, uint32_t const* accepted) {
+         st[5],
+         st[6],
+         st[7],
++        st[9],
+         ms(a0, a1),
+         ms(a1, a2),
+         ms(a2, a3),
+@@ -2132,6 +2201,11 @@ void LSTEvent::createTrackCandidates(bool no_pls_dupclean, bool tc_pls_triplets)
+   if (useChainTracking_)
+     arbitrateChains(nTotal);
+ 
++  // The TC parity sidecar is written here rather than at the end of arbitrateChains so that it also
++  // covers the flag-OFF collection. That leg is what measures the pre-existing LST reproducibility
++  // floor at hit level: without it the flag-ON number has nothing to be compared against.
++  dumpChainTCs();
++
+   // Check if either n_max_pixel_track_candidates or n_max_nonpixel_track_candidates was reached
+   auto nTrackCanTotalHost_buf = cms::alpakatools::make_host_buffer<unsigned int>(queue_);
+   alpaka::memcpy(queue_,
+diff --git a/RecoTracker/LSTCore/src/alpaka/LSTEvent.h b/RecoTracker/LSTCore/src/alpaka/LSTEvent.h
+index b6fa5c0d085..9fd98bf11ca 100644
+--- a/RecoTracker/LSTCore/src/alpaka/LSTEvent.h
++++ b/RecoTracker/LSTCore/src/alpaka/LSTEvent.h
+@@ -201,6 +201,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+     // Optional parity sidecar, enabled by the LST_CHAIN_EDGE_DUMP environment variable. Writes
+     // the per-event edge set and logits to a binary file and touches no ntuple branch.
+     void dumpChainEdges();
++    // Optional determinism sidecar, enabled by the LST_CHAIN_NODE_DUMP environment variable. Writes
++    // the per-event node identity table (stableId plus the six hit rows it is built from), which is
++    // what the P2.5 weld-tie uniqueness census and the CPU-vs-GPU node-set attribution consume.
++    void dumpChainNodes();
+ 
+     // Chain-tracking phase P2.2: K6a-K6f weld + terminal trim, K7a-K7c chain features + 3-class
+     // gate + the -G 6 kill. Only called when useChainTracking_ is true; NOTHING consumes the kill

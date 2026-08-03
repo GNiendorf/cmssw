@@ -1,0 +1,8 @@
+=== 1 timing AFTER ===
+=== 2 repro 5 ===
+=== 3 repro GPU 30 ===
+=== 4 audit 10 ===
+=== 5 streams ===
+=== 6 gate a ===
+=== 7 gate b (300 events) ===
+SWEEP_DONE

@@ -6,6 +6,7 @@
 #include "RecoTracker/LSTCore/interface/alpaka/Common.h"
 #include "RecoTracker/LSTCore/interface/ChainIncidenceSoA.h"
 #include "RecoTracker/LSTCore/interface/ChainNodesSoA.h"
+#include "RecoTracker/LSTCore/interface/MiniDoubletsSoA.h"
 #include "RecoTracker/LSTCore/interface/ModulesSoA.h"
 #include "RecoTracker/LSTCore/interface/ObjectRangesSoA.h"
 #include "RecoTracker/LSTCore/interface/SegmentsSoA.h"
@@ -189,15 +190,50 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     }
   };
 
+  // Bijective 32-bit avalanche (the splitmix32 finalizer). Used to build the stable node identity
+  // below: it is a permutation of uint32, so mixing cannot lose information, and it destroys the
+  // strong positional structure of hit rows (neighbouring MDs differ in one low bit) that a plain
+  // XOR or shift-add would leave intact.
+  ALPAKA_FN_ACC ALPAKA_FN_INLINE uint32_t chainMix32(uint32_t x) {
+    x ^= x >> 16;
+    x *= 0x7feb352du;
+    x ^= x >> 15;
+    x *= 0x846ca68bu;
+    x ^= x >> 16;
+    return x;
+  }
+
+  // The run- and backend-invariant identity of a chain node, see ChainNodesSoA.h. The six hit rows
+  // of the node's three MDs are folded in a fixed positional order, so no two nodes with different
+  // hit content can alias through a coincidental permutation.
+  ALPAKA_FN_ACC ALPAKA_FN_INLINE uint32_t chainNodeStableId(
+      MiniDoubletsConst mds, uint32_t md0, uint32_t md1, uint32_t md2) {
+    uint32_t s = 0x9e3779b9u;
+    uint32_t const h[6] = {static_cast<uint32_t>(mds.anchorHitIndices()[md0]),
+                           static_cast<uint32_t>(mds.outerHitIndices()[md0]),
+                           static_cast<uint32_t>(mds.anchorHitIndices()[md1]),
+                           static_cast<uint32_t>(mds.outerHitIndices()[md1]),
+                           static_cast<uint32_t>(mds.anchorHitIndices()[md2]),
+                           static_cast<uint32_t>(mds.outerHitIndices()[md2])};
+    for (int k = 0; k < 6; ++k)
+      s = chainMix32(s ^ h[k]);
+    return s;
+  }
+
   // K1c. Fill the four CSR payloads. Arrival order within a key slice is irrelevant: the edge set
   // of a key is the full cross product of its in-slice and its out-slice, which is invariant under
   // permutation of either slice.
   //
   // The count columns arrive here zeroed again and are reused as the per-key write cursors.
+  //
+  // The same pass writes the node's stableId: every index it needs is already loaded here, so the
+  // determinism anchor costs one extra MD load (the middle MD) and one write per node, once per
+  // event, instead of anything inside the weld sweeps.
   struct ChainScatterIncidence {
     ALPAKA_FN_ACC void operator()(Acc1D const& acc,
                                   SegmentsConst segments,
                                   TripletsConst triplets,
+                                  MiniDoubletsConst mds,
                                   ChainNodes nodes,
                                   ChainIncidence mdIncidence,
                                   ChainIncidence lsIncidence) const {
@@ -209,6 +245,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         uint32_t const outerSegmentIndex = triplets.segmentIndices()[t3][1];
         uint32_t const firstMDIndex = segments.mdIndices()[innerSegmentIndex][0];
         uint32_t const lastMDIndex = segments.mdIndices()[outerSegmentIndex][1];
+        uint32_t const midMDIndex = segments.mdIndices()[innerSegmentIndex][1];
+
+        nodes.stableId()[node] = chainNodeStableId(mds, firstMDIndex, midMDIndex, lastMDIndex);
 
         uint32_t slot;
 
