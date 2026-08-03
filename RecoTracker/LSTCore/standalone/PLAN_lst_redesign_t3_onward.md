@@ -2141,6 +2141,34 @@ LATER separate pass (same prototype, jet-enriched ntuple) once the machinery exi
        thin-yield audit of every other lever, with integrated timing in hand.
     9. **CUBE + JET SAMPLES — LAST.** Retune for transferability; this is also
        where dxy[10,30) gets fixed (edge-scorer training composition).
+  - **BARE-T3 DEDUP DESIGN BRIEF (maintainer input 2026-08-03: "the pLS can also
+    be useful for dedup ... simple good reusable/reused solution ... good physics
+    AND good timing for PU200 and jets, avoiding these N-squared dedup loops"):**
+    REUSE TWO, ADD ONE.
+    (1) PIXEL SIDE — ALREADY BUILT, route bare-T3 deliveries through it: the
+        one-pLS-one-owner contention and the -RD seed-family dedup (revoke an
+        owner whose pLS shares >= 2 pixel hit rows with a kept owner's pLS). A
+        pT3-class object is 3 OT layers PLUS a seed, so the pixel side is half
+        its identity; duplicates of one track very often share the seed or share
+        seed hits and can die here before any OT test runs.
+    (2) OT SIDE — THE ONE NEW PIECE: a second claim pass for surviving bare-T3
+        deliveries against the chain-established ownership map, then among
+        themselves, ordered by attach logit.
+    (3) GRANULARITY (the lesson from the recon's failed attempt, which killed
+        signal with duplicates — unique pT3 sims recovered collapsed 241 -> 15):
+        the chain budget (<=2 hits, <=20%) is tuned for 10-14-hit objects and is
+        far too strict for a 6-hit T3, which shares MDs with other T3s by the
+        nature of the graph. **Dedup at MD granularity: >= 2 shared MDs of 3 =
+        same track (kill); 1 shared MD = two tracks crossing (keep both).** That
+        is the campaign's primary scan axis, jointly with the delivery threshold
+        (the operating point moves once duplicates stop being emitted).
+    **HARD DESIGN CONSTRAINT (jet scaling AND timing): OWNERSHIP-MAP BASED, never
+    pairwise.** Each candidate looks up its own hits in a map and decides —
+    linear in hits, not quadratic in candidates. This is precisely why our claim
+    does not explode in jet cores where LST's pairwise dedup loops do, and it is
+    non-negotiable for the new pass. No deltaR/proximity criteria either (LST's
+    CrossCleanpT3 uses a dR^2 < 1e-5 pixel-direction test; we do NOT copy that
+    shape — structural only).
   - **QUEUED: POST-INTEGRATION SIMPLIFYING PASS (maintainer, 2026-08-02).**
     After integration + timing/memory are done, one pass re-judging marginal
     complexity. FIRST CANDIDATE: chain extension (-EX) — maintainer reaction to
