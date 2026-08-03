@@ -577,10 +577,12 @@ accordingly — state it, do not force it.
 
 ### Phase P2.5 — the physics kinks the prototype could not validate (plan §10.3 residual risk)
 Atomic weld/claim race semantics vs the serial reference; CPU-vs-GPU score parity;
-ROCm wavefront parity (plan §6.8 — no warp-width assumptions; template on
-`alpaka::warp::getSize` if any warp idiom is used); run-to-run reproducibility per the
-maintainer policy (free stable tie-break swap, measured; else accept documented
-nondeterminism; NO sorting). **STANDALONE-ONLY (maintainer resequencing, 2026-08-02): the
+run-to-run reproducibility per the maintainer policy (free stable tie-break swap,
+measured; else accept documented nondeterminism; NO sorting). **ROCm DESCOPED
+(maintainer, 2026-08-02: "idc about ROCm"; no AMD hardware on this box anyway) — no
+dedicated ROCm validation. The only ROCm consideration that remains is passive and free:
+keep kernels warp-width-agnostic (already the style), so a ROCm build stays plausible for
+whoever needs it later.** **STANDALONE-ONLY (maintainer resequencing, 2026-08-02): the
 full CMSSW workflow validation previously gated here is DEFERRED to the new Phase P2.8 —
 no agent runs cmsRun / the workflow matrix until integration is essentially complete.**
 
