@@ -1779,10 +1779,15 @@ LATER separate pass (same prototype, jet-enriched ntuple) once the machinery exi
     the recovery numbers (+0.087/+0.154/+0.031 mean hits = ~24/49/22% of the
     length gap, cost 6 sims): "that little... sounds like something we should
     remove". It is flag-gated, so the re-judgment is a one-run A/B (-EX 0) and
-    deletion is mechanical if confirmed. Same pass should re-audit any other
-    lever whose yield is small relative to its code (the anti-overfitting
-    criterion applied retrospectively with integrated-timing numbers in hand).
-    Sequencing per maintainer: do NOT do this mid-port.
+    deletion is mechanical if confirmed. **SECOND CANDIDATE (maintainer,
+    2026-08-02): terminal TRIM (-TR)** — despite its ledger being ~10x
+    extension's (at the frozen point: +0.0022 eff ~50 sims AND fake -0.0012,
+    costing +0.0011 dup and 0.10 barrel hits; removal therefore PAYS ~50
+    tracks + a fake regression — state this in the pass). Both are one-flag
+    A/Bs (-EX 0 / -TR 0). Same pass re-audits any other lever whose yield is
+    small relative to its code (the anti-overfitting criterion applied
+    retrospectively with integrated-timing numbers in hand). Sequencing per
+    maintainer: do NOT do this mid-port.
 - **pLS SELF-CLEANING CONFIG MATCHING (maintainer requirement, 2026-08-02):** LST's
   pLS dedup = ONE kernel (CheckHitspLS) at TWO sites, both gated by one flag:
   first pass in pixelLineSegmentCleaning() (LSTEvent.dev.cc:1044), second stricter
