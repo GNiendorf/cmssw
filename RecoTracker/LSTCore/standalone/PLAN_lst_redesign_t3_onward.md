@@ -1743,6 +1743,16 @@ LATER separate pass (same prototype, jet-enriched ntuple) once the machinery exi
     (b) md_type ports the ntuple writer's ring formula verbatim (the trained-in
     definition) which differs from geometry moduleType — reconcile at the next
     edge-head retrain, never silently in the port.
+  - **QUEUED: POST-INTEGRATION SIMPLIFYING PASS (maintainer, 2026-08-02).**
+    After integration + timing/memory are done, one pass re-judging marginal
+    complexity. FIRST CANDIDATE: chain extension (-EX) — maintainer reaction to
+    the recovery numbers (+0.087/+0.154/+0.031 mean hits = ~24/49/22% of the
+    length gap, cost 6 sims): "that little... sounds like something we should
+    remove". It is flag-gated, so the re-judgment is a one-run A/B (-EX 0) and
+    deletion is mechanical if confirmed. Same pass should re-audit any other
+    lever whose yield is small relative to its code (the anti-overfitting
+    criterion applied retrospectively with integrated-timing numbers in hand).
+    Sequencing per maintainer: do NOT do this mid-port.
 - **pLS SELF-CLEANING CONFIG MATCHING (maintainer requirement, 2026-08-02):** LST's
   pLS dedup = ONE kernel (CheckHitspLS) at TWO sites, both gated by one flag:
   first pass in pixelLineSegmentCleaning() (LSTEvent.dev.cc:1044), second stricter
