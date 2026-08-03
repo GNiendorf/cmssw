@@ -1912,6 +1912,21 @@ LATER separate pass (same prototype, jet-enriched ntuple) once the machinery exi
     labelled as such; wall time = a MEASURED preview of post-P2.7, not an
     extrapolation). Report per-stream-count throughput + per-stage means, plus
     the memory table. This is the artifact the maintainer decides on.**
+  - **ULP DRIFT ACCEPTED (maintainer, 2026-08-03).** P2.6d's pinned-toolchain
+    re-verification (the earlier gates were vacuous: executables snapshotted but
+    kernels live in the shared library) found the CPU optimizations are
+    DECISION-identical but not BIT-identical: chains.score drifts 1-4 ULP on
+    32% of chains (batching changed summation order; ZERO drift on CUDA, which
+    fingerprints the CPU-targeted phase). No decision field differs anywhere
+    (membership, nLayers, branch, trim, flags all 0); TC set identity 100% on
+    10 evts; on 300 evts 6/29 scoreboard rows move at 1e-7..2.5e-5 RELATIVE and
+    **no efficiency band moves at all** (dup .051883 vs .051883, fake .046360
+    vs .046360). Maintainer: "just accept it if it's that small." **The
+    standing claim for P2.6a/b/c is therefore DECISION-IDENTICAL WITH
+    LAST-BIT FLOAT DRIFT, not bit-identical — use that wording.** Consequence
+    for future gates: CPU parity vs the frozen prototype is now ULP-level, not
+    exact; the gate of record becomes decision fields + the scoreboard at
+    4 decimals.
   - **QUEUED: POST-INTEGRATION SIMPLIFYING PASS (maintainer, 2026-08-02).**
     After integration + timing/memory are done, one pass re-judging marginal
     complexity. FIRST CANDIDATE: chain extension (-EX) — maintainer reaction to
