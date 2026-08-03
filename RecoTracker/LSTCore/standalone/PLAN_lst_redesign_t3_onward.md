@@ -2046,6 +2046,42 @@ LATER separate pass (same prototype, jet-enriched ntuple) once the machinery exi
     FAN-OUT CAMPAIGN (retrain + feature engineering incl. the T3's own DNN
     scores, threshold/calibration scans, A/B vs LST pT3 with displaced strata,
     gap analysis driving rounds) -> integrate the single winning configuration.
+  - **2026-08-03 BARE-T3 RECON VERDICT (p24b_ref; production measurement, all
+    flag-gated, no-op gate bit-identical): NO-GO on the flip AS BUILT, and the
+    blocker is NOT what the plan assumed.** Scoreboard vs the current state
+    (baseline eff .8130 / dup .0519 / fake .0464): at the frozen margin
+    efficiency is a WASH (+.0010) but dup goes 5.5x (+.2310); tightening the
+    margin trades efficiency away with no knee anywhere (-AT3 8: eff -.0142,
+    dup +.1472; -AT3 11: eff -.0375). Displaced bands are UNTOUCHED at every
+    setting — the pT3 class contributes nothing at vxy>=10.
+    **WHAT WORKS (measured, do not re-litigate): the grid is EXACT for 3-layer
+    targets (MISSING=0 every event; the phi-monotonicity superset proof contains
+    no target quantity so it transfers verbatim); the HEAD is fine — production
+    ships r2 (not g1; P2_PORT_MAP.md:480 is stale), it WAS trained on bare-T3
+    pairs (3.14M true tt1 pairs) with tt1 test AUC .99855; the margins and
+    candidate finding all work.**
+    **THE ACTUAL BLOCKER: stage-B deliveries get NO TC-LEVEL DUP CLEANING.**
+    472 rows/evt vs LST's 150, and 82% are for sims another TC ALREADY delivers.
+    The class margin cannot fix this (the head ranks pair COMPATIBILITY, and a
+    duplicate of a real track is a perfectly compatible pair) and the K9-claim
+    filter cannot either (it removes duplicates and signal together: purity
+    .88 -> .58 while pT3-only sims recovered collapse 241/265 -> 15/218).
+    Bare-T3 deliveries are emitted POST-claim, so they never compete for hits
+    with each other or with chain TCs — exactly the role LST's CrossCleanpT3
+    plays.
+    **LOAD-BEARING CONTROL: dropping LST's pT3 and delivering nothing costs
+    -3.87 points of ABSOLUTE efficiency (-6.95 in barrel) — the class cannot
+    simply be deleted — and our attach DOES recover all of it (+.0010 at the
+    frozen margin).** So candidate finding + head + margins are proven; ONE
+    component is missing.
+    CONDITION FOR RETRY (agent's, endorsed): implement the CrossCleanpT3
+    analogue — post-assembly hit-overlap contention of bare-T3 deliveries
+    against emitted chain TCs and each other (the K6 mutual-best / -RD shape,
+    already built twice in this codebase) — then re-run against eff >= .8130,
+    dup <= .052, fake <= .047. **A head retrain is NOT indicated first.**
+    Cost data for the later timing decision: GPU 4.6 ms/evt for pre+grid+score
+    (the extra 34 ms was a serial scaffold kernel); CPU 185-423 ms/evt vs the
+    161.1 ms unsubsidised LST pT3 stage.
   - **QUEUED: POST-INTEGRATION SIMPLIFYING PASS (maintainer, 2026-08-02).**
     After integration + timing/memory are done, one pass re-judging marginal
     complexity. FIRST CANDIDATE: chain extension (-EX) — maintainer reaction to
