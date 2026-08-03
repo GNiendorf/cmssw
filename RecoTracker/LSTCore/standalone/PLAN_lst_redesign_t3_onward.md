@@ -2199,9 +2199,15 @@ LATER separate pass (same prototype, jet-enriched ntuple) once the machinery exi
     90% redundancy at the root); RECOMPUTE A's ceiling under the changed universe
     (it was measured on the unconditioned universe with shared-unit vetoes);
     consolidate A's and C's bare-T3 heads rather than rebuilding.
-    **P3 SHIP**: port the winner, delete pT5-side AND pT3-side together, then
-    produce the plots + timing/memory benchmarks. CMSSW after, when the
-    maintainer decides.
+    **P2.5 MAINTAINER SIGN-OFF GATE (added 2026-08-03, HARD): before ANY
+    integration or deletion, the PROTOTYPE winner's comparison PLOTS go to the
+    maintainer and they sign off. "I will sign off before we integrate the
+    winner into LST, the prototype winner I mean — I want to see plots before we
+    do the final integration and removal of redundant LST code." Nothing ports
+    and nothing gets deleted before that.**
+    **P3 SHIP** (only after sign-off): port the winner, delete pT5-side AND
+    pT3-side together, then produce the final in-LST plots + timing/memory
+    benchmarks. CMSSW after, when the maintainer decides.
   - **QUEUED: POST-INTEGRATION SIMPLIFYING PASS (maintainer, 2026-08-02).**
     After integration + timing/memory are done, one pass re-judging marginal
     complexity. FIRST CANDIDATE: chain extension (-EX) — maintainer reaction to
