@@ -300,6 +300,14 @@ int main(int argc, char **argv) {
   ana.t4_branches = result["t4"].as<bool>() || result["allobj"].as<bool>();
 
   //_______________________________________________________________________________
+  // P1 RE-BASELINE: the algorithmic isDup snapshots inside LSTCore are pure bookkeeping for
+  // the pLS / pT3 / pT5 branches above. Turn the LSTCore-side host copies on exactly when one
+  // of those blocks is being written; every other build and every CMSSW job leaves them off
+  // and pays nothing.
+  if (ana.pls_branches || ana.pt3_branches || ana.pt5_branches)
+    setenv("LST_DUP_SNAPSHOTS", "1", 1);
+
+  //_______________________________________________________________________________
   // --occ
   ana.occ_branches = result["occ"].as<bool>() || result["allobj"].as<bool>();
 

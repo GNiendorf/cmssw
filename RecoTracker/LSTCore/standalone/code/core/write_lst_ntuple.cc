@@ -37,6 +37,8 @@ void createOutputBranches() {
     createPixelTripletBranches();
   if (ana.pt5_branches)
     createPixelQuintupletBranches();
+  if (bareT3AttachEnabled())
+    createBareT3AttachBranches();
 
   if (ana.occ_branches)
     createOccupancyBranches();
@@ -95,6 +97,9 @@ void fillOutputBranches(LSTEvent* event) {
 
   setTrackCandidateBranches(
       event, n_accepted_simtrk, t5_idx_map, pls_idx_map, pt3_idx_map, pt5_idx_map, t4_idx_map, matchfrac);
+
+  if (bareT3AttachEnabled())
+    setBareT3AttachBranches(event, n_accepted_simtrk, matchfrac, t3_idx_map);
 
   // Now actually fill the ttree
   ana.tx->fill();
@@ -360,6 +365,12 @@ void createTrackCandidateBranches() {
   if (ana.t4_branches)
     ana.tx->createBranch<std::vector<int>>(
         "tc_t4Idx");  // index to the t4_*  if it is the said type, if not set to -999
+  // ---- P1 RE-BASELINE: generic per-TC hit content -------------------------------------
+  // The tracking-ntuple hit rows of each TC and their HitType, straight out of
+  // candsBase.hitIndices(). This is type-agnostic, so it replaces the per-object-type
+  // routing (t5_hitIndices / pT3_otHitIndices) that disappears with those collections.
+  ana.tx->createBranch<std::vector<std::vector<int>>>("tc_hitIdx");
+  ana.tx->createBranch<std::vector<std::vector<int>>>("tc_hitType");
 }
 
 //________________________________________________________________________________________________________________________________
@@ -593,6 +604,21 @@ void createPixelLineSegmentBranches() {
   ana.tx->createBranch<std::vector<bool>>("pLS_isQuad");
   ana.tx->createBranch<std::vector<int>>("pLS_charge");
   ana.tx->createBranch<std::vector<float>>("pLS_deltaPhi");
+  // ---- P1 RE-BASELINE: LST's own ALGORITHMIC duplicate flag, three snapshots -----------
+  // Raw pixelSegments.isDup() values (a 1 / 2 bitmask, not a boolean), recorded at the three
+  // points where the column changes meaning. Distinct from pLS_isDuplicate, which is the
+  // TRUTH-level sim-matching verdict. Precedent: t5_isDupBitmask.
+  //   Self  = after CheckHitspLS pass 1 (pixelLineSegmentCleaning); bit 0 only.
+  //   Pass2 = after CheckHitspLS pass 2; bit 1 added. Both passes are pure seed
+  //           self-cleaning and survive the P2.7 deletion.
+  //   Final = after CrossCleanpLS, which writes 1 and CLOBBERS the bitmask. This is the
+  //           admission state: AddpLSasTrackCandidate takes isQuad rows with Final == 0.
+  ana.tx->createBranch<std::vector<int>>("pLS_isDupAlgSelf");
+  ana.tx->createBranch<std::vector<int>>("pLS_isDupAlgPass2");
+  ana.tx->createBranch<std::vector<int>>("pLS_isDupAlgFinal");
+  // pixelSegments.score(): the tie-break CheckHitspLS uses to pick which member of a
+  // duplicate seed family survives (lower score wins at equal isQuad).
+  ana.tx->createBranch<std::vector<float>>("pLS_score");
 }
 
 //________________________________________________________________________________________________________________________________
@@ -635,6 +661,12 @@ void createPixelTripletBranches() {
 #endif
   ana.tx->createBranch<std::vector<int>>("pT3_moduleType_binary");
   ana.tx->createBranch<std::vector<float>>("pT3_pLS_pMatched");
+  // ---- P1 RE-BASELINE: LST's own ALGORITHMIC duplicate flag, two snapshots -------------
+  // Self  = after RemoveDupPixelTripletsFromMap (pT3-vs-pT3 dedup only; survives deletion).
+  // Final = after CrossCleanpT3, which adds the pT5 / T5 consumption verdicts (these die).
+  // AddpT3asTrackCandidates admits the rows with Final == 0.
+  ana.tx->createBranch<std::vector<int>>("pT3_isDupAlgSelf");
+  ana.tx->createBranch<std::vector<int>>("pT3_isDupAlgFinal");
 }
 
 //________________________________________________________________________________________________________________________________
@@ -658,6 +690,10 @@ void createPixelQuintupletBranches() {
   ana.tx->createBranch<std::vector<std::vector<int>>>("pT5_simIdxAll");
   // list of idx of all matched (> 0%) simulated track
   ana.tx->createBranch<std::vector<std::vector<float>>>("pT5_simIdxAllFrac");
+  // ---- P1 RE-BASELINE: LST's own ALGORITHMIC duplicate flag --------------------------
+  // After RemoveDupPixelQuintupletsFromMap; nothing writes the column afterwards, so this
+  // is also the admission state (AddpT5asTrackCandidate takes the zero rows).
+  ana.tx->createBranch<std::vector<int>>("pT5_isDupAlg");
 }
 
 //________________________________________________________________________________________________________________________________
@@ -1851,6 +1887,19 @@ std::map<unsigned int, unsigned int> setPixelLineSegmentBranches(
     ana.tx->pushbackToBranch<bool>("pLS_isQuad", static_cast<bool>(pixelSeeds.isQuad()[ipLS]));
     ana.tx->pushbackToBranch<int>("pLS_charge", pixelSeeds.charge()[ipLS]);
     ana.tx->pushbackToBranch<float>("pLS_deltaPhi", pixelSeeds.deltaPhi()[ipLS]);
+    // P1 RE-BASELINE: the three algorithmic isDup snapshots and the self-cleaning tie-break
+    // score. The snapshot vectors are empty unless LST_DUP_SNAPSHOTS was set; -999 then marks
+    // "not recorded" so a stale ntuple can never be mistaken for a measured zero.
+    ana.tx->pushbackToBranch<int>(
+        "pLS_isDupAlgSelf",
+        ipLS < event->plsIsDupSelf_.size() ? static_cast<int>(event->plsIsDupSelf_[ipLS]) : -999);
+    ana.tx->pushbackToBranch<int>(
+        "pLS_isDupAlgPass2",
+        ipLS < event->plsIsDupPass2_.size() ? static_cast<int>(event->plsIsDupPass2_[ipLS]) : -999);
+    ana.tx->pushbackToBranch<int>(
+        "pLS_isDupAlgFinal",
+        ipLS < event->plsIsDupFinal_.size() ? static_cast<int>(event->plsIsDupFinal_[ipLS]) : -999);
+    ana.tx->pushbackToBranch<float>("pLS_score", pixelSegments.score()[ipLS]);
     ana.tx->pushbackToBranch<int>("pLS_nhit", hit_idx.size());
     unsigned int seedIdx = pixelSeeds.seedIdx()[ipLS];
     ana.tx->pushbackToBranch<int>("pLS_seedIdx", seedIdx);
@@ -2106,6 +2155,13 @@ std::map<unsigned int, unsigned int> setPixelTripletBranches(LSTEvent* event,
     ana.tx->pushbackToBranch<float>("pT3_pixelRadiusError", pixelRadiusError);
 #endif
     ana.tx->pushbackToBranch<int>("pT3_moduleType_binary", module_type_binary);
+    // P1 RE-BASELINE: the two algorithmic isDup snapshots (-999 = not recorded).
+    ana.tx->pushbackToBranch<int>(
+        "pT3_isDupAlgSelf",
+        ipT3 < event->pt3IsDupSelf_.size() ? static_cast<int>(event->pt3IsDupSelf_[ipT3]) : -999);
+    ana.tx->pushbackToBranch<int>(
+        "pT3_isDupAlgFinal",
+        ipT3 < event->pt3IsDupFinal_.size() ? static_cast<int>(event->pt3IsDupFinal_[ipT3]) : -999);
 
     // end of pT3 DNN branches.
 
@@ -2198,6 +2254,9 @@ std::map<unsigned int, unsigned int> setPixelQuintupletBranches(LSTEvent* event,
     ana.tx->pushbackToBranch<float>("pT5_pt", pt);
     ana.tx->pushbackToBranch<float>("pT5_eta", eta);
     ana.tx->pushbackToBranch<float>("pT5_phi", phi);
+    // P1 RE-BASELINE: the algorithmic isDup snapshot (-999 = not recorded).
+    ana.tx->pushbackToBranch<int>("pT5_isDupAlg",
+                                  ipT5 < event->pt5IsDup_.size() ? static_cast<int>(event->pt5IsDup_[ipT5]) : -999);
     if (ana.pls_branches) {
       unsigned int plsIdx = ranges.segmentModuleIndices()[modules.nLowerModules()] + ipLS;
       unsigned int pls_idx = pls_idx_map.at(plsIdx);
@@ -2360,6 +2419,19 @@ void setTrackCandidateBranches(LSTEvent* event,
     ana.tx->pushbackToBranch<int>("tc_nhits", nPixHits + nOtHits);
     ana.tx->pushbackToBranch<int>("tc_nlayers", nLayers);
 
+    // P1 RE-BASELINE: generic per-TC hit content (tracking-ntuple rows + HitType), the
+    // type-agnostic replacement for the t5_hitIndices / pT3_otHitIndices routing.
+    {
+      auto [tc_hit_idx, tc_hit_type] = getHitIdxsAndHitTypesFromTC(event, tc_idx);
+      std::vector<int> hitIdxOut(tc_hit_idx.begin(), tc_hit_idx.end());
+      std::vector<int> hitTypeOut;
+      hitTypeOut.reserve(tc_hit_type.size());
+      for (auto const& ht : tc_hit_type)
+        hitTypeOut.push_back(static_cast<int>(ht));
+      ana.tx->pushbackToBranch<std::vector<int>>("tc_hitIdx", hitIdxOut);
+      ana.tx->pushbackToBranch<std::vector<int>>("tc_hitType", hitTypeOut);
+    }
+
     // Fill some branches for this track candidate
     ana.tx->pushbackToBranch<float>("tc_pt", pt);
     ana.tx->pushbackToBranch<float>("tc_eta", eta);
@@ -2379,8 +2451,19 @@ void setTrackCandidateBranches(LSTEvent* event,
         ana.tx->pushbackToBranch<int>("tc_pt3Idx", -999);
       if (ana.t5_branches)
         ana.tx->pushbackToBranch<int>("tc_t5Idx", -999);
-      if (ana.pls_branches)
-        ana.tx->pushbackToBranch<int>("tc_plsIdx", -999);
+      // P1 RE-BASELINE: tc_plsIdx is now filled for the pixel-backed types too, so the seed
+      // a carried row consumed can be found without pT5_plsIdx / pT3_plsIdx (both of which
+      // disappear with their collections). For pT5, objectIndices[0] IS the global pLS index
+      // (TrackCandidate.h AddpT5asTrackCandidate passes pT5PixelIndex as innerTrackletIndex).
+      if (ana.pls_branches) {
+        int plsOut = -999;
+        if (!chainRowTC) {
+          auto const it = pls_idx_map.find(trackCandidatesExtended.objectIndices()[tc_idx][0]);
+          if (it != pls_idx_map.end())
+            plsOut = static_cast<int>(it->second);
+        }
+        ana.tx->pushbackToBranch<int>("tc_plsIdx", plsOut);
+      }
       if (ana.t4_branches)
         ana.tx->pushbackToBranch<int>("tc_t4Idx", -999);
     } else if (type == LSTObjType::pT3) {
@@ -2392,8 +2475,21 @@ void setTrackCandidateBranches(LSTEvent* event,
             (ana.pt3_branches ? pt3_idx_map[trackCandidatesExtended.directObjectIndices()[tc_idx]] : -999));
       if (ana.t5_branches)
         ana.tx->pushbackToBranch<int>("tc_t5Idx", -999);
-      if (ana.pls_branches)
-        ana.tx->pushbackToBranch<int>("tc_plsIdx", -999);
+      // P1 RE-BASELINE: for pT3 the object index is the pT3 row, so the seed is reached via
+      // pixelTriplets.pixelSegmentIndices() (already a GLOBAL pLS index).
+      if (ana.pls_branches) {
+        int plsOut = -999;
+        if (!chainRowTC) {
+          auto const& pixelTripletsForPls = event->getPixelTriplets();
+          unsigned int const pt3Row = trackCandidatesExtended.directObjectIndices()[tc_idx];
+          if (pt3Row < pixelTripletsForPls.metadata().size()) {
+            auto const it = pls_idx_map.find(pixelTripletsForPls.pixelSegmentIndices()[pt3Row]);
+            if (it != pls_idx_map.end())
+              plsOut = static_cast<int>(it->second);
+          }
+        }
+        ana.tx->pushbackToBranch<int>("tc_plsIdx", plsOut);
+      }
       if (ana.t4_branches)
         ana.tx->pushbackToBranch<int>("tc_t4Idx", -999);
     } else if (type == LSTObjType::T5) {
@@ -2981,6 +3077,15 @@ std::tuple<float, float, float, std::vector<unsigned int>, std::vector<HitType>>
   auto const& chains = event->getChains();
   unsigned int const chainIdx = trackCandidatesExtended.directObjectIndices()[idx];
   auto [hit_idx, hit_type] = getHitIdxsAndHitTypesFromTC(event, idx);
+  // P2.4b-1 replacement mode: a bare-T3 attach row carries the sentinel 0xFFFFFFFF instead of a
+  // chain row (it is backed by no chain and by no PixelTriplets entry), and objectIndices[0] is
+  // the pLS row it attached. Its kinematics come from that pixel seed, exactly as LST's own pT3
+  // rows take theirs from their pLS -- so the two are on the same footing in the scoreboard.
+  if (chainIdx == 0xFFFFFFFFu) {
+    auto const& pixelSeeds = event->getInput<PixelSeedsSoA>();
+    unsigned int const ipLS = trackCandidatesExtended.objectIndices()[idx][0];
+    return {pixelSeeds.ptIn()[ipLS], pixelSeeds.eta()[ipLS], pixelSeeds.phi()[ipLS], hit_idx, hit_type};
+  }
   return {chains.tcPt()[chainIdx], chains.tcEta()[chainIdx], chains.tcPhi()[chainIdx], hit_idx, hit_type};
 }
 
@@ -3507,4 +3612,116 @@ void printT3s(LSTEvent* event) {
     }
   }
   std::cout << "VALIDATION nTriplets: " << nTriplets << std::endl;
+}
+
+//________________________________________________________________________________________________________________________________
+// ============================================================================================
+// P2.4b-1 MEASUREMENT INSTRUMENT -- the WOULD-BE pT3-class deliveries of the general attach.
+//
+// src/alpaka/ChainAttachT3.h runs stage B of the general attach (bare-T3 targets) as a probe: it
+// resolves which (bare T3, pLS) pairs WOULD become pT3-class track candidates and publishes them,
+// but delivers nothing. This block turns each of those into the hit list a delivery would carry
+// -- the pLS's pixel hits followed by the T3's six outer-tracker hits, exactly as
+// prototype/main.cc:3547-3573 assembles a type-5 OutTC -- and runs it through
+// matchedSimTrkIdxsAndFracs with the SAME > matchfrac rule setTrackCandidateBranches uses for
+// tc_simIdx. So bt3_simIdx and tc_simIdx are the same quantity computed the same way, and
+// "which sims would we deliver that LST delivers only as a pT3" is a set difference on two
+// branches of one file.
+//
+// Nothing here reads or writes a decision. With LST_CHAIN_T3ATTACH unset the branches do not
+// exist and this file behaves exactly as before.
+bool bareT3AttachEnabled() {
+  static bool const enabled = []() {
+    char const* v = std::getenv("LST_CHAIN_T3ATTACH");
+    return v != nullptr && *v != '\0' && *v != '0';
+  }();
+  return enabled;
+}
+
+void createBareT3AttachBranches() {
+  ana.tx->createBranch<std::vector<int>>("bt3_t3Idx");    // ntuple t3 row of the bare-T3 target
+  ana.tx->createBranch<std::vector<int>>("bt3_plsIdx");   // ntuple pLS row of the attached seed
+  ana.tx->createBranch<std::vector<float>>("bt3_logit");  // the winning pair-head logit
+  ana.tx->createBranch<std::vector<float>>("bt3_pt");     // pt from the pLS, as a pT3 does
+  ana.tx->createBranch<std::vector<float>>("bt3_eta");
+  ana.tx->createBranch<std::vector<float>>("bt3_phi");
+  ana.tx->createBranch<std::vector<int>>("bt3_isFake");
+  ana.tx->createBranch<std::vector<float>>("bt3_pMatched");
+  ana.tx->createBranch<std::vector<int>>("bt3_simIdx");  // best match > matchfrac, tc_simIdx rule
+  ana.tx->createBranch<std::vector<std::vector<int>>>("bt3_simIdxAll");
+  ana.tx->createBranch<std::vector<std::vector<float>>>("bt3_simIdxAllFrac");
+  ana.tx->createBranch<std::vector<int>>("sim_bt3_matched");  // per accepted sim, n deliveries
+}
+
+void setBareT3AttachBranches(LSTEvent* event,
+                             unsigned int n_accepted_simtrk,
+                             float matchfrac,
+                             std::map<unsigned int, unsigned int> const& t3_idx_map) {
+  auto const& pixelSeeds = event->getInput<PixelSeedsSoA>();
+  auto const& trk_simhit_simTrkIdx = trk.getVI("simhit_simTrkIdx");
+  auto const& trk_ph2_simHitIdx = trk.getVVI("ph2_simHitIdx");
+  auto const& trk_pix_simHitIdx = trk.getVVI("pix_simHitIdx");
+
+  std::vector<unsigned int> const& t3rows = event->bareT3Triplet_;
+  std::vector<int> const& plsrows = event->bareT3Pls_;
+  std::vector<float> const& logits = event->bareT3Logit_;
+
+  std::vector<int> sim_bt3_matched(n_accepted_simtrk, 0);
+  std::vector<std::vector<int>> bt3_simIdxAll;
+  std::vector<std::vector<float>> bt3_simIdxAllFrac;
+
+  for (size_t i = 0; i < t3rows.size(); ++i) {
+    unsigned int const t3Idx = t3rows[i];
+    unsigned int const ipLS = static_cast<unsigned int>(plsrows[i]);
+
+    // The delivered hit list: pixel hits of the seed, then the T3's outer-tracker hits.
+    auto [pixHit, pixType] = getHitIdxsAndHitTypesFrompLS(event, ipLS);
+    auto [otHit, otType] = getHitIdxsAndHitTypesFromT3(event, t3Idx);
+    std::vector<unsigned int> hit_idx = pixHit;
+    std::vector<lst::HitType> hit_type = pixType;
+    hit_idx.insert(hit_idx.end(), otHit.begin(), otHit.end());
+    hit_type.insert(hit_type.end(), otType.begin(), otType.end());
+
+    float pmatched = 0.f;
+    auto [simidx, simidxfrac] = matchedSimTrkIdxsAndFracs(
+        hit_idx, hit_type, trk_simhit_simTrkIdx, trk_ph2_simHitIdx, trk_pix_simHitIdx, false, matchfrac, &pmatched);
+
+    ana.tx->pushbackToBranch<int>("bt3_t3Idx",
+                                  (ana.t3_branches && t3_idx_map.count(t3Idx))
+                                      ? static_cast<int>(t3_idx_map.at(t3Idx))
+                                      : -999);
+    ana.tx->pushbackToBranch<int>("bt3_plsIdx", static_cast<int>(ipLS));
+    ana.tx->pushbackToBranch<float>("bt3_logit", logits[i]);
+    ana.tx->pushbackToBranch<float>("bt3_pt", pixelSeeds.ptIn()[ipLS]);
+    ana.tx->pushbackToBranch<float>("bt3_eta", pixelSeeds.eta()[ipLS]);
+    ana.tx->pushbackToBranch<float>("bt3_phi", pixelSeeds.phi()[ipLS]);
+    ana.tx->pushbackToBranch<float>("bt3_pMatched", pmatched);
+
+    bool isfake = true;
+    for (size_t is = 0; is < simidx.size(); ++is)
+      if (simidxfrac[is] > matchfrac) {
+        isfake = false;
+        break;
+      }
+    ana.tx->pushbackToBranch<int>("bt3_isFake", isfake);
+
+    int best = -999;
+    float bestfrac = 0;
+    for (size_t is = 0; is < simidx.size(); ++is) {
+      if (simidxfrac[is] > bestfrac and simidxfrac[is] > matchfrac) {
+        bestfrac = simidxfrac[is];
+        best = simidx[is];
+      }
+      if (simidx[is] >= 0 && static_cast<unsigned int>(simidx[is]) < n_accepted_simtrk &&
+          simidxfrac[is] > matchfrac)
+        sim_bt3_matched[simidx[is]] += 1;
+    }
+    ana.tx->pushbackToBranch<int>("bt3_simIdx", best);
+    bt3_simIdxAll.push_back(simidx);
+    bt3_simIdxAllFrac.push_back(simidxfrac);
+  }
+
+  ana.tx->setBranch<std::vector<std::vector<int>>>("bt3_simIdxAll", bt3_simIdxAll);
+  ana.tx->setBranch<std::vector<std::vector<float>>>("bt3_simIdxAllFrac", bt3_simIdxAllFrac);
+  ana.tx->setBranch<std::vector<int>>("sim_bt3_matched", sim_bt3_matched);
 }

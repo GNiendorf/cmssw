@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "RecoTracker/LSTCore/interface/LSTInputHostCollection.h"
 #include "RecoTracker/LSTCore/interface/ChainEdgesHostCollection.h"
@@ -223,7 +224,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     // (chain, pLS) candidates with the r2 pair head, resolves the one-pLS-one-owner contention and
     // the -RD seed-family dedup, and retires the carried pixel rows the attach replaced. The type-7
     // upgrade itself is applied by ChainEmitTCs.
-    void attachPixels(unsigned int nHits, uint32_t const* accepted, unsigned int nAllocatedTCs);
+    void attachPixels(unsigned int nHits,
+                      uint32_t const* accepted,
+                      unsigned int nAllocatedTCs,
+                      int32_t const* hitOwner);
     // Env-gated (LST_CHAIN_ATTACH_AUDIT) grid-vs-exhaustive-scan superset verification.
     void attachGridAudit(unsigned int nTargets,
                          AttachPlsPre const* plsPre,
@@ -232,6 +236,44 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                          AttachPlsPre const* items);
     // Per-event attach counters, formatted for the [CHAIN K8] printout.
     std::string attachSummary_;
+
+    // ---- P2.4b-1 MEASUREMENT INSTRUMENT (src/alpaka/ChainAttachT3.h) ------------------------
+    // Stage B of the general attach over BARE-T3 targets. Runs only when LST_CHAIN_T3ATTACH is
+    // set; it delivers nothing, retires nothing, and changes no chain and no track candidate. It
+    // exists to measure the target inventory, the grid superset property on the bare-T3 target
+    // geometry, the candidate volume and head cost, and to publish the WOULD-BE pT3-class
+    // deliveries so the standalone harness can sim-match them against LST's own pT3 rows.
+    void attachBareT3Probe(unsigned int nHits,
+                           uint32_t const* accepted,
+                           AttachPlsPre const* plsPre,
+                           uint8_t* plsOwnedLive,
+                           uint32_t* plsBestLive,
+                           int32_t const* hitOwner,
+                           uint32_t* hashKey,
+                           int32_t* hashVal);
+    // The WOULD-BE (probe) / ACTUAL (replacement) pT3-class deliveries of stage B, emitted as
+    // type-5 rows after the chain rows when LST_CHAIN_T3REPLACE is set.
+    void emitBareT3TCs(unsigned int nHits, unsigned int nAllocatedTCs);
+    std::string attachT3Summary_;
+    std::vector<unsigned int> bareT3Triplet_;  // sparse triplet row of each would-be delivery
+    std::vector<int> bareT3Pls_;               // its pLS row (== the ntuple's pLS index)
+    std::vector<float> bareT3Logit_;           // the winning pair logit
+
+    // ---- P1 RE-BASELINE INSTRUMENT: ALGORITHMIC DUPLICATE-FLAG SNAPSHOTS -------------------
+    // BOOKKEEPING ONLY. Each vector is a host copy of one device isDup column, taken at the
+    // moment BEFORE a later kernel overwrites it. Nothing in the algorithm ever reads these
+    // back; no cut, threshold or kernel behaviour depends on them. They exist because the
+    // end-of-run collection cannot show the earlier states: CrossCleanpLS writes isDup = true
+    // and clobbers the 1 / 2 bitmask that the two CheckHitspLS self-cleaning passes wrote.
+    // Filled only when dupSnapshotsEnabled() (env LST_DUP_SNAPSHOTS, set by the standalone
+    // driver for --allobj); otherwise every vector stays empty and no copy is made.
+    std::vector<char> plsIsDupSelf_;   // end of pixelLineSegmentCleaning (CheckHitspLS pass 1)
+    std::vector<char> plsIsDupPass2_;  // after the second CheckHitspLS (both self-clean passes)
+    std::vector<char> plsIsDupFinal_;  // after CrossCleanpLS, before AddpLSasTrackCandidate
+    std::vector<char> pt3IsDupSelf_;   // after RemoveDupPixelTripletsFromMap
+    std::vector<char> pt3IsDupFinal_;  // after CrossCleanpT3
+    std::vector<char> pt5IsDup_;       // after RemoveDupPixelQuintupletsFromMap
+
     // Env-gated (LST_CHAIN_TC_DUMP) TC-level parity sidecar; writes nothing otherwise.
     void dumpChainTCs();
     // Optional parity sidecar, enabled by the LST_CHAIN_CHAIN_DUMP environment variable.
