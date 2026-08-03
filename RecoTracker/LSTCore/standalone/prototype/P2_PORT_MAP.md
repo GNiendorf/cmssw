@@ -586,6 +586,17 @@ whoever needs it later.** **STANDALONE-ONLY (maintainer resequencing, 2026-08-02
 full CMSSW workflow validation previously gated here is DEFERRED to the new Phase P2.8 —
 no agent runs cmsRun / the workflow matrix until integration is essentially complete.**
 
+### Phase P2.7b — output/converter surface (explicit, per maintainer question 2026-08-02)
+The infrastructure fallout, named so none of it is implied: (a) tc-side ntuple writer =
+P2.3 scope (harness/plot stack unchanged by the impersonation design); (b) timing/
+multiplicity printouts + lst_timing parsing evolve incrementally (add chain stage columns
+during hybrid phases, drop retired columns at P2.7); (c) the P2.7 deletion sweep carries
+its own writer/AccessHelper/Common.h/memory-report cleanup as phase content; (d)
+**LSTOutputConverter (RecoTracker/LST) must learn chain TCs BEFORE P2.8 can run** — kept
+small by the P2.3 decision to emit into the standard TrackCandidatesBaseSoA, but it is
+real work and is a named prerequisite of P2.8, done here; (e) chain_* --allobj object
+branches for future retraining dumps = post-integration item (cube/jet era).
+
 ### Phase P2.8 — CMSSW full-chain validation (LAST; moved out of P2.5 per maintainer, 2026-08-02)
 After P2.7 (pT5-side deletion) is landed: the full CMSSW workflow runs (wf 24834.703/.704,
 CPU + GPU) with (a) standard MTV plots, (b) hit-residual / fit-quality distribution
