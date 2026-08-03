@@ -1999,6 +1999,27 @@ LATER separate pass (same prototype, jet-enriched ntuple) once the machinery exi
     is a poor metric (most of the 10 are trivial setup - count/prefix/scatter,
     precompute; the real work is one scoring kernel + one contention), but the
     underlying question stands and is answered by measurement, not argument.
+  - **P2.4b WORKFLOW DECISION (maintainer question, 2026-08-03: "should the
+    physics baselining be done in the integrated version or the prototype?").
+    ANSWER: dumps from PRODUCTION, iteration OFFLINE in python, final A/B in
+    PRODUCTION.** The baseline itself is identical in both places (LST's full
+    pT3 algorithm = map + physics cuts + pt3dnn shows up as type-5 TCs in the
+    ntuple, carried identically). The complication is that the PROTOTYPE CANNOT
+    do bare-T3 attach affordably — that was the original M16 blocker (43k
+    targets -> ~6.5M analytic pairs/evt) and the GRID that removes it exists
+    only in production; porting the grid backwards would rebuild what we just
+    built. So: (1) production generates grid-selected bare-T3 x pLS candidate
+    dumps with features + harness truth (one run, reusable); (2) ALL iteration
+    -- retrain, feature engineering (T3's own DNN scores), threshold and
+    LOGIT-SCALE calibration, physics accounting -- happens offline in python on
+    those dumps, which is agent-parallel exactly as the M16-M19 rounds were
+    (no shared build tree); (3) production runs the final A/B scored by the same
+    harness scoreboard. **ACCOUNTING RULE (the M16b lesson repeating): judge
+    TOTAL DELIVERY, not slice-vs-slice.** Some sims LST delivers as pT3 are
+    already delivered by our chains; requiring our pT3-class slice to match
+    LST's pT3-class slice would make us chase tracks we already have. Class-level
+    numbers are diagnostics; the gate is total efficiency/fake/dup/length plus
+    displaced strata.
   - **QUEUED: POST-INTEGRATION SIMPLIFYING PASS (maintainer, 2026-08-02).**
     After integration + timing/memory are done, one pass re-judging marginal
     complexity. FIRST CANDIDATE: chain extension (-EX) — maintainer reaction to
