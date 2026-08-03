@@ -1793,6 +1793,15 @@ LATER separate pass (same prototype, jet-enriched ntuple) once the machinery exi
     count. scram clean on all 3 backends. Writer parseChainTC path added; tc_*
     format unchanged (harness untouched). Carried rows verified bit-identical to
     LST's own (crosscleans run upstream unchanged before compaction).
+  - **ATTACH CANDIDATE-FINDING FALLBACK (maintainer, 2026-08-03): if the P2.4 grid
+    timing is not competitive (gate <= 10 ms/evt CPU; re-judged at P2.6), fall back
+    to PIXEL MAPS AS PREFILTER-ONLY while keeping the general approach (learned
+    head + contention stay the decision-makers) — the long-recorded contingency.
+    CONDITIONS ATTACHED: (a) a head RETRAIN is warranted (threshold calibrated on
+    window-selected candidates; map-selected is a different population); (b) the
+    displaced strata per pixel class must be RE-MEASURED (an IP-traced map can
+    kill displaced pairs at candidate level before the displacement-aware head
+    sees them — the M16 judging protocol applies, not aggregate parity).**
   - **QUEUED: POST-INTEGRATION SIMPLIFYING PASS (maintainer, 2026-08-02).**
     After integration + timing/memory are done, one pass re-judging marginal
     complexity. FIRST CANDIDATE: chain extension (-EX) — maintainer reaction to
