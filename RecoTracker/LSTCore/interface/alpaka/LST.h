@@ -2,6 +2,7 @@
 #define RecoTracker_LSTCore_interface_alpaka_LST_h
 
 #include "RecoTracker/LSTCore/interface/alpaka/Common.h"
+#include "RecoTracker/LSTCore/interface/ChainConfig.h"
 #include "RecoTracker/LSTCore/interface/LSTESData.h"
 #include "RecoTracker/LSTCore/interface/alpaka/LSTInputDeviceCollection.h"
 #include "RecoTracker/LSTCore/interface/alpaka/TrackCandidatesDeviceCollection.h"
@@ -26,7 +27,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
              bool no_pls_dupclean,
              bool tc_pls_triplets,
              bool reduce_mem_by_full_precompute,
-             bool use_chain_tracking = false);
+             bool use_chain_tracking = false,
+             ::lst::ChainConfig const& chainConfig = ::lst::ChainConfig{});
     std::unique_ptr<TrackCandidatesBaseDeviceCollection> getTrackCandidates() {
       return std::move(trackCandidatesBaseDC_);
     }

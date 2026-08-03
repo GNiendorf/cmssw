@@ -634,6 +634,183 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
   // any DELIVERED object, so an extension can never manufacture an overlap. Chains are visited in
   // K9 accepted (best-first) order and each accepted extension marks its hits claimed, so two
   // chains can never absorb the same free MD -- which is why this is serial.
+  // The per-chain extension body, factored out of ChainExtendSerial so that the P2.6a parallel form
+  // (ChainParallel.h, ChainExtendRound / ChainExtendFinish) executes the IDENTICAL code and cannot
+  // drift from the reference transcription. Nothing about the arithmetic changed when it moved
+  // here; the only edit is that the diagnostic counters are bumped with atomicAdd, which is a plain
+  // increment on the serial backend and is order-independent (a sum) on every backend.
+  //
+  // The only state this shares with another chain is claimedHit; every other write is into the
+  // chain's own ChainItems / Chains rows. That is what makes the conflict-free-round form exact.
+  template <typename TAcc>
+  ALPAKA_FN_ACC ALPAKA_FN_INLINE void chainExtendChain(TAcc const& acc,
+                                                       ModulesConst modules,
+                                                       MiniDoubletsConst mds,
+                                                       SegmentsConst segments,
+                                                       ChainItems items,
+                                                       Chains chains,
+                                                       uint32_t c,
+                                                       uint8_t* claimedHit,
+                                                       uint32_t nHitUniverse,
+                                                       uint32_t const* segOffsets,
+                                                       uint32_t const* segItems,
+                                                       uint32_t nMDall,
+                                                       uint32_t* stats,
+                                                       ChainConfig const& cfg) {
+    double const win = static_cast<double>(cfg.extendWindow);
+    double const win2 = win * win;
+
+    if (chains.nLayers()[c] < cfg.extendMinLayers)
+      return;
+    uint32_t const mdBase = 3u * chains.nodeOffset()[c];
+    int nMD = chains.nMDs()[c];
+    if (nMD < 3)
+      return;
+
+    ChainFit fit;
+    if (!chainBuildFit(acc, mds, &items.mdItems()[mdBase], nMD, fit)) {
+      alpaka::atomicAdd(acc, &stats[1], 1u, alpaka::hierarchy::Blocks{});  // nNoFit
+      return;
+    }
+    if (cfg.extendMaxChi2 > 0.f && fit.chi2 > static_cast<double>(cfg.extendMaxChi2)) {
+      alpaka::atomicAdd(acc, &stats[6], 1u, alpaka::hierarchy::Blocks{});  // nRejFit
+      return;
+    }
+    alpaka::atomicAdd(acc, &stats[0], 1u, alpaka::hierarchy::Blocks{});  // nChains examined
+
+    uint32_t layerMask = 0u;
+    for (int k = 0; k < nMD; ++k)
+      layerMask |= (1u << chainMdLayer(modules, mds, items.mdItems()[mdBase + k]));
+
+    // end 0 = outer (append), end 1 = inner (prepend). The frozen -EX 1 runs the outer end
+    // only; the inner branch is kept so the flag surface stays complete.
+    for (int end = 0; end < 2; ++end) {
+      bool const outer = (end == 0);
+      if (outer && !(cfg.extendMode == 1 || cfg.extendMode == 3))
+        continue;
+      if (!outer && !(cfg.extendMode == 2 || cfg.extendMode == 3))
+        continue;
+
+      uint32_t tMd = outer ? items.mdItems()[mdBase + nMD - 1] : items.mdItems()[mdBase];
+      double tx = outer ? fit.xOut : fit.xIn;
+      double ty = outer ? fit.yOut : fit.yIn;
+      double tz = outer ? fit.zOut : fit.zIn;
+      double sT = outer ? fit.sLast : 0.0;
+
+      for (int rep = 0; rep < cfg.extendMaxPerEnd; ++rep) {
+        int const tLay = chainMdLayer(modules, mds, tMd);
+        double const ox = outer ? fit.xIn : fit.xOut;
+        double const oy = outer ? fit.yIn : fit.yOut;
+        double const oz = outer ? fit.zIn : fit.zOut;
+        double const dRef = chainDist3(acc, ox, oy, oz, tx, ty, tz);
+
+        int32_t bestMd = -1;
+        double bestRes = 1e30, secondRes = 1e30;
+        // Stable tie-break operand for the argmin below, see the comparison site.
+        uint64_t bestHitKey = ~0ull;
+
+        // -EXS 1: only MDs the detector already declared segment-compatible with the terminal.
+        uint32_t const nb = outer ? segOffsets[tMd] : 0u;
+        uint32_t const ne = outer ? segOffsets[tMd + 1u] : 0u;
+        for (uint32_t q = nb; q < ne; ++q) {
+          uint32_t const m = segments.mdIndices()[segItems[q]][1];
+          if (m >= nMDall)
+            continue;
+          int const L = chainMdLayer(modules, mds, m);
+          if (L < 1 || L >= kChainMaxMdLayer)
+            continue;
+          int const jump = outer ? (L - tLay) : (tLay - L);
+          if (jump < 1 || jump > cfg.extendMaxJump)
+            continue;
+          if (layerMask & (1u << L))
+            continue;  // the chain already occupies this layer: no length to gain
+          unsigned int const ha = mds.anchorHitIndices()[m], hb = mds.outerHitIndices()[m];
+          if (ha >= nHitUniverse || hb >= nHitUniverse)
+            continue;
+          if (claimedHit[ha] || claimedHit[hb])
+            continue;  // owned by a delivered object, or taken by an earlier extension
+          double const mx = mds.anchorX()[m], my = mds.anchorY()[m], mz = mds.anchorZ()[m];
+          if (chainDist3(acc, tx, ty, tz, mx, my, mz) > static_cast<double>(cfg.extendMaxDist))
+            continue;
+          if (chainDist3(acc, ox, oy, oz, mx, my, mz) <= dRef)
+            continue;  // not beyond the terminal -> not an extension
+          alpaka::atomicAdd(acc, &stats[2], 1u, alpaka::hierarchy::Blocks{});  // nCand
+          double const dcx = mx - fit.cx, dcy = my - fit.cy;
+          double const rxy = alpaka::math::sqrt(acc, dcx * dcx + dcy * dcy) - fit.R;
+          double const chord = alpaka::math::sqrt(acc, (mx - tx) * (mx - tx) + (my - ty) * (my - ty));
+          double const sC = outer ? (sT + chord) : (sT - chord);
+          double const rrz = mz - (fit.a + fit.b * sC);
+          double res;
+          if (cfg.extendRzWindow > 0.f) {
+            if (chainAbsd(rxy) > win || chainAbsd(rrz) > static_cast<double>(cfg.extendRzWindow))
+              continue;
+            res = chainAbsd(rxy);
+          } else {
+            res = alpaka::math::sqrt(acc, rxy * rxy + rrz * rrz);
+            if (res > win)
+              continue;
+          }
+          // The reference keeps the FIRST of an exact residual tie, walking the neighbours in
+          // ascending LineSegment index -- and LST hands out LineSegment indices by atomicAdd,
+          // so that rule permutes run to run. Exact ties do occur (1-2 per event, stats[10]), so
+          // P2.5 decides them on the candidate MD's own hit rows instead, which are input-
+          // ordered and identical on both backends. ha/hb are already loaded above, so the
+          // stable operand costs no extra memory traffic.
+          uint64_t const hitKey = (static_cast<uint64_t>(ha) << 32) | static_cast<uint64_t>(hb);
+          bool const better = (res < bestRes) || (res == bestRes && bestMd >= 0 && hitKey < bestHitKey);
+          if (res == bestRes && bestMd >= 0)
+            alpaka::atomicAdd(acc, &stats[10], 1u, alpaka::hierarchy::Blocks{});
+          if (better) {
+            secondRes = bestRes;
+            bestRes = res;
+            bestMd = static_cast<int32_t>(m);
+            bestHitKey = hitKey;
+          } else if (res < secondRes) {
+            secondRes = res;
+          }
+        }
+        if (bestMd < 0)
+          break;
+
+        if (cfg.extendUniqMargin > 0.f && secondRes < 1e29 &&
+            (secondRes - bestRes) < static_cast<double>(cfg.extendUniqMargin)) {
+          alpaka::atomicAdd(acc, &stats[4], 1u, alpaka::hierarchy::Blocks{});  // nRejUniq
+          break;
+        }
+
+        // The REFIT combined chi2/hit over the enlarged MD list must stay within chi2Factor of
+        // the original, with an absolute floor of window^2 so a numerically perfect chain is
+        // not barred from ever extending. The candidate is written into the slot past the
+        // chain's used MD range for the test; a rejected candidate simply leaves a dead entry
+        // there, still inside the chain's own 3 * nNodes allocation and never read again.
+        if (nMD + 1 > 3 * static_cast<int>(chains.nNodes()[c]))
+          break;
+        items.mdItems()[mdBase + nMD] = static_cast<uint32_t>(bestMd);
+        double const chi2New = chainFitChi2Combined(acc, mds, &items.mdItems()[mdBase], nMD + 1);
+        if (chi2New > static_cast<double>(cfg.extendChi2Factor) * chainMaxd(fit.chi2, win2)) {
+          alpaka::atomicAdd(acc, &stats[5], 1u, alpaka::hierarchy::Blocks{});  // nRejChi2
+          break;
+        }
+
+        claimedHit[mds.anchorHitIndices()[bestMd]] = 1u;
+        claimedHit[mds.outerHitIndices()[bestMd]] = 1u;
+        layerMask |= (1u << chainMdLayer(modules, mds, bestMd));
+        ++nMD;
+        chains.nMDs()[c] = static_cast<uint16_t>(nMD);
+        chains.nLayers()[c] = static_cast<uint8_t>(chains.nLayers()[c] + 1);
+        alpaka::atomicAdd(acc, &stats[3], 1u, alpaka::hierarchy::Blocks{});  // nExtOuter
+
+        double const nx = mds.anchorX()[bestMd], ny = mds.anchorY()[bestMd];
+        double const chordAcc = alpaka::math::sqrt(acc, (nx - tx) * (nx - tx) + (ny - ty) * (ny - ty));
+        sT = outer ? (sT + chordAcc) : (sT - chordAcc);
+        tMd = static_cast<uint32_t>(bestMd);
+        tx = nx;
+        ty = ny;
+        tz = mds.anchorZ()[bestMd];
+      }
+    }
+  }
+
   struct ChainExtendSerial {
     ALPAKA_FN_ACC void operator()(Acc1D const& acc,
                                   ModulesConst modules,
@@ -655,161 +832,21 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         return;
 
       uint32_t const nAcc = chains.nAccepted();
-      double const win = static_cast<double>(cfg.extendWindow);
-      double const win2 = win * win;
-
-      for (uint32_t ai = 0; ai < nAcc; ++ai) {
-        uint32_t const c = accepted[ai];
-        if (chains.nLayers()[c] < cfg.extendMinLayers)
-          continue;
-        uint32_t const mdBase = 3u * chains.nodeOffset()[c];
-        int nMD = chains.nMDs()[c];
-        if (nMD < 3)
-          continue;
-
-        ChainFit fit;
-        if (!chainBuildFit(acc, mds, &items.mdItems()[mdBase], nMD, fit)) {
-          ++stats[1];  // nNoFit
-          continue;
-        }
-        if (cfg.extendMaxChi2 > 0.f && fit.chi2 > static_cast<double>(cfg.extendMaxChi2)) {
-          ++stats[6];  // nRejFit
-          continue;
-        }
-        ++stats[0];  // nChains examined
-
-        uint32_t layerMask = 0u;
-        for (int k = 0; k < nMD; ++k)
-          layerMask |= (1u << chainMdLayer(modules, mds, items.mdItems()[mdBase + k]));
-
-        // end 0 = outer (append), end 1 = inner (prepend). The frozen -EX 1 runs the outer end
-        // only; the inner branch is kept so the flag surface stays complete.
-        for (int end = 0; end < 2; ++end) {
-          bool const outer = (end == 0);
-          if (outer && !(cfg.extendMode == 1 || cfg.extendMode == 3))
-            continue;
-          if (!outer && !(cfg.extendMode == 2 || cfg.extendMode == 3))
-            continue;
-
-          uint32_t tMd = outer ? items.mdItems()[mdBase + nMD - 1] : items.mdItems()[mdBase];
-          double tx = outer ? fit.xOut : fit.xIn;
-          double ty = outer ? fit.yOut : fit.yIn;
-          double tz = outer ? fit.zOut : fit.zIn;
-          double sT = outer ? fit.sLast : 0.0;
-
-          for (int rep = 0; rep < cfg.extendMaxPerEnd; ++rep) {
-            int const tLay = chainMdLayer(modules, mds, tMd);
-            double const ox = outer ? fit.xIn : fit.xOut;
-            double const oy = outer ? fit.yIn : fit.yOut;
-            double const oz = outer ? fit.zIn : fit.zOut;
-            double const dRef = chainDist3(acc, ox, oy, oz, tx, ty, tz);
-
-            int32_t bestMd = -1;
-            double bestRes = 1e30, secondRes = 1e30;
-            // Stable tie-break operand for the argmin below, see the comparison site.
-            uint64_t bestHitKey = ~0ull;
-
-            // -EXS 1: only MDs the detector already declared segment-compatible with the terminal.
-            uint32_t const nb = outer ? segOffsets[tMd] : 0u;
-            uint32_t const ne = outer ? segOffsets[tMd + 1u] : 0u;
-            for (uint32_t q = nb; q < ne; ++q) {
-              uint32_t const m = segments.mdIndices()[segItems[q]][1];
-              if (m >= nMDall)
-                continue;
-              int const L = chainMdLayer(modules, mds, m);
-              if (L < 1 || L >= kChainMaxMdLayer)
-                continue;
-              int const jump = outer ? (L - tLay) : (tLay - L);
-              if (jump < 1 || jump > cfg.extendMaxJump)
-                continue;
-              if (layerMask & (1u << L))
-                continue;  // the chain already occupies this layer: no length to gain
-              unsigned int const ha = mds.anchorHitIndices()[m], hb = mds.outerHitIndices()[m];
-              if (ha >= nHitUniverse || hb >= nHitUniverse)
-                continue;
-              if (claimedHit[ha] || claimedHit[hb])
-                continue;  // owned by a delivered object, or taken by an earlier extension
-              double const mx = mds.anchorX()[m], my = mds.anchorY()[m], mz = mds.anchorZ()[m];
-              if (chainDist3(acc, tx, ty, tz, mx, my, mz) > static_cast<double>(cfg.extendMaxDist))
-                continue;
-              if (chainDist3(acc, ox, oy, oz, mx, my, mz) <= dRef)
-                continue;  // not beyond the terminal -> not an extension
-              ++stats[2];  // nCand
-              double const dcx = mx - fit.cx, dcy = my - fit.cy;
-              double const rxy = alpaka::math::sqrt(acc, dcx * dcx + dcy * dcy) - fit.R;
-              double const chord = alpaka::math::sqrt(acc, (mx - tx) * (mx - tx) + (my - ty) * (my - ty));
-              double const sC = outer ? (sT + chord) : (sT - chord);
-              double const rrz = mz - (fit.a + fit.b * sC);
-              double res;
-              if (cfg.extendRzWindow > 0.f) {
-                if (chainAbsd(rxy) > win || chainAbsd(rrz) > static_cast<double>(cfg.extendRzWindow))
-                  continue;
-                res = chainAbsd(rxy);
-              } else {
-                res = alpaka::math::sqrt(acc, rxy * rxy + rrz * rrz);
-                if (res > win)
-                  continue;
-              }
-              // The reference keeps the FIRST of an exact residual tie, walking the neighbours in
-              // ascending LineSegment index -- and LST hands out LineSegment indices by atomicAdd,
-              // so that rule permutes run to run. Exact ties do occur (1-2 per event, stats[10]), so
-              // P2.5 decides them on the candidate MD's own hit rows instead, which are input-
-              // ordered and identical on both backends. ha/hb are already loaded above, so the
-              // stable operand costs no extra memory traffic.
-              uint64_t const hitKey = (static_cast<uint64_t>(ha) << 32) | static_cast<uint64_t>(hb);
-              bool const better = (res < bestRes) || (res == bestRes && bestMd >= 0 && hitKey < bestHitKey);
-              if (res == bestRes && bestMd >= 0)
-                ++stats[10];
-              if (better) {
-                secondRes = bestRes;
-                bestRes = res;
-                bestMd = static_cast<int32_t>(m);
-                bestHitKey = hitKey;
-              } else if (res < secondRes) {
-                secondRes = res;
-              }
-            }
-            if (bestMd < 0)
-              break;
-
-            if (cfg.extendUniqMargin > 0.f && secondRes < 1e29 &&
-                (secondRes - bestRes) < static_cast<double>(cfg.extendUniqMargin)) {
-              ++stats[4];  // nRejUniq
-              break;
-            }
-
-            // The REFIT combined chi2/hit over the enlarged MD list must stay within chi2Factor of
-            // the original, with an absolute floor of window^2 so a numerically perfect chain is
-            // not barred from ever extending. The candidate is written into the slot past the
-            // chain's used MD range for the test; a rejected candidate simply leaves a dead entry
-            // there, still inside the chain's own 3 * nNodes allocation and never read again.
-            if (nMD + 1 > 3 * static_cast<int>(chains.nNodes()[c]))
-              break;
-            items.mdItems()[mdBase + nMD] = static_cast<uint32_t>(bestMd);
-            double const chi2New = chainFitChi2Combined(acc, mds, &items.mdItems()[mdBase], nMD + 1);
-            if (chi2New > static_cast<double>(cfg.extendChi2Factor) * chainMaxd(fit.chi2, win2)) {
-              ++stats[5];  // nRejChi2
-              break;
-            }
-
-            claimedHit[mds.anchorHitIndices()[bestMd]] = 1u;
-            claimedHit[mds.outerHitIndices()[bestMd]] = 1u;
-            layerMask |= (1u << chainMdLayer(modules, mds, bestMd));
-            ++nMD;
-            chains.nMDs()[c] = static_cast<uint16_t>(nMD);
-            chains.nLayers()[c] = static_cast<uint8_t>(chains.nLayers()[c] + 1);
-            ++stats[3];  // nExtOuter
-
-            double const nx = mds.anchorX()[bestMd], ny = mds.anchorY()[bestMd];
-            double const chordAcc = alpaka::math::sqrt(acc, (nx - tx) * (nx - tx) + (ny - ty) * (ny - ty));
-            sT = outer ? (sT + chordAcc) : (sT - chordAcc);
-            tMd = static_cast<uint32_t>(bestMd);
-            tx = nx;
-            ty = ny;
-            tz = mds.anchorZ()[bestMd];
-          }
-        }
-      }
+      for (uint32_t ai = 0; ai < nAcc; ++ai)
+        chainExtendChain(acc,
+                         modules,
+                         mds,
+                         segments,
+                         items,
+                         chains,
+                         accepted[ai],
+                         claimedHit,
+                         nHitUniverse,
+                         segOffsets,
+                         segItems,
+                         nMDall,
+                         stats,
+                         cfg);
     }
   };
 

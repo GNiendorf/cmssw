@@ -222,7 +222,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     // (chain, pLS) candidates with the r2 pair head, resolves the one-pLS-one-owner contention and
     // the -RD seed-family dedup, and retires the carried pixel rows the attach replaced. The type-7
     // upgrade itself is applied by ChainEmitTCs.
-    void attachPixels(unsigned int nHits, uint32_t const* accepted);
+    void attachPixels(unsigned int nHits, uint32_t const* accepted, unsigned int nAllocatedTCs);
     // Env-gated (LST_CHAIN_ATTACH_AUDIT) grid-vs-exhaustive-scan superset verification.
     void attachGridAudit(unsigned int nTargets,
                          AttachPlsPre const* plsPre,

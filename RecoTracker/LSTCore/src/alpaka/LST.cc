@@ -19,9 +19,10 @@ void LST::run(Queue& queue,
               bool no_pls_dupclean,
               bool tc_pls_triplets,
               bool reduce_mem_by_full_precompute,
-              bool use_chain_tracking) {
-  auto event =
-      LSTEvent(verbose, ptCut, clustSizeCut, queue, deviceESData, reduce_mem_by_full_precompute, use_chain_tracking);
+              bool use_chain_tracking,
+              ::lst::ChainConfig const& chainConfig) {
+  auto event = LSTEvent(
+      verbose, ptCut, clustSizeCut, queue, deviceESData, reduce_mem_by_full_precompute, use_chain_tracking, chainConfig);
 
   event.addInputToEvent(lstInputDC);
   event.addHitToEvent();
