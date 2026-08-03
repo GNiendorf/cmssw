@@ -2254,6 +2254,43 @@ LATER separate pass (same prototype, jet-enriched ntuple) once the machinery exi
     partOfPT5/PT3; ChainAttach.h:1081/1084 + ChainParallel.h:176/179
     pixelSegmentIndices). The port has the IDENTICAL type-8 exposure —
     arbitrateChains runs after CrossCleanpLS.
+  - **2026-08-03 JOB 1 DONE (rebase_ref, commit cba3148ca37) — MEASURED
+    POST-DELETION BASELINE. RESUME HERE.**
+    SAMPLE: `rebase_ref/LSTNtuple_instr_977evt.root` (977 evts, 19.9 GB; 23
+    missing, listed in missing_events.txt) + frozen 300-evt subset
+    (frozen300_keys.txt). Instrument env-gated, CMSSW pays nothing; three
+    closure identities EXACT so every snapshot is pinned to its kernel boundary.
+    | tag | eff | dup | fake | nTC |
+    | RBBASE frozen line | .80917 | .05193 | .04585 | 611645 |
+    | LST current, same evts | .80988 | .05179 | .04476 | 608190 |
+    | deletion, no seed change | .77109 | .05285 | .04846 | 577342 |
+    | audit MODEL on these evts | .80732 | .21127 | .04985 | 664158 |
+    | **POSTDEL (measured pass-1)** | .80882 | **.39326** | .04504 | 758249 |
+    | **POSTDELP2 (pass-1+2)** | .80626 | **.20553** | .04630 | 655866 |
+    **THE AUDIT MODEL UNDER-PREDICTED BY 1.86x** (seed universe 1951.7/evt
+    measured vs 943 modelled): post-deletion dup is 7.6x today, not 4.1x.
+    Efficiency flat, fake IMPROVES — the added rows are almost purely duplicates.
+    **PLAN CHANGE (act on this): CheckHitspLS PASS 2 DOES NOT HAVE TO DIE.** Its
+    kernel takes only modules/segmentsOccupancy/pixelSeeds/pixelSegments —
+    nothing in the deletion set. Keeping it costs -.0026 eff and buys dup
+    .39326 -> .20553. **POSTDELP2 is the reference the next round works
+    against**, and keeping pass 2 is an explicit decision, not an assumed
+    casualty. SECONDARY: CrossCleanpT3 is essentially INERT (0.26 pT3/evt; the
+    586->152 reduction is self-dedup, which survives), so the pT3 carried-set
+    change is entirely the PixelTriplet.h:721/:770 builder skips — the
+    skips-disabled ntuple is still needed if that case must be measured.
+    **BONUS FINDING (real LST bug, worth reporting upstream): the generation
+    stall is root-caused** — `matchedSimTrkIdxsAndFracs` (trkCore.cc:461-473)
+    materialises the full cartesian product of per-hit sim candidates INSIDE an
+    omp critical section; gdb showed 63/64 threads parked on the lock. This is
+    the historical "two-hour hang". Removable: the wanted quantity is just "how
+    many hit positions contain sim u", an O(nHits x nCandidates) loop. Also
+    measured: `-s 64` buys ~no parallelism for --allobj (load ~1.1/job) — use
+    many chunks, not many streams.
+    NEXT (tomorrow): the seed-ownership / attach-recall round against POSTDELP2,
+    2-3 independent agents, truth-based diagnostic first (partition seeds by
+    truth: true match with an accepted chain / true match without / no true
+    match, and measure our attach decision on each class).
   - **QUEUED: POST-INTEGRATION SIMPLIFYING PASS (maintainer, 2026-08-02).**
     After integration + timing/memory are done, one pass re-judging marginal
     complexity. FIRST CANDIDATE: chain extension (-EX) — maintainer reaction to
