@@ -1793,6 +1793,54 @@ LATER separate pass (same prototype, jet-enriched ntuple) once the machinery exi
     count. scram clean on all 3 backends. Writer parseChainTC path added; tc_*
     format unchanged (harness untouched). Carried rows verified bit-identical to
     LST's own (crosscleans run upstream unchanged before compaction).
+  - **P2.4 LANDED: the K8 PIXEL ATTACH -- production now runs the COMPLETE frozen
+    configuration.** Grid prefilter (K8a), r2 pair head (K8b), one-pLS-one-owner
+    contention + -RD seed dedup (K8c), in-place type-7 upgrade and the -RPS /
+    contention retirement of carried rows (K8d), plus the a2 2-class head as the
+    f11 provider. GATES: (a) ATTACH PARITY EXACT at shipping flags -- TC multiset
+    (type, sorted OT hit list) 19,897/19,897 over 10 events with zero differences,
+    AND tc_pt BIT-EXACT on every row, which pins the attached (chain, pLS) pairing
+    because an upgraded row's pt IS the attached seed's ptIn; the prototype's own
+    prefiltered-pair total (1,209,435 over the same 10 events) is reproduced
+    EXACTLY. (b) 300-evt FULL-FREEZE scoreboard reproduces the freeze on every
+    row (eff .8129, vxy .8458/.8049/.7287/.7173, dxy .5622/.2526, fake .0463,
+    dup .0518, nhitOT 9.895/9.886/3.467, n_tc 614,213 identical); worst residual
+    2.5e-5 on mean_nhitOT_endcap, the inherited ULP eta/phi class. (c) OFF-state
+    clean (same 12 known -d ls_* debug branches, 461 other branches bit-identical
+    over 146M values). (e) CUDA compiles and runs; CPU/GPU TC counts within +-1
+    per event, type-7 counts track the accepted set (no attach-specific
+    amplification of the P2.3 nondeterminism).
+    GRID: superset-verified OFFLINE FIRST (LST_CHAIN_ATTACH_AUDIT, port map 1.1
+    protocol) -- MISSING=0 on every tested event. It is keyed on the three
+    quantities the frozen windows are written in (target rtInner / tanLambda /
+    chordPhi); the r axis uses fixed bins only as a bucketing device and the phi
+    interval is computed against the MEASURED radial hull of the targets in each
+    bin, and the phi range is EXACT because the crossing-angle is monotone in r
+    with a fixed intersection branch -- so the superset property has no slack
+    term to bound. Count/prefix/scatter only, no sort anywhere.
+    (d) TIMING GATE MISSED, MEASURED NOT ESTIMATED: attach 201.8 -> 30.0 ms/evt
+    CPU (6.7x) against a 10 ms target. Attribution: grid build 4.1, candidate
+    iteration + windows + features 9.7, r2 HEAD 15.3 (measured by stubbing the
+    head: score 25.0 -> 9.7), contention+delivery 0.3. The head term is
+    irreducible at exact parity (~121k pairs/evt must be scored, as the reference
+    scores them) unless it is made faster, not fewer: it currently runs ~2.7
+    FMA/cycle. Named P2.6 levers with measured sizes: head vectorisation/batching
+    (up to -10 ms), preprocessing hoist -- 12 of 19 inputs are per-pLS or
+    per-target constants including one log10 (part of the 15.3), grid candidate
+    duplication 1.20x (-4 ms), bounded-error fast atan2 in the grid count pass
+    (-3 ms). On GPU the parallel half is already 1.4 ms (pre 0.3 + grid 0.2 +
+    score 1.2); the 10 ms serial contention/suppression kernel is the same
+    deliberate serial-first choice P2.3 made for K9. THIS IS THE INPUT TO THE
+    PIXEL-MAP-PREFILTER FALLBACK DECISION RECORDED BELOW.
+    ONE INTERFACE ADDITION, stated because it is not a pure port: attach feature
+    17 (zResidAtInnermost) and its rt0 are defined on the pLS's REAL innermost
+    rec hit, and LST's hits SoA cannot supply it -- a pixel seed's four rows there
+    carry trajectory quantities (r3PCA, then (pt,eta,phi), then r3LH), which
+    differ from the true first hit by ~10 cm in z at large |eta|. PixelSeeds
+    therefore gained hit0X/Y/Z, filled by prepareInput from the caller (both call
+    sites updated). Without it the feature is simply wrong, not slightly off.
+    Producer surface: chainTracking.{gate,claim,attach,extension} PSets with the
+    frozen defaults; useChainTracking stays false by default.
   - **ATTACH CANDIDATE-FINDING FALLBACK (maintainer, 2026-08-03): if the P2.4 grid
     timing is not competitive (gate <= 10 ms/evt CPU; re-judged at P2.6), fall back
     to PIXEL MAPS AS PREFILTER-ONLY while keeping the general approach (learned
@@ -1802,6 +1850,31 @@ LATER separate pass (same prototype, jet-enriched ntuple) once the machinery exi
     displaced strata per pixel class must be RE-MEASURED (an IP-traced map can
     kill displaced pairs at candidate level before the displacement-aware head
     sees them — the M16 judging protocol applies, not aggregate parity).**
+  - **P2.4 LANDED (commit 445a8127a0f): grid prefilter + attach — PRODUCTION NOW
+    RUNS THE FULL FROZEN CONFIGURATION.** Grid keyed on the exact frozen-window
+    quantities with measured radial hulls + monotone-phiDir exactness — the
+    superset is PROVEN, not bounded (offline verification BEFORE kernels:
+    1,209,435 exact-scan pairs over 10 evts = the prototype's count
+    pair-for-pair, 0 missing; volume 65x down; audit[3] keeps it continuously
+    checkable in production). GATES: TC multiset EXACT at shipping flags
+    (19,897/19,897; tc_pt bit-exact incl. all 5,680 type-7 rows = attached pair
+    set pinned); 300-evt FULL-FREEZE scoreboard 29/29 identical (dup .051829,
+    eff .812939, d510 72/285); OFF-state clean; CUDA smoke clean. **TIMING GATE
+    MISSED, honestly: attach 201.8 -> 30.0 ms/evt CPU (6.7x, target 10). r2
+    head scoring = 15.3 ms, irreducible at exact parity (121k pairs/evt must be
+    scored as the reference scores them); GPU 11.6 ms of which 10.35 is the
+    serial contention kernel (parallelizes at P2.6 -> GPU attach ~1.3 ms).
+    Named P2.6 levers sized: head vectorization <= -10 ms, per-pLS/target
+    preprocessing hoist (12/19 inputs are pair-invariant), grid dup 1.2x -4 ms,
+    bounded-error atan2 -3 ms. This is THE INPUT to the pixel-map-prefilter
+    fallback decision (re-judged at P2.6; NOTE the nuance: a map prefilter cuts
+    the 15.3 ms only by scoring FEWER pairs = different physics = retrain; the
+    grid already scores exactly the reference set).** PixelSeeds gained
+    hit0X/Y/Z (load-bearing: feature 17 defined on the REAL innermost hit; the
+    hits SoA rows carry trajectory points ~10 cm off in z at high |eta|).
+    Producer surface: chainTracking.{gate,claim,attach,extension} PSets (33
+    params, frozen defaults). Process note: lst_make_tracklooper reports
+    success even when a TU fails — read the fresh .make.log.<timestamp>.
   - **QUEUED: POST-INTEGRATION SIMPLIFYING PASS (maintainer, 2026-08-02).**
     After integration + timing/memory are done, one pass re-judging marginal
     complexity. FIRST CANDIDATE: chain extension (-EX) — maintainer reaction to
