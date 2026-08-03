@@ -2115,6 +2115,32 @@ LATER separate pass (same prototype, jet-enriched ntuple) once the machinery exi
     cube/jet phase is a planned later round where BOTH algorithms' discriminators
     see the same enriched data, so the comparison stays fair. Enrichment is
     legitimate THERE, illegitimate as a substitute for fixing ttbar-visible gaps.
+  - **CANONICAL ROADMAP (maintainer-confirmed 2026-08-03; supersedes every
+    earlier ordering in this log):**
+    1. **pT3 REPLACEMENT CAMPAIGN — in the PROTOTYPE, running now.** Build the
+       TC-level dedup the recon identified as the sole blocker, then fan-out
+       agents on the physics until the gate is met (eff >= .81303, dup <= .052,
+       fake <= .047 vs the P25BASE synced baseline). Production stays PARKED.
+    2. **MAINTAINER SIGNS OFF ON PLOTS** — the same harness + comparison-curve
+       validation used through the prototyping phase. Nothing integrates before
+       this.
+    3. **INTEGRATE the winning configuration** into production (one validated
+       answer, no iterating inside CMSSW).
+    4. **P2.7 DELETION — pT5-side AND pT3-side together** (the subsidy finding
+       makes a split deletion strictly worse): T5/T4/pT5/pT3 builders, their
+       dedup+crossclean families, both pixel maps, the retired networks.
+    5. **P2.7b OUTPUT/CONVERTER surface** (LSTOutputConverter must read chain
+       TCs; printouts/writer cleanup).
+    6. **P2.8 CMSSW FULL-CHAIN SIGN-OFF** — workflow matrix, MTV + hit residuals
+       + downstream-MVA distributions. First and only cmsRun exposure.
+    7. **TIMING CAMPAIGN** — dedicated rounds to get BELOW current LST on both
+       backends (GPU is the weaker column: preview parity only where the
+       baseline is host-bound; CPU +1-2.5%). Parallelising the remaining serial
+       kernels and the attach candidate cost are the named levers.
+    8. **SIMPLIFYING PASS** — extension (-EX) and trim (-TR) removal A/Bs plus a
+       thin-yield audit of every other lever, with integrated timing in hand.
+    9. **CUBE + JET SAMPLES — LAST.** Retune for transferability; this is also
+       where dxy[10,30) gets fixed (edge-scorer training composition).
   - **QUEUED: POST-INTEGRATION SIMPLIFYING PASS (maintainer, 2026-08-02).**
     After integration + timing/memory are done, one pass re-judging marginal
     complexity. FIRST CANDIDATE: chain extension (-EX) — maintainer reaction to
