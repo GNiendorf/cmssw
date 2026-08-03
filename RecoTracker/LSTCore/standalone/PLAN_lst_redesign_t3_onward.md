@@ -1895,6 +1895,23 @@ LATER separate pass (same prototype, jet-enriched ntuple) once the machinery exi
     MAINTAINER, morning. Clean backout patch in p25_ref.** Race audit: all
     parallel-kernel invariants stated + verified (0 stableId collisions /
     907k edges).
+  - **P2.6d BENCHMARK METHODOLOGY (maintainer point, 2026-08-03: "hard to think
+    about these times without comparing to existing LST for some stream
+    number"). ALL P2.6a-c numbers are SINGLE-STREAM PER-STAGE ATTRIBUTION on a
+    -Cd (cut-value DEBUG) build, with GPU figures further inflated by per-kernel
+    queue drains — they are optimization telemetry, NOT comparable to LST's
+    headline throughput (~1.9 ms/evt GPU, which is multi-stream lst_timing on a
+    production build). The ONLY comparable pair measured so far is P2.3's
+    single-stream CPU total: LST 845 vs chains-on 884 ms/evt (debug build,
+    both algorithms running). THE P2.6d TABLE MUST BE: production builds (-C /
+    -G, NO -d), lst_timing stream sweeps (CPU 1/4/16/32/64, GPU 1/2/4/6/8),
+    same events, runs SEQUENTIAL (never parallel — contaminates), three
+    configurations: (1) LST baseline (flag off), (2) chains-on hybrid (both
+    algorithms — the honest current state), (3) chains-on with the doomed
+    builders skipped behind a TIMING-ONLY env flag (physics output invalid and
+    labelled as such; wall time = a MEASURED preview of post-P2.7, not an
+    extrapolation). Report per-stream-count throughput + per-stage means, plus
+    the memory table. This is the artifact the maintainer decides on.**
   - **QUEUED: POST-INTEGRATION SIMPLIFYING PASS (maintainer, 2026-08-02).**
     After integration + timing/memory are done, one pass re-judging marginal
     complexity. FIRST CANDIDATE: chain extension (-EX) — maintainer reaction to
