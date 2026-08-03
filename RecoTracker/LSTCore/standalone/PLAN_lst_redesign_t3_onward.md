@@ -1761,10 +1761,18 @@ LATER separate pass (same prototype, jet-enriched ntuple) once the machinery exi
     among shared chains).** Cause: the weld comparator's index tie-break is
     genuinely exercised (36.4k distinct logits among 48.4k eligible edges/evt)
     x edge numbering permuted by two atomicAdd scatters (LST's own upstream
-    T3 slot assignment + the K1c CSR cursor). Remedies for P2.5: canonical
-    (sorted) CSR slices + upstream T3 slot ordering, OR a physically stable
-    tie-break key — the latter changes a frozen comparator = MAINTAINER
-    DECISION. Dual-flag reference harnesses (p21_ref/p22_ref) committed.
+    T3 slot assignment + the K1c CSR cursor). **MAINTAINER POLICY (2026-08-02):
+    NO SORTING anywhere in the algorithm, and no timing spent on determinism.
+    The P2.5 remedy is the FREE one only: swap the comparator's tie-break
+    operand from the volatile slot index to a physically stable identity (T3
+    anchor-hit index — already in the SoA; same comparison count, zero extra
+    passes, at most one extra load). Implement, MEASURE, and if it shows any
+    timing cost, fall back to ACCEPTING the documented nondeterminism (it is
+    physics-benign: 0 kill flips among shared chains, identical distributions
+    — it only reshuffles which of two exactly-equal-scored alternatives wins).
+    The comparator change is a bit-level redefinition of a frozen quantity:
+    P2.5 re-verifies the frozen scoreboard after the swap.** Dual-flag
+    reference harnesses (p21_ref/p22_ref) committed.
   - **QUEUED: POST-INTEGRATION SIMPLIFYING PASS (maintainer, 2026-08-02).**
     After integration + timing/memory are done, one pass re-judging marginal
     complexity. FIRST CANDIDATE: chain extension (-EX) — maintainer reaction to
