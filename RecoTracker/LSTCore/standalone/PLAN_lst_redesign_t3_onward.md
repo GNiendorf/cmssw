@@ -1950,6 +1950,30 @@ LATER separate pass (same prototype, jet-enriched ntuple) once the machinery exi
     post-integration queue to run BEFORE/WITH P2.7 deletion** — deleting pT5
     while keeping pT3 is the worst of both worlds. Maintainer also notes GPU is
     currently the weaker backend relatively (+5% vs CPU's +2% on the preview).
+  - **P2.4b EXPECTATION SETTING (maintainer, 2026-08-03): the pT3 replacement
+    will likely take SEVERAL ROUNDS (retraining, feature engineering, possibly
+    a regenerated training sample) — round one is not the verdict.** The
+    asymmetry is real: LST's pT3 path is a mature stack (superbin map + a
+    substantial physics-cut set + pt3dnn, tuned for years) and we replace it
+    with one 19-feature MLP + contention. WHY BARE-T3 TARGETS ARE HARDER THAN
+    CHAIN TARGETS: (a) 3 layers = short lever arm = poorly constrained fit, so
+    curvature/tanLambda features that separate well for 5-7-layer chains are
+    noisy and several of the 19 may be near-degenerate; (b) ~45x more targets
+    (43k vs ~1k) so the same false-positive RATE yields far more fake TCs — the
+    threshold must be sharper; (c) LST's cuts encode real physics about that
+    under-constrained geometry which our head must LEARN. WHAT IS IN OUR FAVOUR:
+    (a) identical raw T3s — purely a selection question; (b) **the T3's own DNN
+    scores (t3_fakeScore/promptScore/displacedScore) are the obvious missing
+    feature — in the chain gate the member-t3-score features were the strongest
+    single inputs (AUC .856), and for a bare-T3 target the T3's own score IS the
+    object-quality signal**; (c) the grid gives a training population MATCHED TO
+    SERVING (M16's dump was analytic-window pairs, mostly junk, tens of GB);
+    (d) our head sees the pLS's measured helix, not IP-traced bins — the
+    displaced upside. LADDER: feasibility recon -> regenerate the dump from
+    grid-selected bare-T3 pairs -> retrain with feature engineering (T3 scores
+    in, degenerate features out, target-type-conditioned capacity) -> A/B vs
+    LST's pT3 delivery incl. displaced strata -> iterate on the gap analysis ->
+    flip. Estimate 2-4 rounds.
   - **QUEUED: POST-INTEGRATION SIMPLIFYING PASS (maintainer, 2026-08-02).**
     After integration + timing/memory are done, one pass re-judging marginal
     complexity. FIRST CANDIDATE: chain extension (-EX) — maintainer reaction to
