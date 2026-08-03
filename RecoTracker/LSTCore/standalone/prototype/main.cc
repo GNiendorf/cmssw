@@ -157,6 +157,7 @@
 #include "NtupleReader.h"
 #include "OutputWriter.h"
 #include "PixelAttach.h"
+#include "PixelAttachCand.h"
 #include "PixelAttachPairs.h"
 #include "Stages.h"
 #include "Trim.h"
@@ -390,7 +391,42 @@ void usage(const char* prog) {
                "              volume knob (conversion purity flat at ~5.7%% for every -TT), so\n"
                "              it buys fake and pays track length at a fixed rate; -TA restricts\n"
                "              the trim to chains that genuinely mis-fit (purity 11.9%% at 3.0,\n"
-               "              ~3x the conversions at equal trim volume)\n",
+               "              ~3x the conversions at equal trim volume)\n"
+               " ---- M20 (T3ATTACH) CANDIDATE FINDING, all default to the frozen behaviour ----\n"
+               "  -CF <0|1|2> (-A 4) candidate finding for the general attach:\n"
+               "              0 = the frozen FULL ANALYTIC SCAN (default, bit-exact),\n"
+               "              1 = the scalar BINNED PREFILTER (provable superset of 0; see\n"
+               "                  PixelAttachCand.h for the proof and -CFA for the audit),\n"
+               "              2 = an EXTERNAL candidate-pair list from -CFM (LST's pixel map\n"
+               "                  used as a prefilter only, no map port).\n"
+               "  -CFA <0|1>  run the analytic full scan ALONGSIDE the candidate finder and\n"
+               "              count the analytic-accepted pairs the candidate set missed.\n"
+               "              MUST report 0 for -CF 1. Expensive: audit runs only.\n"
+               "  -CFB <mult> bin width as a multiple of the analytic window (default 1.0).\n"
+               "              Smaller = tighter candidate volume, more cells.\n"
+               "  -CFR <cm>   rt bin width (default 8.0). -CFP <rad> phi arc pad (default 0.02).\n"
+               "  -CFC <0|1>  also route CHAIN targets through the candidate finder (default 0:\n"
+               "              chain targets keep the full scan so the frozen pT5 line cannot\n"
+               "              move while only the bare-T3 side is being developed).\n"
+               "  -CFM <path> candidate-pair file for -CF 2 (text or binary; format documented\n"
+               "              in PixelAttachCand.h). -CFW <0|1> additionally enforces the\n"
+               "              analytic windows on map candidates (default 0: the map IS the\n"
+               "              prefilter and the windows are features only).\n"
+               " ---- M20 pT3-CLASS HIT-OVERLAP CONTENTION (the CrossCleanpT3 analogue) ----\n"
+               "  -CC <0|1>   (-A 4) run a post-assembly hit-overlap contention over the\n"
+               "              bare-T3 (type-5) deliveries. They are decided AFTER the K9 claim\n"
+               "              and otherwise never compete for hits with anything, which is the\n"
+               "              measured cause of the pT3-class duplicate explosion. Shared-hit\n"
+               "              structure ONLY -- no dR/dEta/embedding proximity, by rule.\n"
+               "  -CCT <frac> drop a delivery whose CLAIMED OT-hit fraction exceeds this\n"
+               "              (default 0 = any shared OT hit drops it; 6 OT hits per delivery,\n"
+               "              so the meaningful steps are 0, 1/6, 2/6, 3/6).\n"
+               "  -CCP <0|1>  1 (default) = everything already delivered (chain TCs and the\n"
+               "              surviving carried pixel rows) pre-claims its OT hits; 0 = the\n"
+               "              deliveries contend only with each other.\n"
+               "  -CCK <0|1|2> keep-best key: 0 attach logit (default), 1 pLS pt, 2 t3 row.\n"
+               "  -T3E <n>    bare-T3 stage B: -1 (default) follow -RT3, 0 force off, 1 force\n"
+               "              on even with LST's pT3 rows carried (DIAGNOSTIC: double-counts).\n",
                prog);
 }
 
@@ -769,6 +805,41 @@ int main(int argc, char** argv) {
   float pdFakeStrideT3 = 1.f;
   float pdFirstEvt = 0.f;
 
+  // M20 (T3ATTACH-BUILD) CANDIDATE FINDING. See PixelAttachCand.h. Every default here is
+  // the FROZEN behaviour (full analytic scan, no audit, stage B tied to -RT3), so any
+  // pre-M20 command line is bit-exact.
+  float candMode = 0.f;      // -CF   0 = analytic full scan, 1 = binned prefilter, 2 = map
+  float candAudit = 0.f;     // -CFA  1 = run the analytic scan alongside and count misses
+  float candBinMult = 1.f;   // -CFB  bin width as a multiple of the analytic window
+  float candRtBinW = 8.f;    // -CFR  rt bin width [cm]
+  float candPhiPad = 0.02f;  // -CFP  extra pad on the inserted phi arc [rad]
+  float candMapWin = 0.f;    // -CFW  mode 2: ALSO enforce the analytic windows
+  float candChainToo = 0.f;  // -CFC  apply the candidate finder to CHAIN targets too
+  float t3StageEnable = -1.f;  // -T3E bare-T3 stage B: -1 = follow -RT3 (frozen coupling),
+                               //      0 = force off, 1 = force on even with pT3 carried
+                               //      (a DIAGNOSTIC: carrying LST's pT3 rows AND
+                               //      delivering ours double-counts the class)
+  std::string candMapPath;   // -CFM  candidate-pair file for mode 2
+
+  // M20 pT3-CLASS HIT-OVERLAP CONTENTION (the CrossCleanpT3 analogue). Bare-T3 deliveries
+  // are decided post-claim and otherwise never compete for hits with anything; measured
+  // consequence is 472 rows/evt vs LST's ~150 and a 5.5x duplicate rate. Default OFF so
+  // the frozen line is bit-exact; this is the campaign's PRIMARY tuning axis.
+  float ccMode = 0.f;      // -CC   1 = run the OT-side contention
+  float ccGran = 1.f;      // -CCG  ownership-map granularity: 1 = MD rows (DEFAULT; see
+                           //       the granularity note at the implementation site),
+                           //       0 = outer-tracker HIT rows
+  float ccMinShared = 2.f; // -CCN  kill when the number of SHARED (already-claimed) units
+                           //       REACHES this. A delivery has exactly 3 MDs, so at
+                           //       -CCG 1: 2 = "2 of 3 MDs shared == same track" (the
+                           //       maintainer rule), 1 = any shared MD, 3 = identical
+                           //       MD triple only. At -CCG 0 it counts OT hit rows (of 6).
+  float ccPreclaim = 1.f;  // -CCP  1 = already-delivered TCs pre-claim into the map
+  float ccOrder = 0.f;     // -CCK  keep-best key: 0 attach logit, 1 pLS pt, 2 t3 row
+  float rdT3 = -1.f;       // -RDT  stage-B PIXEL-SIDE seed-family dedup: -1 follow -RD
+                           //       (default), 0 off, 1 on. Splitting it from -RD is what
+                           //       lets the campaign measure OT-only vs pixel-assisted.
+
   // Pre-scan for the multi-char flags -T4/-T5/-T6 and -U4/-U5/-U6 (getopt cannot
   // express them: "-T4" would parse as -T with value "4"); consume flag+value pairs
   // here and hand the compacted argv to getopt. "-T <v>" stays in getopt as
@@ -960,6 +1031,48 @@ int main(int argc, char** argv) {
       dst = &pdFakeStrideT3;
     else if (s == "-PDN")  // M16 pairdump: first LST entry (chunked dumps)
       dst = &pdFirstEvt;
+    // M20 candidate finding. -CFM is a PATH, so it is consumed here explicitly; the rest
+    // are floats and join the table. All must be pre-scanned: getopt's "-C"/"-T" would
+    // otherwise swallow them.
+    else if (s == "-CFM") {
+      if (a + 1 >= argc) {
+        std::fprintf(stderr, "Error: -CFM requires a path.\n");
+        usage(argv[0]);
+        return 1;
+      }
+      candMapPath = argv[++a];
+      continue;
+    } else if (s == "-CFA")
+      dst = &candAudit;
+    else if (s == "-CFB")
+      dst = &candBinMult;
+    else if (s == "-CFR")
+      dst = &candRtBinW;
+    else if (s == "-CFP")
+      dst = &candPhiPad;
+    else if (s == "-CFW")
+      dst = &candMapWin;
+    else if (s == "-CFC")
+      dst = &candChainToo;
+    else if (s == "-CF")
+      dst = &candMode;
+    else if (s == "-T3E")
+      dst = &t3StageEnable;
+    // M20 pT3-class hit-overlap contention. -CCT/-CCP/-CCK MUST precede -CC in this
+    // chain: the scan uses exact string equality, but keeping the longer names first
+    // documents the intent and survives a future switch to prefix matching.
+    else if (s == "-CCG")
+      dst = &ccGran;
+    else if (s == "-CCN")
+      dst = &ccMinShared;
+    else if (s == "-CCP")
+      dst = &ccPreclaim;
+    else if (s == "-CCK")
+      dst = &ccOrder;
+    else if (s == "-CC")
+      dst = &ccMode;
+    else if (s == "-RDT")
+      dst = &rdT3;
     if (dst == nullptr) {
       args.push_back(argv[a]);
       continue;
@@ -1117,6 +1230,42 @@ int main(int argc, char** argv) {
   if (attachMode == 4 && mode != "hybrid") {
     std::fprintf(stderr, "Error: -A 4 is a hybrid-mode delivery path.\n");
     return 1;
+  }
+  // M20: candidate-finder validation. Same discipline -- a mistyped -CF must not silently
+  // fall back to the full scan and be read as a prefilter result.
+  {
+    const int cm = static_cast<int>(candMode + 0.5f);
+    if (cm < 0 || cm > 2) {
+      std::fprintf(stderr, "Error: -CF expects 0 (analytic), 1 (binned prefilter) or 2 (map candidates).\n");
+      return 1;
+    }
+    if (cm == kCandMap && candMapPath.empty()) {
+      std::fprintf(stderr, "Error: -CF 2 requires -CFM <candidate pair file>.\n");
+      return 1;
+    }
+    if (cm != kCandMap && !candMapPath.empty())
+      std::fprintf(stderr, "WARNING: -CFM given without -CF 2; the candidate file is IGNORED.\n");
+    // Consumers: the -A 4 delivery path, and the pairdump (same enumeration, so the
+    // prefilter is a pure speedup there). -CF 2 is delivery-only: a map candidate list is
+    // a decision input, not a training-set definition.
+    if (cm != kCandAnalytic && attachMode != 4 && mode != "pairdump") {
+      std::fprintf(stderr, "Error: -CF %d requires -A 4 or -m pairdump.\n", cm);
+      return 1;
+    }
+    if (cm == kCandMap && mode == "pairdump") {
+      std::fprintf(stderr, "Error: -CF 2 (map candidates) is a delivery-path mode; pairdump enumerates the\n"
+                           "       analytic universe by construction. Use -CF 0 or -CF 1 for dumps.\n");
+      return 1;
+    }
+    if (ccMode >= 0.5f && attachMode != 4) {
+      std::fprintf(stderr, "Error: -CC requires -A 4 (it cleans the pT3-class attach deliveries).\n");
+      return 1;
+    }
+    const int ck = static_cast<int>(ccOrder + 0.5f);
+    if (ccMode >= 0.5f && (ck < 0 || ck > 2)) {
+      std::fprintf(stderr, "Error: -CCK expects 0 (attach logit), 1 (pLS pt) or 2 (t3 row).\n");
+      return 1;
+    }
   }
 
   NtupleReader reader(lstPath, trkPath);
@@ -1396,6 +1545,14 @@ int main(int argc, char** argv) {
     // displaced strata of the true-pair population, because the pT5-class and pT3-class
     // deliveries are judged separately (plan 11).
     AttachParams apre;  // default prefilter windows (PixelAttach.h: 0.6 / 0.4)
+    // M20: pairdump-local candidate-finder state (the hybrid block owns its own).
+    const int candModeI = static_cast<int>(candMode + 0.5f);
+    PlsCandIndex pdCandIdx;
+    CandStats pdCandStats;
+    CandIndexParams pdCandIdxParams;
+    pdCandIdxParams.rtBinW = candRtBinW;
+    pdCandIdxParams.binMult = candBinMult;
+    pdCandIdxParams.phiPad = candPhiPad;
     const int pdMode = static_cast<int>(pdTargetMode);
     const long long strideChain = std::max(1LL, static_cast<long long>(pdFakeStrideChain));
     const long long strideT3 = std::max(1LL, static_cast<long long>(pdFakeStrideT3));
@@ -1715,6 +1872,18 @@ int main(int argc, char** argv) {
       // --- prefilter-only pair enumeration over BOTH target kinds (shared K8 path) -----
       const auto t0 = std::chrono::steady_clock::now();
       std::vector<AttachPair> pairs;
+      // M20: the pairdump runs the SAME enumeration as the delivery path, so the binned
+      // prefilter applies verbatim -- and it is proven to emit the identical pair list, so
+      // -CF 1 here is a pure speedup for the campaign's training-data generation. -CFA
+      // audits it exactly as in hybrid mode.
+      if (candModeI == kCandBinned) {
+        apre.candMode = candModeI;
+        apre.candAudit = (candAudit >= 0.5f);
+        apre.candChainToo = (candChainToo >= 0.5f);
+        apre.candStats = &pdCandStats;
+        k8BuildPlsCandIndex(ev, apre, pdCandIdxParams, pdCandIdx);
+        apre.cand = &pdCandIdx;
+      }
       k8EnumeratePrefilteredPairsGeneral(ev, chains, accepted, cf, gateLogit, bareMask, apre, pairs);
       const auto t1 = std::chrono::steady_clock::now();
       const double enumMs = msBetween(t0, t1);
@@ -1880,6 +2049,15 @@ int main(int argc, char** argv) {
 
     const double nEvD = nRun > 0 ? static_cast<double>(nRun) : 1.0;
     const char* const kKindName[2] = {"CHAIN (ttype 0, pT5-class)", "BARE T3 (ttype 1, pT3-class)"};
+    if (candModeI == kCandBinned)
+      std::printf("pairdump candfind: -CF 1 binned prefilter | targets=%lld examined=%lld (%.4gx of"
+                  " full scan %lld) emitted=%lld | -CFA audit: analytic=%lld MISSING=%lld %s\n",
+                  pdCandStats.nTargets, pdCandStats.nExamined,
+                  pdCandStats.nFullScan > 0
+                      ? static_cast<double>(pdCandStats.nExamined) / static_cast<double>(pdCandStats.nFullScan)
+                      : 0.0,
+                  pdCandStats.nFullScan, pdCandStats.nEmitted, pdCandStats.nAnalytic, pdCandStats.nMissing,
+                  (candAudit >= 0.5f) ? (pdCandStats.nMissing == 0 ? "PASS" : "*** FAIL ***") : "(not run)");
     std::printf("pairdump summary: %lld events (prefDTanL=%.3f prefDPhi=%.3f, kAttachFeat=%d, -PDT %d)\n", nRun,
                 apre.prefDTanL, apre.prefDPhi, kAttachFeat, pdMode);
     for (int tt = 0; tt < 2; ++tt) {
@@ -2144,6 +2322,24 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "WARNING: cannot open PROTO_DCA_DUMP path %s\n", dcaPath);
     }
 
+    // ---- M20 (T3ATTACH-BUILD) per-run candidate-finder state ----------------------
+    // candIdx is REUSED across events (its vectors keep their capacity); the binned
+    // index is rebuilt per event, the map projection re-selected per event.
+    const int candModeI = static_cast<int>(candMode + 0.5f);
+    PlsCandIndex candIdx;
+    CandIndexParams candIdxParams;
+    candIdxParams.rtBinW = candRtBinW;
+    candIdxParams.binMult = candBinMult;
+    candIdxParams.phiPad = candPhiPad;
+    MapCandFile mapCandFile;
+    if (candModeI == kCandMap && !k8LoadMapCandFile(candMapPath, mapCandFile))
+      return 1;  // a half-read candidate list must never be mistaken for a physics result
+    double totCandBuildMs = 0.0;
+    // -T3E: bare-T3 stage B is tied to -RT3 by default (delivering our pT3 class while
+    // LST's carried type-5 rows are ALSO kept double-counts the class). -T3E 1 forces it
+    // on anyway as a DIAGNOSTIC, -T3E 0 forces it off.
+    const bool doT3Stage = (t3StageEnable < -0.5f) ? (replT3 >= 0.5f) : (t3StageEnable >= 0.5f);
+
     long long totPixKept = 0;
     long long totChainsIn = 0, totAfterTheta = 0, totAfterPixDrop = 0, totAfterClaim = 0;
     long long totChainTCs = 0, totT5c = 0, totT4c = 0;
@@ -2156,6 +2352,9 @@ int main(int argc, char** argv) {
     long long totDelivT5 = 0, totDelivT3 = 0, totGaDcaBlocked = 0, totM16ChainOwners = 0;
     long long totGaPairs = 0, totGaScored = 0, totGaChainAtt = 0, totGaT3Att = 0;
     long long totSeedDedup = 0;
+    long long totCCDropped = 0;      // M20 -CC OT-side crossclean ledger
+    long long totSeedDedupT3 = 0;    // M20: the PIXEL-side (-RDT) half, reported apart
+    CandStats candStats;         // M20 candidate-finder volume / superset audit
     long long totM16Supp[3] = {0, 0, 0};  // {type 7, type 5, type 8} rows retired by attach
     long long nPostClaimKilled = 0;                                   // M14 (-Q4/-Q5)
     long long nDedupKilled = 0;                                       // M17 (-DD)
@@ -2582,6 +2781,22 @@ int main(int argc, char** argv) {
       GeneralAttachParams gap;
       gap.pref.thetaAttach = thetaAttach;
       gap.thetaAttachT3 = thetaAttachT3;
+      // ---- M20 CANDIDATE FINDING (PixelAttachCand.h). candMode 0 leaves every field at
+      // its default, so the frozen full analytic scan is untouched.
+      gap.pref.candMode = candModeI;
+      gap.pref.candAudit = (candAudit >= 0.5f);
+      gap.pref.candMapWindows = (candMapWin >= 0.5f);
+      gap.pref.candChainToo = (candChainToo >= 0.5f);
+      if (candModeI != kCandAnalytic) {
+        gap.pref.candStats = &candStats;
+        const auto tcb0 = std::chrono::steady_clock::now();
+        if (candModeI == kCandBinned)
+          k8BuildPlsCandIndex(ev, gap.pref, candIdxParams, candIdx);
+        else
+          k8SelectMapCandidates(ev, mapCandFile, candIdx, &candStats);
+        totCandBuildMs += msBetween(tcb0, std::chrono::steady_clock::now());
+        gap.pref.cand = &candIdx;
+      }
       GeneralAttach ga;
       long long nGaDcaBlocked = 0;
 
@@ -3228,9 +3443,14 @@ int main(int argc, char** argv) {
           for (int c = 0; c < static_cast<int>(ga.chainPls.size()); ++c)
             if (ga.chainPls[c] >= 0)
               owners.push_back(c);
-          std::sort(owners.begin(), owners.end(), [&ga](int a, int b) {
+          // P2.5 stable tie-break (production ChainsSoA.h names the attach -RD dedup
+          // order as a stableKey consumer): logit desc, chain stableKey asc, index asc.
+          const bool haveSkRd = (chains.stableKey.size() == chains.score.size());
+          std::sort(owners.begin(), owners.end(), [&ga, &chains, haveSkRd](int a, int b) {
             if (ga.chainLogit[a] != ga.chainLogit[b])
               return ga.chainLogit[a] > ga.chainLogit[b];
+            if (haveSkRd && chains.stableKey[a] != chains.stableKey[b])
+              return chains.stableKey[a] < chains.stableKey[b];
             return a < b;
           });
           for (int c : owners) {
@@ -3429,6 +3649,7 @@ int main(int argc, char** argv) {
       std::vector<float> attachRefPt, attachRefEta, attachRefPhi;
       long long nAttached = 0, nUpgraded = 0;
       long long nDelivT5 = 0, nDelivT3 = 0, nBareT3Targets = 0;
+      long long nCCDropped = 0;  // M20 -CC: pT3-class deliveries revoked by hit overlap
       double attachT3Ms = 0.0;
       if (attachMode) {
         plsSuppressed.assign(ev.pLS_pt.size(), 0);
@@ -3511,10 +3732,11 @@ int main(int argc, char** argv) {
       if (attachMode == 4) {
         std::vector<int> pixHits;
 
-        // (5) STAGE B + (6b) type-5 (pT3-class) deliveries. Only under -RT3: without the
-        // carried type-5 rows being replaced there is nothing to measure and the extra
-        // TCs would be pure duplication of a class the baseline still delivers.
-        if (replT3 >= 0.5f) {
+        // (5) STAGE B + (6b) type-5 (pT3-class) deliveries. Tied to -RT3 by default:
+        // without the carried type-5 rows being replaced there is nothing to measure and
+        // the extra TCs would be pure duplication of a class the baseline still
+        // delivers. -T3E overrides the coupling in either direction (diagnostic).
+        if (doT3Stage) {
           const auto tb0 = std::chrono::steady_clock::now();
           gaStageT3(ev, chains, accepted, cfHyb, gateLogit, gap, ga);
           attachT3Ms = msBetween(tb0, std::chrono::steady_clock::now());
@@ -3522,7 +3744,10 @@ int main(int argc, char** argv) {
           // seeds gets N pT3-class deliveries (measured DR 0.82-0.93 before this) --
           // and, because the map carries stage A's kept seeds, a track already
           // delivered as a pT5 cannot ALSO be delivered as a pT3 by a sibling seed.
-          if (seedDupClean >= 0.5f) {
+          // -RDT: the PIXEL-SIDE half of the pT3-class dedup, split from -RD so the
+          // campaign can run OT-only (-RDT 0) against pixel-assisted (-RDT 1).
+          const bool doRdT3 = (rdT3 < -0.5f) ? (seedDupClean >= 0.5f) : (rdT3 >= 0.5f);
+          if (doRdT3) {
             std::vector<int> t3Owners;
             for (int t = 0; t < static_cast<int>(ga.t3Pls.size()); ++t)
               if (ga.t3Pls[t] >= 0)
@@ -3544,11 +3769,210 @@ int main(int argc, char** argv) {
             }
             ga.nT3Attached -= nSeedDedupT3;
           }
-          for (int t = 0; t < static_cast<int>(ga.t3Pls.size()); ++t) {
-            if (ga.t3Pls[t] < 0)
-              continue;
+          // ---- (6c) M20: pT3-CLASS HIT-OVERLAP CONTENTION (-CC), the CrossCleanpT3
+          // analogue. --------------------------------------------------------------
+          // Bare-T3 deliveries are decided AFTER the K9 claim, so NOTHING has ever made
+          // them compete for hits: not with the chain TCs already assembled, and not with
+          // each other. Measured consequence (sibling production recon, 300 evts): 472
+          // delivered rows/evt against LST's ~150, 82% of them for a sim that another TC
+          // already delivers, and a 5.5x duplicate rate. The pair head cannot repair that
+          // -- it ranks pair COMPATIBILITY, and a duplicate of a real track is a perfectly
+          // compatible pair -- and neither can a K9-claim-overlap veto, which was measured
+          // to remove duplicates and signal together. The missing stage is a hit-overlap
+          // crossclean, exactly the role LST's CrossCleanpT3 plays.
+          //
+          // Mechanism = the two shapes this codebase already uses:
+          //   (i)  an OWNERSHIP MAP pre-loaded from everything already delivered (the
+          //        K9 / Extend claim shape) -- gated by -CCP;
+          //   (ii) a greedy BEST-FIRST sweep over the deliveries (the -RD attach dedup
+          //        shape): a delivery that finds >= -CCN of its own units already in the
+          //        map is dropped, otherwise it claims them.
+          //
+          // TWO HARD CONSTRAINTS, both maintainer requirements, both structural to this
+          // implementation rather than parameters of it:
+          //   * OWNERSHIP-MAP BASED, NEVER PAIRWISE. Every candidate looks up ITS OWN
+          //     units in one map and decides alone. Cost is linear in the candidate's
+          //     unit count (3 MDs, or 6 hits), never quadratic in candidates. This is
+          //     exactly why the claim does not explode in a jet core, where LST's
+          //     pairwise CrossClean loops do -- it is a timing requirement as much as a
+          //     physics one. There is no candidate-vs-candidate comparison anywhere below.
+          //   * NO PROXIMITY CRITERIA. LST's own CrossCleanpT3 kills a pT3 whose pixel
+          //     direction is within dR^2 < 1e-5 of a pT5's. That shape is NOT copied.
+          //     Shared structure only.
+          //
+          // GRANULARITY (-CCG), the lesson from the sibling recon's failed attempt: it
+          // reused the CHAIN claim budget (<= 2 hits, <= 20% fraction), which is tuned for
+          // 10-14-hit objects, and killed signal with the duplicates (unique pT3-only sims
+          // recovered collapsed 241/265 -> 15/218). A 6-hit / 3-MD T3 shares MDs with
+          // other T3s by the nature of the graph, so the right unit is the MD and the
+          // right rule is COUNTING: >= 2 shared MDs of 3 == the same track (kill), exactly
+          // 1 shared MD == two tracks crossing (keep both). -CCG 1 -CCN 2 is that rule and
+          // is the default; -CCG 0 counts OT hit rows instead, for the A/B.
+          std::vector<int> t3Deliv;
+          for (int t = 0; t < static_cast<int>(ga.t3Pls.size()); ++t)
+            if (ga.t3Pls[t] >= 0)
+              t3Deliv.push_back(t);
+
+          const bool ccMd = (ccGran >= 0.5f);
+          const int ccNeed = std::max(1, static_cast<int>(ccMinShared + 0.5f));
+          std::vector<char> ccClaimed;  // the ownership map: MD rows, or ph2 hit rows
+          int ccMaxUnit = -1;
+          if (ccMode >= 0.5f) {
+            if (ccMd) {
+              ccMaxUnit = static_cast<int>(ev.md_anchorHitIdx.size()) - 1;
+            } else {
+              for (std::size_t m = 0; m < ev.md_anchorHitIdx.size(); ++m)
+                ccMaxUnit = std::max(ccMaxUnit, std::max(ev.md_anchorHitIdx[m], ev.md_otherHitIdx[m]));
+              for (const std::vector<int>& v : ev.t5_hitIndices)
+                for (int h : v)
+                  ccMaxUnit = std::max(ccMaxUnit, h);
+              for (const std::vector<int>& v : ev.pT3_otHitIndices)
+                for (int h : v)
+                  ccMaxUnit = std::max(ccMaxUnit, h);
+              for (const OutTC& o : outTCs)
+                for (std::size_t h = 0; h < o.hitIdxs.size() && h < o.hitTypes.size(); ++h)
+                  if (o.hitTypes[h] == proto::HitType::Phase2OT)
+                    ccMaxUnit = std::max(ccMaxUnit, static_cast<int>(o.hitIdxs[h]));
+            }
+            ccClaimed.assign(static_cast<std::size_t>(std::max(ccMaxUnit, -1)) + 1, 0);
+            auto ccMark = [&](int u) {
+              if (u >= 0 && u <= ccMaxUnit)
+                ccClaimed[u] = 1;
+            };
+            // -CCP 1: everything ALREADY DELIVERED writes its units into the map -- the
+            // assembled chain TCs (bare and in-place-upgraded type-7 alike) and the
+            // carried pixel rows that survived the M16 suppression. A pT3-class delivery
+            // sitting on top of one of those is the duplicate we are removing.
+            if (ccPreclaim >= 0.5f) {
+              if (ccMd) {
+                // MD granularity: the chain TCs' MD lists are the chains' own dedup MD
+                // CSR (outTCChain maps an emitted TC back to its chain row).
+                for (std::size_t j = 0; j < outTCs.size() && j < outTCChain.size(); ++j) {
+                  const int c = outTCChain[j];
+                  if (c < 0 || c + 1 >= static_cast<int>(chains.mdOffsets.size()))
+                    continue;
+                  for (int k = chains.mdOffsets[c]; k < chains.mdOffsets[c + 1]; ++k)
+                    ccMark(chains.mdItems[k]);
+                }
+                // Carried pixel rows do not expose an MD list, only hit rows, so their
+                // contribution is routed through the hit->MD map built once below.
+              } else {
+                for (const OutTC& o : outTCs)
+                  for (std::size_t h = 0; h < o.hitIdxs.size() && h < o.hitTypes.size(); ++h)
+                    if (o.hitTypes[h] == proto::HitType::Phase2OT)
+                      ccMark(static_cast<int>(o.hitIdxs[h]));
+              }
+              // Surviving carried pixel rows (type 7 / type 5) hold outer-tracker hits.
+              // At MD granularity they are mapped onto MD rows through hit2md, which is
+              // built ONCE per event -- still one map lookup per unit, never a pairwise
+              // loop.
+              if (!ccMd || true) {
+                std::vector<int> hit2md;
+                if (ccMd) {
+                  int mh = -1;
+                  for (std::size_t m = 0; m < ev.md_anchorHitIdx.size(); ++m)
+                    mh = std::max(mh, std::max(ev.md_anchorHitIdx[m], ev.md_otherHitIdx[m]));
+                  for (const std::vector<int>& v : ev.t5_hitIndices)
+                    for (int h : v)
+                      mh = std::max(mh, h);
+                  for (const std::vector<int>& v : ev.pT3_otHitIndices)
+                    for (int h : v)
+                      mh = std::max(mh, h);
+                  hit2md.assign(static_cast<std::size_t>(std::max(mh, -1)) + 1, -1);
+                  for (int m = 0; m < static_cast<int>(ev.md_anchorHitIdx.size()); ++m) {
+                    const int ha = ev.md_anchorHitIdx[m], hb = ev.md_otherHitIdx[m];
+                    if (ha >= 0 && ha <= mh)
+                      hit2md[ha] = m;
+                    if (hb >= 0 && hb <= mh)
+                      hit2md[hb] = m;
+                  }
+                }
+                auto markCarriedHit = [&](int h) {
+                  if (!ccMd) {
+                    ccMark(h);
+                    return;
+                  }
+                  if (h >= 0 && h < static_cast<int>(hit2md.size()) && hit2md[h] >= 0)
+                    ccMark(hit2md[h]);
+                };
+                for (std::size_t it = 0; it < ev.tc_type.size(); ++it) {
+                  if (!m16RowSuppressed.empty() && m16RowSuppressed[it])
+                    continue;
+                  const int ty = ev.tc_type[it];
+                  if (ty == 7) {
+                    const int p5 = (it < ev.tc_pt5Idx.size()) ? ev.tc_pt5Idx[it] : -999;
+                    if (p5 < 0 || p5 >= static_cast<int>(ev.pT5_t5Idx.size()))
+                      continue;
+                    const int t5 = ev.pT5_t5Idx[p5];
+                    if (t5 < 0 || t5 >= static_cast<int>(ev.t5_hitIndices.size()))
+                      continue;
+                    for (int h : ev.t5_hitIndices[t5])
+                      markCarriedHit(h);
+                  } else if (ty == 5) {
+                    const int p3 = (it < ev.tc_pt3Idx.size()) ? ev.tc_pt3Idx[it] : -999;
+                    if (p3 < 0 || p3 >= static_cast<int>(ev.pT3_otHitIndices.size()))
+                      continue;
+                    for (int h : ev.pT3_otHitIndices[p3])
+                      markCarriedHit(h);
+                  }
+                }
+              }
+            }
+            // KEEP-BEST ORDER (-CCK). 0 = attach logit desc (the pair head's own ranking),
+            // 1 = pLS pt desc, 2 = t3 row ascending (order-free control). Ties always
+            // break on the lower t3 row, so the sweep is deterministic.
+            const int ccKey = static_cast<int>(ccOrder + 0.5f);
+            std::sort(t3Deliv.begin(), t3Deliv.end(), [&](int a, int b) {
+              if (ccKey == 1) {
+                const float pa = ev.pLS_pt[ga.t3Pls[a]], pb = ev.pLS_pt[ga.t3Pls[b]];
+                if (pa != pb)
+                  return pa > pb;
+              } else if (ccKey == 0) {
+                if (ga.t3Logit[a] != ga.t3Logit[b])
+                  return ga.t3Logit[a] > ga.t3Logit[b];
+              }
+              return a < b;
+            });
+          }
+
+          std::vector<int> t3OtHits;
+          std::vector<int> ccUnits;
+          for (int t : t3Deliv) {
             ++nBareT3Targets;
             const int p = ga.t3Pls[t];
+            const int mds[3] = {ev.t3_md0[t], ev.t3_md1[t], ev.t3_md2[t]};
+            t3OtHits.clear();
+            for (int md : mds) {
+              if (md < 0 || md >= static_cast<int>(ev.md_anchorHitIdx.size()))
+                continue;
+              t3OtHits.push_back(ev.md_anchorHitIdx[md]);
+              t3OtHits.push_back(ev.md_otherHitIdx[md]);
+            }
+            if (ccMode >= 0.5f) {
+              ccUnits.clear();
+              if (ccMd) {
+                for (int md : mds)
+                  if (md >= 0 && md <= ccMaxUnit)
+                    ccUnits.push_back(md);
+              } else {
+                for (int h : t3OtHits)
+                  if (h >= 0 && h <= ccMaxUnit)
+                    ccUnits.push_back(h);
+              }
+              int nShared = 0;
+              for (int u : ccUnits)
+                nShared += ccClaimed[u] ? 1 : 0;
+              if (!ccUnits.empty() && nShared >= ccNeed) {
+                ++nCCDropped;
+                ga.t3Pls[t] = -1;   // the delivery is revoked...
+                ga.plsOwned[p] = 0;  // ...and its pLS goes back to the carried universe,
+                                     // so m16RefreshSupp() below un-retires the type-8 row
+                                     // instead of losing the seed entirely.
+                continue;
+              }
+              for (int u : ccUnits)
+                ccClaimed[u] = 1;
+            }
             OutTC otc;
             otc.type = 5;  // pT3-class
             otc.deliv = kDelivAttachT3;
@@ -3560,13 +3984,8 @@ int main(int argc, char** argv) {
               otc.hitIdxs.push_back(static_cast<unsigned int>(hi));
               otc.hitTypes.push_back(proto::HitType::Pixel);
             }
-            const int mds[3] = {ev.t3_md0[t], ev.t3_md1[t], ev.t3_md2[t]};
-            for (int md : mds) {
-              if (md < 0 || md >= static_cast<int>(ev.md_anchorHitIdx.size()))
-                continue;
-              otc.hitIdxs.push_back(static_cast<unsigned int>(ev.md_anchorHitIdx[md]));
-              otc.hitTypes.push_back(proto::HitType::Phase2OT);
-              otc.hitIdxs.push_back(static_cast<unsigned int>(ev.md_otherHitIdx[md]));
+            for (int hi : t3OtHits) {
+              otc.hitIdxs.push_back(static_cast<unsigned int>(hi));
               otc.hitTypes.push_back(proto::HitType::Phase2OT);
             }
             otc.nhitOT = 6;
@@ -3574,6 +3993,7 @@ int main(int argc, char** argv) {
             outTCChain.push_back(-1);
             ++nDelivT3;
           }
+          ga.nT3Attached -= nCCDropped;
           // Stage B can newly own pLS, which retires more carried rows (type-8 above all:
           // the -RPS predicate now sees the bare-T3 evidence too). Those rows DID
           // pre-claim -- they were still owners when K9 ran -- so the chains faced a
@@ -4092,6 +4512,7 @@ int main(int argc, char** argv) {
       totPairsScored += att.nPairsScored;
       totDelivT5 += nDelivT5;
       totDelivT3 += nDelivT3;
+      totCCDropped += nCCDropped;
       totGaDcaBlocked += nGaDcaBlocked;
       totM16ChainOwners += nM16ChainOwners;
       totGaPairs += ga.nPairs;
@@ -4099,6 +4520,7 @@ int main(int argc, char** argv) {
       totGaChainAtt += ga.nChainAttached;
       totGaT3Att += ga.nT3Attached;
       totSeedDedup += nSeedDedup + nSeedDedupT3;
+      totSeedDedupT3 += nSeedDedupT3;
       totM16Supp[0] += nM16SuppT7;
       totM16Supp[1] += nM16SuppT5;
       totM16Supp[2] += nM16SuppT8;
@@ -4219,6 +4641,54 @@ int main(int argc, char** argv) {
                     totM16Supp[0], totM16Supp[1], totM16Supp[2], totM16Supp[0] + totM16Supp[1] + totM16Supp[2],
                     (totM16Supp[0] + totM16Supp[1] + totM16Supp[2]) / nEvD, replT5 >= 0.5f ? 1 : 0,
                     replT3 >= 0.5f ? 1 : 0, replPls >= 0.5f ? 1 : 0, thetaAttach, thetaAttachT3);
+        // ---- M20 CANDIDATE FINDER (-CF) + SUPERSET AUDIT (-CFA) ---------------------
+        if (candModeI != kCandAnalytic) {
+          const char* cfName = (candModeI == kCandBinned) ? "binned prefilter" : "map candidates";
+          std::printf("  M20 candfind    -CF %d (%s) | targets=%lld (%.0f/evt) full-scan pairs=%lld"
+                      " (%.3g/evt) | examined=%lld (%.3g/evt, %.4gx of full scan)"
+                      " | emitted=%lld (%.3g/evt) | build=%.3f ms/evt\n",
+                      candModeI, cfName, candStats.nTargets, candStats.nTargets / nEvD, candStats.nFullScan,
+                      candStats.nFullScan / nEvD, candStats.nExamined, candStats.nExamined / nEvD,
+                      candStats.nFullScan > 0
+                          ? static_cast<double>(candStats.nExamined) / static_cast<double>(candStats.nFullScan)
+                          : 0.0,
+                      candStats.nEmitted, candStats.nEmitted / nEvD, totCandBuildMs / nEvD);
+          if (candModeI == kCandBinned)
+            std::printf("  M20 candbins    rt %d x %.1f cm | tanLambda %d x %.4g (|t| <= %.4g)"
+                        " | phi %d x %.4g rad | pad %.4g | wild seeds=%d wild targets=%lld\n",
+                        candIdx.nRt, candIdx.rtW, candIdx.nTan, candIdx.tanW, candIdx.tanClamp, candIdx.nPhi,
+                        candIdx.phiW, candPhiPad, static_cast<int>(candIdx.wildPls.size()),
+                        candStats.nWildTargets);
+          if (candModeI == kCandMap)
+            std::printf("  M20 candmap     file=%s | events missing=%lld | bare targets with no"
+                        " candidate=%lld | analytic windows %s (-CFW %d)\n",
+                        candMapPath.c_str(), candStats.nMapEventsMissing, candStats.nMapTargetsEmpty,
+                        candMapWin >= 0.5f ? "ENFORCED" : "features only", candMapWin >= 0.5f ? 1 : 0);
+          if (candAudit >= 0.5f)
+            std::printf("  M20 SUPERSET AUDIT (-CFA 1): analytic-accepted pairs=%lld (%.3g/evt)"
+                        " | MISSING FROM THE CANDIDATE SET=%lld  ==> %s\n",
+                        candStats.nAnalytic, candStats.nAnalytic / nEvD, candStats.nMissing,
+                        candStats.nMissing == 0 ? "PASS (exact superset)" : "*** FAIL ***");
+        }
+        // ---- M20 pT3-CLASS HIT-OVERLAP CONTENTION (-CC) -----------------------------
+        // ---- M20 pT3-CLASS DEDUP LEDGER: the two stages reported SEPARATELY -----------
+        // PIXEL SIDE  = the -RD/-RDT seed-family dedup inside the contention (a delivery
+        //               whose pLS shares >= 2 pixel hit rows with a kept owner's pLS).
+        // OT SIDE     = the -CC ownership-map contention over what the pixel side left.
+        // Reported apart because the maintainer question is exactly which of the two is
+        // carrying the work, and whether the OT side alone suffices.
+        std::printf("  M20 pT3 dedup   PIXEL side (-RDT %s): revoked=%lld (%.1f/evt)"
+                    " | OT side (-CC %d -CCG %s -CCN %d -CCP %d -CCK %d): revoked=%lld (%.1f/evt)"
+                    " | DELIVERED=%lld (%.1f/evt)  [LST pT3 reference ~150/evt]\n",
+                    (rdT3 < -0.5f) ? (seedDupClean >= 0.5f ? "follow -RD =1" : "follow -RD =0")
+                                   : (rdT3 >= 0.5f ? "1" : "0"),
+                    totSeedDedupT3, totSeedDedupT3 / nEvD, ccMode >= 0.5f ? 1 : 0,
+                    ccGran >= 0.5f ? "MD" : "hit", std::max(1, static_cast<int>(ccMinShared + 0.5f)),
+                    ccPreclaim >= 0.5f ? 1 : 0, static_cast<int>(ccOrder + 0.5f), totCCDropped,
+                    totCCDropped / nEvD, totDelivT3, totDelivT3 / nEvD);
+        std::printf("  M20 stageB      %s | pT3-class candidates before any dedup=%lld (%.1f/evt)\n",
+                    doT3Stage ? "ON" : "off", totSeedDedupT3 + totCCDropped + totDelivT3,
+                    (totSeedDedupT3 + totCCDropped + totDelivT3) / nEvD);
       }
       // M16b: totDelivT5 are IN-PLACE upgrades already counted inside totChainTCs, so only
       // the stage-B type-5 TCs are additive at -A 4.

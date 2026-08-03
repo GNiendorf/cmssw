@@ -161,6 +161,7 @@ void k6TrimTerminals(const LSTEventData& ev,
   out.mdItems.reserve(chains.mdItems.size());
   out.edgeItems.reserve(chains.edgeItems.size());
   out.score.reserve(chains.score.size());
+  out.stableKey.reserve(chains.stableKey.size());
   out.nLayers.reserve(chains.nLayers.size());
 
   std::vector<int> mdIn, mdOut;
@@ -185,6 +186,7 @@ void k6TrimTerminals(const LSTEventData& ev,
         out.mdItems.insert(out.mdItems.end(), chains.mdItems.begin() + mb, chains.mdItems.begin() + me);
         out.nLayers.push_back(chains.nLayers[c]);
         out.score.push_back(chains.score[c]);
+        out.stableKey.push_back(chains.stableKey[c]);  // P2.5: PRE-trim head, copied not recomputed
         out.offsets.push_back(static_cast<int>(out.items.size()));
         out.mdOffsets.push_back(static_cast<int>(out.mdItems.size()));
         out.edgeOffsets.push_back(static_cast<int>(out.edgeItems.size()));
@@ -218,6 +220,7 @@ void k6TrimTerminals(const LSTEventData& ev,
       out.mdItems.insert(out.mdItems.end(), chains.mdItems.begin() + mb, chains.mdItems.begin() + me);
       out.nLayers.push_back(chains.nLayers[c]);
       out.score.push_back(chains.score[c]);
+      out.stableKey.push_back(chains.stableKey[c]);  // P2.5: PRE-trim head, copied not recomputed
     } else {
       const int nib = (drop == 1) ? ib + 1 : ib;
       const int nie = (drop == 1) ? ie : ie - 1;
@@ -232,6 +235,7 @@ void k6TrimTerminals(const LSTEventData& ev,
         edgeSum += s.logOdds[chains.edgeItems[k]];
       out.nLayers.push_back(nLayAfter);
       out.score.push_back(edgeSum + lambdaLen * static_cast<float>(nLayAfter));
+      out.stableKey.push_back(chains.stableKey[c]);  // P2.5: the trimmed chain keeps its PRE-trim identity
       if (drop == 1)
         ++st.nTrimInner;
       else
@@ -261,6 +265,7 @@ void buildTrimStudyChains(const LSTEventData& ev,
   out.edgeItems.clear();
   out.score.clear();
   out.nLayers.clear();
+  out.stableKey.clear();
   srcChain.clear();
   variant.clear();
 
@@ -286,6 +291,7 @@ void buildTrimStudyChains(const LSTEventData& ev,
         edgeSum += s.logOdds[chains.edgeItems[k]];
       out.nLayers.push_back(nLay);
       out.score.push_back(edgeSum + lambdaLen * static_cast<float>(nLay));
+      out.stableKey.push_back(chains.stableKey[c]);  // P2.5: every variant of one chain
       out.offsets.push_back(static_cast<int>(out.items.size()));
       out.mdOffsets.push_back(static_cast<int>(out.mdItems.size()));
       out.edgeOffsets.push_back(static_cast<int>(out.edgeItems.size()));

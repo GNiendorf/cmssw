@@ -22,16 +22,59 @@
 
 namespace {
 
-// Deterministic "edge a beats current best b": higher logOdds first, lower index on ties.
-inline bool beats(int a, int b, const std::vector<float>& logOdds) {
+// P2.5 (production ChainGraph.h chainMix32/chainNodeStableId, copied verbatim).
+inline uint32_t chainMix32(uint32_t x) {
+  x ^= x >> 16;
+  x *= 0x7feb352du;
+  x ^= x >> 15;
+  x *= 0x846ca68bu;
+  x ^= x >> 16;
+  return x;
+}
+
+// Deterministic "edge a beats current best b": higher logOdds first, then the P2.5 STABLE
+// TIE WORD (larger wins, matching production's packed key whose low word is the tie and
+// where a larger key wins). The pre-P2.5 rule was "lower edge index", and an edge index is
+// a position in the K2 enumeration -- a numbering that descends from LST's atomicAdd
+// triplet slots and permutes run to run and backend to backend. Exact logit ties are
+// common (duplicate feature rows give bit-identical MLP outputs), so the welded chain set
+// was run-dependent. `tie` is nodeStableId[inner] ^ nodeStableId[outer], a function of hit
+// rows alone. The edge index survives as a third key so the order stays strict and total.
+inline bool beats(int a, int b, const std::vector<float>& logOdds, const std::vector<uint32_t>& tie) {
   if (b < 0)
     return true;
   if (logOdds[a] != logOdds[b])
     return logOdds[a] > logOdds[b];
+  if (tie[a] != tie[b])
+    return tie[a] > tie[b];
   return a < b;
 }
 
 }  // namespace
+
+uint32_t chainNodeStableId(const LSTEventData& ev, int t3) {
+  const int md[3] = {ev.t3_md0[t3], ev.t3_md1[t3], ev.t3_md2[t3]};
+  uint32_t s = 0x9e3779b9u;
+  for (int k = 0; k < 3; ++k) {
+    const int m = md[k];
+    const uint32_t ha = (m >= 0 && m < static_cast<int>(ev.md_anchorHitIdx.size()))
+                            ? static_cast<uint32_t>(ev.md_anchorHitIdx[m])
+                            : 0xffffffffu;
+    const uint32_t hb = (m >= 0 && m < static_cast<int>(ev.md_otherHitIdx.size()))
+                            ? static_cast<uint32_t>(ev.md_otherHitIdx[m])
+                            : 0xffffffffu;
+    s = chainMix32(s ^ ha);
+    s = chainMix32(s ^ hb);
+  }
+  return s;
+}
+
+void buildNodeStableIds(const LSTEventData& ev, std::vector<uint32_t>& out) {
+  const int nT3 = static_cast<int>(ev.t3_lsIdx0.size());
+  out.resize(nT3);
+  for (int t = 0; t < nT3; ++t)
+    out[t] = chainNodeStableId(ev, t);
+}
 
 void k6WeldChains(const LSTEventData& ev,
                   const ChainGraph& g,
@@ -46,6 +89,18 @@ void k6WeldChains(const LSTEventData& ev,
   std::vector<int> outWeld(nT3, -1), inWeld(nT3, -1);
   std::vector<int> bestOut(nT3), bestIn(nT3);
 
+  // P2.5 determinism: the per-node stable identity and the per-edge stable tie word
+  // (production ChainEdges.h: edges.tie() = stableId(inner) ^ stableId(outer)).
+  std::vector<uint32_t> nodeSid;
+  buildNodeStableIds(ev, nodeSid);
+  std::vector<uint32_t> edgeTie(nEdges, 0);
+  for (int e = 0; e < nEdges; ++e) {
+    const int in = g.edges[e].inner, ou = g.edges[e].outer;
+    const uint32_t si = (in >= 0 && in < nT3) ? nodeSid[in] : 0u;
+    const uint32_t so = (ou >= 0 && ou < nT3) ? nodeSid[ou] : 0u;
+    edgeTie[e] = si ^ so;
+  }
+
   for (int sweep = 0; sweep < kWeldSweeps; ++sweep) {
     // Phase 1: per-node best over a frozen snapshot of the slots. A single pass over the
     // edge array in index order plus beats() yields the deterministic winner (this is the
@@ -59,9 +114,9 @@ void k6WeldChains(const LSTEventData& ev,
       const int m = g.edges[e].outer;
       if (outWeld[n] != -1 || inWeld[m] != -1)
         continue;  // tail's out-slot or head's in-slot already taken
-      if (beats(e, bestOut[n], s.logOdds))
+      if (beats(e, bestOut[n], s.logOdds, edgeTie))
         bestOut[n] = e;
-      if (beats(e, bestIn[m], s.logOdds))
+      if (beats(e, bestIn[m], s.logOdds, edgeTie))
         bestIn[m] = e;
     }
     // Phase 2: weld mutual pairs. bestOut is unique per tail and bestIn unique per head,
@@ -92,6 +147,7 @@ void k6WeldChains(const LSTEventData& ev,
   out.mdItems.clear();
   out.edgeOffsets.assign(1, 0);
   out.edgeItems.clear();
+  out.stableKey.clear();
 
   std::vector<char> visited(nT3, 0);
   for (int start = 0; start < nT3; ++start) {
@@ -147,6 +203,9 @@ void k6WeldChains(const LSTEventData& ev,
       ++nLayers;
     out.nLayers.push_back(nLayers);
     out.score.push_back(edgeSum + lambdaLen * static_cast<float>(nLayers));
+    // P2.5: the head node names the chain (production ChainWeld.h:307). `start` is the
+    // head of the walk that just produced this chain, i.e. the PRE-trim head node.
+    out.stableKey.push_back(nodeSid[start]);
     out.offsets.push_back(static_cast<int>(out.items.size()));
     out.mdOffsets.push_back(static_cast<int>(out.mdItems.size()));
     out.edgeOffsets.push_back(static_cast<int>(out.edgeItems.size()));

@@ -72,7 +72,25 @@ struct Chains {
   // (M6 chain gate): logit aggregates / junction degrees must use the WELDED edges --
   // recomputing them would be ambiguous for parallel E1/E2 edges of the same node pair.
   std::vector<int> edgeOffsets, edgeItems;
+  // ---- P2.5 DETERMINISM (ported from production commit f41c6abb8a4) ------------------
+  // The run- and backend-invariant identity of the chain: the stableId of its PRE-trim
+  // head (innermost) node. Heads are unique across chains because the welded graph has
+  // in/out degree <= 1, so this names the chain. It replaces the CHAIN INDEX as the
+  // second key of the K9 claim order and of the attach -RD dedup order: the chain index
+  // descends from LST's atomicAdd triplet slots and permutes run to run and backend to
+  // backend, while exact score ties really do occur (production measures 40-56 adjacent
+  // tied pairs per event). Trim COPIES this value rather than recomputing it, which is
+  // what makes it the PRE-trim head.
+  std::vector<uint32_t> stableKey;
 };
+
+// P2.5. Run- and backend-invariant identity of a chain node (== a T3), mixing the SIX hit
+// rows of its three MDs in fixed positional order. Hit rows are the input order of the hit
+// collection, fixed by the event data alone. Production: ChainGraph.h chainNodeStableId /
+// chainMix32 -- the constants and the fold order are copied verbatim so the two
+// implementations agree bit for bit.
+uint32_t chainNodeStableId(const LSTEventData& ev, int t3);
+void buildNodeStableIds(const LSTEventData& ev, std::vector<uint32_t>& out);
 
 constexpr int kWeldSweeps = 3;
 

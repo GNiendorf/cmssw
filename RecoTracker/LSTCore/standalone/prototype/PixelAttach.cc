@@ -111,6 +111,7 @@
 #include <unordered_map>
 
 #include "AttachInference.h"
+#include "PixelAttachCand.h"
 #include "PixelAttachPairs.h"
 
 const char* const kAttachFeatNames[kAttachFeat] = {"log10PtIn",
@@ -346,10 +347,13 @@ TargetPre makeT3Pre(const LSTEventData& ev, int t) {
   return o;
 }
 
-// dPhiAtInnermost (feature 15 / prefilter window 2). See the definition block on top.
-float dPhiAtInnermost(const PlsPre& pls, const TargetPre& cp) {
+// Azimuth of the pLS direction of motion where its helix circle crosses radius R1
+// OUTWARD; falls back to the seed's production direction pls.phi when the circles do not
+// intersect (R1 outside [|d - r|, d + r]) or the circle is centred on the origin.
+// M20: extracted verbatim from dPhiAtInnermost so the binned candidate index can evaluate
+// the SAME quantity at arbitrary radii. dPhiAtInnermost is unchanged in value.
+float phiDirAtRadius(const PlsPre& pls, float R1) {
   float phiDir = pls.phi;  // fallback: seed direction at production
-  const float R1 = cp.rtInner;
   if (pls.d > kEps) {
     const float a = (pls.d * pls.d + R1 * R1 - pls.r * pls.r) / (2.f * pls.d);
     const float h2 = R1 * R1 - a * a;
@@ -373,27 +377,37 @@ float dPhiAtInnermost(const PlsPre& pls, const TargetPre& cp) {
       phiDir = std::atan2(bestTy, bestTx);
     }
   }
-  return wrapPhi(phiDir - cp.chordPhi);
+  return phiDir;
+}
+
+// dPhiAtInnermost (feature 15 / prefilter window 2). See the definition block on top.
+inline float dPhiAtInnermost(const PlsPre& pls, const TargetPre& cp) {
+  return wrapPhi(phiDirAtRadius(pls, cp.rtInner) - cp.chordPhi);
 }
 
 // Shared pair evaluation. Always computes both prefilter quantities when evalAll is
 // true (probe path); the fast path rejects on dTanLambda before touching the circle
 // propagation. fOut may be null (windows-only probe).
+// M20: enforceWindows == false (mode-2 map candidates only) keeps the two window
+// quantities as FEATURES but stops them from rejecting -- the external map IS the
+// prefilter in that mode. Every other caller leaves it true and is bit-exact.
 bool evalPair(const PlsPre& pls,
               const TargetPre& cp,
               const AttachParams& params,
               bool evalAll,
               float* fOut,
               float& absDTanL,
-              float& absDPhi) {
+              float& absDPhi,
+              bool enforceWindows = true) {
   const float dTanL = pls.tanLambda - cp.tanLambda;
   absDTanL = std::fabs(dTanL);
-  if (!evalAll && absDTanL >= params.prefDTanL)
+  if (enforceWindows && !evalAll && absDTanL >= params.prefDTanL)
     return false;
 
   const float dPhi = dPhiAtInnermost(pls, cp);
   absDPhi = std::fabs(dPhi);
-  const bool pass = absDTanL < params.prefDTanL && absDPhi < params.prefDPhi;
+  const bool pass =
+      !enforceWindows || (absDTanL < params.prefDTanL && absDPhi < params.prefDPhi);
   if (!pass || fOut == nullptr)
     return pass;
 
@@ -430,6 +444,266 @@ bool evalPair(const PlsPre& pls,
   return true;
 }
 
+// ======================================================================================
+// M20 (T3ATTACH-BUILD): THE SCALAR BINNED CANDIDATE INDEX
+// Design, axes and the superset proof are in PixelAttachCand.h. Everything below is
+// mechanics; no physics quantity is defined here that is not already defined above.
+// ======================================================================================
+
+constexpr float kTwoPi = 2.f * kPi;
+
+// phi in [0, 2pi) -> bin. nPhi bins tile the circle exactly (phiW = 2pi/nPhi).
+inline int phiBinOf(float phi, float phiW, int nPhi) {
+  float a = std::fmod(phi, kTwoPi);
+  if (a < 0.f)
+    a += kTwoPi;
+  int b = static_cast<int>(a / phiW);
+  if (b < 0)
+    b = 0;
+  if (b >= nPhi)
+    b = nPhi - 1;
+  return b;
+}
+
+inline int tanBinOf(float t, float tanClamp, float tanW, int nTan) {
+  const float c = std::min(std::max(t, -tanClamp), tanClamp);
+  int b = static_cast<int>((c + tanClamp) / tanW);
+  if (b < 0)
+    b = 0;
+  if (b >= nTan)
+    b = nTan - 1;
+  return b;
+}
+
+inline int rtBinOf(float rt, float rtW, int nRt) {
+  int b = static_cast<int>(rt / rtW);
+  if (b < 0)
+    b = 0;
+  if (b >= nRt)
+    b = nRt - 1;  // the last bin is open-ended by construction
+  return b;
+}
+
+inline bool plsGeomFinite(const PlsPre& p) {
+  return std::isfinite(p.tanLambda) && std::isfinite(p.phi) && std::isfinite(p.cx) &&
+         std::isfinite(p.cy) && std::isfinite(p.r) && std::isfinite(p.d);
+}
+
+// The inserted phi arc of seed `p` over rt bin [lo, hi). Returns false when the arc is
+// too wide to describe (>= pi), which the caller answers by inserting into EVERY phi bin
+// -- the conservative direction, never a miss.
+bool plsPhiArc(const PlsPre& p, float lo, float hi, float& start, float& span) {
+  float ang[5];
+  int n = 0;
+  bool fallback = (p.d <= kEps);
+  if (p.d > kEps) {
+    const float rMin = std::fabs(p.d - p.r), rMax = p.d + p.r;
+    if (lo < rMin || hi > rMax)
+      fallback = true;  // part of the bin is unreachable -> the code's pls.phi fallback
+    const float a = std::max(lo, rMin), b = std::min(hi, rMax);
+    if (a <= b) {
+      // phiDirAtRadius is monotone in R (PixelAttachCand.h), so the endpoints bracket the
+      // arc exactly; the two interior samples are belt and braces against a float edge.
+      ang[n++] = phiDirAtRadius(p, a);
+      ang[n++] = phiDirAtRadius(p, b);
+      if (b > a) {
+        ang[n++] = phiDirAtRadius(p, a + (b - a) * (1.f / 3.f));
+        ang[n++] = phiDirAtRadius(p, a + (b - a) * (2.f / 3.f));
+      }
+    }
+  }
+  if (fallback)
+    ang[n++] = p.phi;
+  if (n == 0)
+    return false;  // unreachable in practice; treat as "all bins"
+  const float ref = ang[0];
+  float dLo = 0.f, dHi = 0.f;
+  for (int i = 1; i < n; ++i) {
+    const float d = wrapPhi(ang[i] - ref);
+    dLo = std::min(dLo, d);
+    dHi = std::max(dHi, d);
+  }
+  span = dHi - dLo;
+  start = ref + dLo;
+  return span < kPi;  // a hull wider than pi is not reliably oriented -> all bins
+}
+
+// Walks phi bins forward from bin(a) to bin(b) inclusive (mod nPhi) and calls fn(bin).
+template <typename F>
+inline void forEachPhiBin(float a, float b, float phiW, int nPhi, F&& fn) {
+  const int b0 = phiBinOf(a, phiW, nPhi);
+  const int b1 = phiBinOf(b, phiW, nPhi);
+  int steps = b1 - b0;
+  if (steps < 0)
+    steps += nPhi;
+  for (int s = 0; s <= steps; ++s)
+    fn((b0 + s) % nPhi);
+}
+
+}  // namespace
+
+void k8BuildPlsCandIndex(const LSTEventData& ev,
+                         const AttachParams& params,
+                         const CandIndexParams& ip,
+                         PlsCandIndex& out) {
+  const int nPls = static_cast<int>(ev.pLS_pt.size());
+  out.nPls = nPls;
+  out.wildPls.clear();
+  out.cellItems.clear();
+  out.qStamp.assign(nPls, -1);
+  out.qEpoch = 0;
+
+  out.rtW = std::max(ip.rtBinW, 0.5f);
+  out.nRt = std::max(1, static_cast<int>(std::ceil(std::max(ip.rtMax, out.rtW) / out.rtW)));
+  out.tanClamp = std::max(ip.tanClamp, 1.f);
+  out.tanW = std::max(params.prefDTanL * std::max(ip.binMult, 0.05f), 1e-3f);
+  out.nTan = std::min(8192, std::max(1, static_cast<int>(std::ceil(2.f * out.tanClamp / out.tanW))));
+  out.nPhi = std::min(4096, std::max(1, static_cast<int>(kTwoPi / std::max(params.prefDPhi * std::max(ip.binMult, 0.05f), 1e-3f))));
+  out.phiW = kTwoPi / static_cast<float>(out.nPhi);
+
+  const long long nCell = static_cast<long long>(out.nRt) * out.nTan * out.nPhi;
+  out.cellStart.assign(static_cast<std::size_t>(nCell) + 1, 0);
+  if (nPls == 0)
+    return;
+
+  std::vector<PlsPre> pre;
+  pre.reserve(nPls);
+  for (int p = 0; p < nPls; ++p)
+    pre.push_back(makePlsPre(ev, p));
+
+  // Two passes over the same deterministic enumeration: count, then fill. Seeds are
+  // visited in ascending row order, so every cell ends up ASCENDING in plsRow -- which is
+  // what makes the emitted pair list identical to the full scan's.
+  auto enumerateCells = [&](int p, auto&& sink) {
+    const PlsPre& q = pre[p];
+    const int tb = tanBinOf(q.tanLambda, out.tanClamp, out.tanW, out.nTan);
+    for (int r = 0; r < out.nRt; ++r) {
+      const float lo = static_cast<float>(r) * out.rtW;
+      const float hi = (r == out.nRt - 1) ? 1e9f : lo + out.rtW;
+      float start = 0.f, span = 0.f;
+      const long long base = (static_cast<long long>(r) * out.nTan + tb) * out.nPhi;
+      if (plsPhiArc(q, lo, hi, start, span) && span + 2.f * ip.phiPad < kTwoPi) {
+        forEachPhiBin(start - ip.phiPad, start + span + ip.phiPad, out.phiW, out.nPhi, [&](int pb) {
+          sink(base + pb);
+        });
+      } else {
+        for (int pb = 0; pb < out.nPhi; ++pb)
+          sink(base + pb);
+      }
+    }
+  };
+
+  for (int p = 0; p < nPls; ++p) {
+    if (!plsGeomFinite(pre[p])) {
+      out.wildPls.push_back(p);
+      continue;
+    }
+    enumerateCells(p, [&](long long cell) { ++out.cellStart[static_cast<std::size_t>(cell) + 1]; });
+  }
+  for (long long c = 0; c < nCell; ++c)
+    out.cellStart[static_cast<std::size_t>(c) + 1] += out.cellStart[static_cast<std::size_t>(c)];
+  out.cellItems.assign(static_cast<std::size_t>(out.cellStart[static_cast<std::size_t>(nCell)]), 0);
+  std::vector<int> fill(out.cellStart.begin(), out.cellStart.end() - 1);
+  for (int p = 0; p < nPls; ++p) {
+    if (!plsGeomFinite(pre[p]))
+      continue;
+    enumerateCells(p, [&](long long cell) { out.cellItems[fill[static_cast<std::size_t>(cell)]++] = p; });
+  }
+}
+
+namespace {
+
+// Fills idx.qBuf with the candidate pLS rows for one target, ASCENDING and deduplicated.
+// Returns false when the target must fall back to the full scan (wild geometry).
+bool candidatesForTarget(const PlsCandIndex& idx, const TargetPre& cp, const AttachParams& params, CandStats* st) {
+  idx.qBuf.clear();
+  if (!std::isfinite(cp.rtInner) || !std::isfinite(cp.tanLambda) || !std::isfinite(cp.chordPhi)) {
+    if (st != nullptr)
+      ++st->nWildTargets;
+    return false;
+  }
+  const int rb = rtBinOf(cp.rtInner, idx.rtW, idx.nRt);
+  const float ct = std::min(std::max(cp.tanLambda, -idx.tanClamp), idx.tanClamp);
+  const int tLo = tanBinOf(ct - params.prefDTanL, idx.tanClamp, idx.tanW, idx.nTan);
+  const int tHi = tanBinOf(ct + params.prefDTanL, idx.tanClamp, idx.tanW, idx.nTan);
+
+  const int epoch = ++idx.qEpoch;
+  auto take = [&](int p) {
+    if (idx.qStamp[p] == epoch)
+      return;
+    idx.qStamp[p] = epoch;
+    idx.qBuf.push_back(p);
+  };
+  for (int tb = tLo; tb <= tHi; ++tb) {
+    const long long base = (static_cast<long long>(rb) * idx.nTan + tb) * idx.nPhi;
+    forEachPhiBin(cp.chordPhi - params.prefDPhi, cp.chordPhi + params.prefDPhi, idx.phiW, idx.nPhi, [&](int pb) {
+      const std::size_t c = static_cast<std::size_t>(base + pb);
+      for (int i = idx.cellStart[c]; i < idx.cellStart[c + 1]; ++i)
+        take(idx.cellItems[i]);
+    });
+  }
+  for (int p : idx.wildPls)
+    take(p);
+  std::sort(idx.qBuf.begin(), idx.qBuf.end());
+  return true;
+}
+
+// One target's emission, shared by every candidate mode. `cands`/`nCands` == the pLS rows
+// to test (null => every row, the frozen full scan).
+void emitTarget(const std::vector<PlsPre>& pls,
+                int nPls,
+                const TargetPre& cp,
+                const AttachParams& params,
+                int8_t ttype,
+                int chainPos,
+                int t3Row,
+                int targetOrd,
+                const int* cands,
+                int nCands,
+                bool enforceWindows,
+                std::vector<AttachPair>& out,
+                CandStats* st) {
+  const int n = (cands == nullptr) ? nPls : nCands;
+  const std::size_t before = out.size();
+  for (int i = 0; i < n; ++i) {
+    const int p = (cands == nullptr) ? i : cands[i];
+    AttachPair ap;
+    float aDT, aDP;
+    if (!evalPair(pls[p], cp, params, false, ap.f, aDT, aDP, enforceWindows))
+      continue;
+    ap.ttype = ttype;
+    ap.chainPos = chainPos;
+    ap.t3Row = t3Row;
+    ap.targetOrd = targetOrd;
+    ap.plsRow = p;
+    out.push_back(ap);
+  }
+  if (st == nullptr)
+    return;
+  ++st->nTargets;
+  st->nFullScan += nPls;
+  st->nExamined += n;
+  st->nEmitted += static_cast<long long>(out.size() - before);
+  if (params.candAudit && cands != nullptr) {
+    // SUPERSET AUDIT. Run the analytic full scan and check, pair by pair, that every pair
+    // it accepts is PRESENT in the candidate set the finder produced. `cands` is sorted
+    // ascending in both modes, so membership is a binary search. For the binned prefilter
+    // st->nMissing MUST be 0 on every event -- that is the correctness gate. For map mode
+    // the same counter is read as COVERAGE of the analytic window set, not as a bug.
+    long long nAna = 0, nMiss = 0;
+    for (int p = 0; p < nPls; ++p) {
+      float aDT, aDP;
+      if (!evalPair(pls[p], cp, params, false, nullptr, aDT, aDP))
+        continue;
+      ++nAna;
+      if (!std::binary_search(cands, cands + nCands, p))
+        ++nMiss;
+    }
+    st->nAnalytic += nAna;
+    st->nMissing += nMiss;
+  }
+}
+
 }  // namespace
 
 void k8EnumeratePrefilteredPairsGeneral(const LSTEventData& ev,
@@ -452,24 +726,29 @@ void k8EnumeratePrefilteredPairsGeneral(const LSTEventData& ev,
 
   int targetOrd = 0;
 
+  // M20: which target kinds use the pluggable candidate finder. Chain targets keep the
+  // frozen full scan unless -CFC asks otherwise, so nothing the M19 freeze measured can
+  // move when only the bare-T3 side is being developed.
+  const PlsCandIndex* idx = params.cand;
+  const int mode = (idx == nullptr) ? kCandAnalytic : params.candMode;
+  CandStats* st = params.candStats;
+
   // (a) accepted chains, nLayers >= 5 (ttype 0) -- unchanged M7 behavior.
+  const bool chainUsesIdx = (mode == kCandBinned) && params.candChainToo;
   for (int pos = 0; pos < static_cast<int>(acceptedChains.size()); ++pos) {
     const int c = acceptedChains[pos];
     if (chains.nLayers[c] < 5)
       continue;  // v1 scope: attach only to pT5-class chains
     const float gate = c < static_cast<int>(chainGateLogits.size()) ? chainGateLogits[c] : 0.f;
     const TargetPre cp = makeChainPre(ev, chains, c, cf, gate);
-    for (int p = 0; p < nPls; ++p) {
-      AttachPair ap;
-      float aDT, aDP;
-      if (!evalPair(pls[p], cp, params, false, ap.f, aDT, aDP))
-        continue;
-      ap.ttype = static_cast<int8_t>(kAttachTargetChain);
-      ap.chainPos = pos;
-      ap.targetOrd = targetOrd;
-      ap.plsRow = p;
-      out.push_back(ap);
+    const int* cands = nullptr;
+    int nCands = 0;
+    if (chainUsesIdx && candidatesForTarget(*idx, cp, params, st)) {
+      cands = idx->qBuf.data();
+      nCands = static_cast<int>(idx->qBuf.size());
     }
+    emitTarget(
+        pls, nPls, cp, params, static_cast<int8_t>(kAttachTargetChain), pos, -1, targetOrd, cands, nCands, true, out, st);
     ++targetOrd;
   }
 
@@ -479,17 +758,34 @@ void k8EnumeratePrefilteredPairsGeneral(const LSTEventData& ev,
     if (!bareT3Mask[t])
       continue;
     const TargetPre cp = makeT3Pre(ev, t);
-    for (int p = 0; p < nPls; ++p) {
-      AttachPair ap;
-      float aDT, aDP;
-      if (!evalPair(pls[p], cp, params, false, ap.f, aDT, aDP))
-        continue;
-      ap.ttype = static_cast<int8_t>(kAttachTargetT3);
-      ap.t3Row = t;
-      ap.targetOrd = targetOrd;
-      ap.plsRow = p;
-      out.push_back(ap);
+    const int* cands = nullptr;
+    int nCands = 0;
+    bool enforce = true;
+    if (mode == kCandBinned) {
+      if (candidatesForTarget(*idx, cp, params, st)) {
+        cands = idx->qBuf.data();
+        nCands = static_cast<int>(idx->qBuf.size());
+      }
+    } else if (mode == kCandMap) {
+      // The external map IS the prefilter here: the analytic windows are features, not
+      // gates, unless -CFW asks for both.
+      enforce = params.candMapWindows;
+      if (t + 1 < static_cast<int>(idx->mapStart.size())) {
+        const int b = idx->mapStart[t], e = idx->mapStart[t + 1];
+        cands = idx->mapItems.data() + b;
+        nCands = e - b;
+        if (nCands == 0 && st != nullptr)
+          ++st->nMapTargetsEmpty;
+      } else {
+        static const int kNone = 0;
+        cands = &kNone;
+        nCands = 0;
+        if (st != nullptr)
+          ++st->nMapTargetsEmpty;
+      }
     }
+    emitTarget(
+        pls, nPls, cp, params, static_cast<int8_t>(kAttachTargetT3), -1, t, targetOrd, cands, nCands, enforce, out, st);
     ++targetOrd;
   }
 }

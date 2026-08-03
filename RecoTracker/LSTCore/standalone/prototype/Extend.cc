@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstddef>
 
 #include "Trim.h"  // chainFitChi2Combined (the shared chain-fit arithmetic)
@@ -277,6 +278,13 @@ void extendChains(const LSTEventData& ev,
           dphiWin = std::min(kPi, 0.5 * kPi * static_cast<double>(p.maxDist) / rT);
 
         int bestMd = -1;
+        // P2.5 determinism: the stable tie operand of the extension argmin. The pre-P2.5
+        // rule kept the FIRST of an exact residual tie, walking neighbours in ascending
+        // LineSegment / MD index -- and LST hands those out by atomicAdd, so the rule
+        // permuted run to run. Production (ChainArbitrate.h) decides the tie on the
+        // candidate MD's own hit rows instead: hitKey = (anchorHit << 32) | outerHit,
+        // SMALLER wins. ha/hb are already loaded in the candidate test, so it is free.
+        uint64_t bestHitKey = 0;
         double bestRes = 1e30, secondRes = 1e30;
         // One candidate test, shared by both search modes.
         auto testCand = [&](int m) {
@@ -320,10 +328,14 @@ void extendChains(const LSTEventData& ev,
             if (res > win)
               return;
           }
-          if (res < bestRes) {
+          const uint64_t hitKey = (static_cast<uint64_t>(static_cast<uint32_t>(ha)) << 32) |
+                                  static_cast<uint64_t>(static_cast<uint32_t>(hb));
+          const bool better = (res < bestRes) || (res == bestRes && bestMd >= 0 && hitKey < bestHitKey);
+          if (better) {
             secondRes = bestRes;
             bestRes = res;
             bestMd = m;
+            bestHitKey = hitKey;
           } else if (res < secondRes) {
             secondRes = res;
           }

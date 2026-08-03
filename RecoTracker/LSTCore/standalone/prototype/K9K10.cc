@@ -96,16 +96,27 @@ void k9Arbitrate(const LSTEventData& ev,
     order.push_back(c);
   }
 
-  // 2) Deterministic best-first order: key desc, chain index asc on ties. The key is
-  //    chains.score unless the caller supplied a separate ordering key (A8 -B: legacy
-  //    score minus a fake-suspicion penalty; thresholds still cut on chains.score).
+  // 2) Deterministic best-first order: key desc, then the P2.5 STABLE KEY ascending,
+  //    then chain index ascending. The pre-P2.5 rule broke an exact key tie on the chain
+  //    INDEX, a numbering that descends from LST's atomicAdd triplet slots and therefore
+  //    permutes run to run and backend to backend, while exact ties really do occur
+  //    (production measures 40-56 adjacent tied pairs per event). chains.stableKey is the
+  //    stableId of the chain's pre-trim head node -- fixed by the event data alone. The
+  //    index stays as a third key so the comparator remains a strict total order even on
+  //    a stableKey hash collision. The key is chains.score unless the caller supplied a
+  //    separate ordering key (A8 -B: legacy score minus a fake-suspicion penalty;
+  //    thresholds still cut on chains.score).
   const std::vector<float>* keyVec = &chains.score;
   if (params.orderKey != nullptr && params.orderKey->size() == chains.score.size())
     keyVec = params.orderKey;
   const std::vector<float>& key = *keyVec;
-  std::sort(order.begin(), order.end(), [&key](int a, int b) {
+  const std::vector<uint32_t>& sk = chains.stableKey;
+  const bool haveSk = (sk.size() == chains.score.size());
+  std::sort(order.begin(), order.end(), [&key, &sk, haveSk](int a, int b) {
     if (key[a] != key[b])
       return key[a] > key[b];
+    if (haveSk && sk[a] != sk[b])
+      return sk[a] < sk[b];
     return a < b;
   });
 
@@ -352,12 +363,18 @@ void k9ArbitrateTwoPass(const LSTEventData& ev,
     order.push_back(c);
   }
 
-  // Same deterministic greedy as pass 1, continuing on the pass-1 claim map.
-  std::sort(order.begin(), order.end(), [&chains](int a, int b) {
-    if (chains.score[a] != chains.score[b])
-      return chains.score[a] > chains.score[b];
-    return a < b;
-  });
+  // Same deterministic greedy as pass 1, continuing on the pass-1 claim map -- and the
+  // same P2.5 stable tie-break (score desc, stableKey asc, index asc).
+  {
+    const bool haveSk2 = (chains.stableKey.size() == chains.score.size());
+    std::sort(order.begin(), order.end(), [&chains, haveSk2](int a, int b) {
+      if (chains.score[a] != chains.score[b])
+        return chains.score[a] > chains.score[b];
+      if (haveSk2 && chains.stableKey[a] != chains.stableKey[b])
+        return chains.stableKey[a] < chains.stableKey[b];
+      return a < b;
+    });
+  }
   for (int c : order) {
     const int b = chains.mdOffsets[c];
     const int e = chains.mdOffsets[c + 1];
