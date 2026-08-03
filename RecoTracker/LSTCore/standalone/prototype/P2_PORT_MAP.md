@@ -578,9 +578,21 @@ accordingly — state it, do not force it.
 ### Phase P2.5 — the physics kinks the prototype could not validate (plan §10.3 residual risk)
 Atomic weld/claim race semantics vs the serial reference; CPU-vs-GPU score parity;
 ROCm wavefront parity (plan §6.8 — no warp-width assumptions; template on
-`alpaka::warp::getSize` if any warp idiom is used); bitwise run-to-run reproducibility as a land
-criterion (plan §6.6). **This phase gates the full CMSSW workflow run** (wf 24834.703/.704) with
-hit-residual and downstream-MVA distribution comparison, not just MTV (plan §6.15).
+`alpaka::warp::getSize` if any warp idiom is used); run-to-run reproducibility per the
+maintainer policy (free stable tie-break swap, measured; else accept documented
+nondeterminism; NO sorting). **STANDALONE-ONLY (maintainer resequencing, 2026-08-02): the
+full CMSSW workflow validation previously gated here is DEFERRED to the new Phase P2.8 —
+no agent runs cmsRun / the workflow matrix until integration is essentially complete.**
+
+### Phase P2.8 — CMSSW full-chain validation (LAST; moved out of P2.5 per maintainer, 2026-08-02)
+After P2.7 (pT5-side deletion) is landed: the full CMSSW workflow runs (wf 24834.703/.704,
+CPU + GPU) with (a) standard MTV plots, (b) hit-residual / fit-quality distribution
+comparison (chi2/ndof, outlier-rejected-hit rates — catches "same tracks, subtly worse
+hits" that MTV cannot see), (c) downstream track-selection MVA input/output distribution
+comparison and pass rates (catches distribution shift that silently costs efficiency at
+the selected working point; if shifted, it is a finding to raise with downstream, not to
+hide). This is the integration sign-off gate before the post-integration queue
+(simplifying pass -> P2.4b pT3 flip -> cube/jet round).
 
 ### Phase P2.6 — timing campaign (Stage 3)
 Occupancy, kernel fusion, layout (fp16 node features), the tiered edge scorer as jet insurance,
