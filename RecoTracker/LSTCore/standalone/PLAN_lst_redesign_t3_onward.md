@@ -2324,6 +2324,47 @@ LATER separate pass (same prototype, jet-enriched ntuple) once the machinery exi
     decision on each) to see what the ported rule leaves on the table; (4) only
     then consider anything more elaborate. 2-3 independent agents, own
     workspaces, same brief. GATE: dup toward .052 without paying efficiency.
+  - **ROAD TO THE COMPLETE ALGORITHM (detailed, agreed 2026-08-03 for the
+    2026-08-04 restart). Reference throughout: POSTDELP2 (eff .80626 / dup
+    .20553 / fake .04630); target: current LST on the same events (eff .80988 /
+    dup .05179 / fake .04476) or better, with track length not regressed.**
+    **A. ADMISSION-FLAG SWEEP (first, cheap, blocks nothing but protects
+    everything).** Maintainer question 2026-08-03: are we sure no OTHER deleted
+    kernel flags pLS that reach TCs? Preliminary answer by grep: TC admission
+    for a seed is exactly `isQuad && !isDup`; `isQuad` is a seed property; the
+    ONLY writers of `isDup` are `rmPixelSegmentFromMemory` (called solely from
+    CheckHitspLS, SURVIVES) and five sites inside CrossCleanpLS (DIES). Near
+    miss: `pixelSegments.partOfPT5()` dies but gates the pT3 BUILDER, not seed
+    admission. **REQUIRED: turn that grep into a systematic sweep - every writer
+    of every flag gating ANY TC admission (pLS and the other carried types),
+    classified survives/dies, with the post-deletion value measured for each.**
+    Same bug class as CrossCleanpLS; do not skip.
+    **B. PORT + DUAL-THRESHOLD CRITERION.** Implement CrossCleanpLS structurally
+    intact against POSTDELP2 (dR windows, shared-pixel-hit tests, per-type
+    dispatch all preserved; our chains slot in by whether a seed is attached),
+    replacing ONLY the embedding-distance test with the attach-head score at a
+    SEPARATE looser dedup threshold. The score is already computed during grid
+    scoring, so this costs ~nothing. GATE: no-op with the new flags off.
+    **C. SCAN + TRUTH DIAGNOSTIC.** Scan the dedup threshold (primary axis).
+    Then the truth-based diagnostic: partition seeds into (true match whose sim
+    has an accepted chain / true match without / no true match) and measure our
+    attach decision on each class - that says what the ported rule leaves on
+    the table, in truth terms rather than by comparison to LST's choices.
+    **D. RE-MEASURE THE pT3 CLASS ON THE FIXED BASELINE.** NOTE: all prior pT3
+    numbers (A/B/C agents, the oracle ceiling) were measured against the OLD
+    baseline that included CrossCleanpLS. The pT3-class dup problem and the
+    seed-ownership problem may be THE SAME PROBLEM - both are "objects
+    duplicating what chains already deliver". Do NOT re-litigate the pT3 ceiling
+    until seed ownership is in; then re-measure. The numbers may look entirely
+    different.
+    **E. ASSEMBLE THE COMPLETE ALGORITHM**: chains (frozen) + pT5 class (done) +
+    pT3 class + seed ownership + conditioning, one config, full scoreboard vs
+    LST on the 977-evt sample, track length included.
+    **F. PLOTS -> MAINTAINER SIGN-OFF** (hard gate, nothing integrates first):
+    standard comparison curve set vs current LST, on the prototype.
+    **G. INTEGRATE + DELETE + FINAL PLOTS/BENCHMARKS**: port the blessed config,
+    delete pT5-side AND pT3-side together, then in-LST plots and timing/memory
+    with the redundant machinery gone. CMSSW after, when the maintainer decides.
   - **QUEUED: POST-INTEGRATION SIMPLIFYING PASS (maintainer, 2026-08-02).**
     After integration + timing/memory are done, one pass re-judging marginal
     complexity. FIRST CANDIDATE: chain extension (-EX) — maintainer reaction to
