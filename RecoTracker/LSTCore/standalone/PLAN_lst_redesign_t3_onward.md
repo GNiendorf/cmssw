@@ -2357,6 +2357,14 @@ LATER separate pass (same prototype, jet-enriched ntuple) once the machinery exi
     duplicating what chains already deliver". Do NOT re-litigate the pT3 ceiling
     until seed ownership is in; then re-measure. The numbers may look entirely
     different.
+    **D2. EXPECT ITERATION ROUNDS (maintainer, 2026-08-03).** Steps C-E are NOT
+    linear. Between the pT3 re-measurement and assembly - and again within
+    assembly - expect one or more FAN-OUT IMPROVEMENT ROUNDS if the physics does
+    not land first time. That is the normal shape here: the pT5 replacement took
+    four milestones and several fan-outs to go from "the mechanism works" to
+    "the physics is better". Budget for it rather than presenting a config that
+    misses. Each round: 2-3 independent agents, own workspaces, gap analysis
+    from the previous round driving the angles, judged on the full scoreboard.
     **E. ASSEMBLE THE COMPLETE ALGORITHM**: chains (frozen) + pT5 class (done) +
     pT3 class + seed ownership + conditioning, one config, full scoreboard vs
     LST on the 977-evt sample, track length included.
