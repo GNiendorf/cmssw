@@ -2291,6 +2291,39 @@ LATER separate pass (same prototype, jet-enriched ntuple) once the machinery exi
     2-3 independent agents, truth-based diagnostic first (partition seeds by
     truth: true match with an accepted chain / true match without / no true
     match, and measure our attach decision on each class).
+  - **TOMORROW (2026-08-04, after the 18:00 token reset) — THE PLAN, decided
+    2026-08-03 with the maintainer. The design is already settled; tomorrow is
+    implementation and measurement, not search.**
+    **THE DESIGN (maintainer, 2026-08-03): port CrossCleanpLS STRUCTURALLY
+    INTACT and change ONE criterion.** Keep the dR windows (0.02 bare-chain
+    branch, 1e-6 pixel-anchored branches), keep the shared-pixel-hit tests, keep
+    the per-type dispatch; our chains slot in wherever T5/pT5/pT3 appear,
+    by whether a seed is attached. **The ONLY thing that changes is the
+    pLS-embedding-distance test in the bare-chain branch** (the embedding net is
+    in the deletion set): replace it with the ATTACH HEAD score at a SEPARATE,
+    LOOSER dedup threshold. Rationale for two operating points on one
+    discriminator: attaching is a CONSTRUCTION decision (a wrong attach prepends
+    wrong pixel hits and can flip a real track to fake - needs precision);
+    retiring a redundant seed is BOOKKEEPING (wrong = lose a probably-redundant
+    bare row). LST itself uses different discriminators for build vs dedup; we
+    use one at two thresholds, which is simpler. **COST: ~zero new computation -
+    every seed's best attach score against any chain is ALREADY recorded during
+    the grid scoring (it is the quantity the -RPS/-RPT predicate keys on).**
+    ALSO KEEP: CheckHitspLS BOTH passes verbatim (pure seed-vs-seed, touches
+    nothing in the deletion set; pass 2 is worth dup .393 -> .206). Note pass 2
+    contains a dR^2 < 1e-5 test, so the shipped algorithm will carry an
+    inherited proximity rule at the SEED level - tight (dR ~0.003) and far below
+    the ~0.1 windows that hurt jet cores, but re-examine it at the jet-sample
+    round.
+    ORDER OF WORK: (1) implement the CrossCleanpLS port + dual-threshold attach
+    criterion in the prototype against POSTDELP2 (eff .80626 / dup .20553 /
+    fake .04630; current LST on the same events .80988 / .05179 / .04476);
+    (2) scan the dedup threshold - this is the primary axis; (3) THEN the
+    truth-based diagnostic (partition seeds into: true match whose sim has an
+    accepted chain / true match without / no true match, and measure our attach
+    decision on each) to see what the ported rule leaves on the table; (4) only
+    then consider anything more elaborate. 2-3 independent agents, own
+    workspaces, same brief. GATE: dup toward .052 without paying efficiency.
   - **QUEUED: POST-INTEGRATION SIMPLIFYING PASS (maintainer, 2026-08-02).**
     After integration + timing/memory are done, one pass re-judging marginal
     complexity. FIRST CANDIDATE: chain extension (-EX) — maintainer reaction to
