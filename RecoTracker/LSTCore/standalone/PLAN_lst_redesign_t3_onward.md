@@ -2387,7 +2387,17 @@ LATER separate pass (same prototype, jet-enriched ntuple) once the machinery exi
     workspaces against the POSTDELP2-lineage baseline, truth-partition and gap
     analyses from the port round seeding the angles, full-scoreboard judging,
     followed by synthesis + adversarial validation + plots for maintainer
-    sign-off.
+    sign-off. **WORKFLOW SHAPE (maintainer, 2026-08-04): one Workflow run -
+    Stage 1 = ~15 Opus agents in parallel (most on assigned layers: seed
+    residuals, pT3 class on the fixed baseline, prompt eff, displaced, fake,
+    dup mechanisms, track length; a few unconstrained "attack what you judge
+    best"), Stage 2 = adversarial verification agents, Stage 3 = one synthesis
+    agent (contributor numbers must reproduce in the merged tree before
+    composing) delivering THE final configuration + comparison plots.
+    ENDGAME AFTER SIGN-OFF: port the remaining pieces into LST -> strip out the
+    replaced LST parts -> verify ported physics MATCHES the prototype (the
+    P2.0-P2.4 parity discipline) -> then BIG FAN-OUTS on timing and memory to
+    get both better than LST.**
   - **QUEUED: POST-INTEGRATION SIMPLIFYING PASS (maintainer, 2026-08-02).**
     After integration + timing/memory are done, one pass re-judging marginal
     complexity. FIRST CANDIDATE: chain extension (-EX) — maintainer reaction to
