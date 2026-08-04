@@ -2373,6 +2373,21 @@ LATER separate pass (same prototype, jet-enriched ntuple) once the machinery exi
     **G. INTEGRATE + DELETE + FINAL PLOTS/BENCHMARKS**: port the blessed config,
     delete pT5-side AND pT3-side together, then in-LST plots and timing/memory
     with the redundant machinery gone. CMSSW after, when the maintainer decides.
+  - **MAINTAINER DIRECTIVE (2026-08-04, evening restart): if the CrossCleanpLS
+    port round does not deliver good physics on its own, launch a LARGE FAN-OUT
+    (~15 Opus agents) attacking overall physics performance from multiple
+    angles - dup rate, prompt efficiency, displaced efficiency, fake rate, and
+    whatever the agents judge best - to BRING THE ALGORITHM OVER THE FINISH
+    LINE.** The finish line, verbatim intent: a FULL algorithm that does not
+    rely on any of the LST parts being stripped out (everything after T3s),
+    with a general pLS-OT matching that also produces the pT3-class object,
+    and physics vs current LST of: matching-or-better prompt efficiency, MUCH
+    better displaced efficiency (as already achieved), same-or-better dup rate,
+    same-or-better fake rate. Fan-out shape: independent agents in own
+    workspaces against the POSTDELP2-lineage baseline, truth-partition and gap
+    analyses from the port round seeding the angles, full-scoreboard judging,
+    followed by synthesis + adversarial validation + plots for maintainer
+    sign-off.
   - **QUEUED: POST-INTEGRATION SIMPLIFYING PASS (maintainer, 2026-08-02).**
     After integration + timing/memory are done, one pass re-judging marginal
     complexity. FIRST CANDIDATE: chain extension (-EX) — maintainer reaction to
