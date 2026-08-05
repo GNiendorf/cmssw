@@ -27,7 +27,6 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
              bool no_pls_dupclean,
              bool tc_pls_triplets,
              bool reduce_mem_by_full_precompute,
-             bool use_chain_tracking = false,
              ::lst::ChainConfig const& chainConfig = ::lst::ChainConfig{});
     std::unique_ptr<TrackCandidatesBaseDeviceCollection> getTrackCandidates() {
       return std::move(trackCandidatesBaseDC_);

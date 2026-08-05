@@ -1738,8 +1738,6 @@ void setT3DNNBranches(LSTEvent* event, float matchfrac) {
 // chain is type 7, the same label a carried pT5 row would carry -- so provenance is taken from the
 // row range rather than from the type.
 bool isChainTCRow(LSTEvent* event, unsigned int idx) {
-  if (!ana.use_chain_tracking)
-    return false;
   auto const& base = event->getTrackCandidatesBase();
   auto const& chains = event->getChains();
   unsigned int const nTC = base.nTrackCandidates();

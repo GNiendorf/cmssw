@@ -113,7 +113,6 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
           nopLSDupClean_(config.getParameter<bool>("nopLSDupClean")),
           tcpLSTriplets_(config.getParameter<bool>("tcpLSTriplets")),
           reduceMemByFullPrecompute_(config.getParameter<bool>("reduceMemByFullPrecompute")),
-          useChainTracking_(config.getParameter<bool>("useChainTracking")),
           chainConfig_(makeChainConfig(config.getParameter<edm::ParameterSet>("chainTracking"))),
           lstInputToken_{consumes(config.getParameter<edm::InputTag>("lstInput"))},
           lstESToken_{esConsumes(edm::ESInputTag("", ptCutStr_))},
@@ -134,7 +133,6 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
               nopLSDupClean_,
               tcpLSTriplets_,
               reduceMemByFullPrecompute_,
-              useChainTracking_,
               chainConfig_);
 
       // Output
@@ -155,13 +153,6 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
               "If true, run extra counting kernels that exactly size the MD/LS/T3/T5/T4 "
               "buffers, reducing average per-event memory at a small CPU/GPU runtime cost. "
               "If false (default), buffers use cheaper, looser occupancy estimates.");
-      desc.add<bool>("useChainTracking", false)
-          ->setComment(
-              "Master flag of the chain-tracking pipeline (K1-K10 plus the K8 pixel attach). With "
-              "it false the track candidate collection is LST's own, byte for byte. With it true "
-              "the chain pipeline REPLACES the T5 / T4 / pT5 classes: welded chains are arbitrated "
-              "by the hit claim, extended, attached to pixel line segments and emitted as track "
-              "candidates, and the carried pT5 rows are retired.");
 
       // Grouped chain-tracking configuration. Every value is the M19 FREEZE_RECORD default (see
       // RecoTracker/LSTCore/interface/ChainConfig.h, which documents the prototype flag each one
@@ -240,7 +231,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
         chainDesc.add<edm::ParameterSetDescription>("extension", extDesc);
       }
       desc.add<edm::ParameterSetDescription>("chainTracking", chainDesc)
-          ->setComment("Frozen chain-tracking configuration; read only when useChainTracking is true.");
+          ->setComment("Chain-tracking configuration (the only track-building path).");
 
       descriptions.addWithDefaultLabel(desc);
     }
@@ -253,7 +244,6 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     const bool nopLSDupClean_;
     const bool tcpLSTriplets_;
     const bool reduceMemByFullPrecompute_;
-    const bool useChainTracking_;
     const lst::ChainConfig chainConfig_;
     const device::EDGetToken<lst::LSTInputDeviceCollection> lstInputToken_;
     const device::ESGetToken<lst::LSTESData<Device>, TrackerRecoGeometryRecord> lstESToken_;

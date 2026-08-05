@@ -446,7 +446,7 @@ void LSTEvent::createTriplets() {
   // ChainPrefixKeyModules in the allocation block below, consumed by the K1a tallies in the triplet
   // builder and by K1c in buildChainIncidence). Declared at function scope because those consumers
   // straddle the allocation block, matching the lifetime the incidence collections already have.
-  unsigned int const chainKeyBiasSize = useChainTracking_ ? nLowerModules_ : 1u;
+  unsigned int const chainKeyBiasSize = nLowerModules_;
   auto chainMdKeyBias_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, chainKeyBiasSize);
   auto chainLsKeyBias_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, chainKeyBiasSize);
 
@@ -489,7 +489,7 @@ void LSTEvent::createTriplets() {
     // collections, ride down on the host sync the triplet count already pays for. No extra wait.
     auto chainKeyTotals_buf_h = cms::alpakatools::make_host_buffer<uint32_t[]>(queue_, 2u);
     auto chainKeyTotals_buf_d = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, 2u);
-    if (useChainTracking_) {
+    {
       alpaka::exec<Acc1D>(queue_,
                           cms::alpakatools::make_workdiv<Acc1D>(1, kChainScanBlockThreads),
                           ChainPrefixKeyModules{},
@@ -520,7 +520,7 @@ void LSTEvent::createTriplets() {
         cms::alpakatools::make_device_view(queue_, tripletsOccupancy.totOccupancyTriplets());
     alpaka::memset(queue_, totOccupancyTriplets_view, 0u);
 
-    if (useChainTracking_) {
+    {
       // Chain-tracking K1a target arrays, keyed by the DENSE MiniDoublet / Segment index that
       // ChainPrefixKeyModules just defined. Keying them by the RAW module-segmented index instead
       // forced them to span the full allocated extent of those two collections, which carries about
@@ -597,7 +597,7 @@ void LSTEvent::createTriplets() {
   uint32_t* chainMdT3InCounts = nullptr;
   uint32_t* chainLsT3OutCounts = nullptr;
   uint32_t* chainLsT3InCounts = nullptr;
-  if (useChainTracking_) {
+  {
     auto mdIncidence = chainMdIncidenceDC_->view();
     auto lsIncidence = chainLsIncidenceDC_->view();
     chainMdT3OutCounts = mdIncidence.metadata().addressOf_t3OutCounts();
@@ -627,17 +627,10 @@ void LSTEvent::createTriplets() {
                         chainMdKeyBias_buf.data(),
                         chainLsKeyBias_buf.data());
   };
-  if (useChainTracking_) {
-    if (reduceMemByFullPrecompute_)
-      execCreateTriplets(CreateTripletsReduceMemChain{});
-    else
-      execCreateTriplets(CreateTripletsChain{});
-  } else {
-    if (reduceMemByFullPrecompute_)
-      execCreateTriplets(CreateTripletsReduceMem{});
-    else
-      execCreateTriplets(CreateTriplets{});
-  }
+  if (reduceMemByFullPrecompute_)
+    execCreateTriplets(CreateTripletsReduceMemChain{});
+  else
+    execCreateTriplets(CreateTripletsChain{});
 
   auto const addTripletRangesToEventExplicit_workDiv = cms::alpakatools::make_workdiv<Acc1D>(1, 1024);
 
@@ -648,7 +641,7 @@ void LSTEvent::createTriplets() {
                       tripletsDC_->const_view().tripletsOccupancy(),
                       rangesDC_->view());
 
-  if (useChainTracking_) {
+  {
     alpaka::wait(queue_);  // fence the T3 build so the chain-build stamp attributes correctly
     auto const chainBuild0 = std::chrono::steady_clock::now();
     buildChainIncidence(chainMdKeyBias_buf.data(), chainLsKeyBias_buf.data());
@@ -3080,7 +3073,7 @@ void LSTEvent::createTrackCandidates(bool no_pls_dupclean, bool tc_pls_triplets)
   // Chain tracking phase P2.3: the carried-row compaction (-RT5 1 plus the T5/T4 class
   // replacement), the K9 hit claim, the chain extension and the K10 assembly. Everything above
   // this line ran exactly as it does at baseline.
-  if (useChainTracking_) {
+  {
     alpaka::wait(queue_);  // fence the pLS admission so the chain-TC stamp attributes correctly
     auto const chainTC0 = std::chrono::steady_clock::now();
     arbitrateChains(nTotal);

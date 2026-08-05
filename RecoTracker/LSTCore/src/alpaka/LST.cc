@@ -19,10 +19,8 @@ void LST::run(Queue& queue,
               bool no_pls_dupclean,
               bool tc_pls_triplets,
               bool reduce_mem_by_full_precompute,
-              bool use_chain_tracking,
               ::lst::ChainConfig const& chainConfig) {
-  auto event = LSTEvent(
-      verbose, ptCut, clustSizeCut, queue, deviceESData, reduce_mem_by_full_precompute, use_chain_tracking, chainConfig);
+  auto event = LSTEvent(verbose, ptCut, clustSizeCut, queue, deviceESData, reduce_mem_by_full_precompute, chainConfig);
 
   event.addInputToEvent(lstInputDC);
   event.addHitToEvent();
@@ -63,12 +61,10 @@ void LST::run(Queue& queue,
   event.createTriplets();
   if (verbose) {
     alpaka::wait(queue);  // event calls are asynchronous: wait before printing
-    if (use_chain_tracking) {
-      printf("# of chain nodes (dense T3s): %d\n", event.getNumberOfChainNodes());
-      printf("# of chain E1 edges (MD keyed): %d\n", event.getNumberOfChainE1Edges());
-      printf("# of chain E2 edges (LS keyed): %d\n", event.getNumberOfChainE2Edges());
-      printf("# of chain edges total: %d\n", event.getNumberOfChainE1Edges() + event.getNumberOfChainE2Edges());
-    }
+    printf("# of chain nodes (dense T3s): %d\n", event.getNumberOfChainNodes());
+    printf("# of chain E1 edges (MD keyed): %d\n", event.getNumberOfChainE1Edges());
+    printf("# of chain E2 edges (LS keyed): %d\n", event.getNumberOfChainE2Edges());
+    printf("# of chain edges total: %d\n", event.getNumberOfChainE1Edges() + event.getNumberOfChainE2Edges());
     printf("# of T3s produced: %d\n", event.getNumberOfTriplets());
     printf("# of T3s produced layer 1-2-3: %d\n", event.getNumberOfTripletsByLayerBarrel(0));
     printf("# of T3s produced layer 2-3-4: %d\n", event.getNumberOfTripletsByLayerBarrel(1));

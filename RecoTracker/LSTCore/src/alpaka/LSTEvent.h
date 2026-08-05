@@ -54,12 +54,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     const float ptCut_;
     const uint16_t clustSizeCut_;
     const bool reduceMemByFullPrecompute_;
-    // Master flag of the chain-tracking port (P2_PORT_MAP.md). At phase P2.0 it only enables the
-    // triplet compaction and the incidence CSR build; nothing downstream consumes them yet, so the
-    // track candidate collection is bit-identical with the flag either way.
-    const bool useChainTracking_;
-    // FROZEN chain-tracking configuration. Supplied by LSTProducer's grouped chainTracking PSets in
-    // CMSSW and left at the FREEZE_RECORD defaults documented in ChainConfig.h in the standalone.
+    // CHAINFINAL2 chain-tracking configuration (the only track-building path). Supplied by
+    // LSTProducer's grouped chainTracking PSets in CMSSW and left at the ChainConfig.h defaults
+    // in the standalone.
     ChainConfig chainConfig_;
 
     std::array<unsigned int, 6> n_minidoublets_by_layer_barrel_{};
@@ -134,13 +131,11 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
              Queue& q,
              const LSTESData<Device>* deviceESData,
              bool reduce_mem_by_full_precompute,
-             bool use_chain_tracking = false,
              ChainConfig const& chain_config = ChainConfig{})
         : queue_(q),
           ptCut_(ptCut),
           clustSizeCut_(clustSizeCut),
           reduceMemByFullPrecompute_(reduce_mem_by_full_precompute),
-          useChainTracking_(use_chain_tracking),
           chainConfig_(chain_config),
           nModules_(deviceESData->nModules),
           nLowerModules_(deviceESData->nLowerModules),
