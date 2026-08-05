@@ -924,6 +924,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         int const nL = chains.nLayers()[c];
         if (nL < kChainTCMinLayers)
           continue;  // too short for a TC without pixel help
+        if (chains.flags()[c] & kChainFlagCcsSuppressed)
+          continue;  // -CCS: a bare chain the chain-loser rule suppressed emits nothing
         if (row >= nAllocated)
           break;
         chains.tcRow()[c] = static_cast<int32_t>(row++);
@@ -944,25 +946,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     }
   };
 
-  // t3_phi as the ntuple writer computes it (standalone/code/core/lst_math.h Hit::phi over the
-  // anchor hit of the triplet's FIRST MD): Phi_mpi_pi(M_PI + ATan2(-y, -x)), with the ATan2 zero-x
-  // special case and the float narrowing at the Phi_mpi_pi call reproduced exactly.
-  template <typename TAcc>
-  ALPAKA_FN_ACC ALPAKA_FN_INLINE float chainHitPhi(TAcc const& acc, float x, float y) {
-    float at;
-    if (x != 0.f)
-      at = alpaka::math::atan2(acc, -y, -x);
-    else if (y == 0.f)
-      at = 0.f;
-    else
-      at = (-y > 0.f) ? static_cast<float>(chainarb::kPi / 2.0) : static_cast<float>(-chainarb::kPi / 2.0);
-    float p = static_cast<float>(chainarb::kPi + static_cast<double>(at));
-    while (static_cast<double>(p) >= chainarb::kPi)
-      p = static_cast<float>(static_cast<double>(p) - 2.0 * chainarb::kPi);
-    while (static_cast<double>(p) < -chainarb::kPi)
-      p = static_cast<float>(static_cast<double>(p) + 2.0 * chainarb::kPi);
-    return p;
-  }
+  // chainHitPhi (the ntuple writer's t3_phi) now lives in ChainGate.h so the attach pre-record
+  // kernels can use it too.
 
   // ------------------------------------------------------------------------------------------
   // K10, second half. Accepted chains -> TrackCandidatesBase rows.

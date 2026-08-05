@@ -40,6 +40,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     auto const rc = g.getParameter<std::vector<double>>("rescue");
     c.m3ThetaRI = rc.at(0);
     c.m3ThetaR = rc.at(1);
+    auto const rb = g.getParameter<std::vector<double>>("rescueBand");
+    c.m3ThetaRB = rb.at(0);
+    c.m3ThetaRT = rb.at(1);
     auto const te = g.getParameter<std::vector<double>>("thetaExempt");
     c.thetaExempt4 = te.at(0);
     c.thetaExempt5 = te.at(1);
@@ -65,8 +68,24 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     c.preClaim = k.getParameter<bool>("preClaim");
 
     auto const& a = ps.getParameter<edm::ParameterSet>("attach");
-    c.attachTheta = a.getParameter<double>("theta");
+    auto const th = a.getParameter<std::vector<double>>("theta");
+    c.attachTheta = th.at(0);
+    c.attachThetaT = th.at(1);
+    c.attachThetaE = th.at(2);
     c.attachThetaT3 = a.getParameter<double>("thetaT3");
+    c.rpsThetaChain = a.getParameter<double>("rpsThetaChain");
+    c.t3FakeMax = a.getParameter<double>("t3FakeMax");
+    c.ccMinShared = a.getParameter<int32_t>("ccMinShared");
+    auto const cs = a.getParameter<std::vector<double>>("ccsTheta");
+    c.ccsTheta = cs.at(0);
+    c.ccsThetaT = cs.at(1);
+    c.ccsThetaE = cs.at(2);
+    auto const xt = a.getParameter<std::vector<double>>("xcTheta");
+    c.xcTheta = xt.at(0);
+    c.xcThetaT = xt.at(1);
+    c.xcThetaE = xt.at(2);
+    c.xcDR2Pix = a.getParameter<double>("xcDR2Pix");
+    c.xcDR2Chain = a.getParameter<double>("xcDR2Chain");
     c.replacePT5 = a.getParameter<bool>("replacePT5");
     c.replacePT3 = a.getParameter<bool>("replacePT3");
     c.dropPartOfPT5 = !c.replacePT5;
@@ -164,6 +183,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
             ->setComment("-M4 / -M4D: T4-class kills on the 3-class mX and mD margins.");
         gateDesc.add<std::vector<double>>("rescue", {-0.5, -1.8})
             ->setComment("-MRI / -MR: mX OR-rescue floors for the IP and exempt 5+ branches.");
+        gateDesc.add<std::vector<double>>("rescueBand", {-1.2, -1.2})
+            ->setComment("-MRB / -MRT: barrel / transition band split of the exempt-5+ -MR floor.");
         gateDesc.add<std::vector<double>>("thetaExempt", {0.0, 0.0, 0.0})
             ->setComment("-U4 / -U5 / -U6: per-length acceptance thresholds of the exempt branch.");
         gateDesc.add<std::vector<double>>("cell25", {0.0, -2.0})
@@ -186,11 +207,23 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
         chainDesc.add<edm::ParameterSetDescription>("claim", claimDesc);
 
         edm::ParameterSetDescription attachDesc;
-        attachDesc.add<double>("theta", 6.875)->setComment("-a: pair-head logit a (chain, pLS) attach must reach.");
-        attachDesc.add<double>("thetaT3", 6.0)
-            ->setComment("-AT3: the bare-T3-target margin; inert while replacePT3 is false.");
+        attachDesc.add<std::vector<double>>("theta", {5.0, 5.0, 6.0})
+            ->setComment("-a / -a2 / -a3: pair-head delivery margins, banded on |seed eta| at 1.1 / 1.7.");
+        attachDesc.add<double>("thetaT3", 6.0)->setComment("-AT3: the bare-T3 (stage B) delivery margin, global.");
+        attachDesc.add<double>("rpsThetaChain", 5.5)
+            ->setComment("-RPSA: chain-side seed-retirement bar (global; the T3 bar is thetaT3).");
+        attachDesc.add<double>("t3FakeMax", 0.10)
+            ->setComment("-T3F: stage-B target admission on the T3 fake score (NaN rejected).");
+        attachDesc.add<int32_t>("ccMinShared", 1)
+            ->setComment("-CCN: revoke a stage-B delivery when >= this many of its 3 MDs are already claimed.");
+        attachDesc.add<std::vector<double>>("ccsTheta", {6.0, 5.0, 1e9})
+            ->setComment("-CCS / -CCS2 / -CCS3: chain-loser suppression bars per TC-|eta| band; >= 1e8 = band OFF.");
+        attachDesc.add<std::vector<double>>("xcTheta", {3.75, 3.5, 3.75})
+            ->setComment("-XCT / -XCT2 / -XCT3: seed-crossclean bare-chain-arm logit bars per |seed eta| band.");
+        attachDesc.add<double>("xcDR2Pix", 1e-6)->setComment("-XCR2: pixel-anchored crossclean dR^2 window.");
+        attachDesc.add<double>("xcDR2Chain", 0.02)->setComment("-XCW2: bare-chain crossclean dR^2 window.");
         attachDesc.add<bool>("replacePT5", true)->setComment("-RT5: retire every carried pT5 row.");
-        attachDesc.add<bool>("replacePT3", false)->setComment("-RT3: retire every carried pT3 row (phase P2.4b).");
+        attachDesc.add<bool>("replacePT3", true)->setComment("-RT3: retire every carried pT3 row.");
         attachDesc.add<bool>("suppressBarePLS", true)
             ->setComment("-RPS: retire a carried bare-pLS row whose seed lost an above-margin contention.");
         attachDesc.add<bool>("seedDedup", true)
@@ -202,7 +235,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
         edm::ParameterSetDescription extDesc;
         extDesc.add<int32_t>("mode", 1)->setComment("-EX: 0 off, 1 outer end, 2 inner end, 3 both.");
         extDesc.add<double>("window", 0.25)->setComment("-EXW: xy circle-residual window, cm.");
-        extDesc.add<double>("rzWindow", 2.0)->setComment("-EXR: separate |rz| residual window, cm.");
+        extDesc.add<double>("rzWindow", 4.0)->setComment("-EXR: separate |rz| residual window, cm.");
         extDesc.add<double>("chi2Factor", 2.0)->setComment("-EXF: refit chi2/hit growth an extension may cause.");
         extDesc.add<double>("maxDist", 60.0)->setComment("-EXD: max 3D terminal-to-candidate distance, cm.");
         extDesc.add<int32_t>("minLayers", 4)->setComment("-EXL: chains below this many layers are never extended.");

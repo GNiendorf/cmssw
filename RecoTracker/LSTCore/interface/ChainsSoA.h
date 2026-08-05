@@ -129,6 +129,11 @@ namespace lst {
   static constexpr uint8_t kChainFlagExempt = 0x2;
   static constexpr uint8_t kChainFlagEtaBand = 0x4;
   static constexpr uint8_t kChainFlagCellKill = 0x8;
+  // -CCS: accepted BARE chain suppressed by the chain-loser rule (its best scored pair toward a
+  // pLS owned by a DIFFERENT chain reached the band bar). Set before K10 row assignment, which
+  // skips flagged chains, so a suppressed chain never emits a TC and never anchors the seed
+  // crossclean.
+  static constexpr uint8_t kChainFlagCcsSuppressed = 0x10;
 
 }  // namespace lst
 

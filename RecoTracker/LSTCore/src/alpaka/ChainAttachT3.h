@@ -20,21 +20,22 @@
 #include "ChainEdges.h"
 
 // =====================================================================================
-// P2.4b-1 MEASUREMENT PATH -- stage B of the general attach: BARE-T3 TARGETS.
+// STAGE B of the general attach: BARE-T3 TARGETS -- the pT3-class DELIVERY path.
 //
-// THIS FILE IS A MEASUREMENT INSTRUMENT, NOT A DELIVERY PATH. Nothing here runs unless
-// LST_CHAIN_T3ATTACH is set in the environment, nothing here writes a TrackCandidate row,
-// nothing here changes a chain, a pLS ownership flag or a carried-row retirement, and
-// ChainAttach.h is not modified by it at all. Its whole job is to answer the P2.4b
-// feasibility questions with measured numbers:
-//   (1) how many bare-T3 attach targets exist per event,
-//   (2) whether the K8a grid stays a superset on the bare-T3 target geometry,
-//   (3) what the candidate volume and the head cost actually are, CPU and GPU,
-//   (4) what a pT3-class delivery WOULD be, so the harness can sim-match it against
-//       LST's own pT3 rows.
+// CHAINFINAL2 production form (promoted from the P2.4b-1 measurement probe): stage B runs
+// whenever the chain master switch is on, writes the LIVE pLS ownership array (one pLS, one
+// owner, across target kinds -- invariant I1), records the bare-T3 retirement evidence in its
+// OWN key array (plsBestT3, read by the -RPS predicate against the -AT3 bar), admits targets
+// through the -T3F fake-score gate, and delivers one type-5 (pT3-class) TC per owner through
+// the -CC hit-overlap contention sweep (ChainT3CCPreclaim + ChainT3CCSweepEmit below), which
+// revokes a delivery whose MDs are already claimed by an emitted chain TC or by an earlier
+// delivery (-CCN 1 at MD granularity) and applies the -CCR 2 release: the seed's ownership AND
+// its bare-T3 evidence are both cleared, so its carried type-8 row genuinely survives.
 //
 // REFERENCE (frozen): prototype/AttachDelivery.cc gaStageT3 + prototype/PixelAttach.cc
-// makeT3Pre / makeT3PreGeom / k8BuildBareT3Mask + the -RT3 blocks of prototype/main.cc.
+// makeT3Pre / makeT3PreGeom / k8BuildBareT3Mask + the -RT3 / -CC blocks of prototype/main.cc
+// (winner config CHAINFINAL2: -T3E 1 -T3F 0.10 -AT3 6.0 -CC 1 -CCG 1 -CCN 1 -CCK 0 -CCP 1
+// -CCR 2 -RDT follow -RD).
 //
 // ELIGIBILITY (prototype/PixelAttach.h:107-119, transcribed): a BARE T3 is a T3 that is
 // NOT a member of ANY K9-ACCEPTED chain. The mask is built AFTER arbitration and against
@@ -91,28 +92,15 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
   namespace chainattacht3 {
     // Diagnostic counters for stage B (never read by a decision):
     //   0 (unused)  1 candidates iterated   2 pairs scored   3 per-target picks
-    //   4 attached after contention   5 -RD revocations   6 (unused)
+    //   4 delivered type-5 rows   5 -RDT revocations   6 TC-row overflows
     //   7 seed-dedup owner-slot overflows   8 targets that saw at least one scored pair
-    //   9 (unused)  10 grid candidates skipped as a repeat inside one target's cell walk
+    //   9 -CC revocations   10 grid candidates skipped as a repeat inside one target's cell walk
     //  11 pairs whose logit reached the class margin
     constexpr uint32_t kStats = 12u;
-    // Logit histogram of every SCORED pair, 1 bin per 0.25 over [-30, 30].
-    constexpr int kLogitBins = 240;
-    constexpr float kLogitLo = -30.f;
-    constexpr float kLogitStep = 0.25f;
   }  // namespace chainattacht3
 
   // The bare-T3 target kind's value of head input 18 (prototype/PixelAttach.h kAttachTargetT3).
   constexpr float kAttachTargetTypeT3 = 1.f;
-
-  // Snapshot of the live pLS ownership array. Stage B must not write the array the delivery path
-  // owns, so it reads a copy; this is the copy.
-  struct ChainAttachT3CopyOwned {
-    ALPAKA_FN_ACC void operator()(Acc1D const& acc, uint8_t const* src, uint8_t* dst, uint32_t n) const {
-      for (uint32_t i : cms::alpakatools::uniform_elements(acc, n))
-        dst[i] = src[i];
-    }
-  };
 
   // ------------------------------------------------------------------------------------------
   // K8B-0a. Mark every triplet consumed by a K9-ACCEPTED chain.
@@ -135,54 +123,21 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
 
   // K8B-0b. keep[] for the bare-T3 selection (the CSR idiom of every other selection here).
   //
-  // maxFake is a MEASUREMENT knob, not part of the M16 eligibility definition (which applies no
-  // filter beyond bareness). It exists because the affordability answer turns entirely on the
-  // size of this universe, and the T3-level fake score is the one discriminant that is already
-  // computed for every triplet by production and therefore costs nothing to gate on -- node
-  // feature 12 IS triplets.fakeScore(). 1e9 = the frozen, unfiltered universe.
-  //
-  // maxClaimed is the second measurement knob and the more important one. The M16 eligibility rule
-  // only asks whether the T3 is a MEMBER of an accepted chain -- but a T3 that is not a member can
-  // still have every one of its six hits already CLAIMED by accepted chains (the shifted triplet
-  // along a track a chain already delivers). Those targets are the structural duplicate source:
-  // they deliver a pT3-class TC for a sim the chain pipeline has already delivered. K9's hit-owner
-  // map is the exact production-native test for it and is alive at attach time, so "at most
-  // maxClaimed of the six hits are claimed" is measurable here for free. 6 = the frozen,
-  // unfiltered universe.
+  // The -T3F target admission (winner 0.10) is applied HERE, to the mask, so cut targets never
+  // reach the candidate finder, never get scored, and never write plsBestT3 (reference
+  // AttachDelivery.cc:132-144). The NaN-rejecting form !(x <= maxFake) is deliberate. Node
+  // feature 12 IS triplets.fakeScore(), computed at T3 build time -- no new dependency.
+  // (The probe-era maxClaimed pre-filter was NOT in the signed-off config and is deleted; the
+  // delivered-duplicate control is the -CC contention sweep below.)
   struct ChainAttachT3Keep {
     ALPAKA_FN_ACC void operator()(Acc1D const& acc,
                                   uint8_t const* consumed,
                                   ChainNodesConst nodes,
-                                  SegmentsConst segments,
-                                  TripletsConst triplets,
-                                  MiniDoubletsConst mds,
-                                  int32_t const* hitOwner,
                                   float maxFake,
-                                  int maxClaimed,
                                   uint32_t* keep,
                                   uint32_t nNodes) const {
       for (uint32_t n : cms::alpakatools::uniform_elements(acc, nNodes)) {
-        if (consumed[n] || !(nodes.features()[n][12] <= maxFake)) {
-          keep[n] = 0u;
-          continue;
-        }
-        if (maxClaimed < 6) {
-          uint32_t const t3 = nodes.tripletIndex()[n];
-          unsigned int m[3];
-          chainNodeMDs(triplets, segments, t3, m[0], m[1], m[2]);
-          int nClaimed = 0;
-          for (int k = 0; k < 3; ++k) {
-            if (hitOwner[mds.anchorHitIndices()[m[k]]] != chainarb::kFree)
-              ++nClaimed;
-            if (hitOwner[mds.outerHitIndices()[m[k]]] != chainarb::kFree)
-              ++nClaimed;
-          }
-          if (nClaimed > maxClaimed) {
-            keep[n] = 0u;
-            continue;
-          }
-        }
-        keep[n] = 1u;
+        keep[n] = (consumed[n] || !(nodes.features()[n][12] <= maxFake)) ? 0u : 1u;
       }
     }
   };
@@ -240,6 +195,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
 
         AttachTargetPre o;
         o.chain = t3;
+        o.tcEta = 0.f;  // chain-target-only fields (the -XC pass-1 window); unused for bare T3s
+        o.tcPhi = 0.f;
         float const x0 = mds.anchorX()[md0], y0 = mds.anchorY()[md0];
         o.rtInner = alpaka::math::sqrt(acc, x0 * x0 + y0 * y0);
         o.zInner = mds.anchorZ()[md0];
@@ -279,9 +236,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
   //   (2) prototype/AttachDelivery.cc gaStageT3 updates plsBestT3 for EVERY scored pair and
   //       only THEN skips a pLS stage A already owns, so a stage-A-owned pLS can never become a
   //       bare T3's pick. Both halves are reproduced in that order.
-  //   (3) it fills a logit histogram over every scored pair, which is what answers the head
-  //       calibration question, and it reports the UNTHRESHOLDED per-target best as well as the
-  //       thresholded pick, so a margin sweep needs no re-run.
+  // plsBest here is the SEPARATE bare-T3 evidence key array (plsBestT3): the -RPS predicate reads
+  // it against the -AT3 bar, and the -CC revoke (-CCR 2) erases entries in it.
   struct ChainAttachT3Score {
     template <typename TAcc>
     ALPAKA_FN_ACC void operator()(TAcc const& acc,
@@ -292,10 +248,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                   uint8_t const* plsOwned,
                                   int32_t* tgtPls,
                                   float* tgtLogit,
-                                  float* tgtBestAny,
                                   uint32_t* plsBest,
                                   uint32_t* stats,
-                                  uint32_t* hist,
                                   float theta,
                                   ChainConfig cfg) const {
       constexpr int kB = cms::alpakatools::requires_single_thread_per_block_v<TAcc> ? kAttachScoreBatch : 1;
@@ -312,7 +266,6 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         AttachTargetPre const cp = tgt[t];
         int32_t bestPls = -1;
         float bestLogit = kAttachNoLogit;
-        float bestAny = kAttachNoLogit;
         uint32_t nCand = 0, nScored = 0, nDup = 0, nOverTheta = 0;
         int nb = 0;
 
@@ -321,16 +274,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
           for (int b = 0; b < nb; ++b) {
             float const lo = logits[b];
             int32_t const p = rowB[b];
-            int hb = static_cast<int>((lo - chainattacht3::kLogitLo) / chainattacht3::kLogitStep);
-            if (hb < 0)
-              hb = 0;
-            if (hb >= chainattacht3::kLogitBins)
-              hb = chainattacht3::kLogitBins - 1;
-            alpaka::atomicAdd(acc, &hist[hb], 1u, alpaka::hierarchy::Threads{});
             alpaka::atomicMax(
                 acc, &plsBest[static_cast<uint32_t>(p)], attachOrderFloat(lo), alpaka::hierarchy::Threads{});
-            if (lo > bestAny)
-              bestAny = lo;
             if (lo >= theta)
               ++nOverTheta;
             if (plsOwned[static_cast<uint32_t>(p)] != 0u)
@@ -390,7 +335,6 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
 
         tgtPls[t] = bestPls;
         tgtLogit[t] = bestLogit;
-        tgtBestAny[t] = bestAny;
         alpaka::atomicAdd(acc, &stats[1], nCand, alpaka::hierarchy::Threads{});
         alpaka::atomicAdd(acc, &stats[2], nScored, alpaka::hierarchy::Threads{});
         alpaka::atomicAdd(acc, &stats[10], nDup, alpaka::hierarchy::Threads{});
@@ -545,70 +489,46 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         }
       }
 
-      uint32_t nAttached = 0;
       for (uint32_t pos = 0; pos < nTargets; ++pos) {
         if (tgtPls[pos] < 0)
           continue;
-        // MEASUREMENT ONLY: plsOwned is a scratch copy in the caller, never the live array,
-        // so marking it here cannot retire a carried row or change any delivered TC.
+        // PRODUCTION: plsOwned is the LIVE ownership array (invariant I1) -- a stage-B owner is
+        // visible to the -XC anchor set and to the carried-row retirement, and the -CC sweep can
+        // still release it (-CCR 2).
         plsOwned[tgtPls[pos]] = 1u;
-        ++nAttached;
       }
       (void)targets;
-      stats[4] = nAttached;
     }
   };
 
   // ==========================================================================================
-  // REPLACEMENT MODE (LST_CHAIN_T3REPLACE) -- the -RT3 equivalent, mirroring the -RT5 1 the CTL
-  // already runs for the pT5 class. Still a MEASUREMENT CONFIG: default OFF, and with the env
-  // variable unset none of the kernels below is ever launched.
-  //
-  //   (1) ChainConfig::replacePT3 goes true, so ChainCompactCarriedTCs drops every carried LST
-  //       type-5 row exactly as it already drops type-7 under -RT5 1, and dropPartOfPT3 goes
-  //       false (the partOfPT3 half of the pixel-consumed drop would otherwise kill chains for
-  //       colliding with rows that no longer exist -- the reasoning ChainConfig.h already
-  //       records for dropPartOfPT5).
-  //   (2) stage B runs BEFORE ChainSuppressCarriedTCs and publishes its ownership, so a seed
-  //       delivered as a pT3-class object retires its own carried bare-pLS row.
-  //   (3) the owners are emitted as type-5 rows appended after the chain rows.
+  // -CC: the hit-overlap contention on the stage-B deliveries, FUSED with the type-5 emission
+  // (the reference's one loop, main.cc:4293-4489). Ownership-map based, never pairwise: each
+  // delivery looks up ITS OWN 3 MDs in one claim map and decides alone.
   // ==========================================================================================
 
-  // Inverse of attachOrderFloat (the monotone float -> uint32 key).
-  ALPAKA_FN_ACC ALPAKA_FN_INLINE float attachUnorderFloat(uint32_t key) {
-    uint32_t const b = (key & 0x80000000u) ? (key & 0x7FFFFFFFu) : ~key;
-    return std::bit_cast<float>(b);
-  }
-
-  // Publish stage B's ownership onto the LIVE arrays, so ChainSuppressCarriedTCs sees it.
-  //
-  // plsBest is the -RPS predicate's input and is compared against orderFloat(cfg.attachTheta).
-  // The bare-T3 evidence lives on a DIFFERENT class margin (-AT3), so it is folded in SHIFTED by
-  // (attachTheta - attachThetaT3): "the seed had a bare-T3 pair at or above -AT3" is then exactly
-  // "the shifted value is at or above -a" on the one scale the shipped kernel tests. The shift is
-  // an order isomorphism, so this reproduces the reference's two-margin predicate without
-  // touching the shipped kernel.
-  struct ChainAttachT3PublishOwnership {
+  // -CCP 1 pre-claim: every EMITTED chain TC (bare and attach-upgraded alike) claims its deduped
+  // MD union -- the POST-extension mdItems CSR, matching the reference's ordering (EX before -CC).
+  // The surviving carried pixel rows of the reference contribute nothing here: replacePT5 and
+  // replacePT3 dropped them all, so the hit2md inversion machinery is not needed.
+  struct ChainT3CCPreclaim {
     ALPAKA_FN_ACC void operator()(Acc1D const& acc,
-                                  uint8_t const* ownedAfterStageB,
-                                  uint32_t const* plsBestT3,
-                                  uint8_t* plsOwnedLive,
-                                  uint32_t* plsBestLive,
-                                  float shift,
-                                  uint32_t nPls) const {
-      for (uint32_t p : cms::alpakatools::uniform_elements(acc, nPls)) {
-        plsOwnedLive[p] = ownedAfterStageB[p];
-        uint32_t const k = plsBestT3[p];
-        if (k == 0u)
-          continue;  // orderFloat(-inf): no scored pair for this seed
-        uint32_t const shifted = attachOrderFloat(attachUnorderFloat(k) + shift);
-        if (shifted > plsBestLive[p])
-          plsBestLive[p] = shifted;
+                                  ChainsConst chains,
+                                  ChainItemsConst items,
+                                  uint8_t* ccClaimed) const {
+      uint32_t const nChains = static_cast<uint32_t>(chains.metadata().size());
+      for (uint32_t c : cms::alpakatools::uniform_elements(acc, nChains)) {
+        if (chains.tcRow()[c] < 0)
+          continue;  // not emitted (K9-rejected, too short, -CCS-suppressed, or out of rows)
+        uint32_t const mdBase = 3u * chains.nodeOffset()[c];
+        int const nMD = chains.nMDs()[c];
+        for (int k = 0; k < nMD; ++k)
+          ccClaimed[items.mdItems()[mdBase + k]] = 1u;
       }
     }
   };
 
-  // The type-5 (pT3-class) rows. prototype/main.cc:3547-3573 assembles exactly this object: the
+  // The type-5 (pT3-class) rows. prototype/main.cc:4470-4488 assembles exactly this object: the
   // seed's DISTINCT pixel hit rows followed by the T3's three MDs (six outer-tracker hits).
   //
   // directObjectIndices is set to the sentinel kBareT3TCMarker because the row is backed by NO
@@ -618,7 +538,18 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
   // map that does not apply to them.
   static constexpr uint32_t kBareT3TCMarker = 0xFFFFFFFFu;
 
-  struct ChainEmitBareT3TCs {
+  // -CC sweep + emission, one serial kernel (the greedy order is load-bearing):
+  //   (1) gather the deliveries (tgtPls >= 0) and order them by (logit desc, target position asc)
+  //       == (logit desc, T3 row asc) -- the -CCK 0 sweep order, ties on the lower T3 row;
+  //   (2) for each delivery count its MDs already in the claim map; >= ccMinShared -> REVOKE and
+  //       apply -CCR 2: tgtPls = -1, plsOwned[p] = 0, plsBestT3[p] = 0 (orderFloat(-inf)) -- the
+  //       seed is genuinely released, its carried type-8 row survives unless other evidence
+  //       retires it;
+  //   (3) otherwise claim the 3 MDs and emit the type-5 row.
+  // Runs AFTER ChainEmitTCs (the chain rows pre-claimed) and BEFORE the -XC kernels and the final
+  // ChainSuppressCarriedTCs (invariant I7: the revoke's erasure must be visible to the
+  // retirement).
+  struct ChainT3CCSweepEmit {
     ALPAKA_FN_ACC void operator()(Acc1D const& acc,
                                   ModulesConst modules,
                                   MiniDoubletsConst mds,
@@ -626,30 +557,79 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                   TripletsConst triplets,
                                   HitsBaseConst hitsBase,
                                   PixelSeedsConst pixelSeeds,
+                                  ChainNodesConst nodes,
                                   Chains chains,
                                   TrackCandidatesBase candsBase,
                                   TrackCandidatesExtended candsExtended,
-                                  uint32_t const* t3rows,
-                                  int32_t const* plsrows,
-                                  uint32_t nDeliv,
+                                  uint32_t const* targets,
+                                  int32_t* tgtPls,
+                                  float const* tgtLogit,
+                                  uint32_t nTargets,
+                                  uint32_t* order,
+                                  uint8_t* ccClaimed,
+                                  uint8_t* plsOwned,
+                                  uint32_t* plsBestT3,
+                                  int ccMinShared,
                                   uint32_t nHits,
                                   uint16_t pixelModuleIndex,
                                   uint32_t nAllocated,
                                   uint32_t* stats) const {
       if (!cms::alpakatools::once_per_grid(acc))
         return;
+
+      // (1) gather + order. Ascending position IS ascending T3 row (the target array is ascending
+      // in dense node index); selection sort over a few hundred deliveries.
+      uint32_t n = 0;
+      for (uint32_t pos = 0; pos < nTargets; ++pos)
+        if (tgtPls[pos] >= 0)
+          order[n++] = pos;
+      for (uint32_t i = 0; i < n; ++i) {
+        uint32_t best = i;
+        float lb = tgtLogit[order[best]];
+        for (uint32_t j = i + 1; j < n; ++j) {
+          float const lj = tgtLogit[order[j]];
+          bool const jFirst = (lj != lb) ? (lj > lb) : (order[j] < order[best]);
+          if (jFirst) {
+            best = j;
+            lb = lj;
+          }
+        }
+        uint32_t const tmp = order[i];
+        order[i] = order[best];
+        order[best] = tmp;
+      }
+
       uint32_t row = candsBase.nTrackCandidates();
       uint32_t nEmit = 0;
-      for (uint32_t i = 0; i < nDeliv; ++i) {
-        int32_t const pls = plsrows[i];
-        if (pls < 0)
+      for (uint32_t i = 0; i < n; ++i) {
+        uint32_t const pos = order[i];
+        int32_t const pls = tgtPls[pos];
+        uint32_t const t3 = nodes.tripletIndex()[targets[pos]];
+        unsigned int m[3];
+        chainNodeMDs(triplets, segments, t3, m[0], m[1], m[2]);
+
+        // (2) the -CCN verdict on the MD unit set.
+        int nShared = 0;
+        for (int k = 0; k < 3; ++k)
+          if (ccClaimed[m[k]] != 0u)
+            ++nShared;
+        if (nShared >= ccMinShared) {
+          // REVOKE + -CCR 2 release.
+          tgtPls[pos] = -1;
+          plsOwned[static_cast<uint32_t>(pls)] = 0u;
+          plsBestT3[static_cast<uint32_t>(pls)] = 0u;  // orderFloat(-inf): erase the evidence
+          ++stats[9];
           continue;
+        }
+        for (int k = 0; k < 3; ++k)
+          ccClaimed[m[k]] = 1u;
+
+        // (3) emit.
         if (row >= nAllocated) {
           ++stats[6];  // out of TC rows; not seen at PU200, but it must be visible if it happens
           break;
         }
         uint32_t const tc = row++;
-        uint32_t const t3 = t3rows[i];
 
         candsBase.trackCandidateType()[tc] = LSTObjType::pT3;
         candsBase.pixelSeedIndex()[tc] = pixelSeeds.seedIdx()[pls];
@@ -680,8 +660,6 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
           ++slotPix;
         }
 
-        unsigned int m[3];
-        chainNodeMDs(triplets, segments, t3, m[0], m[1], m[2]);
         for (int k = 0; k < 3; ++k) {
           uint16_t const mod = mds.moduleIndices()[m[k]];
           int const logical = chainMdLayer(modules, mds, m[k]);

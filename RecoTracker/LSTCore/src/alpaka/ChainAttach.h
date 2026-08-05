@@ -8,9 +8,12 @@
 
 #include "RecoTracker/LSTCore/interface/alpaka/Common.h"
 #include "RecoTracker/LSTCore/interface/ChainConfig.h"
+#include "RecoTracker/LSTCore/interface/ChainNodesSoA.h"
 #include "RecoTracker/LSTCore/interface/ChainsSoA.h"
 #include "RecoTracker/LSTCore/interface/LSTInputSoA.h"
 #include "RecoTracker/LSTCore/interface/MiniDoubletsSoA.h"
+#include "RecoTracker/LSTCore/interface/SegmentsSoA.h"
+#include "RecoTracker/LSTCore/interface/TripletsSoA.h"
 #include "RecoTracker/LSTCore/interface/ObjectRangesSoA.h"
 #include "RecoTracker/LSTCore/interface/PixelSegmentsSoA.h"
 #include "RecoTracker/LSTCore/interface/PixelTripletsSoA.h"
@@ -111,7 +114,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     //   4 attached after contention   5 -RD revocations   6 carried rows retired
     //   7 seed-dedup owner-slot overflows   9 -RD logit-tie census
     //  10 grid candidates skipped as a repeat of the same pLS inside one target's cell walk
-    constexpr uint32_t kStats = 12u;
+    //  11 -XC pass-1 buffer overflow census   12 -CCS suppressed chains
+    constexpr uint32_t kStats = 14u;
   }  // namespace chainattach
 
   // prototype/PixelAttach.cc wrapPhi is chainWrapPhi verbatim (same float pi, same while loops);
@@ -175,10 +179,29 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     float tanLambda;    // pz / max(pt, eps)
     float kappaSigned;  // rotSign / max(circleRadius, eps)
     float rotSign;      // -charge
-    float phi;          // the dPhi fallback direction
+    float phi;          // the dPhi fallback direction == the SEED phi (pixelSeeds.phi())
     float cx, cy, r, d;
     float hit0z, rt0;
+    // A11 / A15 per-seed resolved quantities, computed once here so the scoring loop pays one
+    // register read per pair instead of a band lookup:
+    //   eta        the SEED eta (pixelSeeds.eta()) -- the -XC dR^2 candidate side
+    //   attachThr  the banded -a / -a2 / -a3 delivery margin for this seed's |eta| band
+    //   xcThr      the banded -XCT / -XCT2 / -XCT3 crossclean bar for the same band
+    //   isQuad     pixelSeeds.isQuad(), the -XC candidacy requirement
+    float eta;
+    float attachThr;
+    float xcThr;
+    uint8_t isQuad;
     uint16_t phiMask;  // set by the grid scatter; 0 in the per-pLS array
+  };
+
+  // One filtered (chain, seed) pair of the -XC bare-chain arm, appended at attach-scoring time
+  // (SPEC_XC section 5.2 pass 1: logit >= the |seed eta|-banded xcTheta AND dR^2 < xcDR2Chain
+  // against the chain's innermost-T3 direction). Pass 2 resolves it after delivery: the chain must
+  // have emitted a SEEDLESS TC and the seed must still be unowned.
+  struct ChainXcPair {
+    uint32_t chain;
+    uint32_t pls;
   };
 
   // Per-target record, prototype/PixelAttach.cc TargetPre restricted to the chain kind.
@@ -189,6 +212,11 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     float fitKappa;
     float xs[5];  // head inputs 7..11, preprocessed (attachStdz<7..11>)
     float rotSign, centerX, centerY;
+    // The emitted-TC direction of a CHAIN target: eta/phi of the innermost member T3, exactly the
+    // values K10 gives the TC. Exact at scoring time because extendMode = 1 (outer end only) never
+    // changes the innermost member. Consumed by the -XC bare-chain arm's pass-1 dR^2 window; unused
+    // (0) for bare-T3 targets.
+    float tcEta, tcPhi;
     uint32_t chain;
     uint8_t centerValid;
   };
@@ -343,7 +371,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                   PixelSeedsConst pixelSeeds,
                                   PixelSegmentsConst pixelSegments,
                                   AttachPlsPre* out,
-                                  uint32_t nPls) const {
+                                  uint32_t nPls,
+                                  ChainConfig cfg) const {
       for (uint32_t p : cms::alpakatools::uniform_elements(acc, nPls)) {
         AttachPlsPre o;
         float const pt = chainMaxf(pixelSeeds.ptIn()[p], chainattach::kEps);
@@ -360,6 +389,14 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         o.rotSign = (charge > 0.f) ? -1.f : 1.f;
         o.kappaSigned = o.rotSign / r;
         o.phi = pixelSeeds.phi()[p];
+        // The banded per-seed thresholds (A11 -a bands, A15 -XCT bands), both on the SEED |eta| at
+        // the literal 1.1 / 1.7 boundaries the reference hardcodes (AttachDelivery.cc:95,
+        // main.cc:5023-5024). Resolved once per seed so the pair loop never branches on eta.
+        o.eta = pixelSeeds.eta()[p];
+        float const ae = attachFabs(o.eta);
+        o.attachThr = (ae < 1.1f) ? cfg.attachTheta : ((ae < 1.7f) ? cfg.attachThetaT : cfg.attachThetaE);
+        o.xcThr = (ae < 1.1f) ? cfg.xcTheta : ((ae < 1.7f) ? cfg.xcThetaT : cfg.xcThetaE);
+        o.isQuad = pixelSeeds.isQuad()[p] ? 1u : 0u;
         o.cx = pixelSegments.circleCenterX()[p];
         o.cy = pixelSegments.circleCenterY()[p];
         o.r = r;
@@ -413,6 +450,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
   struct ChainAttachTargetPre {
     ALPAKA_FN_ACC void operator()(Acc1D const& acc,
                                   MiniDoubletsConst mds,
+                                  SegmentsConst segments,
+                                  TripletsConst triplets,
+                                  ChainNodesConst nodes,
                                   ChainItemsConst items,
                                   ChainsConst chains,
                                   uint32_t const* targets,
@@ -429,6 +469,19 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         o.centerX = 0.f;
         o.centerY = 0.f;
         o.centerValid = 0u;
+        o.tcEta = 0.f;
+        o.tcPhi = 0.f;
+
+        // The K10 TC direction (innermost member T3's eta/phi), for the -XC bare-chain arm's
+        // pass-1 dR^2 window. Byte-identical to what ChainEmitTCs later stores in tcEta / tcPhi,
+        // because outer-only extension never changes the innermost member.
+        if (chains.nNodes()[c] > 0) {
+          uint32_t const t3In = nodes.tripletIndex()[items.nodeItems()[chains.nodeOffset()[c]]];
+          unsigned int em0, em1, em2;
+          chainNodeMDs(triplets, segments, t3In, em0, em1, em2);
+          o.tcEta = chainT3Eta(acc, mds, em2);
+          o.tcPhi = chainHitPhi(acc, mds.anchorX()[em0], mds.anchorY()[em0]);
+        }
 
         uint32_t const mdBase = 3u * chains.nodeOffset()[c];
         int const nMD = chains.nMDs()[c];
@@ -756,6 +809,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                   int32_t* tgtPls,
                                   float* tgtLogit,
                                   uint32_t* plsBest,
+                                  ChainXcPair* xcPairs,
+                                  uint32_t* xcCursor,
+                                  uint32_t xcCap,
                                   uint32_t* stats,
                                   ChainConfig cfg) const {
       constexpr int kB = cms::alpakatools::requires_single_thread_per_block_v<TAcc> ? kAttachScoreBatch : 1;
@@ -763,6 +819,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
 
       alignas(64) float xT[kIn * kB];
       int32_t rowB[kB];
+      AttachPlsPre const* ppB[kB];
       float logits[kB];
       for (int i = 0; i < kIn * kB; ++i)
         xT[i] = 0.f;  // the tail lanes of a partial batch are evaluated and discarded
@@ -775,16 +832,35 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         int nb = 0;
 
         // Retire a staged batch: the pairs are reduced in staging order, which is immaterial
-        // because both reductions below are order-independent maxima.
+        // because both reductions below are order-independent maxima (and the -XC append is a
+        // set insertion, resolved order-independently in pass 2).
         auto flush = [&]() {
           attachHeadBatch<kB>(xT, logits);
           for (int b = 0; b < nb; ++b) {
             float const lo = logits[b];
             int32_t const p = rowB[b];
+            AttachPlsPre const& pq = *ppB[b];
             alpaka::atomicMax(
                 acc, &plsBest[static_cast<uint32_t>(p)], attachOrderFloat(lo), alpaka::hierarchy::Threads{});
-            if (lo < cfg.attachTheta)
-              continue;
+            // -XC bare-chain arm, pass 1 (A15): the filtered (chain, seed) compaction of the
+            // scored-pair stream. Threshold on the |seed eta|-banded xcTheta, window on the
+            // emitted-TC direction. Ordering: BEFORE the delivery threshold (the crossclean sees
+            // sub-margin pairs; xcThr 3.5-3.75 sits well below attachThr 5.0-6.0).
+            if (xcPairs != nullptr && pq.isQuad != 0u && lo >= pq.xcThr) {
+              float const dEta = pq.eta - cp.tcEta;
+              float const dPhi = chainWrapPhi(pq.phi - cp.tcPhi);
+              if (dEta * dEta + dPhi * dPhi < cfg.xcDR2Chain) {
+                uint32_t const slot = alpaka::atomicAdd(acc, xcCursor, 1u, alpaka::hierarchy::Threads{});
+                if (slot < xcCap) {
+                  xcPairs[slot].chain = cp.chain;
+                  xcPairs[slot].pls = static_cast<uint32_t>(p);
+                } else {
+                  alpaka::atomicAdd(acc, &stats[11], 1u, alpaka::hierarchy::Threads{});  // overflow census
+                }
+              }
+            }
+            if (lo < pq.attachThr)
+              continue;  // the banded -a / -a2 / -a3 delivery margin (A11)
             if (bestPls < 0 || lo > bestLogit || (lo == bestLogit && p < bestPls)) {
               bestPls = p;
               bestLogit = lo;
@@ -828,6 +904,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
               if (!attachEvalPairX(acc, pp, cp, dTanL, cfg, xT + nb, kB))
                 continue;
               rowB[nb] = static_cast<int32_t>(p);
+              ppB[nb] = &pp;
               ++nb;
               if (nb == kB)
                 flush();
@@ -845,6 +922,180 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         if (bestPls >= 0)
           alpaka::atomicAdd(acc, &stats[3], 1u, alpaka::hierarchy::Threads{});
       }
+    }
+  };
+
+  // ------------------------------------------------------------------------------------------
+  // A14 -CCS support: the inverted stage-A grant map, pLS row -> owning chain row or -1.
+  // Single-valued by the one-pLS-one-owner invariant, so no atomics. Run AFTER the contention and
+  // the -RD dedup are final (chains.attachPls() is the post-dedup grant).
+  struct ChainBuildPlsOwnerChain {
+    ALPAKA_FN_ACC void operator()(Acc1D const& acc, ChainsConst chains, int32_t* plsOwnerChain) const {
+      uint32_t const nChains = static_cast<uint32_t>(chains.metadata().size());
+      for (uint32_t c : cms::alpakatools::uniform_elements(acc, nChains)) {
+        int32_t const p = chains.attachPls()[c];
+        if (p >= 0)
+          plsOwnerChain[p] = static_cast<int32_t>(c);
+      }
+    }
+  };
+
+  // A14 -CCS / A15 -XC4: the RESTRICTED second scoring pass (SPEC_CCS_MR section 1.8 -- one
+  // inverted map plus one restricted pass; the reference's pair log is never materialised).
+  //
+  // Targets are ALL entries of the combined pre-record array (the stage-A 5+ list followed by the
+  // aux 4-layer accepted list); the kernel walks the same grid with the same exact predicate:
+  //   - a BARE target (attachPls < 0, which is every 4-layer chain) accumulates
+  //     ccsLoserLogit = max head logit over its prefiltered pairs whose pLS is owned by a
+  //     DIFFERENT chain -- threshold-free and contention-free, exactly the reference's map;
+  //   - a 4-LAYER target additionally evaluates EVERY prefiltered pair (this is its only scoring
+  //     pass -- the -XC4 score-only extension) and appends the -XC pass-1 candidates for it. It
+  //     writes NOTHING else: not tgtPls, not plsBest -- so -RPSA is bit-identical with and without
+  //     the 4-layer pass (invariant I5).
+  //   - a 5+ target evaluates the head ONLY for owned-pLS pairs (its full pair set was already
+  //     scored and -XC-appended by ChainAttachScore).
+  // At the end the -CCS verdict is applied directly: a bare chain whose loser max reaches the
+  // band bar (on the emitted-TC |eta|, literal 1.1 / 1.7, per-band 1e9 = OFF with NO fallback)
+  // gets kChainFlagCcsSuppressed, which K10 row assignment honours.
+  struct ChainAttachCcsScore {
+    template <typename TAcc>
+    ALPAKA_FN_ACC void operator()(TAcc const& acc,
+                                  Chains chains,
+                                  AttachTargetPre const* tgt,
+                                  uint32_t nTgtAll,
+                                  uint32_t const* offsets,
+                                  AttachPlsPre const* items,
+                                  int32_t const* plsOwnerChain,
+                                  ChainXcPair* xcPairs,
+                                  uint32_t* xcCursor,
+                                  uint32_t xcCap,
+                                  uint32_t* stats,
+                                  ChainConfig cfg) const {
+      constexpr int kB = cms::alpakatools::requires_single_thread_per_block_v<TAcc> ? kAttachScoreBatch : 1;
+      constexpr int kIn = dnn::attachmlp::kInput;
+
+      alignas(64) float xT[kIn * kB];
+      int32_t rowB[kB];
+      AttachPlsPre const* ppB[kB];
+      float logits[kB];
+      for (int i = 0; i < kIn * kB; ++i)
+        xT[i] = 0.f;
+
+      for (uint32_t t : cms::alpakatools::uniform_elements(acc, nTgtAll)) {
+        AttachTargetPre const cp = tgt[t];
+        uint32_t const c = cp.chain;
+        bool const is4L = chains.nLayers()[c] < 5;
+        bool const bare = chains.attachPls()[c] < 0;
+        if (!is4L && !bare)
+          continue;  // attached 5+ chain: not CCS-eligible and already fully scored
+
+        float loser = kAttachNoLogit;
+        int nb = 0;
+
+        auto flush = [&]() {
+          attachHeadBatch<kB>(xT, logits);
+          for (int b = 0; b < nb; ++b) {
+            float const lo = logits[b];
+            int32_t const p = rowB[b];
+            AttachPlsPre const& pq = *ppB[b];
+            if (is4L && xcPairs != nullptr && pq.isQuad != 0u && lo >= pq.xcThr) {
+              float const dEta = pq.eta - cp.tcEta;
+              float const dPhi = chainWrapPhi(pq.phi - cp.tcPhi);
+              if (dEta * dEta + dPhi * dPhi < cfg.xcDR2Chain) {
+                uint32_t const slot = alpaka::atomicAdd(acc, xcCursor, 1u, alpaka::hierarchy::Threads{});
+                if (slot < xcCap) {
+                  xcPairs[slot].chain = c;
+                  xcPairs[slot].pls = static_cast<uint32_t>(p);
+                } else {
+                  alpaka::atomicAdd(acc, &stats[11], 1u, alpaka::hierarchy::Threads{});
+                }
+              }
+            }
+            int32_t const oc = plsOwnerChain[p];
+            if (oc >= 0 && oc != static_cast<int32_t>(c) && lo > loser)
+              loser = lo;
+          }
+          nb = 0;
+        };
+
+        int const rb = attachRBin(cp.rtInner);
+        int const tbLo = attachTanLBin(cp.tanLambda - cfg.attachPrefDTanL, cfg.attachPrefDTanL);
+        int const tbHi = attachTanLBin(cp.tanLambda + cfg.attachPrefDTanL, cfg.attachPrefDTanL);
+        int const pbLo = attachPhiBin(cp.chordPhi - cfg.attachPrefDPhi);
+        int const pbHi = attachPhiBin(cp.chordPhi + cfg.attachPrefDPhi);
+        int nPb = pbHi - pbLo;
+        if (nPb < 0)
+          nPb += kAttachPhiBins;
+        ++nPb;
+        if (nPb > kAttachPhiBins)
+          nPb = kAttachPhiBins;
+
+        for (int tb = tbLo; tb <= tbHi; ++tb) {
+          for (int k = 0; k < nPb; ++k) {
+            int const pb = (pbLo + k) % kAttachPhiBins;
+            uint32_t const earlier = (1u << k) - 1u;
+            uint32_t const cell = attachCellId(rb, tb, pb);
+            uint32_t const b = offsets[cell], e = offsets[cell + 1u];
+            for (uint32_t i = b; i < e; ++i) {
+              AttachPlsPre const& pp = items[i];
+              uint32_t const m = pp.phiMask;
+              uint32_t const rot = ((m >> pbLo) | (m << (kAttachPhiBins - pbLo))) & (kAttachPhiCellMask);
+              if ((rot & earlier) != 0u)
+                continue;  // multi-cell duplicate: same suppression as the delivery scorer
+              int32_t const oc = plsOwnerChain[pp.row];
+              // A 5+ target only needs the owned-pLS pairs (the restricted pass); a 4-layer target
+              // needs every pair (this is its -XC4 score-only enumeration).
+              if (!is4L && oc < 0)
+                continue;
+              float const dTanL = pp.tanLambda - cp.tanLambda;
+              if (!attachEvalPairX(acc, pp, cp, dTanL, cfg, xT + nb, kB))
+                continue;
+              rowB[nb] = static_cast<int32_t>(pp.row);
+              ppB[nb] = &pp;
+              ++nb;
+              if (nb == kB)
+                flush();
+            }
+          }
+        }
+        if (nb > 0)
+          flush();
+
+        // The -CCS verdict: bare targets only, band on the emitted-TC |eta|, >= comparison,
+        // per-band 1e9 = OFF with no cross-band fallback (SPEC_CCS_MR 1.1 / 1.5).
+        if (bare) {
+          float const ae = attachFabs(cp.tcEta);
+          float const bar = (ae < 1.1f) ? cfg.ccsTheta : ((ae < 1.7f) ? cfg.ccsThetaT : cfg.ccsThetaE);
+          if (bar < 1e8f && loser >= bar) {
+            chains.flags()[c] = chains.flags()[c] | kChainFlagCcsSuppressed;
+            alpaka::atomicAdd(acc, &stats[12], 1u, alpaka::hierarchy::Threads{});
+          }
+        }
+      }
+    }
+  };
+
+  // The aux 4-layer target list: accepted chains with nLayers == 4, appended AFTER the stage-A
+  // (5+) targets in the combined array. Serial because it reads the K9 accepted order (order is
+  // immaterial for -CCS / -XC4, but the append position must not race the stage-A count).
+  struct ChainAttachSelectAux {
+    ALPAKA_FN_ACC void operator()(Acc1D const& acc,
+                                  ChainsConst chains,
+                                  uint32_t const* accepted,
+                                  uint32_t const* nTargets5,
+                                  uint32_t* targets,
+                                  uint32_t* nTargetsAllOut) const {
+      if (!cms::alpakatools::once_per_grid(acc))
+        return;
+      uint32_t const nAcc = chains.nAccepted();
+      uint32_t n = *nTargets5;
+      for (uint32_t ai = 0; ai < nAcc; ++ai) {
+        uint32_t const c = accepted[ai];
+        if (chains.nLayers()[c] != 4)
+          continue;
+        targets[n++] = c;
+      }
+      *nTargetsAllOut = n;
     }
   };
 
@@ -1043,54 +1294,54 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
   };
 
   // ------------------------------------------------------------------------------------------
-  // K8d. The contention / -RPS retirement of the carried pixel rows.
+  // K8d. The contention / -RPS / -XC retirement of the carried bare-pLS rows -- the FINAL pass of
+  // the ON-state, run after the chain rows and the stage-B type-5 rows have been appended.
   //
-  // prototype/main.cc m16RefreshSupp: a carried type-7 / type-5 / type-8 row whose OWN pLS now has
-  // an outer-tracker owner is a second delivery of the same seed and goes; and under -RPS a carried
-  // type-8 row ALSO goes when its seed had a scored pair at or above the class margin but is not
-  // the owner. The wholesale -RT5 half already ran in ChainCompactCarriedTCs before the claim, so
-  // this pass only ever adds rows; compaction is stable, exactly as there.
-  //
-  // The bare-T3 term of the -RPS predicate (plsBestT3Logit >= attachThetaT3) is structurally false
-  // in the freeze: -RT3 0 means stage B never runs, so that best stays -inf.
+  // prototype/main.cc m16RefreshSupp + the -XC channel: a carried type-8 row goes when
+  //   (a) its seed now has an outer-tracker owner (a chain upgrade or a stage-B delivery),
+  //   (b) under -RPS, its seed had a scored pair at or above the class RETIREMENT bar but is not
+  //       the owner -- TWO separate bars on TWO separate evidence arrays: the chain evidence
+  //       against rpsThetaChain (-RPSA 5.5) and the bare-T3 evidence against attachThetaT3
+  //       (-AT3 6.0). The single-array shift trick of the measurement probe is gone: it was exact
+  //       only while rpsThetaChain == attachTheta, which the A11 retune broke. -CCR 2's erasure of
+  //       the T3 evidence is visible here by construction (the sweep runs first).
+  //   (c) the ported seed crossclean retired it (xcRetired).
+  // Carried pT5 / pT3 rows no longer exist (replacePT5 / replacePT3 dropped them wholesale), so
+  // the pixel-collection row -> pLS mapping is gone with them. The chain-emitted rows occupy the
+  // LAST nChainTCs positions and are kept verbatim (stable compaction preserves the row-range
+  // contract isChainTCRow relies on); every per-class counter is recounted from the kept rows.
   struct ChainSuppressCarriedTCs {
     ALPAKA_FN_ACC void operator()(Acc1D const& acc,
                                   TrackCandidatesBase candsBase,
                                   TrackCandidatesExtended candsExtended,
-                                  PixelTripletsConst pixelTriplets,
-                                  PixelQuintupletsConst pixelQuintuplets,
-                                  ObjectRangesConst ranges,
-                                  uint16_t nLowerModules,
+                                  ChainsConst chains,
                                   uint8_t const* plsOwned,
-                                  uint32_t const* plsBest,
+                                  uint32_t const* plsBestChain,
+                                  uint32_t const* plsBestT3,
+                                  uint8_t const* xcRetired,
                                   uint32_t nPls,
                                   uint32_t* stats,
                                   ChainConfig cfg) const {
       if (!cms::alpakatools::once_per_grid(acc))
         return;
-      uint32_t const pLSOffset = static_cast<uint32_t>(ranges.segmentModuleIndices()[nLowerModules]);
-      uint32_t const thetaKey = attachOrderFloat(cfg.attachTheta);
+      uint32_t const keyChain = attachOrderFloat(cfg.rpsThetaChain);
+      uint32_t const keyT3 = attachOrderFloat(cfg.attachThetaT3);
 
       uint32_t const nIn = candsBase.nTrackCandidates();
-      uint32_t w = 0, nKeptPT5 = 0, nKeptPT3 = 0, nKeptPLS = 0;
+      uint32_t const nChainRows = chains.nChainTCs();
+      uint32_t const boundary = (nChainRows <= nIn) ? (nIn - nChainRows) : 0u;
+      uint32_t w = 0, nKeptPT5 = 0, nKeptPT3 = 0, nKeptPLS = 0, nKeptT5 = 0, nKeptT4 = 0;
       for (uint32_t r = 0; r < nIn; ++r) {
         LSTObjType const ty = candsBase.trackCandidateType()[r];
-        int32_t p = -1;
-        if (ty == LSTObjType::pT3) {
-          uint32_t const i3 = candsExtended.directObjectIndices()[r];
-          p = static_cast<int32_t>(pixelTriplets.pixelSegmentIndices()[i3] - pLSOffset);
-        } else if (ty == LSTObjType::pT5) {
-          uint32_t const i5 = candsExtended.directObjectIndices()[r];
-          p = static_cast<int32_t>(pixelQuintuplets.pixelSegmentIndices()[i5] - pLSOffset);
-        } else if (ty == LSTObjType::pLS) {
-          p = static_cast<int32_t>(candsExtended.directObjectIndices()[r]);
-        }
-
         bool drop = false;
-        if (p >= 0 && static_cast<uint32_t>(p) < nPls) {
-          drop = plsOwned[p] != 0u;
-          if (ty == LSTObjType::pLS && cfg.attachSuppressBarePLS)
-            drop = drop || (plsBest[p] >= thetaKey);
+        if (r < boundary && ty == LSTObjType::pLS) {
+          int32_t const p = static_cast<int32_t>(candsExtended.directObjectIndices()[r]);
+          if (p >= 0 && static_cast<uint32_t>(p) < nPls) {
+            drop = plsOwned[p] != 0u;
+            if (cfg.attachSuppressBarePLS)
+              drop = drop || (plsBestChain[p] >= keyChain) || (plsBestT3[p] >= keyT3);
+            drop = drop || (xcRetired[p] != 0u);
+          }
         }
         if (drop) {
           alpaka::atomicAdd(acc, &stats[6], 1u, alpaka::hierarchy::Threads{});
@@ -1116,14 +1367,20 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
           ++nKeptPT3;
         else if (ty == LSTObjType::pLS)
           ++nKeptPLS;
+        else if (ty == LSTObjType::T5)
+          ++nKeptT5;
+        else if (ty == LSTObjType::T4)
+          ++nKeptT4;
         ++w;
       }
       candsBase.nTrackCandidates() = w;
-      // Keep the per-class counters honest: they are diagnostics, but a stale pT3 / pLS count after
-      // a retirement pass would be a trap for the next reader.
+      // Recount every class from the kept rows: the carried classes and the chain-row classes
+      // (pT5 upgrades, bare T5 / T4 chains, stage-B pT3 rows) land in one consistent census.
       candsExtended.nTrackCandidatespT5() = nKeptPT5;
       candsExtended.nTrackCandidatespT3() = nKeptPT3;
       candsExtended.nTrackCandidatespLS() = nKeptPLS;
+      candsExtended.nTrackCandidatesT5() = nKeptT5;
+      candsExtended.nTrackCandidatesT4() = nKeptT4;
     }
   };
 

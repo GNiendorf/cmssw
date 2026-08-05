@@ -46,6 +46,7 @@
 #include "RecoTracker/LSTCore/interface/alpaka/EndcapGeometryDevDeviceCollection.h"
 
 #include "HeterogeneousCore/AlpakaInterface/interface/host.h"
+#include "HeterogeneousCore/AlpakaInterface/interface/memory.h"
 
 namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
 
@@ -53,6 +54,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
   // implementation translation unit needs to see.
   struct AttachPlsPre;
   struct AttachTargetPre;
+  struct ChainXcPair;
 
   class LSTEvent {
   private:
@@ -219,15 +221,24 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     // createTrackCandidates, only when useChainTracking_ is true.
     void arbitrateChains(unsigned int nAllocatedTCs);
 
-    // Chain-tracking phase P2.4: K8 pixel attach. Runs inside arbitrateChains, on the K9-accepted
-    // chains and before the extension. Builds the invariant-keyed grid prefilter, scores the
-    // (chain, pLS) candidates with the r2 pair head, resolves the one-pLS-one-owner contention and
-    // the -RD seed-family dedup, and retires the carried pixel rows the attach replaced. The type-7
-    // upgrade itself is applied by ChainEmitTCs.
+    // Chain-tracking phase P2.4: K8 pixel attach, stage A (chain targets). Runs inside
+    // arbitrateChains, on the K9-accepted chains and before the extension. Builds the
+    // invariant-keyed grid prefilter, scores the (chain, pLS) candidates with the r2 pair head
+    // under the banded -a margins, appends the -XC pass-1 pair candidates, resolves the
+    // one-pLS-one-owner contention and the -RD seed-family dedup, and runs the -CCS restricted
+    // second pass (which also covers the 4-layer -XC4 score-only targets). The type-7 upgrade
+    // itself is applied by ChainEmitTCs; the carried-row retirement is the FINAL pass of
+    // arbitrateChains.
     void attachPixels(unsigned int nHits,
                       uint32_t const* accepted,
-                      unsigned int nAllocatedTCs,
-                      int32_t const* hitOwner);
+                      AttachPlsPre const* plsPre,
+                      uint8_t* plsOwned,
+                      uint32_t* plsBestChain,
+                      uint32_t* hashKey,
+                      int32_t* hashVal,
+                      ChainXcPair* xcPairs,
+                      uint32_t* xcCursor,
+                      uint32_t xcCap);
     // Env-gated (LST_CHAIN_ATTACH_AUDIT) grid-vs-exhaustive-scan superset verification.
     void attachGridAudit(unsigned int nTargets,
                          AttachPlsPre const* plsPre,
@@ -237,27 +248,27 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     // Per-event attach counters, formatted for the [CHAIN K8] printout.
     std::string attachSummary_;
 
-    // ---- P2.4b-1 MEASUREMENT INSTRUMENT (src/alpaka/ChainAttachT3.h) ------------------------
-    // Stage B of the general attach over BARE-T3 targets. Runs only when LST_CHAIN_T3ATTACH is
-    // set; it delivers nothing, retires nothing, and changes no chain and no track candidate. It
-    // exists to measure the target inventory, the grid superset property on the bare-T3 target
-    // geometry, the candidate volume and head cost, and to publish the WOULD-BE pT3-class
-    // deliveries so the standalone harness can sim-match them against LST's own pT3 rows.
-    void attachBareT3Probe(unsigned int nHits,
-                           uint32_t const* accepted,
-                           AttachPlsPre const* plsPre,
-                           uint8_t* plsOwnedLive,
-                           uint32_t* plsBestLive,
-                           int32_t const* hitOwner,
-                           uint32_t* hashKey,
-                           int32_t* hashVal);
-    // The WOULD-BE (probe) / ACTUAL (replacement) pT3-class deliveries of stage B, emitted as
-    // type-5 rows after the chain rows when LST_CHAIN_T3REPLACE is set.
-    void emitBareT3TCs(unsigned int nHits, unsigned int nAllocatedTCs);
+    // ---- Stage B of the general attach (src/alpaka/ChainAttachT3.h): the pT3-class delivery ---
+    // Builds the bare-T3 target universe (K9-accepted bareness + the -T3F fake gate), its own
+    // grid, scores it against the LIVE ownership array, resolves the stage-B contention and the
+    // -RDT dedup, and records the bare-T3 retirement evidence in plsBestT3. The delivery itself
+    // (the -CC contention sweep + type-5 emission) runs later in arbitrateChains, after the chain
+    // rows are emitted; the owner arrays below stay alive in between.
+    void attachBareT3(unsigned int nHits,
+                      uint32_t const* accepted,
+                      AttachPlsPre const* plsPre,
+                      uint8_t* plsOwned,
+                      uint32_t* plsBestT3,
+                      uint32_t* hashKey,
+                      int32_t* hashVal);
     std::string attachT3Summary_;
-    std::vector<unsigned int> bareT3Triplet_;  // sparse triplet row of each would-be delivery
-    std::vector<int> bareT3Pls_;               // its pLS row (== the ntuple's pLS index)
-    std::vector<float> bareT3Logit_;           // the winning pair logit
+    // Stage-B owner state, device-resident, alive from attachBareT3 until the -CC sweep consumes
+    // it (ChainT3CCSweepEmit). targets = dense node index per bare-T3 target; tgtPls / tgtLogit =
+    // the per-target pick after contention and -RDT.
+    std::optional<cms::alpakatools::device_buffer<Device, uint32_t[]>> bareT3Targets_;
+    std::optional<cms::alpakatools::device_buffer<Device, int32_t[]>> bareT3TgtPls_;
+    std::optional<cms::alpakatools::device_buffer<Device, float[]>> bareT3TgtLogit_;
+    uint32_t nBareT3_ = 0;
 
     // ---- P1 RE-BASELINE INSTRUMENT: ALGORITHMIC DUPLICATE-FLAG SNAPSHOTS -------------------
     // BOOKKEEPING ONLY. Each vector is a host copy of one device isDup column, taken at the

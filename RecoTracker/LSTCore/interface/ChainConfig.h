@@ -40,7 +40,13 @@ namespace lst {
     float m3Theta6 = 1e9f;     // -M6  : IP nLayers >= 6 kill iff mP < m3Theta6 (inert at 1e9)
     float m3ThetaD = 1e9f;     // -MD  : exempt 5+       kill iff mD < m3ThetaD (inert at 1e9)
     float m3ThetaRI = -0.5f;   // -MRI : IP-5+     OR-rescue floor on mX
-    float m3ThetaR = -1.8f;    // -MR  : exempt-5+ OR-rescue floor on mX
+    float m3ThetaR = -1.8f;    // -MR  : exempt-5+ OR-rescue floor on mX (endcap + no-member fallback)
+    // -MRB / -MRT: band split of the exempt-5+ OR-rescue floor. Band on |eta| of the innermost
+    // member T3 (the K10 TC eta), boundaries zEta1 / zEta2. Winner: barrel and transition
+    // tightened to -1.2, endcap stays at the global -MR. Resolved values only -- the prototype's
+    // kMrUnset sentinel is resolved on the host and never reaches a kernel.
+    float m3ThetaRB = -1.2f;
+    float m3ThetaRT = -1.2f;
     // -C25 0.0 / -C25D -2.0 : the (nNodes == 2, nLayers == 5) cell rule; kills only when BOTH
     // margins fail, and never re-kills an already-killed chain.
     float c25Theta = 0.f;
@@ -77,13 +83,12 @@ namespace lst {
     float thetaExempt5 = 0.f;
     float thetaExempt6 = 0.f;
 
-    // Pixel-consumed drop (the structural mimic of CrossCleanT5 / CrossCleanpT3). -RT5 1 removes
-    // every carried type-7 row, so the partOfPT5 half would be killing chains for colliding with
-    // rows that no longer exist -- it is therefore OFF. -RT3 0 keeps the pT3 rows, so the
-    // partOfPT3 half stays ON.
+    // Pixel-consumed drop (the structural mimic of CrossCleanT5 / CrossCleanpT3). -RT5 1 / -RT3 1
+    // remove every carried type-7 and type-5 row, so BOTH halves would be killing chains for
+    // colliding with rows that no longer exist -- both are OFF (the POSTDELP2 -ZPF 3 universe).
     bool dropPixelConsumed = true;
     bool dropPartOfPT5 = false;  // == !replacePT5
-    bool dropPartOfPT3 = true;   // == !replacePT3
+    bool dropPartOfPT3 = false;  // == !replacePT3
 
     // -B 10 / -BK 1 / -BT 5: the K9 best-first ORDER key. Never a threshold (M9 lesson):
     //   orderKey = score - orderAlpha * max(0, orderHinge - marginX)
@@ -114,17 +119,18 @@ namespace lst {
     // freeze, so pixel owners only supply claimed slots to the maxClaimedFrac test.
     bool preClaim = true;
 
-    // -RT5 1 / -RT3 0: wholesale class replacement. At P2.3 attach is inert, so replacePT5 only
-    // means "drop every carried type-7 row"; the chains deliver the pT5 class as bare chain TCs.
+    // -RT5 1 / -RT3 1: wholesale class replacement. replacePT5 drops every carried type-7 row and
+    // replacePT3 every carried type-5 row; the chains deliver the pT5 class as bare/attached chain
+    // TCs and the pT3 class through the bare-T3 attach (stage B, ChainAttachT3.h).
     bool replacePT5 = true;
-    bool replacePT3 = false;
+    bool replacePT3 = true;
 
     // ------------------------------------------------------------------------------------------
     // P2.3 -- chain extension at assembly (-EX family, prototype/Extend.h).
     // ------------------------------------------------------------------------------------------
     int extendMode = 1;             // -EX  : 0 off, 1 outer end only, 2 inner only, 3 both
     float extendWindow = 0.25f;     // -EXW : xy (circle) residual window, cm
-    float extendRzWindow = 2.f;     // -EXR : separate |rz| window, cm; > 0 splits the test
+    float extendRzWindow = 4.f;     // -EXR : separate |rz| window, cm; > 0 splits the test (CHAINFINAL2)
     float extendChi2Factor = 2.f;   // -EXF : refit chi2/hit <= factor * max(chi2Full, window^2)
     float extendUniqMargin = 0.f;   // -EXU : runner-up ambiguity guard, cm; 0 = off
     float extendMaxDist = 60.f;     // -EXD : max 3D distance terminal MD -> candidate MD, cm
@@ -137,15 +143,61 @@ namespace lst {
     // ------------------------------------------------------------------------------------------
     // P2.4 -- pixel attach (-A 4, the general pLS -> outer-tracker attach as the DELIVERY path).
     // ------------------------------------------------------------------------------------------
-    // -a 6.875: the pair-head logit an (accepted chain, pLS) pair must reach to attach. The M19
-    // freeze lowered it from 8 when the head was retrained (r2).
-    float attachTheta = 6.875f;
-    // -AT3 6.0: the bare-T3-target margin. INERT in the freeze (-RT3 0 keeps stage B switched off);
-    // carried because the -RPS predicate reads it.
+    // -a 5.0 / -a2 5.0 / -a3 6.0 (CHAINFINAL2): the pair-head logit an (accepted chain, pLS) pair
+    // must reach to attach, banded on |eta| of the SEED (pLS) at the literal 1.1 / 1.7 boundaries.
+    // The head's logit calibration shifts ~4.6 units across eta, so one global margin would be a
+    // different working point per band. All three are RESOLVED values (no follow-the-barrel
+    // sentinel survives the port). plsBestChainLogit stays UNBANDED: it is recorded for every
+    // scored pair BEFORE the threshold (invariant I4).
+    float attachTheta = 5.0f;    // -a   delivery margin, |eta| < 1.1
+    float attachThetaT = 5.0f;   // -a2  delivery margin, 1.1 <= |eta| < 1.7
+    float attachThetaE = 6.0f;   // -a3  delivery margin, |eta| >= 1.7
+    // -AT3 6.0: the bare-T3 (stage B) delivery margin, GLOBAL -- no eta bands. Also the T3-side
+    // retirement bar of the -RPS predicate (-RPST was measured as a dead end and is deleted; the
+    // bar is hardcoded to this value).
     float attachThetaT3 = 6.f;
+    // -RPSA 5.5: the chain-side RETIREMENT bar of the -RPS predicate. Global, deliberately NOT
+    // banded (banded -RPSA measured dominated). The retirement kernels must read THIS, never
+    // attachTheta -- reusing the delivery margin is the pre-A11 behaviour and is wrong now that
+    // delivery is banded.
+    float rpsThetaChain = 5.5f;
+    // -T3F 0.10: stage-B target admission on the production T3 fake score (node feature 12 ==
+    // triplets.fakeScore()). NaN-rejecting form !(fakeScore <= t3FakeMax). Applied to the bare
+    // mask so cut targets are never scored and never write plsBestT3.
+    float t3FakeMax = 0.10f;
+    // -CC 1 -CCG 1 -CCN 1 -CCK 0 -CCP 1 -CCR 2: hit-overlap contention on the stage-B deliveries.
+    // The unit is the MD row (-CCG 1 hardcoded), the sweep is (logit desc, T3 row asc) (-CCK 0
+    // hardcoded), the pre-claim is every emitted chain TC's deduped MD set (-CCP 1; the carried
+    // pixel rows contribute nothing because replacePT5/replacePT3 dropped them all), and a revoke
+    // releases the seed AND erases its bare-T3 evidence (-CCR 2 hardcoded -- the only release that
+    // releases; see the -CCR 1 failure mode in the port spec). Only the count is a parameter.
+    int ccMinShared = 1;
+    // -CCS 6.0 / -CCS2 5.0 / -CCS3 unset: chain-loser suppression of an accepted BARE chain whose
+    // best scored pair toward a pLS owned by a DIFFERENT chain reaches the band bar. Band on the
+    // emitted TC |eta| (the innermost member T3) at the literal 1.1 / 1.7 boundaries.
+    // SENTINEL SEMANTICS DIFFER from the -a family: >= 1e8 means OFF FOR THAT BAND, with NO
+    // follow-the-barrel fallback -- the endcap dup rate is already below LST and must not move by
+    // accident. Do not "resolve" these.
+    float ccsTheta = 6.0f;
+    float ccsThetaT = 5.0f;
+    float ccsThetaE = 1e9f;
+    // -XC 3 -XCT 3.75 -XCT2 3.5 -XCT3 3.75 -XCR2 1e-6 -XCW2 0.02 -XC4 1: the ported CrossCleanpLS.
+    // Pixel-anchored arm: retire a bare quad seed sharing >= 1 pixel hit row with, or within
+    // dR^2 < xcDR2Pix of, the seed of any delivery (LST's own pT5/pT3 arms, windows verbatim).
+    // Bare-chain arm: retire a bare quad seed within dR^2 < xcDR2Chain of a delivered SEEDLESS
+    // chain TC whose attach-head logit for that exact (seed, chain) pair reaches the |seed eta|-
+    // banded xcTheta -- the substitution for LST's deleted pLS/T5 embedding test. -XC4 is folded
+    // in unconditionally (4-layer accepted chains join the scored-pair stream, score-only);
+    // -XC4T / -XCD / -XCG 1 are dead ends and are not ported.
+    float xcTheta = 3.75f;   // |seed eta| < 1.1
+    float xcThetaT = 3.5f;   // 1.1 <= |seed eta| < 1.7
+    float xcThetaE = 3.75f;  // |seed eta| >= 1.7
+    float xcDR2Pix = 1e-6f;  // LST TrackCandidate.h pT5/pT3 arm window, verbatim
+    float xcDR2Chain = 0.02f;  // LST TrackCandidate.h T5 arm window, verbatim
     // -RPS 1: also retire a carried bare-pLS (type 8) row whose seed had a scored pair above its
-    // class margin but lost the contention. -RD 1: seed-family dedup of the attach owners, two pLS
-    // being the same seed when they share >= 2 pixel hit rows.
+    // class RETIREMENT bar but lost the contention. -RD 1: seed-family dedup of the attach owners,
+    // two pLS being the same seed when they share >= 2 pixel hit rows (also gates the stage-B
+    // -RDT dedup, which follows -RD).
     bool attachSuppressBarePLS = true;
     bool attachSeedDedup = true;
     // -D4 1e9: attach-eligibility dcaXY gate, deliberately OFF (the displaced-with-pixel-seed

@@ -142,50 +142,46 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     }
   };
 
-  // The K8d contention / -RPS keep predicate, transcribed from ChainSuppressCarriedTCs. The kept
-  // per-class tallies are integer sums, so accumulating them with atomics is order-independent.
-  //   classCounts[0] pT5   [1] pT3   [2] pLS
+  // The K8d contention / -RPS / -XC keep predicate, transcribed from ChainSuppressCarriedTCs (see
+  // the semantics there: two evidence arrays against two bars, the xcRetired channel, and the
+  // chain-row tail kept verbatim). The kept per-class tallies are integer sums, so accumulating
+  // them with atomics is order-independent.
+  //   classCounts[0] pT5   [1] pT3   [2] pLS   [3] T5   [4] T4
   struct ChainTCKeepSuppress {
     ALPAKA_FN_ACC void operator()(Acc1D const& acc,
                                   TrackCandidatesBaseConst candsBase,
                                   TrackCandidatesExtendedConst candsExtended,
-                                  PixelTripletsConst pixelTriplets,
-                                  PixelQuintupletsConst pixelQuintuplets,
-                                  ObjectRangesConst ranges,
-                                  uint16_t nLowerModules,
+                                  ChainsConst chains,
                                   uint8_t const* plsOwned,
-                                  uint32_t const* plsBest,
+                                  uint32_t const* plsBestChain,
+                                  uint32_t const* plsBestT3,
+                                  uint8_t const* xcRetired,
                                   uint32_t nPls,
                                   uint32_t* keep,
                                   uint32_t* classCounts,
                                   uint32_t nBound,
                                   uint32_t* stats,
                                   ChainConfig cfg) const {
-      uint32_t const pLSOffset = static_cast<uint32_t>(ranges.segmentModuleIndices()[nLowerModules]);
-      uint32_t const thetaKey = attachOrderFloat(cfg.attachTheta);
+      uint32_t const keyChain = attachOrderFloat(cfg.rpsThetaChain);
+      uint32_t const keyT3 = attachOrderFloat(cfg.attachThetaT3);
       uint32_t const nIn = candsBase.nTrackCandidates();
+      uint32_t const nChainRows = chains.nChainTCs();
+      uint32_t const boundary = (nChainRows <= nIn) ? (nIn - nChainRows) : 0u;
       for (uint32_t r : cms::alpakatools::uniform_elements(acc, nBound)) {
         if (r >= nIn) {
           keep[r] = 0u;
           continue;
         }
         LSTObjType const ty = candsBase.trackCandidateType()[r];
-        int32_t p = -1;
-        if (ty == LSTObjType::pT3) {
-          uint32_t const i3 = candsExtended.directObjectIndices()[r];
-          p = static_cast<int32_t>(pixelTriplets.pixelSegmentIndices()[i3] - pLSOffset);
-        } else if (ty == LSTObjType::pT5) {
-          uint32_t const i5 = candsExtended.directObjectIndices()[r];
-          p = static_cast<int32_t>(pixelQuintuplets.pixelSegmentIndices()[i5] - pLSOffset);
-        } else if (ty == LSTObjType::pLS) {
-          p = static_cast<int32_t>(candsExtended.directObjectIndices()[r]);
-        }
-
         bool drop = false;
-        if (p >= 0 && static_cast<uint32_t>(p) < nPls) {
-          drop = plsOwned[p] != 0u;
-          if (ty == LSTObjType::pLS && cfg.attachSuppressBarePLS)
-            drop = drop || (plsBest[p] >= thetaKey);
+        if (r < boundary && ty == LSTObjType::pLS) {
+          int32_t const p = static_cast<int32_t>(candsExtended.directObjectIndices()[r]);
+          if (p >= 0 && static_cast<uint32_t>(p) < nPls) {
+            drop = plsOwned[p] != 0u;
+            if (cfg.attachSuppressBarePLS)
+              drop = drop || (plsBestChain[p] >= keyChain) || (plsBestT3[p] >= keyT3);
+            drop = drop || (xcRetired[p] != 0u);
+          }
         }
         if (drop) {
           alpaka::atomicAdd(acc, &stats[6], 1u, alpaka::hierarchy::Blocks{});
@@ -199,6 +195,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
           alpaka::atomicAdd(acc, &classCounts[1], 1u, alpaka::hierarchy::Blocks{});
         else if (ty == LSTObjType::pLS)
           alpaka::atomicAdd(acc, &classCounts[2], 1u, alpaka::hierarchy::Blocks{});
+        else if (ty == LSTObjType::T5)
+          alpaka::atomicAdd(acc, &classCounts[3], 1u, alpaka::hierarchy::Blocks{});
+        else if (ty == LSTObjType::T4)
+          alpaka::atomicAdd(acc, &classCounts[4], 1u, alpaka::hierarchy::Blocks{});
       }
     }
   };
@@ -275,7 +275,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     }
   };
 
-  // The scalar tail of the K8d retirement pass.
+  // The scalar tail of the K8d retirement pass. Recounts every class from the kept rows, exactly
+  // as the serial form does.
   struct ChainTCFinishSuppress {
     ALPAKA_FN_ACC void operator()(Acc1D const& acc,
                                   TrackCandidatesBase candsBase,
@@ -289,6 +290,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
       candsExtended.nTrackCandidatespT5() = classCounts[0];
       candsExtended.nTrackCandidatespT3() = classCounts[1];
       candsExtended.nTrackCandidatespLS() = classCounts[2];
+      candsExtended.nTrackCandidatesT5() = classCounts[3];
+      candsExtended.nTrackCandidatesT4() = classCounts[4];
     }
   };
 
@@ -966,7 +969,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         Acc1D const& acc, ChainsConst chains, uint32_t const* accepted, uint32_t nBound, uint32_t* keep) const {
       uint32_t const nAcc = chains.nAccepted();
       for (uint32_t ai : cms::alpakatools::uniform_elements(acc, nBound))
-        keep[ai] = (ai < nAcc && chains.nLayers()[accepted[ai]] >= kChainTCMinLayers) ? 1u : 0u;
+        keep[ai] = (ai < nAcc && chains.nLayers()[accepted[ai]] >= kChainTCMinLayers &&
+                    (chains.flags()[accepted[ai]] & kChainFlagCcsSuppressed) == 0u)
+                       ? 1u
+                       : 0u;
     }
   };
 

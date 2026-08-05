@@ -57,6 +57,30 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     return sign * alpaka::math::acosh(acc, r3 / rt);
   }
 
+  // t3_phi as the ntuple writer computes it (standalone/code/core/lst_math.h Hit::phi over the
+  // anchor hit of the triplet's FIRST MD): Phi_mpi_pi(M_PI + ATan2(-y, -x)), with the ATan2 zero-x
+  // special case and the float narrowing at the Phi_mpi_pi call reproduced exactly. (Moved here
+  // from ChainArbitrate.h so the attach pre-record kernels can use it too.)
+  namespace chaingate {
+    constexpr double kPiD = 3.14159265358979323846;
+  }
+  template <typename TAcc>
+  ALPAKA_FN_ACC ALPAKA_FN_INLINE float chainHitPhi(TAcc const& acc, float x, float y) {
+    float at;
+    if (x != 0.f)
+      at = alpaka::math::atan2(acc, -y, -x);
+    else if (y == 0.f)
+      at = 0.f;
+    else
+      at = (-y > 0.f) ? static_cast<float>(chaingate::kPiD / 2.0) : static_cast<float>(-chaingate::kPiD / 2.0);
+    float p = static_cast<float>(chaingate::kPiD + static_cast<double>(at));
+    while (static_cast<double>(p) >= chaingate::kPiD)
+      p = static_cast<float>(static_cast<double>(p) - 2.0 * chaingate::kPiD);
+    while (static_cast<double>(p) < -chaingate::kPiD)
+      p = static_cast<float>(static_cast<double>(p) + 2.0 * chaingate::kPiD);
+    return p;
+  }
+
   // rotSign of a triplet exactly as the node feature f[0] and prototype/ChainFeatures.cc
   // t3RotSign: sign of the z component of cross(c01, c12); collinear counts as +1.
   ALPAKA_FN_ACC ALPAKA_FN_INLINE float chainT3RotSign(
@@ -559,15 +583,20 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         chains.branch()[c] = branch;
 
         // Band membership on the chain's K10 eta (the innermost member T3), so a chain is
-        // tightened in exactly the |eta| band its TC is counted in.
-        bool inZ = false;
-        if (cfg.zEta2 > cfg.zEta1 && chains.nNodes()[c] > 0) {
+        // tightened in exactly the |eta| band its TC is counted in. aEtaC < 0 means "no member
+        // T3", which falls back to the global bars (reference main.cc:2937-2938).
+        float aEtaC = -1.f;
+        if (chains.nNodes()[c] > 0) {
           uint32_t const t3In = nodes.tripletIndex()[items.nodeItems()[off]];
           unsigned int m0, m1, m2;
           chainNodeMDs(triplets, segments, t3In, m0, m1, m2);
-          float const ae = alpaka::math::abs(acc, chainT3Eta(acc, mds, m2));
-          inZ = ae >= cfg.zEta1 && ae < cfg.zEta2;
+          aEtaC = alpaka::math::abs(acc, chainT3Eta(acc, mds, m2));
         }
+        bool const inZ = cfg.zEta2 > cfg.zEta1 && aEtaC >= cfg.zEta1 && aEtaC < cfg.zEta2;
+        // -MRB / -MRT: band split of the exempt-5+ OR-rescue floor. Note the asymmetry with inZ,
+        // reproduced from the reference: the barrel band does NOT require zEta2 > zEta1.
+        bool const inB = aEtaC >= 0.f && aEtaC < cfg.zEta1;
+        float const barR = inB ? cfg.m3ThetaRB : (inZ ? cfg.m3ThetaRT : cfg.m3ThetaR);
 
         // -ZIL 1: the band levers only reach chains whose innermost MD sits in layer 1.
         bool ilOk = true;
@@ -610,8 +639,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
             flags |= kChainFlagKilled;
           }
         } else {
-          // Exempt (large-DCA) 5+, with the -MR OR-rescue on mX.
-          if (mD < cfg.m3ThetaD && mX < cfg.m3ThetaR + dR) {
+          // Exempt (large-DCA) 5+, with the band-split -MR / -MRB / -MRT OR-rescue on mX.
+          if (mD < cfg.m3ThetaD && mX < barR + dR) {
             score -= cfg.gateKill;
             flags |= kChainFlagKilled;
           }

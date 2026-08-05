@@ -81,3 +81,74 @@ code: T5/T4/pT5/pT3 builders, their dedup+crossclean kernels incl. LST's CrossCl
 pixel maps, T5/pT5/pT3/T4 DNNs + embedding nets; KEEP CheckHitspLS pass1+2, t3dnn/t3_fakeScore,
 MD/LS/T3, pLS machinery) -> (B) post-strip parity vs pre-strip chain-ON -> (C) integrated
 performance plots vs the M0 LST reference.
+
+## INTEGRATION AGENT (resumed 2026-08-05): IMPLEMENTATION PLAN (M2)
+Maintainer waived intermediate physics verification; the master-OFF no-op gate (nTC 48335 on
+PU200 -n 25 -s 1) holds at every commit until the strip begins.
+
+Design decisions taken after the tree audit (all spec-conformant):
+* NEW ON-flow in arbitrateChains (prototype stage order transplanted to the tree's layout):
+  compact(replacePT3=1 too) -> K9 -> attachPixels{stage A with BANDED -a thresholds read off the
+  per-pLS pre-record + XC pass-1 filtered append for 5+ chain targets; aux 4-layer accepted
+  targets join the GRID BOUNDS (hull only; superset argument unaffected, scored pairs of stage A
+  provably identical) and get their own score-only pass; CCS restricted second pass -> per-chain
+  ccsLoserLogit -> flags bit kChainFlagCcsSuppressed; contention+RD; stage B (production: live
+  plsOwned, persistent plsBestT3 key array, cfg.t3FakeMax, maxClaimed DELETED, theta =
+  cfg.attachThetaT3); RDT} -> EX -> K10 rows (skip CCS-flagged) -> ChainEmitTCs ->
+  ChainT3CCPreclaim (MD map from emitted chains' post-extension mdItems CSR; carried pixel rows
+  contribute NOTHING because replacePT5=replacePT3=1 dropped them all -- hit2md machinery not
+  needed) -> ChainT3CCSweepEmit (serial, logit desc/T3 row asc, -CCN 1 on 3 MDs, -CCR 2 semantics
+  hardcoded, FUSED type-5 emission, device-resident; replaces the host round trip + emitBareT3TCs)
+  -> XC pixel arm (anchors = plsOwned!=0 final; candidates = carried type-8 rows only, the
+  spec 2.4 candidacy restriction; hash set on hit idxs + brute anchor dR loop) + XC chain-arm
+  pass 2 over the pass-1 buffer (tcRow>=0 && attachPls<0 -> retire) -> final
+  ChainSuppressCarriedTCs MOVED HERE (two bars rpsThetaChain 5.5 / attachThetaT3 6.0 on two
+  arrays, + xcRetired, chain rows at the tail kept verbatim + full 5-class recount).
+* Single final retirement refresh == the prototype's two refreshes (proved: -CCR 2 releases only
+  stage-B-owned seeds, which refresh#1 could not have suppressed; chain evidence untouched).
+* tcEta/tcPhi for XC pass-1 computed in ChainAttachTargetPre from the innermost member T3 --
+  exact at emission because extendMode=1 (outer only) never changes the innermost member.
+* -M4B/-M4T omitted (winner-inert; legal while m3Theta4D stays one global constant).
+* Env gates LST_CHAIN_T3ATTACH/T3REPLACE deleted; ON-state is the master switch.
+* CrossCleanpLS launch wrapped in if(!useChainTracking_) (the -ZP8 6 universe).
+* Writer fixes: 2475 map-insert guard for kBareT3TCMarker rows; bare-T3 emitted rows take the
+  T3's eta/phi (recomputed writer-side from the T3's MD anchor hits).
+
+COMMIT LADDER: P1-A config surface (+EXR 4.0, dropPartOfPT3=false, PSet) -> P1-B core delivery
+(POSTDEL de-gate, stage B production, CC, retirement rework, flow restructure) -> P1-C bands
+(-a/-a2/-a3, -MRB/-MRT) -> P1-D CCS+XC(+XC4) -> ON sanity run -> P2 STRIP (grouped deletions,
+rebuild+commit each) -> P3 CUDA + physics + plots.
+
+## M3 -- PORT IMPLEMENTED (P1-A..D landed as one coherent build, 2026-08-05)
+All eight port items (a)-(h) implemented in one pass (they share the restructured flow, so the
+intermediate commits would not each build):
+* ChainConfig: attachTheta 5.0/attachThetaT 5.0/attachThetaE 6.0, rpsThetaChain 5.5, t3FakeMax
+  0.10, ccMinShared 1, ccsTheta 6.0/5.0/1e9(OFF), xcTheta 3.75/3.5/3.75, xcDR2Pix 1e-6,
+  xcDR2Chain 0.02, m3ThetaRB/RT -1.2, extendRzWindow 4.0, dropPartOfPT3 false; LSTProducer PSet
+  surface matched.
+* ChainGate.h: -MRB/-MRT band split of the exempt-5+ -MR floor (aEtaC fallback semantics kept);
+  chainHitPhi moved to ChainGate.h.
+* ChainAttach.h: AttachPlsPre gains eta/attachThr/xcThr/isQuad (banded thresholds resolved once
+  per seed); AttachTargetPre gains tcEta/tcPhi (innermost-T3 = K10 TC direction, exact under
+  outer-only extension); ChainAttachScore = banded -a + XC pass-1 filtered append;
+  ChainBuildPlsOwnerChain + ChainAttachCcsScore (restricted second pass; 4L targets join the
+  grid bounds -- hull-only, stage-A scored pairs provably unchanged -- and get their -XC4
+  score-only enumeration there); ChainAttachSelectAux; ChainSuppressCarriedTCs reworked (two
+  evidence arrays vs rpsThetaChain/attachThetaT3, xcRetired channel, chain-row tail kept, 5-class
+  recount, pixelTriplets/pixelQuintuplets args dropped).
+* ChainAttachT3.h: production stage B (env gates gone, live plsOwned, persistent plsBestT3,
+  cfg.t3FakeMax gate, maxClaimed DELETED, hist/tgtBestAny stripped, CopyOwned+PublishOwnership
+  shift trick DELETED); NEW ChainT3CCPreclaim + ChainT3CCSweepEmit (fused -CC sweep + type-5
+  emission, -CCR 2 hardcoded).
+* NEW ChainCrossClean.h: XC anchor list/hash, pixel arm (shared-hit + dR, candidacy = carried
+  type-8 rows), chain arm pass 2.
+* LSTEvent.dev.cc: CrossCleanpLS skipped under the master switch; arbitrateChains restructured
+  (pls-side state hoisted; stage A -> CCS -> stage B -> EX -> K10(CCS skip) -> emit -> CC sweep
+  -> XC -> final suppress, both backend forms); emitBareT3TCs + host round trip deleted.
+* Writer: pt3_idx_map guard for kBareT3TCMarker rows; bare-T3 rows take the T3's eta/phi
+  (writer-side recomputation, t3_eta/t3_phi conventions); bt3_* probe branches deleted.
+* MASTER-OFF GATE: PASS. nTC 48335 and per-type {T5 3370, pT3 3673, pT5 19240, pLS 21184,
+  T4 868} identical to ref_off_n25 (port2_ref/p1_off_n25.root).
+Deferred edge (recorded): an event with ZERO welded chains skips stage B entirely (arbitrate
+early-return); prototype would still deliver bare-T3 rows. Never occurs at PU200.
+* -M4B/-M4T omitted (winner-inert while m3Theta4D stays global).

@@ -31,18 +31,6 @@ void createPixelTripletBranches();
 void createPixelQuintupletBranches();
 void createOccupancyBranches();
 
-// ---- P2.4b-1 MEASUREMENT INSTRUMENT ------------------------------------------------------
-// The WOULD-BE pT3-class deliveries of the general attach's bare-T3 stage (src/alpaka/
-// ChainAttachT3.h), sim-matched with the SAME matcher and the SAME > matchfrac rule the real
-// tc_simIdx uses, so the two are directly comparable. Off unless LST_CHAIN_T3ATTACH is set; it
-// adds branches and never touches an existing one, so a run with it off is byte-identical.
-bool bareT3AttachEnabled();
-void createBareT3AttachBranches();
-void setBareT3AttachBranches(LSTEvent* event,
-                             unsigned int n_accepted_simtrk,
-                             float matchfrac,
-                             std::map<unsigned int, unsigned int> const& t3_idx_map);
-
 void fillOutputBranches(LSTEvent* event);
 void setOccupancyBranches(LSTEvent* event);
 void setGenJetBranches(LSTEvent* event);
