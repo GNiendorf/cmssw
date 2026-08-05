@@ -2794,3 +2794,46 @@ ownership-map shape as -CC), no pair log needed.
 NEXT: maintainer reviews plots + picks CHAINFINAL vs CHAINFINAL-D (dup strictly-below vs
 +.0004 eff) -> sign-off -> port A11+A15 deltas into the parked CMSSW tree -> strip replaced
 LST code -> parity check vs prototype -> timing/memory fan-outs.
+
+## 2026-08-05 evening -- BARREL-DUP ROUND COMPLETE: CHAINFINAL2 (F3W977) awaiting review
+
+Maintainer directive (from CHAINFINAL plot review): barrel dup 3x LST unacceptable (primary),
+barrel fake similar-but-milder (secondary), judged per-band; scalars no longer sufficient.
+Round = 8-agent workflow (diagnosis survived a server shutdown) finished by 3 agents:
+F1 mechanisms / F2 thresholds / F3 composer (shared log FINDINGS_F.md; agent wake-up races
+worked around by file-polling).
+
+DIAGNOSIS (b00): barrel dup = seedlessChain+barePLS (92%) + NEVER-NAMED seedlessChain+
+SEEDEDchain cell (2 chains of one sim sharing a SEED not hits; K9 blind by construction).
+Oracle: perfect seed deletion reaches dupB .0055 at zero eff; real thresholds cap at ~40%
+of the excess (weak barrel A/B logit separation - the borrowed-head ceiling again).
+
+F1: attach CONVERSION dominates deletion (merge seed into chain: -a 5.0 barrel free,
+-a2 5.0 transition free, endcap do-not-touch); NEW ~40-line -CCS ownership suppression for
+the 2-chain cell (dupT -.0055 nearly free at -CCS2 5.0); -XCQ owner-credibility FALSIFIED;
+post-conversion RPSA tightening dead. F2: band WPs -XCT 3.75/-XCT2 3.0-3.5 (banded -RPSA
+dominated -> stays global); band-split exempt fake bars -MRB/-MRT -1.2 (eff GAINS;
+-M4B/-M4T dominated -> stay global); endcap-relax dead. F3: 3-way merge conflict-free,
+gates 33/33, contributor runs BYTE-identical in merged tree; composition near-exactly
+additive (feared -CCS x -XCT coupling negligible); displaced spend = naive sum (no overlap
+savings - honest).
+
+WINNER CHAINFINAL2 = protoFINAL2 + "-T3F 0.10 -XC4 1 -RPSA 5.5 -EXR 4.0 -a 5.0 -a2 5.0
+-a3 6.0 -CCS 6.0 -CCS2 5.0 -XCT 3.75 -XCT2 3.5 -MRB -1.2 -MRT -1.2" (977, vs LST):
+  eff .80957 (-.00030, inside gate; effB +.00144 ABOVE)
+  dup .04812 BELOW LST .05138 | dupB .02314 = 2.38x (was 3.15x) | dupT .01690 = 1.29x
+  (was 2.14x) | dupE .07099 below LST
+  fake .04637 (+.00099, was +.00401 - 75% closed) | fakB gap 56% closed, fakT 47%
+  displaced DISP1 +639 vs LST (spent 77 of +716, 89% kept; DISP30 +93)
+  length: no band regressed vs CHAINFINAL; nhT above LST
+ALTERNATE F3A977 = -XCT2 3.0: dupT to LST parity for eff -.00058 (.00008 over gate).
+Constants: +5 new (-a2 -CCS -CCS2 -MRB -MRT) + 3 retunes; 2 small mechanisms. Caveat:
+all thresholds on borrowed-head logits (retrain re-derives). Barrel residual 2.38x:
+next -XCT step breaches eff gate; ~1.2x costs ~.003 eff (measured frontier) - beyond
+that is head-retrain territory.
+Plots: standalone/performance/finishline2_chainp-PU200_chainp-PU200/mtv/var/
+Port inventory + ordering constraints (pre-scan before getopt "a:"; -CCS* before -CC;
+-MRB/-MRT before -MR) in f3_ref/STATUS.md; drop -a4 family, -M4B/-M4T, -XCQ.
+NEXT: maintainer reviews finishline2 plots; decision points = winner vs alternate,
+displaced spend (77 sims) acceptable?, barrel 2.38x acceptable this round or head-retrain
+round first? Then: port (now A11+A15+F1+F2 deltas), strip LST, parity, timing/memory.

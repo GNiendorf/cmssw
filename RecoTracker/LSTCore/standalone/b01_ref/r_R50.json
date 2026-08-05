@@ -3,170 +3,150 @@
   "base_file": "/mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/rebase_ref/rb_base300_hists.root",
   "metrics": {
     "eff_overall": {
-      "proto": null,
+      "proto": 0.3279673886979458,
       "base": 0.32811126208936137,
-      "delta": null
+      "delta": -0.0001438733914155832
     },
     "eff_overall_incut": {
-      "proto": null,
+      "proto": 0.8103653956612027,
       "base": 0.8098793796668581,
-      "delta": null
+      "delta": 0.00048601599434461296
     },
     "eff_vxy_0_1": {
-      "proto": null,
+      "proto": 0.8431987828650216,
       "base": 0.8429610611895593,
-      "delta": null
+      "delta": 0.00023772167546232126
     },
     "eff_vxy_1_5": {
-      "proto": null,
+      "proto": 0.7953216374269005,
       "base": 0.7719298245614035,
-      "delta": null
+      "delta": 0.023391812865497075
     },
     "eff_vxy_5_10": {
-      "proto": null,
+      "proto": 0.7318718381112985,
       "base": 0.654300168634064,
-      "delta": null
+      "delta": 0.07757166947723448
     },
     "eff_vxy_10_30": {
-      "proto": null,
+      "proto": 0.7389911929543634,
       "base": 0.6645316253002402,
-      "delta": null
+      "delta": 0.0744595676541232
     },
     "eff_dxy_0_1": {
-      "proto": null,
+      "proto": 0.8375297720313032,
       "base": 0.8307247363048657,
-      "delta": null
+      "delta": 0.006805035726437536
     },
     "eff_dxy_1_5": {
-      "proto": null,
+      "proto": 0.6142697881828316,
       "base": 0.5540691192865106,
-      "delta": null
+      "delta": 0.06020066889632103
     },
     "eff_dxy_5_10": {
-      "proto": null,
+      "proto": 0.20161290322580644,
       "base": 0.20967741935483872,
-      "delta": null
+      "delta": -0.008064516129032279
     },
     "eff_dxy_10_30": {
-      "proto": null,
+      "proto": 0.030732860520094562,
       "base": 0.05673758865248227,
-      "delta": null
+      "delta": -0.026004728132387706
     },
     "eff_barrel": {
-      "proto": null,
+      "proto": 0.9269375213383407,
       "base": 0.9255718675315807,
-      "delta": null
+      "delta": 0.0013656538067600144
     },
     "eff_transition": {
-      "proto": null,
+      "proto": 0.8818737270875764,
       "base": 0.8818737270875764,
-      "delta": null
+      "delta": 0.0
     },
     "eff_endcap": {
-      "proto": null,
+      "proto": 0.7458453356968757,
       "base": 0.745956126744959,
-      "delta": null
+      "delta": -0.00011079104808331408
     },
     "dup_overall": {
-      "proto": null,
+      "proto": 0.05129857069741659,
       "base": 0.05032308982390372,
-      "delta": null
+      "delta": 0.0009754808735128739
     },
     "dup_overall_incut": {
-      "proto": null,
+      "proto": 0.05228672960868011,
       "base": 0.051788699572772254,
-      "delta": null
+      "delta": 0.0004980300359078565
     },
     "dup_barrel": {
-      "proto": null,
+      "proto": 0.029354927762952055,
       "base": 0.009887158216134864,
-      "delta": null
+      "delta": 0.01946776954681719
     },
     "dup_transition": {
-      "proto": null,
+      "proto": 0.02828385284594078,
       "base": 0.012641083521444696,
-      "delta": null
+      "delta": 0.015642769324496084
     },
     "dup_endcap": {
-      "proto": null,
+      "proto": 0.07204351204351205,
       "base": 0.08556293942020611,
-      "delta": null
+      "delta": -0.013519427376694065
     },
     "fake_overall": {
-      "proto": null,
+      "proto": 0.04831601960242463,
       "base": 0.044711356648415794,
-      "delta": null
+      "delta": 0.0036046629540088387
     },
     "fake_overall_incut": {
-      "proto": null,
+      "proto": 0.048945475955169584,
       "base": 0.04475548388186224,
-      "delta": null
+      "delta": 0.004189992073307343
     },
     "fake_barrel": {
-      "proto": null,
+      "proto": 0.054512249506268096,
       "base": 0.042486695903274356,
-      "delta": null
+      "delta": 0.01202555360299374
     },
     "fake_transition": {
-      "proto": null,
+      "proto": 0.05985773547120249,
       "base": 0.04453591820475369,
-      "delta": null
+      "delta": 0.015321817266448802
     },
     "fake_endcap": {
-      "proto": null,
+      "proto": 0.04263014763014763,
       "base": 0.046032938457093324,
-      "delta": null
+      "delta": -0.0034027908269456952
     },
     "mean_nhitOT": {
-      "proto": null,
+      "proto": 6.501932417940576,
       "base": 6.518646886978841,
-      "delta": null
+      "delta": -0.016714469038264568
     },
     "mean_nhitOT_barrel": {
-      "proto": null,
+      "proto": 9.938713536394589,
       "base": 10.148040931250765,
-      "delta": null
+      "delta": -0.20932739485617624
     },
     "mean_nhitOT_transition": {
-      "proto": null,
+      "proto": 9.992561671803275,
       "base": 10.0154561147258,
-      "delta": null
+      "delta": -0.02289444292252618
     },
     "mean_nhitOT_endcap": {
-      "proto": null,
+      "proto": 3.572859362859363,
       "base": 3.562477126071463,
-      "delta": null
+      "delta": 0.010382236787899846
     },
     "n_tc": {
-      "proto": null,
+      "proto": 611557.0,
       "base": 608190.0,
-      "delta": null
+      "delta": 3367.0
     },
     "n_sim_denom": {
-      "proto": null,
+      "proto": 62555.0,
       "base": 62555.0,
-      "delta": null
+      "delta": 0.0
     }
   },
-  "warnings": [
-    "proto: histogram 'Root__TC_base_0_0_ef_numer_pt' missing",
-    "proto: histogram 'Root__TC_base_0_0_ef_denom_pt' missing",
-    "proto: histogram 'Root__TC_base_0_0_ef_numer_vxy' missing",
-    "proto: histogram 'Root__TC_base_0_0_ef_denom_vxy' missing",
-    "proto: histogram 'Root__TC_base_0_0_ef_numer_dxy' missing",
-    "proto: histogram 'Root__TC_base_0_0_ef_denom_dxy' missing",
-    "proto: histogram 'Root__TC_fr_numer_pt' missing",
-    "proto: histogram 'Root__TC_fr_denom_pt' missing",
-    "proto: histogram 'Root__TC_dr_numer_pt' missing",
-    "proto: histogram 'Root__TC_dr_denom_pt' missing",
-    "proto: histogram 'Root__TC_base_0_0_ef_numer_eta' missing",
-    "proto: histogram 'Root__TC_base_0_0_ef_denom_eta' missing",
-    "proto: histogram 'Root__TC_fr_numer_eta' missing",
-    "proto: histogram 'Root__TC_fr_denom_eta' missing",
-    "proto: histogram 'Root__TC_dr_numer_eta' missing",
-    "proto: histogram 'Root__TC_dr_denom_eta' missing",
-    "proto: histogram 'Root__TC_ol_numer_eta' missing",
-    "proto: histogram 'Root__TC_ol_denom_eta' missing",
-    "proto: ol_ (track length) set unusable; mean_nhitOT will be n/a"
-  ]
+  "warnings": []
 }
