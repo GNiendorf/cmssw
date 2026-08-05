@@ -2724,3 +2724,73 @@ edge types inside the existing chain formalism, not LS nodes.
     overwrote bin/chainproto -> mislabeled controls; agent caught it, rebuilt
     per-variant binaries, re-ran controls (the -B saturation result), deleted bad
     outputs.
+
+## 2026-08-05 -- FINISH-LINE WORKFLOW COMPLETE: CHAINFINAL awaiting maintainer sign-off
+
+23 agents (Baseline + 15 explorers + 5 verifiers + code auditor + synthesis), 0 errors.
+Survived one infra interruption (SSH-drop killed the orchestrator mid-explore; resumed from
+the journal; all agents continued from their durable a##_ref/STATUS.md logs -- verified).
+
+SYNTHESIS (workspace protoFINAL, binary md5 45c68733cf0255d938762a4521e5a25b; artifacts +
+runners in synth_ref/). Built from protoFIN + A11 delta (-T3F/-RPSA) + A15 delta (-XC4)
+ONLY (auditor: A11's form beats A05's duplicate of the same mechanism; A15's -XC4 provably
+independent of -RPSA). Rejected: A03 (provenance HIGH), A02 head (jet-safety: eta features
+could synthesize proximity), A01 -XCO (pair-log consumer, same rows as -RPSA), A05
+(superseded). Merge proven faithful: FGATE bit-identical to FINBASE 33/33; each
+contributor's best line reproduces THEIR numbers in the merged tree. Composition additive
+in dup (naive .05359 vs measured .05340).
+
+THE FIVE LEVERS on top of the assembled baseline (-XC 3 -XCT 4 -T3E 1 -CC 1 -CCN 1 -CCR 2):
+  -T3F 0.10   NEW constant. Bare-T3 target admission on upstream t3_fakeScore (head is
+              quality-blind for bare targets: gateLogit=0). fake -.00659. Mask-level.
+  -XC4 1      boolean. Closes enumeration hole: delivered 4-layer chain TCs were invisible
+              to the ported bare-chain arm. dup -.00562. WINDOW-SCOPE DECISION (a) below.
+  -RPSA 5.5   unwelds seed-retirement bar from delivery margin -AT3 (was one knob).
+  -a 6.0      re-derivation of the M19-frozen 6.875 (A04+A12 convergent). Pareto.
+  -EXR 4.0    re-derivation, same class.
+Dropped as within-noise or dominated: -L 5.0, -EXW 0.50, all -XCT-upward moves (12-21
+dup/eff unit, 4-20x worse than -a). -RPST and -XC4T dead ends, delete at port.
+
+NUMBERS OF RECORD (full 977; LST = fin_base977):
+  tag           eff      dup      fake     nh        vs LST
+  CHAINFINAL   .80978   .05246   .04939   6.49987   eff -.00009 dup +.00108 fake +.00401
+  CHAINFINAL-D .80938   .05133   .04938   6.50796   eff -.00049 dup -.00004 fake +.00400
+  LST          .80987   .05138   .04538   6.51862
+  (D = -RPSA 4.5 instead of 5.5; one number, same binary.)
+
+VERDICT vs finish line: (1) no deletion-set reliance MET (t3_fakeScore is T3-build-time);
+(2) general matching delivers pT3 class MET (121.4 rows/evt); (3) prompt eff PARITY
+(-.00009 = ~18/204388 sims, inside A08's ~107-track 1-sigma; barrel/transition ABOVE LST,
+whole deficit endcap -.00178); (4) displaced MET decisively (+716 distinct sims, +455
+beyond 10 cm; synthesis spent 14 of 730 lead = 1.9%; d1030 -.0225 deficit inherited,
+untouched by 15 angles, real per A08, out of scope); (5) dup +.00108 primary / -.00004
+ALTERNATE (gap cut 90%; residual all barrel+transition, endcap BELOW LST); (6) fake
++.00401 (cut 62%; endcap BELOW LST; A07 proved remainder is the price of the displaced
+win -- 82% of chain fakes on the large-DCA branches carrying 72-91% of displaced eff);
+(7) length aggregate -0.019 (barrel -0.224 = A06's inner-layer saturation, endcap ABOVE;
+-EXW 0.50 -L 5.0 buys aggregate ABOVE LST for 2 constants + 2x displaced spend, offered
+not taken).
+
+TWO SCOPE DECISIONS FOR THE MAINTAINER (not bug fixes): (a) -XC4 extends the blessed
+CrossCleanpLS dR window to 4-layer chain targets (port v1 scope was pT5-class only;
+exposure grows in collimated events); (b) -a/-EXR re-derive M19-frozen constants -- any
+other pre-M19 constant is equally suspect and cheap to re-scan.
+
+STANDING CAVEAT (stated with the headline per rules): the attach head is still BORROWED
+(trained on chain pairs); -T3F/-RPSA/-a are thresholds on its logits; a retrain (queued
+programme) would require re-deriving the values though the mechanisms survive. No timing
+claims. Nothing tested on cube/jet samples.
+
+PLOTS (full 977, LST vs ChainFinal, 176 files):
+standalone/performance/finishline_chainp-PU200_chainp-PU200/mtv/var/ -- sign-off set:
+eff_etazoom (criterion 3 decisive), eff_vxy + eff_dxy (displaced; check far-right d bin),
+duplrate_etazoom, fakerate_etazoom, avgOTlen_eta(coarse). Regenerate: synth_ref/syn_plots.sh.
+
+PORT NOTES (for the integration step after sign-off): resolve retirement + delivery margins
+in ONE place post-getopt (all THREE -RPS copies must read them -- else the -CCR-1 failure
+mode returns); -XC4 in Alpaka = per-target bucket at scoring time (~250/evt, same
+ownership-map shape as -CC), no pair log needed.
+
+NEXT: maintainer reviews plots + picks CHAINFINAL vs CHAINFINAL-D (dup strictly-below vs
++.0004 eff) -> sign-off -> port A11+A15 deltas into the parked CMSSW tree -> strip replaced
+LST code -> parity check vs prototype -> timing/memory fan-outs.
