@@ -2837,3 +2837,12 @@ Port inventory + ordering constraints (pre-scan before getopt "a:"; -CCS* before
 NEXT: maintainer reviews finishline2 plots; decision points = winner vs alternate,
 displaced spend (77 sims) acceptable?, barrel 2.38x acceptable this round or head-retrain
 round first? Then: port (now A11+A15+F1+F2 deltas), strip LST, parity, timing/memory.
+
+## 2026-08-05 -- MAINTAINER DECISION: CHAINFINAL2 accepted WITH RESERVATIONS; INTEGRATION GO
+Verbatim reservations: "definitely not happy overall with the dup rate in the barrel still
+and saddened by the loss of displaced efficiency to get here" - but iteration stops;
+proceed to: port into LST, strip replaced LST code, real performance plots from the
+integrated build. Winner line (F3W977) is the port target; the alternate stays reachable
+(one threshold). Barrel 2.38x residual + head retrain remain QUEUED, not dropped.
+Sequence: Port agent -> Strip agent -> Parity+Plots agent (sequential, Opus, durable
+status, file-polling not notifications). Commits at milestones, push to fork.
