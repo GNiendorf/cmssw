@@ -1,0 +1,364 @@
+--- /mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/protoFIN/AttachDelivery.h	2026-08-03 17:33:14.155302210 -0400
++++ /mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/protoA12/AttachDelivery.h	2026-08-04 21:55:05.035510651 -0400
+@@ -58,6 +58,14 @@
+ struct GeneralAttachParams {
+   AttachParams pref;           // prefilter windows + thetaAttach (chain-target margin, -a)
+   float thetaAttachT3 = 6.0f;  // -AT3: bare-T3-target margin on the SAME logit scale
++  // -AC: pLS CONTENTION POLICY (A12). 0 = the shipped M7-v1 rule reproduced bit for bit
++  // (each target keeps only its single best pLS; when two targets want the same pLS the
++  // loser gets NOTHING and stays bare). 1 = ownership-map best-first assignment over the
++  // above-margin pairs: sweep pairs by descending logit, take one if the target is still
++  // unassigned AND the pLS is still unowned, so a target that loses its first choice
++  // falls back to its next admissible pLS instead of losing the seed altogether. 2 = the
++  // same fallback additionally applied to the stage-B bare-T3 targets.
++  int contentMode = 0;
+ };
+ 
+ struct GeneralAttach {
+@@ -75,6 +83,15 @@
+   // "lost a contention above -a" predicate.
+   std::vector<float> plsBestChainLogit, plsBestT3Logit;
+   long long nPairs = 0, nScored = 0, nChainAttached = 0, nT3Attached = 0;
++  // A12 recall instrument, filled in every mode: targets that HAD at least one pair above
++  // their class margin and still ended up with no pLS -- i.e. the recall the one-pLS-one-
++  // owner rule gives up. Diagnostic only.
++  long long nChainLostAll = 0, nT3LostAll = 0;
++  // A12 recall anatomy for CHAIN targets: how many bid targets the prefilter never
++  // enumerated a single pLS pair for, and the histogram of the per-target BEST logit over
++  // all enumerated pairs (bins: <-4, [-4,0), [0,2), [2,4), [4,5), [5,6), [6,theta), >=theta).
++  long long nChainNoPair = 0;
++  long long chainBestHist[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+ 
+   // ---- ATTACH CONFUSION-MATRIX INSTRUMENT (harness-invisible, off by default) ---------
+   // The maintainer judging protocol for pLS->OT matching requires classifying EVERY
+--- /mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/protoFIN/AttachDelivery.cc	2026-08-03 17:33:14.154302209 -0400
++++ /mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/protoA12/AttachDelivery.cc	2026-08-04 21:55:26.066584986 -0400
+@@ -1,5 +1,6 @@
+ #include "AttachDelivery.h"
+ 
++#include <algorithm>
+ #include <limits>
+ #include <unordered_map>
+ 
+@@ -10,6 +11,41 @@
+ 
+ constexpr float kNegInf = -std::numeric_limits<float>::infinity();
+ 
++// A12 -AC 1/2: one above-margin (target, pLS) offer for the best-first sweep.
++struct AttachBid {
++  float logit;
++  int pos;  // target position (chain position for stage A, bid slot for stage B)
++  int pls;
++};
++
++// Ownership-map best-first assignment: sweep the offers by descending logit and take one
++// only if the target is still unassigned AND the pLS is still unowned. Same shape as the
++// -CC / -RD sweeps already in this codebase: every offer looks up its own units in one
++// map and decides alone; there is no target-vs-target comparison. The one-pLS-one-owner
++// invariant is preserved exactly -- what changes is that a target which loses its FIRST
++// choice falls back to its next admissible pLS instead of ending up bare.
++void assignBestFirst(std::vector<AttachBid>& bids,
++                     std::vector<int>& tgtPls,
++                     std::vector<float>& tgtLogit,
++                     std::vector<char>& plsTaken) {
++  std::sort(bids.begin(), bids.end(), [](const AttachBid& a, const AttachBid& b) {
++    if (a.logit != b.logit)
++      return a.logit > b.logit;
++    if (a.pos != b.pos)
++      return a.pos < b.pos;
++    return a.pls < b.pls;
++  });
++  for (const AttachBid& b : bids) {
++    if (b.pos < 0 || b.pos >= static_cast<int>(tgtPls.size()) || tgtPls[b.pos] >= 0)
++      continue;
++    if (b.pls < 0 || b.pls >= static_cast<int>(plsTaken.size()) || plsTaken[b.pls])
++      continue;
++    tgtPls[b.pos] = b.pls;
++    tgtLogit[b.pos] = b.logit;
++    plsTaken[b.pls] = 1;
++  }
++}
++
+ // Shared contention core. `best*` are per-TARGET-position picks already thresholded;
+ // this resolves the ONE-pLS-ONE-OWNER rule: higher logit wins, tie keeps the earlier
+ // target position (deterministic, identical convention to k8AttachPixels).
+@@ -51,6 +87,9 @@
+   out.plsBestChainLogit.assign(nPls, kNegInf);
+   out.plsBestT3Logit.assign(nPls, kNegInf);
+   out.nPairs = out.nScored = out.nChainAttached = out.nT3Attached = 0;
++  out.nChainLostAll = out.nT3LostAll = out.nChainNoPair = 0;
++  for (int b = 0; b < 8; ++b)
++    out.chainBestHist[b] = 0;
+   out.pairLog.clear();  // instrument state; recordPairs is set by the caller AFTER gaInit
+ }
+ 
+@@ -71,6 +110,9 @@
+ 
+   std::vector<int> tgtPls(nTgt, -1);
+   std::vector<float> tgtLogit(nTgt, kNegInf);
++  std::vector<char> tgtHadOffer(nTgt, 0);       // A12 instrument
++  std::vector<float> tgtBestAny(nTgt, kNegInf);  // A12 instrument: best logit, no threshold
++  std::vector<AttachBid> bids;                  // A12 -AC 1/2 only
+   for (const AttachPair& pr : pairs) {
+     const float lo = attachLogit(pr.f);
+     ++io.nScored;
+@@ -80,19 +122,50 @@
+     if (pr.plsRow >= 0 && pr.plsRow < static_cast<int>(io.plsBestChainLogit.size()) &&
+         lo > io.plsBestChainLogit[pr.plsRow])
+       io.plsBestChainLogit[pr.plsRow] = lo;
++    if (pr.chainPos >= 0 && pr.chainPos < nTgt && lo > tgtBestAny[pr.chainPos])
++      tgtBestAny[pr.chainPos] = lo;
+     if (lo < params.pref.thetaAttach)
+       continue;
++    if (pr.chainPos >= 0 && pr.chainPos < nTgt)
++      tgtHadOffer[pr.chainPos] = 1;
++    if (params.contentMode >= 1)
++      bids.push_back({lo, pr.chainPos, pr.plsRow});
+     if (tgtPls[pr.chainPos] < 0 || lo > tgtLogit[pr.chainPos]) {
+       tgtPls[pr.chainPos] = pr.plsRow;
+       tgtLogit[pr.chainPos] = lo;
+     }
+   }
+ 
+-  resolveContention(tgtPls, tgtLogit);
++  if (params.contentMode >= 1) {
++    std::fill(tgtPls.begin(), tgtPls.end(), -1);
++    std::fill(tgtLogit.begin(), tgtLogit.end(), kNegInf);
++    std::vector<char> plsTaken(io.plsOwned.begin(), io.plsOwned.end());
++    assignBestFirst(bids, tgtPls, tgtLogit, plsTaken);
++  } else {
++    resolveContention(tgtPls, tgtLogit);
++  }
+ 
+   for (int pos = 0; pos < nTgt; ++pos) {
+-    if (tgtPls[pos] < 0)
++    // A12 recall anatomy, filled for EVERY bid target in every mode.
++    const float ba = tgtBestAny[pos];
++    if (ba == kNegInf)
++      ++io.nChainNoPair;
++    else {
++      const int b = (ba < -4.f)                       ? 0
++                    : (ba < 0.f)                      ? 1
++                    : (ba < 2.f)                      ? 2
++                    : (ba < 4.f)                      ? 3
++                    : (ba < 5.f)                      ? 4
++                    : (ba < 6.f)                      ? 5
++                    : (ba < params.pref.thetaAttach)  ? 6
++                                                      : 7;
++      ++io.chainBestHist[b];
++    }
++    if (tgtPls[pos] < 0) {
++      if (tgtHadOffer[pos])
++        ++io.nChainLostAll;
+       continue;
++    }
+     const int c = targetChains[pos];
+     io.chainPls[c] = tgtPls[pos];
+     io.chainLogit[c] = tgtLogit[pos];
+@@ -120,6 +193,8 @@
+ 
+   // Per bare-T3 target: best pLS that stage A left free, above the per-class margin.
+   // Keyed by t3 row directly (targets are unique T3 rows), so no position map is needed.
++  std::vector<char> t3HadOffer(io.t3Pls.size(), 0);  // A12 instrument
++  std::vector<AttachBid> bidsT3;                     // A12 -AC 2 only
+   for (const AttachPair& pr : pairs) {
+     const float lo = attachLogit(pr.f);
+     ++io.nScored;
+@@ -137,12 +212,32 @@
+     const int t = pr.t3Row;
+     if (t < 0 || t >= static_cast<int>(io.t3Pls.size()))
+       continue;
++    t3HadOffer[t] = 1;
++    if (params.contentMode >= 2)
++      bidsT3.push_back({lo, t, p});
+     if (io.t3Pls[t] < 0 || lo > io.t3Logit[t]) {
+       io.t3Pls[t] = p;
+       io.t3Logit[t] = lo;
+     }
+   }
+ 
++  if (params.contentMode >= 2) {
++    // Same ownership-map sweep as stage A, keyed directly on the T3 row.
++    std::fill(io.t3Pls.begin(), io.t3Pls.end(), -1);
++    std::fill(io.t3Logit.begin(), io.t3Logit.end(), kNegInf);
++    std::vector<char> plsTaken(io.plsOwned.begin(), io.plsOwned.end());
++    assignBestFirst(bidsT3, io.t3Pls, io.t3Logit, plsTaken);
++    for (int t = 0; t < static_cast<int>(io.t3Pls.size()); ++t) {
++      if (io.t3Pls[t] >= 0) {
++        io.plsOwned[io.t3Pls[t]] = 1;
++        ++io.nT3Attached;
++      } else if (t3HadOffer[t]) {
++        ++io.nT3LostAll;
++      }
++    }
++    return;
++  }
++
+   // pLS contention among the T3 targets. Compact to the bidding targets first so the
+   // shared resolver's "earlier position wins the tie" is "lower T3 row wins".
+   std::vector<int> bidT3;
+@@ -163,6 +258,8 @@
+     if (tgtPls[i] >= 0) {
+       io.plsOwned[tgtPls[i]] = 1;
+       ++io.nT3Attached;
++    } else {
++      ++io.nT3LostAll;  // A12 instrument: had an above-margin offer, ended with no pLS
+     }
+   }
+ }
+--- /mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/protoFIN/main.cc	2026-08-04 20:23:38.338901523 -0400
++++ /mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/protoA12/main.cc	2026-08-04 22:01:43.469866131 -0400
+@@ -324,6 +324,17 @@
+                "              IP-compatible (-D) and kinematically match a KEPT baseline type-7\n"
+                "              row (dR < -R, pt ratio < 2)\n"
+                "  -R <dR>     K7-lite dR window (M7c, default 0.03)\n"
++               "  -RPT <logit> A12: the -RPS seed-retirement margin, split off from the ATTACH\n"
++               "              margin -a. Default sentinel follows -a exactly (shipped behaviour).\n"
++               "              Set it to pin seed retirement while -a moves for attach recall.\n"
++               "  -AC <0|1|2> A12 pLS CONTENTION POLICY for the general attach (-A 4).\n"
++               "              0 (default, shipped) each target keeps only its single best pLS\n"
++               "                and the loser of a contested pLS gets NOTHING -- it stays bare.\n"
++               "              1 ownership-map best-first sweep over the above-margin offers\n"
++               "                (descending logit; take if target unassigned and pLS unowned),\n"
++               "                so a loser falls back to its next admissible pLS. Chain\n"
++               "                targets only. One-pLS-one-owner is preserved exactly.\n"
++               "              2 the same sweep also for the stage-B bare-T3 targets.\n"
+                "  -S <dR>     suppression-guard dR window (M7c, -A 2 only, default 0.05): a\n"
+                "              family-suppressed row is actually dropped only if\n"
+                "              dR(row, attaching chain+pLS TC) < -S and pt ratio < 2; rows\n"
+@@ -877,6 +888,24 @@
+   // worth the pair log.
+   float xcGlobalScore = 0.f;  // -XCG  <0|1>
+ 
++  // A12 -AC: pLS CONTENTION POLICY for the general attach. The shipped rule (mode 0) gives
++  // a contested pLS to the higher-logit target and leaves the loser BARE -- it is never
++  // offered its next admissible pLS. Mode 1 replaces that with the ownership-map best-first
++  // sweep this codebase already uses for -CC and -RD: offers are swept by descending logit
++  // and taken only if the target is unassigned and the pLS unowned, so a loser falls back.
++  // Mode 2 extends the same sweep to the stage-B bare-T3 targets. Default 0 is the shipped
++  // behaviour bit for bit.
++  float attachContent = 0.f;  // -AC <0|1|2>
++
++  // A12 -RPT: the -RPS SEED-RETIREMENT margin, split off from the ATTACH margin -a.
++  // The shipped code uses ONE constant for two different questions: (i) "is this (pLS,
++  // chain) pair good enough to WELD into one track" and (ii) "did this seed lose a
++  // contention badly enough that its bare row should be RETIRED". Lowering -a to raise
++  // attach recall silently retires every seed scoring above the new, lower value too.
++  // -RPT >= -1e8 overrides the -RPS side only; the default sentinel follows thetaAttach,
++  // which is the shipped behaviour bit for bit.
++  float replPlsTheta = -1e9f;  // -RPT <logit>
++
+   // M16 pairdump scope / volume knobs (read ONLY by pairdump mode; inert everywhere else,
+   // so no other mode's bit-exactness can be touched by them).
+   //   -PDT 0 = chain targets only (the M7 dump), 1 = bare T3 targets only, 2 = BOTH
+@@ -1113,10 +1142,14 @@
+       dst = &replT5;
+     else if (s == "-RT3")
+       dst = &replT3;
++    else if (s == "-RPT")  // A12: -RPS margin, decoupled from -a
++      dst = &replPlsTheta;
+     else if (s == "-RPS")
+       dst = &replPls;
+     else if (s == "-AT3")
+       dst = &thetaAttachT3;
++    else if (s == "-AC")  // A12 attach contention policy; MUST be pre-scanned (getopt "-A")
++      dst = &attachContent;
+     else if (s == "-D4")
+       dst = &dcaAttach4;
+     else if (s == "-RD")
+@@ -1331,6 +1364,10 @@
+     }
+   }
+ 
++  // A12: resolve the -RPS seed-retirement margin. The sentinel makes it follow the attach
++  // margin -a, which is the shipped one-constant behaviour bit for bit.
++  const float rpsTheta = (replPlsTheta > -1e8f) ? replPlsTheta : thetaAttach;
++
+   if (lstPath.empty() || trkPath.empty()) {
+     std::fprintf(stderr, "Error: -i and -t are required.\n");
+     usage(argv[0]);
+@@ -2503,6 +2540,8 @@
+     // M16 (-A 4 general attach delivery)
+     long long totDelivT5 = 0, totDelivT3 = 0, totGaDcaBlocked = 0, totM16ChainOwners = 0;
+     long long totGaPairs = 0, totGaScored = 0, totGaChainAtt = 0, totGaT3Att = 0;
++    long long totGaChainLost = 0, totGaT3Lost = 0;  // A12 -AC recall instrument
++    long long totGaChainNoPair = 0, totGaChainHist[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+     long long totSeedDedup = 0;
+     long long totCCDropped = 0;      // M20 -CC OT-side crossclean ledger
+     long long totSeedDedupT3 = 0;    // M20: the PIXEL-side (-RDT) half, reported apart
+@@ -2971,6 +3010,10 @@
+       GeneralAttachParams gap;
+       gap.pref.thetaAttach = thetaAttach;
+       gap.thetaAttachT3 = thetaAttachT3;
++      // A12 -AC: pLS contention policy. 0 = shipped (loser of a contested pLS gets
++      // nothing), 1 = ownership-map best-first with fallback for chain targets, 2 = also
++      // for the bare-T3 targets. See AttachDelivery.h.
++      gap.contentMode = static_cast<int>(attachContent + 0.5f);
+       // ---- M20 CANDIDATE FINDING (PixelAttachCand.h). candMode 0 leaves every field at
+       // its default, so the frozen full analytic scan is untouched.
+       gap.pref.candMode = candModeI;
+@@ -3399,7 +3442,7 @@
+             // "attached anywhere OR lost a contention above the class margin": the pLS had
+             // a scored pair above its margin but is not the owner. A bare-pLS TC of a seed
+             // the outer tracker can explain is precisely what plsembdnn is for.
+-            drop = drop || ga.plsBestChainLogit[pls] >= thetaAttach || ga.plsBestT3Logit[pls] >= thetaAttachT3;
++            drop = drop || ga.plsBestChainLogit[pls] >= rpsTheta || ga.plsBestT3Logit[pls] >= thetaAttachT3;
+           if (drop) {
+             m16RowSuppressed[it] = 1;
+             (ty == 7 ? nM16SuppT7 : (ty == 5 ? nM16SuppT5 : nM16SuppT8)) += 1;
+@@ -4954,7 +4997,7 @@
+           // Same verdict m16RefreshSupp applies to a carried row of this pLS.
+           bool drop = p < static_cast<int>(ga.plsOwned.size()) && ga.plsOwned[p] != 0;
+           if (!drop && replPls >= 0.5f && p < static_cast<int>(ga.plsBestChainLogit.size()))
+-            drop = ga.plsBestChainLogit[p] >= thetaAttach || ga.plsBestT3Logit[p] >= thetaAttachT3;
++            drop = ga.plsBestChainLogit[p] >= rpsTheta || ga.plsBestT3Logit[p] >= thetaAttachT3;
+           // Channel (b) of the ported crossclean: the seeds LST's own CrossCleanpLS used
+           // to remove. Counted apart so the port's INCREMENTAL effect is visible.
+           if (!drop && p < static_cast<int>(xcRetired.size()) && xcRetired[p]) {
+@@ -5051,7 +5094,7 @@
+           if (p < static_cast<int>(ga.plsOwned.size()) && ga.plsOwned[p] != 0)
+             fate = 0;  // consumed by a pT5-class / pT3-class delivery
+           else if (replPls >= 0.5f && p < static_cast<int>(ga.plsBestChainLogit.size()) &&
+-                   (ga.plsBestChainLogit[p] >= thetaAttach || ga.plsBestT3Logit[p] >= thetaAttachT3))
++                   (ga.plsBestChainLogit[p] >= rpsTheta || ga.plsBestT3Logit[p] >= thetaAttachT3))
+             fate = 1;  // already blocked by the pre-existing -RPS predicate
+           else if (p < static_cast<int>(xcRetired.size()) && xcRetired[p])
+             fate = 2;  // NEWLY retired by the ported crossclean
+@@ -5167,6 +5210,11 @@
+       totGaScored += ga.nScored;
+       totGaChainAtt += ga.nChainAttached;
+       totGaT3Att += ga.nT3Attached;
++      totGaChainLost += ga.nChainLostAll;
++      totGaT3Lost += ga.nT3LostAll;
++      totGaChainNoPair += ga.nChainNoPair;
++      for (int b = 0; b < 8; ++b)
++        totGaChainHist[b] += ga.chainBestHist[b];
+       totSeedDedup += nSeedDedup + nSeedDedupT3;
+       totSeedDedupT3 += nSeedDedupT3;
+       totM16Supp[0] += nM16SuppT7;
+@@ -5281,14 +5329,23 @@
+                     totGaPairs, totGaPairs / nEvD, totGaScored, totGaChainAtt, totGaChainAtt / nEvD, totGaT3Att,
+                     totGaT3Att / nEvD, totGaDcaBlocked, dcaAttach4, totSeedDedup, totSeedDedup / nEvD,
+                     seedDupClean >= 0.5f ? 1 : 0);
++        std::printf("  A12 attach -AC  policy=%d | targets with an above-margin offer that ended BARE:"
++                    " chain=%lld mean=%.1f | bare-T3=%lld mean=%.1f\n",
++                    static_cast<int>(attachContent + 0.5f), totGaChainLost, totGaChainLost / nEvD, totGaT3Lost,
++                    totGaT3Lost / nEvD);
++        std::printf("  A12 recall      chain bid targets/evt: NO pair enumerated=%.1f | best logit <-4=%.1f"
++                    " [-4,0)=%.1f [0,2)=%.1f [2,4)=%.1f [4,5)=%.1f [5,6)=%.1f [6,%.3f)=%.1f >=theta=%.1f\n",
++                    totGaChainNoPair / nEvD, totGaChainHist[0] / nEvD, totGaChainHist[1] / nEvD,
++                    totGaChainHist[2] / nEvD, totGaChainHist[3] / nEvD, totGaChainHist[4] / nEvD,
++                    totGaChainHist[5] / nEvD, thetaAttach, totGaChainHist[6] / nEvD, totGaChainHist[7] / nEvD);
+         std::printf("  M16 delivery    type-7 in-place upgrades of accepted chains=%lld mean=%.1f"
+                     " (of %lld accepted chain TCs) | extra type-5 TCs=%lld mean=%.1f\n",
+                     totDelivT5, totDelivT5 / nEvD, totChainTCs, totDelivT3, totDelivT3 / nEvD);
+         std::printf("  M16 suppression carried rows retired: pT5=%lld pT3=%lld pLS=%lld (total=%lld mean=%.1f)"
+-                    " | -RT5=%d -RT3=%d -RPS=%d -a=%.3f -AT3=%.3f\n",
++                    " | -RT5=%d -RT3=%d -RPS=%d -a=%.3f -AT3=%.3f -RPT=%.3f\n",
+                     totM16Supp[0], totM16Supp[1], totM16Supp[2], totM16Supp[0] + totM16Supp[1] + totM16Supp[2],
+                     (totM16Supp[0] + totM16Supp[1] + totM16Supp[2]) / nEvD, replT5 >= 0.5f ? 1 : 0,
+-                    replT3 >= 0.5f ? 1 : 0, replPls >= 0.5f ? 1 : 0, thetaAttach, thetaAttachT3);
++                    replT3 >= 0.5f ? 1 : 0, replPls >= 0.5f ? 1 : 0, thetaAttach, thetaAttachT3, rpsTheta);
+         if (auZp8 >= 0.5f)
+           std::printf("  AUDIT -ZP8 %d   quad pLS=%lld mean=%.1f | already delivered=%lld mean=%.1f"
+                       " | blocked by our contention=%lld mean=%.1f | ADDED type-8 TCs=%lld mean=%.1f\n",

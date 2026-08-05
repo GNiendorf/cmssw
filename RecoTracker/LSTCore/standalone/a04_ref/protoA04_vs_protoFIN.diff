@@ -1,0 +1,150 @@
+--- protoFIN/main.cc	2026-08-04 20:23:38.338901523 -0400
++++ protoA04/main.cc	2026-08-04 21:46:35.007778054 -0400
+@@ -456,6 +456,17 @@
+                "  -XCG <0|1>  bare-chain score source: 0 (default) the logit of THAT\n"
+                "              (seed, chain) pair -- LST's own structure -- or 1 the per-seed\n"
+                "              best logit over any chain (the -RPS quantity), which is looser.\n"
++               " ---- A04 (PROMPT EFFICIENCY) GENERAL-ATTACH PREFILTER WINDOWS ----\n"
++               "  -PW  <v>    absolute |dTanLambda| prefilter half-width (default 0.6 =\n"
++               "              the frozen hard-coded value).\n"
++               "  -PWR <f>    FRACTIONAL |dTanLambda| tolerance: the effective half-width\n"
++               "              becomes max(-PW, f * |targetTanLambda|). 0 (default) = the\n"
++               "              frozen absolute window, bit-exact. tanLambda ~ sinh(eta), so\n"
++               "              the absolute window is a shrinking ANGULAR window as |eta|\n"
++               "              rises -- the endcap attach recall defect. Feeds pT5-class\n"
++               "              delivery, pT3-class delivery and the -XC bare-chain arm at\n"
++               "              once (all three read only prefiltered pairs).\n"
++               "  -PWP <v>    |dPhiAtInnermost| prefilter half-width (default 0.4 = frozen).\n"
+                "  -XCD <0|1|2> truth partition of the post-deletion bare-seed universe by\n"
+                "              (sim match x sim already has a covering TC) x fate. 1 = covered\n"
+                "              means a 5+ layer chain TC only (the -T3E 0 question); 2 = the\n"
+@@ -877,6 +888,22 @@
+   // worth the pair log.
+   float xcGlobalScore = 0.f;  // -XCG  <0|1>
+ 
++  // ===================== A04 (PROMPT EFFICIENCY): PREFILTER WINDOWS =====================
++  // The general attach's candidate finder enforces |dTanLambda| < prefDTanL (0.6) and
++  // |dPhiAtInnermost| < prefDPhi (0.4), both ABSOLUTE and both hard-coded until now. The
++  // tanLambda one is the endcap attach-head RECALL defect: tanLambda ~ sinh(eta), so a
++  // fixed 0.6 is a shrinking ANGULAR window as |eta| rises, and it feeds THREE consumers
++  // at once -- pT5-class delivery (stage A), pT3-class delivery (stage B) and the ported
++  // CrossCleanpLS bare-chain arm (which reads ga.pairLog, i.e. only prefiltered pairs).
++  //   -PWR <f> : FRACTIONAL tanLambda tolerance. The effective half-width becomes
++  //              max(-PW, f * |targetTanLambda|). 0 (default) = the frozen absolute
++  //              window, bit-exact.
++  //   -PW  <v> : the absolute floor itself (default 0.6 = frozen).
++  //   -PWP <v> : the dPhi window (default 0.4 = frozen).
++  float prefW = 0.6f;     // -PW
++  float prefWRel = 0.f;   // -PWR
++  float prefWPhi = 0.4f;  // -PWP
++
+   // M16 pairdump scope / volume knobs (read ONLY by pairdump mode; inert everywhere else,
+   // so no other mode's bit-exactness can be touched by them).
+   //   -PDT 0 = chain targets only (the M7 dump), 1 = bare T3 targets only, 2 = BOTH
+@@ -1121,6 +1148,14 @@
+       dst = &dcaAttach4;
+     else if (s == "-RD")
+       dst = &seedDupClean;
++    // A04 prefilter windows. -PWR / -PWP MUST precede -PW (exact string equality, but the
++    // ordering documents the intent and survives a switch to prefix matching).
++    else if (s == "-PWR")
++      dst = &prefWRel;
++    else if (s == "-PWP")
++      dst = &prefWPhi;
++    else if (s == "-PW")
++      dst = &prefW;
+     else if (s == "-PDT")  // M16 pairdump: target-kind scope
+       dst = &pdTargetMode;
+     else if (s == "-PDC")  // M16 pairdump: fake downsample stride, chain targets
+@@ -1675,6 +1710,11 @@
+     // displaced strata of the true-pair population, because the pT5-class and pT3-class
+     // deliveries are judged separately (plan 11).
+     AttachParams apre;  // default prefilter windows (PixelAttach.h: 0.6 / 0.4)
++    // A04: the pairdump recall instrument must be able to measure the SAME windows the
++    // hybrid path runs (defaults reproduce the frozen 0.6 / 0.4 absolute pair).
++    apre.prefDTanL = prefW;
++    apre.prefRelTanL = prefWRel;
++    apre.prefDPhi = prefWPhi;
+     // M20: pairdump-local candidate-finder state (the hybrid block owns its own).
+     const int candModeI = static_cast<int>(candMode + 0.5f);
+     PlsCandIndex pdCandIdx;
+@@ -2971,6 +3011,10 @@
+       GeneralAttachParams gap;
+       gap.pref.thetaAttach = thetaAttach;
+       gap.thetaAttachT3 = thetaAttachT3;
++      // A04: prefilter windows (defaults 0.6 / 0 / 0.4 == the frozen hard-coded values).
++      gap.pref.prefDTanL = prefW;
++      gap.pref.prefRelTanL = prefWRel;
++      gap.pref.prefDPhi = prefWPhi;
+       // ---- M20 CANDIDATE FINDING (PixelAttachCand.h). candMode 0 leaves every field at
+       // its default, so the frozen full analytic scan is untouched.
+       gap.pref.candMode = candModeI;
+--- protoFIN/PixelAttach.cc	2026-08-03 17:33:14.155302210 -0400
++++ protoA04/PixelAttach.cc	2026-08-04 21:45:44.930637203 -0400
+@@ -385,6 +385,16 @@
+   return wrapPhi(phiDirAtRadius(pls, cp.rtInner) - cp.chordPhi);
+ }
+ 
++// A04: the EFFECTIVE |dTanLambda| prefilter half-width for a target. With
++// params.prefRelTanL == 0 (the default) this is exactly params.prefDTanL, so every
++// pre-A04 command line is bit-exact. Otherwise the window scales with the target's own
++// |tanLambda| -- a fractional tolerance rather than an absolute one, which is what a
++// resolution-driven window wants in the endcap (tanLambda ~ sinh(eta)).
++inline float effDTanLWindow(const AttachParams& params, float targetTanL) {
++  const float rel = params.prefRelTanL * std::fabs(targetTanL);
++  return (rel > params.prefDTanL) ? rel : params.prefDTanL;
++}
++
+ // Shared pair evaluation. Always computes both prefilter quantities when evalAll is
+ // true (probe path); the fast path rejects on dTanLambda before touching the circle
+ // propagation. fOut may be null (windows-only probe).
+@@ -399,15 +409,17 @@
+               float& absDTanL,
+               float& absDPhi,
+               bool enforceWindows = true) {
++  // A04: fractional tanLambda tolerance (prefRelTanL 0 == the frozen absolute window).
++  const float wDTanL = effDTanLWindow(params, cp.tanLambda);
+   const float dTanL = pls.tanLambda - cp.tanLambda;
+   absDTanL = std::fabs(dTanL);
+-  if (enforceWindows && !evalAll && absDTanL >= params.prefDTanL)
++  if (enforceWindows && !evalAll && absDTanL >= wDTanL)
+     return false;
+ 
+   const float dPhi = dPhiAtInnermost(pls, cp);
+   absDPhi = std::fabs(dPhi);
+   const bool pass =
+-      !enforceWindows || (absDTanL < params.prefDTanL && absDPhi < params.prefDPhi);
++      !enforceWindows || (absDTanL < wDTanL && absDPhi < params.prefDPhi);
+   if (!pass || fOut == nullptr)
+     return pass;
+ 
+@@ -624,8 +636,11 @@
+   }
+   const int rb = rtBinOf(cp.rtInner, idx.rtW, idx.nRt);
+   const float ct = std::min(std::max(cp.tanLambda, -idx.tanClamp), idx.tanClamp);
+-  const int tLo = tanBinOf(ct - params.prefDTanL, idx.tanClamp, idx.tanW, idx.nTan);
+-  const int tHi = tanBinOf(ct + params.prefDTanL, idx.tanClamp, idx.tanW, idx.nTan);
++  // A04: query the SAME effective window evalPair will enforce, so the binned finder
++  // stays a provable superset of the analytic scan (the -CFA audit still gates it).
++  const float wDT = effDTanLWindow(params, cp.tanLambda);
++  const int tLo = tanBinOf(ct - wDT, idx.tanClamp, idx.tanW, idx.nTan);
++  const int tHi = tanBinOf(ct + wDT, idx.tanClamp, idx.tanW, idx.nTan);
+ 
+   const int epoch = ++idx.qEpoch;
+   auto take = [&](int p) {
+--- protoFIN/PixelAttach.h	2026-08-03 17:33:14.156302212 -0400
++++ protoA04/PixelAttach.h	2026-08-04 21:45:22.845531267 -0400
+@@ -82,6 +82,13 @@
+   // Prefilter windows (loose, efficiency-first; measured before tightening):
+   float prefDPhi = 0.4f;        // |dPhiAtInnermost| window
+   float prefDTanL = 0.6f;       // |dTanLambda| window
++  // A04 (prompt efficiency): the |dTanLambda| window is ABSOLUTE, but tanLambda itself
++  // grows like sinh(eta), so a fixed 0.6 is a shrinking ANGULAR window as |eta| rises --
++  // the endcap attach-head recall defect. prefRelTanL turns the window into
++  //     max(prefDTanL, prefRelTanL * |targetTanLambda|)
++  // i.e. a FRACTIONAL tanLambda tolerance, which is what a resolution-driven window
++  // should be. 0 (default) reproduces the absolute window bit-exactly.
++  float prefRelTanL = 0.f;
+   float thetaAttach = 0.f;      // pair-head logit threshold to attach
+   bool suppressPixel = true;    // suppress baseline pT5/pLS TCs of the attached pLS
+   // ---- M20 candidate finding (all defaults == the frozen behaviour) -------------------

@@ -1,0 +1,65 @@
+--- protoXC/main.cc	2026-08-04 18:33:42.149482223 -0400
++++ protoFIN/main.cc	2026-08-04 20:23:38.338901523 -0400
+@@ -456,9 +456,12 @@
+                "  -XCG <0|1>  bare-chain score source: 0 (default) the logit of THAT\n"
+                "              (seed, chain) pair -- LST's own structure -- or 1 the per-seed\n"
+                "              best logit over any chain (the -RPS quantity), which is looser.\n"
+-               "  -XCD <0|1>  truth partition of the post-deletion bare-seed universe by\n"
+-               "              (sim match x sim already has a chain TC) x fate. Diagnostic\n"
+-               "              only: changes no decision and no output row.\n",
++               "  -XCD <0|1|2> truth partition of the post-deletion bare-seed universe by\n"
++               "              (sim match x sim already has a covering TC) x fate. 1 = covered\n"
++               "              means a 5+ layer chain TC only (the -T3E 0 question); 2 = the\n"
++               "              DELIVERED pT3-class rows count as covering too (use this\n"
++               "              whenever the pT3 stage is on). Diagnostic only: changes no\n"
++               "              decision and no output row.\n",
+                prog);
+ }
+ 
+@@ -5015,6 +5018,21 @@
+             for (int s : common)
+               chainCovered[s] = 1;
+           }
++          // -XCD 2: count the DELIVERED pT3-class rows as covering sims too. At -XCD 1
++          // "covered" means a 5+ layer chain TC only, which is the right question when the
++          // pT3 stage is off; with the stage ON a seed whose sim is covered only by one of
++          // OUR pT3-class deliveries is still a duplicate by construction, and -XCD 1
++          // would file it under class B ("efficiency we killed"). ga.t3Pls[t] >= 0 is
++          // exactly the post-revocation delivered set (both dedup passes write -1 there).
++          // Diagnostic only: writes nothing but its own counters.
++          if (xcDiag >= 1.5f) {
++            for (int t = 0; t < static_cast<int>(ga.t3Pls.size()) && t < static_cast<int>(xdT3.sims.size()); ++t) {
++              if (ga.t3Pls[t] < 0)
++                continue;
++              for (int s : xdT3.sims[t])
++                chainCovered[s] = 1;
++            }
++          }
+         }
+         const int nPlsD = static_cast<int>(ev.pLS_pt.size());
+         for (int p = 0; p < nPlsD && p < static_cast<int>(ev.pLS_isDupAlgPass2.size()); ++p) {
+@@ -5290,10 +5308,11 @@
+                       totXcChainKill / nEvD, totXcCarried, totXcCarried / nEvD, totXcZp8, totXcZp8 / nEvD);
+         }
+         if (xcDiag >= 0.5f) {
+-          static const char* kCls[3] = {"A true, sim has chain TC", "B true, sim has NO chain TC",
++          static const char* kCls[3] = {"A true, sim has cover TC", "B true, sim has NO cover TC",
+                                         "C no true match         "};
+           std::printf("  XC truth        post-deletion bare-seed universe (isQuad && isDupAlgPass2==0),"
+-                      " per event over %.0f events\n", nEvD);
++                      " per event over %.0f events | -XCD %d: cover = chain TC%s\n", nEvD,
++                      static_cast<int>(xcDiag + 0.5f), (xcDiag >= 1.5f) ? " + delivered pT3-class" : " only");
+           std::printf("  XC truth        %-28s %10s %10s %10s %10s %10s\n", "class", "N", "consumed", "RPSblock",
+                       "XCretire", "survive");
+           for (int c = 0; c < 3; ++c) {
+@@ -5347,7 +5366,9 @@
+                     totSeedDedupT3, totSeedDedupT3 / nEvD, ccMode >= 0.5f ? 1 : 0,
+                     ccGran >= 0.5f ? "MD" : "hit", std::max(1, static_cast<int>(ccMinShared + 0.5f)),
+                     ccPreclaim >= 0.5f ? 1 : 0, static_cast<int>(ccOrder + 0.5f),
+-                    ccRelPls >= 0.5f ? 1 : 0, totCCDropped,
++                    // report the VALUE, not a boolean: -CCR 1 and -CCR 2 are different
++                    // mechanisms and both used to print "1" here.
++                    static_cast<int>(ccRelPls + 0.5f), totCCDropped,
+                     totCCDropped / nEvD, totDelivT3, totDelivT3 / nEvD);
+         std::printf("  M20 stageB      %s | pT3-class candidates before any dedup=%lld (%.1f/evt)\n",
+                     doT3Stage ? "ON" : "off", totSeedDedupT3 + totCCDropped + totDelivT3,

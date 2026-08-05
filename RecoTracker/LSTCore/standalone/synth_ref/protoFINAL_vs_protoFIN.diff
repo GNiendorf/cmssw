@@ -1,0 +1,347 @@
+--- protoFIN/main.cc	2026-08-04 20:23:38.338901523 -0400
++++ protoFINAL/main.cc	2026-08-05 02:29:04.446393943 -0400
+@@ -375,6 +375,22 @@
+                "              pLS attached anywhere OR lost a contention above -a / -AT3\n"
+                "              (i.e. had real OT evidence but is not the owner). The\n"
+                "              contention rule replacing CrossCleanpLS / plsembdnn.\n"
++               "  -RPSA <v>   (A11) the -RPS SEED-RETIREMENT margin on the chain logit,\n"
++               "              SPLIT from the delivery margin -a. Default 1e9 = unset =\n"
++               "              follow -a exactly (bit-identical). One constant used to answer\n"
++               "              two different questions -- 'is this pair good enough to ATTACH'\n"
++               "              and 'does this seed have enough OT evidence to RETIRE its bare\n"
++               "              row' -- is what made -a unmovable: lowering it to attach more\n"
++               "              also retired more seeds and paid efficiency for it.\n"
++               "  -RPST <v>   same for the bare-T3 logit (default: follow -AT3).\n"
++               "  -T3F <v>    (A11) stage-B TARGET ADMISSION: a bare T3 with upstream\n"
++               "              t3_fakeScore > v never enters the pT3-class pair enumeration.\n"
++               "              Default 1e9 = OFF = bit-identical. The attach head is BLIND to\n"
++               "              T3 quality (a bare-T3 target is handed gateLogit = 0 and\n"
++               "              nLayersF = 3) while the bare-T3 universe is only ~21%% true, so\n"
++               "              the pT3-class delivery is picking out of an unfiltered pool.\n"
++               "              t3_fakeScore is computed at T3 build time and survives the P2.7\n"
++               "              deletion; ChainFeatures 20/21 already consume it.\n"
+                "  -RD <0|1>   (-A 4) SEED-FAMILY dedup of the attach owners (default 0 = off):\n"
+                "              among attached pLS, one sharing >= 2 pixel hit rows with a\n"
+                "              higher-logit attached pLS loses its attachment (its target\n"
+@@ -461,7 +477,15 @@
+                "              means a 5+ layer chain TC only (the -T3E 0 question); 2 = the\n"
+                "              DELIVERED pT3-class rows count as covering too (use this\n"
+                "              whenever the pT3 stage is on). Diagnostic only: changes no\n"
+-               "              decision and no output row.\n",
++               "              decision and no output row.\n"
++               "  -XC4 <0|1>  close the bare-chain arm's ENUMERATION HOLE. Stage A only ever\n"
++               "              scores (seed, chain) pairs for nLayers >= 5 targets, so a\n"
++               "              DELIVERED 4-layer chain TC is invisible to the arm and the seed\n"
++               "              in front of it survives at any -XCT. 1 adds a SCORE-ONLY pass\n"
++               "              over the accepted 4-layer chains (same head, same prefilter,\n"
++               "              same dR^2 window, same threshold) that writes only the pair log\n"
++               "              -- no delivery state, no plsBestChainLogit, no -RPS change.\n"
++               "  -XC4T <v>   separate threshold for that 4-layer arm (default: follow -XCT).\n",
+                prog);
+ }
+ 
+@@ -818,6 +842,15 @@
+   float auZp8 = 0.f;   // -ZP8 <0|1|2>: post-deletion bare-pLS TC universe (see below)
+   float replPls = 0.f;             // -RPS: drop contested carried type-8 rows
+   float thetaAttachT3 = 6.0f;      // -AT3: per-class bare-T3 attach margin (tight by default)
++  // A11: the -RPS SEED-RETIREMENT margins, split from the DELIVERY margins -a / -AT3.
++  // One constant used to serve two different questions ("is this pair good enough to
++  // attach?" and "does this seed have enough outer-tracker evidence to retire its bare
++  // row?"), which made the attach margin unmovable: lowering -a to attach more also
++  // retired more seeds. 1e9 = unset = follow -a / -AT3 exactly (bit-identical default).
++  float rpsThetaChain = 1e9f;      // -RPSA
++  float rpsThetaT3 = 1e9f;         // -RPST
++  // A11 -T3F: stage-B TARGET ADMISSION on the upstream t3dnn fake score. 1e9 = off.
++  float t3FakeMax = 1e9f;
+   float dcaAttach4 = 1e9f;         // -D4: -A 4 attach-eligibility dca gate (default OFF)
+   float seedDupClean = 0.f;        // -RD: seed-family dedup of the attach owners. Plan 11
+                                    // keeps exactly ONE piece of the old crossclean stack --
+@@ -876,6 +909,20 @@
+   // which is looser by construction. The ablation answers whether the distinction is
+   // worth the pair log.
+   float xcGlobalScore = 0.f;  // -XCG  <0|1>
++  // A15 -- THE ENUMERATION HOLE. The bare-chain arm is driven from the attach PAIR LOG,
++  // and stage A enumerates CHAIN targets only for nLayers >= 5 (PixelAttach.cc, "v1 scope:
++  // attach only to pT5-class chains"). So a delivered 4-layer chain TC is invisible to the
++  // arm: chainPairs.find(c) misses and the seed in front of it survives at ANY -XCT.
++  // Measured cost on the assembled baseline (a15_ref/dec_PROTO300.txt): the two
++  // 4-layer-chain-vs-bare-seed cells carry 1718 duplicate pairs / 300 evt (5.7/evt), an
++  // ORACLE worth -.0062 of duplicate rate, and none of it is reachable today.
++  // -XC4 1 closes the hole with a SCORE-ONLY pass: the same head, the same prefilter, the
++  // same dR^2 window, the same -XCT threshold, and NO delivery state touched (chainPls /
++  // plsOwned / plsBestChainLogit are all left exactly as stage A left them). Default 0 is
++  // bit-identical.
++  float xcT4 = 0.f;           // -XC4  <0|1>
++  float xcT4Theta = 1e9f;     // -XC4T <logit>: separate threshold for the 4-layer arm
++                              //        (1e9 sentinel = follow -XCT, the one-knob default)
+ 
+   // M16 pairdump scope / volume knobs (read ONLY by pairdump mode; inert everywhere else,
+   // so no other mode's bit-exactness can be touched by them).
+@@ -1113,6 +1160,11 @@
+       dst = &replT5;
+     else if (s == "-RT3")
+       dst = &replT3;
++    // A11: -RPSA / -RPST MUST precede -RPS (exact string equality, longest first).
++    else if (s == "-RPSA")
++      dst = &rpsThetaChain;
++    else if (s == "-RPST")
++      dst = &rpsThetaT3;
+     else if (s == "-RPS")
+       dst = &replPls;
+     else if (s == "-AT3")
+@@ -1154,6 +1206,10 @@
+       dst = &candChainToo;
+     else if (s == "-CF")
+       dst = &candMode;
++    // A11: -T3F MUST precede -T3E only in intent (exact string equality); both are here
++    // because getopt's "-T" would swallow them.
++    else if (s == "-T3F")
++      dst = &t3FakeMax;
+     else if (s == "-T3E")
+       dst = &t3StageEnable;
+     // M20 pT3-class hit-overlap contention. -CCT/-CCP/-CCK MUST precede -CC in this
+@@ -1175,6 +1231,10 @@
+       dst = &rdT3;
+     // SEED CROSSCLEAN (-XC). The scan uses exact string equality, so the longer names
+     // MUST precede "-XC"; getopt's "-X" would otherwise swallow all of them.
++    else if (s == "-XC4T")
++      dst = &xcT4Theta;
++    else if (s == "-XC4")
++      dst = &xcT4;
+     else if (s == "-XCR2")
+       dst = &xcDR2Pix;
+     else if (s == "-XCW2")
+@@ -1398,6 +1458,14 @@
+     }
+   }
+ 
++  // A11: -RPSA / -RPST default to the DELIVERY margins -a / -AT3, so every pre-A11
++  // command line keeps the single-constant behaviour bit-for-bit. Resolved HERE (not with
++  // the pre-scan defaults) because -a comes through getopt, which has only just run.
++  if (rpsThetaChain >= 1e8f)
++    rpsThetaChain = thetaAttach;
++  if (rpsThetaT3 >= 1e8f)
++    rpsThetaT3 = thetaAttachT3;
++
+   NtupleReader reader(lstPath, trkPath);
+   const long long nTotal = reader.nEntries();
+   const long long nRun = (maxEvents < 0 || maxEvents > nTotal) ? nTotal : maxEvents;
+@@ -2525,6 +2593,10 @@
+     long long totXcChainKill = 0;   // seeds retired: bare-chain window + score >= -XCT
+     long long totXcCarried = 0;     // of those, carried type-8 rows newly retired
+     long long totXcZp8 = 0;         // of those, -ZP8 additions newly blocked
++    // A15 (-XC4): the 4-layer half of the bare-chain arm, counted apart so its
++    // INCREMENTAL effect is visible against the frozen 5+-layer arm.
++    long long totXc4Pairs = 0;      // (seed, 4-layer chain) pairs added to the pair log
++    long long totXc4Kill = 0;       // seeds retired BY a 4-layer chain target
+     // Truth partition of the post-deletion bare-seed universe (-XCD 1). Rows =
+     // {A: true match whose sim already has an accepted chain TC, B: true match whose sim
+     // has none, C: no true match}; columns = the FATE of the seed, in pipeline order:
+@@ -2971,6 +3043,7 @@
+       GeneralAttachParams gap;
+       gap.pref.thetaAttach = thetaAttach;
+       gap.thetaAttachT3 = thetaAttachT3;
++      gap.t3FakeMax = t3FakeMax;  // A11 -T3F: stage-B target admission (1e9 = off)
+       // ---- M20 CANDIDATE FINDING (PixelAttachCand.h). candMode 0 leaves every field at
+       // its default, so the frozen full analytic scan is untouched.
+       gap.pref.candMode = candModeI;
+@@ -3399,7 +3472,7 @@
+             // "attached anywhere OR lost a contention above the class margin": the pLS had
+             // a scored pair above its margin but is not the owner. A bare-pLS TC of a seed
+             // the outer tracker can explain is precisely what plsembdnn is for.
+-            drop = drop || ga.plsBestChainLogit[pls] >= thetaAttach || ga.plsBestT3Logit[pls] >= thetaAttachT3;
++            drop = drop || ga.plsBestChainLogit[pls] >= rpsThetaChain || ga.plsBestT3Logit[pls] >= rpsThetaT3;
+           if (drop) {
+             m16RowSuppressed[it] = 1;
+             (ty == 7 ? nM16SuppT7 : (ty == 5 ? nM16SuppT5 : nM16SuppT8)) += 1;
+@@ -3626,6 +3699,30 @@
+         const auto ta0 = std::chrono::steady_clock::now();
+         gaStageChains(ev, chains, thetaPass, cfHyb, gateLogit, gap, ga);
+         attachMs = msBetween(ta0, std::chrono::steady_clock::now());
++        // ---- A15 (-XC4): CLOSE THE PAIR-LOG ENUMERATION HOLE FOR 4-LAYER CHAINS -------
++        // SCORE-ONLY. The ported CrossCleanpLS bare-chain arm reads ga.pairLog; stage A
++        // only ever enumerates nLayers >= 5 targets, so a delivered 4-layer chain TC can
++        // retire nothing at any -XCT. This appends the missing (seed, 4-layer chain) rows
++        // to the pair log using the SAME head, the SAME prefilter windows and the SAME
++        // AttachPair path -- and writes NOTHING else: not chainPls, not plsOwned, not
++        // plsBestChainLogit (so the -RPS predicate is untouched), and no delivery. The
++        // arm's own dR^2 < -XCW2 window and -XCT threshold then apply verbatim.
++        if (xcT4 >= 0.5f && ga.recordPairs) {
++          std::vector<int> t4Targets;
++          for (int c : accepted)
++            if (chains.nLayers[c] < 5)
++              t4Targets.push_back(c);
++          if (!t4Targets.empty()) {
++            AttachParams p4 = gap.pref;
++            p4.minChainLayers = 1;  // the ONLY difference: let 4-layer targets enumerate
++            std::vector<AttachPair> pairs4;
++            k8EnumeratePrefilteredPairs(ev, chains, t4Targets, cfHyb, gateLogit, p4, pairs4);
++            totXc4Pairs += static_cast<long long>(pairs4.size());
++            for (const AttachPair& pr : pairs4)
++              ga.pairLog.push_back({static_cast<int8_t>(kAttachTargetChain),
++                                    t4Targets[pr.chainPos], pr.plsRow, attachLogit(pr.f)});
++          }
++        }
+         // (1b) SEED-FAMILY DEDUP OF THE ATTACH OWNERS (-RD), stage A. One track
+         // reconstructed with N duplicate pixel seeds offers N distinct pLS; without this
+         // N accepted chains would each be upgraded and the track delivered N times as a
+@@ -4725,7 +4822,11 @@
+           // Per-seed |eta| bin threshold, LST's kWP[bin] structure with the scoreboard's
+           // own region boundaries. The pair-log prefilter uses the LOOSEST bin so no pair
+           // any bin could use is dropped.
+-          const float xcThetaMin = std::min(xcTheta, std::min(xcThetaT, xcThetaE));
++          float xcThetaMin = std::min(xcTheta, std::min(xcThetaT, xcThetaE));
++          // A15: -XC4T can sit BELOW every eta bin, so it has to join the pair-log
++          // prefilter or the 4-layer arm would never see the pairs it is meant to use.
++          if (xcT4 >= 0.5f && xcT4Theta < 1e8f)
++            xcThetaMin = std::min(xcThetaMin, xcT4Theta);
+           auto xcThetaOf = [&](float eta) {
+             const float ae = std::fabs(eta);
+             return (ae < 1.1f) ? xcTheta : ((ae < 1.7f) ? xcThetaT : xcThetaE);
+@@ -4750,6 +4851,11 @@
+             const auto f = chainPairs.find(c);
+             if (f == chainPairs.end())
+               continue;
++            // A15: a 4-layer chain target is a WEAKER anchor than a 5+-layer one (it is
++            // shorter and, measured on this line, far more often fake), so it gets its own
++            // threshold. -XC4T defaults to the 1e9 sentinel = "follow -XCT", which keeps
++            // the one-knob command line and makes -XC4 1 a pure enumeration fix.
++            const bool t4Target = (c < static_cast<int>(chains.nLayers.size())) && chains.nLayers[c] < 5;
+             for (const auto& pr : f->second) {
+               const int p = pr.first;
+               if (p < 0 || p >= nPlsXc || xcRetired[p] || !ev.pLS_isQuad[p] || isAnchor(p))
+@@ -4757,13 +4863,16 @@
+               const float sc = (xcGlobalScore >= 0.5f && p < static_cast<int>(ga.plsBestChainLogit.size()))
+                                    ? ga.plsBestChainLogit[p]
+                                    : pr.second;
+-              if (!(sc >= xcThetaOf(ev.pLS_eta[p])))
++              const float thr = (t4Target && xcT4Theta < 1e8f) ? xcT4Theta : xcThetaOf(ev.pLS_eta[p]);
++              if (!(sc >= thr))
+                 continue;
+               const float dEta = ev.pLS_eta[p] - outTCs[j].eta;
+               const float dPhi = wrapDPhi(ev.pLS_phi[p] - outTCs[j].phi);
+               if (dEta * dEta + dPhi * dPhi < xcDR2Chain) {
+                 xcRetired[p] = 1;
+                 ++nXcChainKill;
++                if (t4Target)
++                  ++totXc4Kill;
+               }
+             }
+           }
+@@ -4954,7 +5063,7 @@
+           // Same verdict m16RefreshSupp applies to a carried row of this pLS.
+           bool drop = p < static_cast<int>(ga.plsOwned.size()) && ga.plsOwned[p] != 0;
+           if (!drop && replPls >= 0.5f && p < static_cast<int>(ga.plsBestChainLogit.size()))
+-            drop = ga.plsBestChainLogit[p] >= thetaAttach || ga.plsBestT3Logit[p] >= thetaAttachT3;
++            drop = ga.plsBestChainLogit[p] >= rpsThetaChain || ga.plsBestT3Logit[p] >= rpsThetaT3;
+           // Channel (b) of the ported crossclean: the seeds LST's own CrossCleanpLS used
+           // to remove. Counted apart so the port's INCREMENTAL effect is visible.
+           if (!drop && p < static_cast<int>(xcRetired.size()) && xcRetired[p]) {
+@@ -5051,7 +5160,7 @@
+           if (p < static_cast<int>(ga.plsOwned.size()) && ga.plsOwned[p] != 0)
+             fate = 0;  // consumed by a pT5-class / pT3-class delivery
+           else if (replPls >= 0.5f && p < static_cast<int>(ga.plsBestChainLogit.size()) &&
+-                   (ga.plsBestChainLogit[p] >= thetaAttach || ga.plsBestT3Logit[p] >= thetaAttachT3))
++                   (ga.plsBestChainLogit[p] >= rpsThetaChain || ga.plsBestT3Logit[p] >= rpsThetaT3))
+             fate = 1;  // already blocked by the pre-existing -RPS predicate
+           else if (p < static_cast<int>(xcRetired.size()) && xcRetired[p])
+             fate = 2;  // NEWLY retired by the ported crossclean
+@@ -5285,10 +5394,12 @@
+                     " (of %lld accepted chain TCs) | extra type-5 TCs=%lld mean=%.1f\n",
+                     totDelivT5, totDelivT5 / nEvD, totChainTCs, totDelivT3, totDelivT3 / nEvD);
+         std::printf("  M16 suppression carried rows retired: pT5=%lld pT3=%lld pLS=%lld (total=%lld mean=%.1f)"
+-                    " | -RT5=%d -RT3=%d -RPS=%d -a=%.3f -AT3=%.3f\n",
++                    " | -RT5=%d -RT3=%d -RPS=%d -a=%.3f -AT3=%.3f | retire margins"
++                    " -RPSA=%.3f -RPST=%.3f | -T3F=%.4g\n",
+                     totM16Supp[0], totM16Supp[1], totM16Supp[2], totM16Supp[0] + totM16Supp[1] + totM16Supp[2],
+                     (totM16Supp[0] + totM16Supp[1] + totM16Supp[2]) / nEvD, replT5 >= 0.5f ? 1 : 0,
+-                    replT3 >= 0.5f ? 1 : 0, replPls >= 0.5f ? 1 : 0, thetaAttach, thetaAttachT3);
++                    replT3 >= 0.5f ? 1 : 0, replPls >= 0.5f ? 1 : 0, thetaAttach, thetaAttachT3, rpsThetaChain,
++                    rpsThetaT3, t3FakeMax);
+         if (auZp8 >= 0.5f)
+           std::printf("  AUDIT -ZP8 %d   quad pLS=%lld mean=%.1f | already delivered=%lld mean=%.1f"
+                       " | blocked by our contention=%lld mean=%.1f | ADDED type-8 TCs=%lld mean=%.1f\n",
+@@ -5306,6 +5417,15 @@
+                       xcBits, xcPix ? 1 : 0, xcChain ? 1 : 0, xcTheta, xcDR2Pix, xcDR2Chain, tot, tot / nEvD,
+                       totXcPixHit, totXcPixHit / nEvD, totXcPixDR, totXcPixDR / nEvD, totXcChainKill,
+                       totXcChainKill / nEvD, totXcCarried, totXcCarried / nEvD, totXcZp8, totXcZp8 / nEvD);
++          char xc4t[32];
++          if (xcT4Theta < 1e8f)
++            std::snprintf(xc4t, sizeof(xc4t), "%.4g", xcT4Theta);
++          else
++            std::snprintf(xc4t, sizeof(xc4t), "follow -XCT");
++          std::printf("  XC 4-layer arm  -XC4 %d -XC4T %s | (seed,4-layer chain) pairs logged=%lld mean=%.0f"
++                      " | of the chain retirements, BY a 4-layer target=%lld mean=%.1f\n",
++                      xcT4 >= 0.5f ? 1 : 0, xc4t,
++                      totXc4Pairs, totXc4Pairs / nEvD, totXc4Kill, totXc4Kill / nEvD);
+         }
+         if (xcDiag >= 0.5f) {
+           static const char* kCls[3] = {"A true, sim has cover TC", "B true, sim has NO cover TC",
+--- protoFIN/AttachDelivery.h	2026-08-03 17:33:14.155302210 -0400
++++ protoFINAL/AttachDelivery.h	2026-08-05 02:29:04.438393928 -0400
+@@ -58,6 +58,14 @@
+ struct GeneralAttachParams {
+   AttachParams pref;           // prefilter windows + thetaAttach (chain-target margin, -a)
+   float thetaAttachT3 = 6.0f;  // -AT3: bare-T3-target margin on the SAME logit scale
++  // A11 -T3F: TARGET ADMISSION for stage B on the upstream t3dnn fake score. The attach
++  // head is BLIND to T3 quality -- PixelAttach.cc gives a bare-T3 target gateLogit = 0
++  // and nLayersF = 3, so features 9/10/11 carry no quality information -- while the bare
++  // T3 universe is only ~21% true. t3_fakeScore is computed at T3 build time (it survives
++  // the P2.7 deletion, and ChainFeatures 20/21 already consume it), so admitting targets
++  // on it adds no new dependency. A target with t3_fakeScore > t3FakeMax never enters the
++  // stage-B pair enumeration. 1e9 = OFF = bit-identical.
++  float t3FakeMax = 1e9f;
+ };
+ 
+ struct GeneralAttach {
+--- protoFIN/AttachDelivery.cc	2026-08-03 17:33:14.154302209 -0400
++++ protoFINAL/AttachDelivery.cc	2026-08-05 02:29:04.438393928 -0400
+@@ -111,6 +111,20 @@
+   std::vector<char> bareMask;
+   k8BuildBareT3Mask(ev, chains, acceptedChains, bareMask);
+ 
++  // A11 -T3F: target admission on the upstream t3dnn fake score (see AttachDelivery.h).
++  // Applied to the MASK, so the cut targets never reach the candidate finder, never get
++  // scored, and never write plsBestT3Logit -- one place, no other coupling.
++  if (params.t3FakeMax < 1e8f) {
++    const int nMask = static_cast<int>(bareMask.size());
++    const int nScore = static_cast<int>(ev.t3_fakeScore.size());
++    for (int t = 0; t < nMask; ++t) {
++      if (!bareMask[t])
++        continue;
++      if (t >= nScore || !(ev.t3_fakeScore[t] <= params.t3FakeMax))
++        bareMask[t] = 0;
++    }
++  }
++
+   // Chain-target list intentionally EMPTY: stage A already resolved that universe and
+   // its decisions are final (see the AttachDelivery.h ordering note).
+   static const std::vector<int> kNoChains;
+--- protoFIN/PixelAttach.h	2026-08-03 17:33:14.156302212 -0400
++++ protoFINAL/PixelAttach.h	2026-08-05 02:29:04.439393930 -0400
+@@ -84,6 +84,12 @@
+   float prefDTanL = 0.6f;       // |dTanLambda| window
+   float thetaAttach = 0.f;      // pair-head logit threshold to attach
+   bool suppressPixel = true;    // suppress baseline pT5/pLS TCs of the attached pLS
++  // A15: minimum chain nLayers a CHAIN target must have to be enumerated at all. 5 is the
++  // frozen v1 scope ("attach only to pT5-class chains") and is the default, so every
++  // pre-A15 caller is bit-exact. Lowering it is what lets the ported CrossCleanpLS
++  // bare-chain arm SEE 4-layer chain TCs: that arm consumes the pair log, so a target
++  // that is never enumerated can never retire a seed no matter what -XCT is set to.
++  int minChainLayers = 5;
+   // ---- M20 candidate finding (all defaults == the frozen behaviour) -------------------
+   int candMode = 0;              // AttachCandMode: 0 analytic full scan, 1 binned, 2 map
+   bool candAudit = false;        // -CFA: run the analytic scan alongside, count misses
+--- protoFIN/PixelAttach.cc	2026-08-03 17:33:14.155302210 -0400
++++ protoFINAL/PixelAttach.cc	2026-08-05 02:29:04.439393930 -0400
+@@ -737,8 +737,8 @@
+   const bool chainUsesIdx = (mode == kCandBinned) && params.candChainToo;
+   for (int pos = 0; pos < static_cast<int>(acceptedChains.size()); ++pos) {
+     const int c = acceptedChains[pos];
+-    if (chains.nLayers[c] < 5)
+-      continue;  // v1 scope: attach only to pT5-class chains
++    if (chains.nLayers[c] < params.minChainLayers)
++      continue;  // v1 scope (default 5): attach only to pT5-class chains
+     const float gate = c < static_cast<int>(chainGateLogits.size()) ? chainGateLogits[c] : 0.f;
+     const TargetPre cp = makeChainPre(ev, chains, c, cf, gate);
+     const int* cands = nullptr;

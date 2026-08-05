@@ -138,6 +138,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <limits>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -418,13 +419,21 @@ void usage(const char* prog) {
                "              and otherwise never compete for hits with anything, which is the\n"
                "              measured cause of the pT3-class duplicate explosion. Shared-hit\n"
                "              structure ONLY -- no dR/dEta/embedding proximity, by rule.\n"
-               "  -CCT <frac> drop a delivery whose CLAIMED OT-hit fraction exceeds this\n"
-               "              (default 0 = any shared OT hit drops it; 6 OT hits per delivery,\n"
-               "              so the meaningful steps are 0, 1/6, 2/6, 3/6).\n"
+               "  -CCG <0|1>  ownership-map unit: 1 (default) MD rows, 0 outer-tracker hits.\n"
+               "  -CCN <n>    kill a delivery that finds >= n of its own units already\n"
+               "              claimed. A delivery is 3 MDs / 6 OT hits, so at -CCG 1 the\n"
+               "              steps are 1 (any shared MD), 2 (default: 2 of 3 == same\n"
+               "              track), 3 (identical MD triple only).\n"
                "  -CCP <0|1>  1 (default) = everything already delivered (chain TCs and the\n"
-               "              surviving carried pixel rows) pre-claims its OT hits; 0 = the\n"
+               "              surviving carried pixel rows) pre-claims its units; 0 = the\n"
                "              deliveries contend only with each other.\n"
                "  -CCK <0|1|2> keep-best key: 0 attach logit (default), 1 pLS pt, 2 t3 row.\n"
+               "  -CCR <0|1|2> on revoke: 1 (default) release plsOwned (MEASURED no-op at\n"
+               "              -RPS 1), 0 keep the pLS retired, 2 also erase the seed's\n"
+               "              bare-T3 evidence so its carried type-8 row survives.\n"
+               "  -RDT <n>    stage-B PIXEL-side seed-family dedup: -1 (default) follow -RD,\n"
+               "              0 off, 1 on. Splitting it from -RD is what lets OT-only be\n"
+               "              measured against pixel-assisted.\n"
                "  -T3E <n>    bare-T3 stage B: -1 (default) follow -RT3, 0 force off, 1 force\n"
                "              on even with LST's pT3 rows carried (DIAGNOSTIC: double-counts).\n",
                prog);
@@ -836,6 +845,13 @@ int main(int argc, char** argv) {
                            //       MD triple only. At -CCG 0 it counts OT hit rows (of 6).
   float ccPreclaim = 1.f;  // -CCP  1 = already-delivered TCs pre-claim into the map
   float ccOrder = 0.f;     // -CCK  keep-best key: 0 attach logit, 1 pLS pt, 2 t3 row
+  float ccRelPls = 1.f;    // -CCR  on revoke: 1 (default) release the delivery's pLS back
+                           //       to the carried universe, 0 keep it retired. Measures the
+                           //       "does the revoked seed come back as a bare-pLS row"
+                           //       fork. NOTE at -RPS 1 the -RPS predicate also fires on
+                           //       plsBestT3Logit >= AT3, which is recorded for every
+                           //       scored pair, so the release is expected to be a no-op
+                           //       there; -CCR is what turns that reading into a number.
   float rdT3 = -1.f;       // -RDT  stage-B PIXEL-SIDE seed-family dedup: -1 follow -RD
                            //       (default), 0 off, 1 on. Splitting it from -RD is what
                            //       lets the campaign measure OT-only vs pixel-assisted.
@@ -1069,6 +1085,8 @@ int main(int argc, char** argv) {
       dst = &ccPreclaim;
     else if (s == "-CCK")
       dst = &ccOrder;
+    else if (s == "-CCR")
+      dst = &ccRelPls;
     else if (s == "-CC")
       dst = &ccMode;
     else if (s == "-RDT")
@@ -1884,15 +1902,37 @@ int main(int argc, char** argv) {
         k8BuildPlsCandIndex(ev, apre, pdCandIdxParams, pdCandIdx);
         apre.cand = &pdCandIdx;
       }
-      k8EnumeratePrefilteredPairsGeneral(ev, chains, accepted, cf, gateLogit, bareMask, apre, pairs);
+      // BUGFIX (T3DEDUP-1): the enumerator assigns targetOrd over ITS OWN target list --
+      // every accepted chain with nLayers >= 5 first, then the mask's bare T3s -- while
+      // the target list built above honours -PDT. At -PDT 1 the chain targets are absent
+      // from the local list but were still enumerated, so targetOrd ran past nTgt and
+      // `++pairBegin[pr.targetOrd + 1]` wrote off the end of the heap block (observed as
+      // "malloc(): invalid size (unsorted)" inside the first TTree::Fill). -PDT 0 was
+      // never affected because it suppresses its unwanted kind through bareMask, which
+      // the enumerator DOES see. Do the same on the chain side: hand the enumerator an
+      // empty accepted list so both lists agree. `accepted` itself is untouched -- the
+      // bare-T3 mask above is built from the REAL accepted set, as it must be.
+      static const std::vector<int> kNoChainTargets;
+      k8EnumeratePrefilteredPairsGeneral(
+          ev, chains, doChainTargets ? accepted : kNoChainTargets, cf, gateLogit, bareMask, apre, pairs);
       const auto t1 = std::chrono::steady_clock::now();
       const double enumMs = msBetween(t0, t1);
 
       // Per-target spans (the enumeration emits targetOrd-ascending, plsRow-ascending
       // within a target -- the same CSR trick as M7, now over the unified target list).
       std::vector<int> pairBegin(nTgt + 1, 0);
-      for (const AttachPair& pr : pairs)
+      for (const AttachPair& pr : pairs) {
+        // Guard the invariant the bugfix above restores, instead of trusting it: an
+        // ordinal past the local target list is a silent heap overwrite otherwise.
+        if (pr.targetOrd < 0 || pr.targetOrd >= nTgt) {
+          std::fprintf(stderr,
+                       "Error: pairdump target ordinal %d outside the local target list"
+                       " (nTgt=%d). Enumerator and target list disagree.\n",
+                       pr.targetOrd, nTgt);
+          return 1;
+        }
         ++pairBegin[pr.targetOrd + 1];
+      }
       for (int i = 0; i < nTgt; ++i)
         pairBegin[i + 1] += pairBegin[i];
 
@@ -3964,10 +4004,22 @@ int main(int argc, char** argv) {
                 nShared += ccClaimed[u] ? 1 : 0;
               if (!ccUnits.empty() && nShared >= ccNeed) {
                 ++nCCDropped;
-                ga.t3Pls[t] = -1;   // the delivery is revoked...
-                ga.plsOwned[p] = 0;  // ...and its pLS goes back to the carried universe,
-                                     // so m16RefreshSupp() below un-retires the type-8 row
-                                     // instead of losing the seed entirely.
+                ga.t3Pls[t] = -1;  // the delivery is revoked...
+                if (ccRelPls >= 0.5f) {
+                  // ...-CCR 1 (default, = what M9 shipped) hands the pLS back to the
+                  // carried universe. MEASURED to be a no-op at -RPS 1: m16RefreshSupp()
+                  // only ever ADDS suppressions, and the -RPS predicate also fires on
+                  // plsBestT3Logit >= AT3, which AttachDelivery records for EVERY scored
+                  // pair rather than only for owners. So the revoked seed disappears
+                  // entirely -- no pT3-class row and no carried type-8 row either.
+                  ga.plsOwned[p] = 0;
+                  if (ccRelPls >= 1.5f)
+                    // -CCR 2 is the release that actually releases: erase the T3 evidence
+                    // too, so the -RPS predicate stops firing on this seed and the carried
+                    // bare-pLS row survives. Costs duplicate rate if the revoked delivery
+                    // really was a duplicate; buys efficiency if it was the seed's only row.
+                    ga.plsBestT3Logit[p] = -std::numeric_limits<float>::infinity();
+                }
                 continue;
               }
               for (int u : ccUnits)
@@ -4678,13 +4730,15 @@ int main(int argc, char** argv) {
         // Reported apart because the maintainer question is exactly which of the two is
         // carrying the work, and whether the OT side alone suffices.
         std::printf("  M20 pT3 dedup   PIXEL side (-RDT %s): revoked=%lld (%.1f/evt)"
-                    " | OT side (-CC %d -CCG %s -CCN %d -CCP %d -CCK %d): revoked=%lld (%.1f/evt)"
+                    " | OT side (-CC %d -CCG %s -CCN %d -CCP %d -CCK %d -CCR %d):"
+                    " revoked=%lld (%.1f/evt)"
                     " | DELIVERED=%lld (%.1f/evt)  [LST pT3 reference ~150/evt]\n",
                     (rdT3 < -0.5f) ? (seedDupClean >= 0.5f ? "follow -RD =1" : "follow -RD =0")
                                    : (rdT3 >= 0.5f ? "1" : "0"),
                     totSeedDedupT3, totSeedDedupT3 / nEvD, ccMode >= 0.5f ? 1 : 0,
                     ccGran >= 0.5f ? "MD" : "hit", std::max(1, static_cast<int>(ccMinShared + 0.5f)),
-                    ccPreclaim >= 0.5f ? 1 : 0, static_cast<int>(ccOrder + 0.5f), totCCDropped,
+                    ccPreclaim >= 0.5f ? 1 : 0, static_cast<int>(ccOrder + 0.5f),
+                    ccRelPls >= 0.5f ? 1 : 0, totCCDropped,
                     totCCDropped / nEvD, totDelivT3, totDelivT3 / nEvD);
         std::printf("  M20 stageB      %s | pT3-class candidates before any dedup=%lld (%.1f/evt)\n",
                     doT3Stage ? "ON" : "off", totSeedDedupT3 + totCCDropped + totDelivT3,

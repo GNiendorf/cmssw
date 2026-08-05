@@ -1,0 +1,102 @@
+--- protoA13/main.cc	2026-08-04 21:41:17.019778969 -0400
++++ protoA13b/main.cc	2026-08-04 21:45:40.261628502 -0400
+@@ -473,7 +473,14 @@
+                "  -DCT <v>    pair-logit bar for the above, on the -a / -AT3 scale. Default\n"
+                "              1e9 = nothing is ever retired.\n"
+                "  -DCO <0|1>  chain arm only: 1 = the chain must ALSO have a seed of its own\n"
+-               "              (a different one). 0 (default) = seedless chain TCs count too.\n",
++               "              (a different one). 0 (default) = seedless chain TCs count too.\n"
++               "  -RPSA <v>   UNWELD the -RPS seed bar on plsBestChainLogit from the DELIVERY\n"
++               "              margin -a. Default = -a, i.e. bit-identical to the shipped\n"
++               "              behaviour.\n"
++               "  -RPST <v>   same for plsBestT3Logit; default = -AT3. Splitting these is what\n"
++               "              lets the pT3-class delivery be made stricter (the only knob that\n"
++               "              moves the FAKE rate) without weakening the seed retirement (the\n"
++               "              knob that sets the DUPLICATE rate).\n",
+                prog);
+ }
+ 
+@@ -919,6 +926,19 @@
+   // 0 (default) = a delivered target retires the bidder whether or not it has an owner.
+   float dcOwned = 0.f;    // -DCO <0|1>
+ 
++  // ---- A13: UNWELD THE -RPS SEED BAR FROM THE DELIVERY MARGIN (-RPSA / -RPST) -------
++  // The -RPS predicate is "this seed had a scored pair at or above ITS CLASS MARGIN but is
++  // not the owner", and the class margins it reads are the DELIVERY thresholds -a and
++  // -AT3. That makes -AT3 two knobs welded into one: raising it makes the pT3-class
++  // delivery stricter (which is the only thing that moves the fake rate) and at the same
++  // time makes the seed retirement WEAKER (which raises the duplicate rate). The measured
++  // consequence on the assembled baseline is that fake can only be bought by giving up
++  // efficiency and duplicate rate together.
++  // -RPSA / -RPST are the same bars for the RETIREMENT question alone. Both default to
++  // the delivery margins, so every existing command line is bit-identical.
++  float rpsTheta = 1e9f;    // -RPSA <logit>: seed bar on plsBestChainLogit (default: -a)
++  float rpsThetaT3 = 1e9f;  // -RPST <logit>: seed bar on plsBestT3Logit   (default: -AT3)
++
+   // M16 pairdump scope / volume knobs (read ONLY by pairdump mode; inert everywhere else,
+   // so no other mode's bit-exactness can be touched by them).
+   //   -PDT 0 = chain targets only (the M7 dump), 1 = bare T3 targets only, 2 = BOTH
+@@ -1237,6 +1257,10 @@
+     // be caught HERE: getopt would read "-DC" as "-D" with the optarg "C".
+     else if (s == "-DCT")
+       dst = &dcTheta;
++    else if (s == "-RPSA")
++      dst = &rpsTheta;
++    else if (s == "-RPST")
++      dst = &rpsThetaT3;
+     else if (s == "-DCO")
+       dst = &dcOwned;
+     else if (s == "-DC")
+@@ -1402,6 +1426,13 @@
+   }
+   // M16: the replacement modes only mean anything inside the general attach (-A 4). Fail
+   // loudly rather than silently ignore -- an A/B run with a mistyped -A is a wasted run.
++  // A13: the -RPS seed bars default to the DELIVERY margins, which is the shipped
++  // behaviour exactly. Done here rather than in the pre-scan defaults block because -a is
++  // a getopt option and is not final until the loop above has run.
++  if (rpsTheta >= 1e8f)
++    rpsTheta = thetaAttach;
++  if (rpsThetaT3 >= 1e8f)
++    rpsThetaT3 = thetaAttachT3;
+   const bool wantRepl = replT5 >= 0.5f || replT3 >= 0.5f || replPls >= 0.5f;
+   if (wantRepl && attachMode != 4) {
+     std::fprintf(stderr, "Error: -RT5/-RT3/-RPS require -A 4 (M16 general attach delivery).\n");
+@@ -3458,7 +3489,7 @@
+             // "attached anywhere OR lost a contention above the class margin": the pLS had
+             // a scored pair above its margin but is not the owner. A bare-pLS TC of a seed
+             // the outer tracker can explain is precisely what plsembdnn is for.
+-            drop = drop || ga.plsBestChainLogit[pls] >= thetaAttach || ga.plsBestT3Logit[pls] >= thetaAttachT3;
++            drop = drop || ga.plsBestChainLogit[pls] >= rpsTheta || ga.plsBestT3Logit[pls] >= rpsThetaT3;
+           if (drop) {
+             m16RowSuppressed[it] = 1;
+             (ty == 7 ? nM16SuppT7 : (ty == 5 ? nM16SuppT5 : nM16SuppT8)) += 1;
+@@ -5100,7 +5131,7 @@
+           // Same verdict m16RefreshSupp applies to a carried row of this pLS.
+           bool drop = p < static_cast<int>(ga.plsOwned.size()) && ga.plsOwned[p] != 0;
+           if (!drop && replPls >= 0.5f && p < static_cast<int>(ga.plsBestChainLogit.size()))
+-            drop = ga.plsBestChainLogit[p] >= thetaAttach || ga.plsBestT3Logit[p] >= thetaAttachT3;
++            drop = ga.plsBestChainLogit[p] >= rpsTheta || ga.plsBestT3Logit[p] >= rpsThetaT3;
+           // Channel (b) of the ported crossclean: the seeds LST's own CrossCleanpLS used
+           // to remove. Counted apart so the port's INCREMENTAL effect is visible.
+           if (!drop && p < static_cast<int>(xcRetired.size()) && xcRetired[p]) {
+@@ -5202,7 +5233,7 @@
+           if (p < static_cast<int>(ga.plsOwned.size()) && ga.plsOwned[p] != 0)
+             fate = 0;  // consumed by a pT5-class / pT3-class delivery
+           else if (replPls >= 0.5f && p < static_cast<int>(ga.plsBestChainLogit.size()) &&
+-                   (ga.plsBestChainLogit[p] >= thetaAttach || ga.plsBestT3Logit[p] >= thetaAttachT3))
++                   (ga.plsBestChainLogit[p] >= rpsTheta || ga.plsBestT3Logit[p] >= rpsThetaT3))
+             fate = 1;  // already blocked by the pre-existing -RPS predicate
+           else if ((p < static_cast<int>(xcRetired.size()) && xcRetired[p]) ||
+                    (p < static_cast<int>(dcRetired.size()) && dcRetired[p]))
+@@ -5441,6 +5472,11 @@
+                     totM16Supp[0], totM16Supp[1], totM16Supp[2], totM16Supp[0] + totM16Supp[1] + totM16Supp[2],
+                     (totM16Supp[0] + totM16Supp[1] + totM16Supp[2]) / nEvD, replT5 >= 0.5f ? 1 : 0,
+                     replT3 >= 0.5f ? 1 : 0, replPls >= 0.5f ? 1 : 0, thetaAttach, thetaAttachT3);
++        if (replPls >= 0.5f)
++          std::printf("  RPS seed bars   -RPSA %.4g (chain; -a is %.4g) -RPST %.4g (bare-T3; -AT3 is %.4g)%s\n",
++                      rpsTheta, thetaAttach, rpsThetaT3, thetaAttachT3,
++                      (rpsTheta == thetaAttach && rpsThetaT3 == thetaAttachT3) ? "  [welded = shipped]"
++                                                                              : "  [UNWELDED]");
+         if (auZp8 >= 0.5f)
+           std::printf("  AUDIT -ZP8 %d   quad pLS=%lld mean=%.1f | already delivered=%lld mean=%.1f"
+                       " | blocked by our contention=%lld mean=%.1f | ADDED type-8 TCs=%lld mean=%.1f\n",

@@ -1,0 +1,363 @@
+152a153
+> #include "DedupInference.h"
+464c465,477
+<                "              decision and no output row.\n",
+---
+>                "              decision and no output row.\n"
+>                "  -XCH <0|1>  bare-chain dedup CRITERION: 0 (default) the attach logit --\n"
+>                "              the original path, bit-identical -- or 1 the purpose-built\n"
+>                "              seed-vs-chain dedup head (DedupInference.h). Everything else\n"
+>                "              about the arm is unchanged, including the blessed dR window;\n"
+>                "              -XCT stays the one threshold, on the new scale.\n"
+>                "  -XCP <path> dump the dedup head's training pairs: every candidate the\n"
+>                "              bare-chain arm could consider (same membership + window, no\n"
+>                "              logit prefilter, no threshold) with its features and the\n"
+>                "              -XCD 2 truth class. Diagnostic only.\n"
+>                "  -XCF <n>    first LST entry of the hybrid loop (default 0). The frozen\n"
+>                "              300 are entries 0..299 of the 977-event ntuple, so a dump\n"
+>                "              that must not touch the test set starts at -XCF 300.\n",
+879a893,910
+>   // ---- A02: THE PURPOSE-BUILT SEED-vs-CHAIN DEDUP HEAD --------------------------------
+>   // -XCH selects WHICH score the bare-chain arm thresholds at -XCT. 0 (default) is the
+>   // attach logit, i.e. the original code path, byte for byte. 1 is the dedup head
+>   // (DedupInference.h), trained on "is this seed's track already delivered" rather than
+>   // "is this pair compatible". NOTHING ELSE about the arm changes: the same membership,
+>   // the same maintainer-blessed dR^2 < 0.02 window, the same one threshold -XCT.
+>   //   * the delivery head is NOT touched (this is a dedup-only substitution);
+>   //   * -XCT keeps its meaning as THE one tuned constant, only on the new scale.
+>   float xcHead = 0.f;         // -XCH  <0|1>: bare-chain dedup criterion source
+>   // -XCP <path>: training-pair dump for the head above. Enumerates every candidate the
+>   // arm could consider (same membership + same window, NO logit prefilter and NO
+>   // threshold), writes features + the -XCD 2 truth class, and changes no decision.
+>   std::string xcDumpPath;
+>   // -XCF <n>: first LST entry of the hybrid event loop (default 0). Needed because the
+>   // frozen 300 ARE entries 0..299 of the 977-event ntuple, so training data starts at
+>   // entry 300; also lets a dump run as disjoint chunks.
+>   long long xcFirstEvt = 0;
+> 
+1191a1223,1241
+>     // A02 dedup head. -XCP is a PATH, consumed here; both must precede "-XC".
+>     else if (s == "-XCP") {
+>       if (a + 1 >= argc) {
+>         std::fprintf(stderr, "Error: -XCP requires a path.\n");
+>         usage(argv[0]);
+>         return 1;
+>       }
+>       xcDumpPath = argv[++a];
+>       continue;
+>     } else if (s == "-XCF") {
+>       if (a + 1 >= argc) {
+>         std::fprintf(stderr, "Error: -XCF requires a value.\n");
+>         usage(argv[0]);
+>         return 1;
+>       }
+>       xcFirstEvt = std::atoll(argv[++a]);
+>       continue;
+>     } else if (s == "-XCH")
+>       dst = &xcHead;
+1403c1453,1458
+<   const long long nRun = (maxEvents < 0 || maxEvents > nTotal) ? nTotal : maxEvents;
+---
+>   // -XCF shifts the FIRST entry of the hybrid loop; the count is clamped so the loop can
+>   // never run off the end. At the default -XCF 0 this is exactly the old expression.
+>   if (xcFirstEvt < 0 || xcFirstEvt > nTotal)
+>     xcFirstEvt = 0;
+>   const long long nAvail = nTotal - xcFirstEvt;
+>   const long long nRun = (maxEvents < 0 || maxEvents > nAvail) ? nAvail : maxEvents;
+2476a2532,2547
+>     // A02: dedup-head training-pair dump (-XCP). One line per candidate (bare-chain TC,
+>     // post-deletion bare seed) pair. Truth (the class column) is written for the offline
+>     // training/justification only; no decision in this file ever reads it.
+>     std::FILE* xcDump = nullptr;
+>     if (!xcDumpPath.empty()) {
+>       xcDump = std::fopen(xcDumpPath.c_str(), "w");
+>       if (xcDump == nullptr) {
+>         std::fprintf(stderr, "Error: cannot open -XCP path %s\n", xcDumpPath.c_str());
+>         return 1;
+>       }
+>       std::fprintf(xcDump, "# run lumi evt seed tc cls");
+>       for (int i = 0; i < kDedupFeat; ++i)
+>         std::fprintf(xcDump, " df%02d", i);
+>       std::fprintf(xcDump, "\n");
+>     }
+> 
+2607c2678,2685
+<     for (long long i = 0; i < nRun; ++i) {
+---
+>     for (long long ii = 0; ii < nRun; ++ii) {
+>       // A02 -XCF: FIRST LST entry to process (default 0 -> i == ii, every pre-existing
+>       // command line bit-exact). The frozen 300 are literally entries 0..299 of the
+>       // 977-event ntuple (rebase_ref/carve300.py), so a training dump that must not touch
+>       // the test set has to start at entry 300; -XCF is also what lets the dump run as
+>       // several disjoint chunks. Events are processed independently, so a chunked dump
+>       // and a single dump are the same data.
+>       const long long i = ii + xcFirstEvt;
+4716a4795,4802
+>         // A02: the state the bare-chain arm STARTS from, i.e. the pixel arms' verdict
+>         // alone. The dump/head block below is written after the original branch, so it
+>         // must not see that branch's own kills or its candidate set would be exactly the
+>         // complement of what the current threshold already retires.
+>         std::vector<char> xcRetiredPix;
+>         if (xcHead >= 0.5f || xcDump != nullptr)
+>           xcRetiredPix = xcRetired;
+> 
+4724c4810
+<         if (xcChain && !ga.pairLog.empty()) {
+---
+>         if (xcChain && !ga.pairLog.empty() && xcHead < 0.5f) {
+4771a4858,5104
+>         // ---- A02: THE SAME ARM, DECIDED BY THE PURPOSE-BUILT DEDUP HEAD (-XCH 1) ------
+>         // and/or DUMPED for training (-XCP). Structurally identical to the block above:
+>         // the SAME membership (bare-chain TC without a seed, seed from the attach pair
+>         // log, not an anchor, not already retired by the pixel arms), the SAME
+>         // maintainer-blessed dR^2 < -XCW2 window, ONE threshold -XCT. The only change is
+>         // WHICH score is thresholded. No new distance test and no new window exist here;
+>         // the head never sees a distance.
+>         //
+>         // Two passes because two of the head's inputs are multiplicities of the candidate
+>         // set the window already produced (how many delivered bare-chain TCs this seed is
+>         // a candidate against, and how many candidate seeds this TC has). Still linear in
+>         // the pairs the delivery already scored: no pairwise candidate loop.
+>         if (xcChain && !ga.pairLog.empty() && (xcHead >= 0.5f || xcDump != nullptr)) {
+>           // (i) SEED FAMILIES. Sim-blind, the production pixelHitsOverlapAny criterion
+>           // (>= 2 shared pixel hit rows) that -RD already uses, as a union-find so the
+>           // head can be told "your family already put a seed into a delivery" -- the
+>           // structural half of "is this track already delivered".
+>           std::vector<int> famUf(nPlsXc);
+>           for (int p = 0; p < nPlsXc; ++p)
+>             famUf[p] = p;
+>           std::function<int(int)> famFind = [&](int x) {
+>             while (famUf[x] != x) {
+>               famUf[x] = famUf[famUf[x]];
+>               x = famUf[x];
+>             }
+>             return x;
+>           };
+>           {
+>             std::unordered_map<int, std::vector<int>> hit2q;
+>             std::vector<int> ph;
+>             for (int p = 0; p < nPlsXc; ++p) {
+>               if (!ev.pLS_isQuad[p])
+>                 continue;
+>               plsPixelHits(p, ph);
+>               for (int h : ph)
+>                 hit2q[h].push_back(p);
+>             }
+>             std::unordered_map<int, int> shareCnt;
+>             for (int p = 0; p < nPlsXc; ++p) {
+>               if (!ev.pLS_isQuad[p])
+>                 continue;
+>               plsPixelHits(p, ph);
+>               shareCnt.clear();
+>               for (int h : ph) {
+>                 const auto f = hit2q.find(h);
+>                 if (f == hit2q.end())
+>                   continue;
+>                 for (int q : f->second)
+>                   if (q != p)
+>                     ++shareCnt[q];
+>               }
+>               for (const auto& kv : shareCnt)
+>                 if (kv.second >= 2) {
+>                   const int ra = famFind(p), rb = famFind(kv.first);
+>                   if (ra != rb)
+>                     famUf[ra] = rb;
+>                 }
+>             }
+>           }
+>           // Per-family aggregates: size, members STILL LIVE in this arm, members the
+>           // pre-existing -RPS predicate already blocked, and the highest-pt member.
+>           // "Live" = this arm still has to decide them (post-deletion universe, not
+>           // consumed, not -RPS-blocked, not retired by the pixel arms). A family with
+>           // several live members is by construction delivering one track several times;
+>           // that is the structural half of the dedup question. NOTE the count of family
+>           // members that OWN a delivery is identically zero in this population and is
+>           // deliberately not a feature: the pixel arm retires every seed sharing a pixel
+>           // hit row with an anchor before this block runs.
+>           std::unordered_map<int, int> famN, famLive, famRpsN, famBest;
+>           auto isRpsBlocked = [&](int p) {
+>             return replPls >= 0.5f && p < static_cast<int>(ga.plsBestChainLogit.size()) &&
+>                    (ga.plsBestChainLogit[p] >= thetaAttach || ga.plsBestT3Logit[p] >= thetaAttachT3);
+>           };
+>           for (int p = 0; p < nPlsXc; ++p) {
+>             if (!ev.pLS_isQuad[p])
+>               continue;
+>             const int r = famFind(p);
+>             ++famN[r];
+>             if (isRpsBlocked(p))
+>               ++famRpsN[r];
+>             else if (!isAnchor(p) && !xcRetiredPix[p] &&
+>                      p < static_cast<int>(ev.pLS_isDupAlgPass2.size()) && ev.pLS_isDupAlgPass2[p] == 0)
+>               ++famLive[r];
+>             auto it = famBest.find(r);
+>             if (it == famBest.end() || ev.pLS_pt[p] > ev.pLS_pt[it->second])
+>               famBest[r] = p;
+>           }
+> 
+>           // (ii) THE CANDIDATE PAIRS. Same enumeration as the block above, minus the
+>           // logit prefilter (the new score is on its own scale) and minus the threshold.
+>           std::unordered_map<int, std::vector<std::pair<int, float>>> chainPairs2;
+>           chainPairs2.reserve(ga.pairLog.size() / 4 + 1);
+>           for (const auto& sp : ga.pairLog) {
+>             if (sp.ttype != static_cast<int8_t>(kAttachTargetChain))
+>               continue;
+>             chainPairs2[sp.tgtRow].emplace_back(sp.plsRow, sp.logit);
+>           }
+>           struct XcCand {
+>             int tc, seed, chain;
+>             float alogit;
+>           };
+>           std::vector<XcCand> cands;
+>           std::unordered_map<int, int> nPerSeed, nPerTc;
+>           for (std::size_t j = 0; j < outTCs.size() && j < outTCChain.size(); ++j) {
+>             const int c = outTCChain[j];
+>             if (c < 0 || outTCs[j].type == 7)
+>               continue;
+>             const auto f = chainPairs2.find(c);
+>             if (f == chainPairs2.end())
+>               continue;
+>             for (const auto& pr : f->second) {
+>               const int p = pr.first;
+>               if (p < 0 || p >= nPlsXc || xcRetiredPix[p] || !ev.pLS_isQuad[p] || isAnchor(p))
+>                 continue;
+>               const float dEta = ev.pLS_eta[p] - outTCs[j].eta;
+>               const float dPhi = wrapDPhi(ev.pLS_phi[p] - outTCs[j].phi);
+>               if (!(dEta * dEta + dPhi * dPhi < xcDR2Chain))
+>                 continue;
+>               cands.push_back({static_cast<int>(j), p, c, pr.second});
+>               ++nPerSeed[p];
+>               ++nPerTc[static_cast<int>(j)];
+>             }
+>           }
+> 
+>           // (iii) THE FEATURE VECTOR (kDedupFeat = 22, DedupInference.h contract). Seed
+>           // quality, chain-side quality, seed-family relation, and the delivery head's own
+>           // opinion of the pair -- deliberately NO distance of any kind.
+>           //   0 log10 seed pt          1 |seed eta|         2 seed ptErr/pt
+>           //   3 seed etaErr            4 seed score         5 seed deltaPhi
+>           //   6 |seed hit0 z|          7 attach logit (this pair)
+>           //   8 seed best chain logit  9 seed best T3 logit
+>           //  10 chain nLayers         11 TC nhitOT         12 chain gate score
+>           //  13 log10 TC pt           14 |TC eta|          15 chain nNodes
+>           //  16 family size           17 family members still live in this arm
+>           //  18 family members -RPS-blocked                19 seed is the family's best pt
+>           //  20 candidate TCs for this seed                21 candidate seeds for this TC
+>           auto buildFeat = [&](const XcCand& cd, float* f) {
+>             const int p = cd.seed, c = cd.chain, j = cd.tc;
+>             const int r = famFind(p);
+>             const float pt = std::max(ev.pLS_pt[p], 1e-3f);
+>             auto clip = [](float v, float lo, float hi) { return std::min(std::max(v, lo), hi); };
+>             f[0] = std::log10(pt);
+>             f[1] = std::fabs(ev.pLS_eta[p]);
+>             f[2] = clip(ev.pLS_ptErr[p] / pt, 0.f, 10.f);
+>             f[3] = clip(ev.pLS_etaErr[p], 0.f, 1.f);
+>             f[4] = clip(ev.pLS_score[p], -1e4f, 1e4f);
+>             f[5] = clip(ev.pLS_deltaPhi[p], -4.f, 4.f);
+>             f[6] = std::fabs(ev.pLS_hit0_z[p]);
+>             f[7] = clip(cd.alogit, -30.f, 30.f);
+>             f[8] = clip(p < static_cast<int>(ga.plsBestChainLogit.size()) ? ga.plsBestChainLogit[p] : -30.f,
+>                         -30.f, 30.f);
+>             f[9] = clip(p < static_cast<int>(ga.plsBestT3Logit.size()) ? ga.plsBestT3Logit[p] : -30.f,
+>                         -30.f, 30.f);
+>             f[10] = static_cast<float>(chains.nLayers[c]);
+>             f[11] = static_cast<float>(outTCs[j].nhitOT);
+>             f[12] = clip(chains.score[c], -100.f, 100.f);
+>             f[13] = std::log10(std::max(outTCs[j].pt, 1e-3f));
+>             f[14] = std::fabs(outTCs[j].eta);
+>             f[15] = static_cast<float>(chains.offsets[c + 1] - chains.offsets[c]);
+>             f[16] = static_cast<float>(famN.count(r) ? famN[r] : 1);
+>             f[17] = static_cast<float>(famLive.count(r) ? famLive[r] : 0);
+>             f[18] = static_cast<float>(famRpsN.count(r) ? famRpsN[r] : 0);
+>             f[19] = (famBest.count(r) && famBest[r] == p) ? 1.f : 0.f;
+>             f[20] = static_cast<float>(nPerSeed[p]);
+>             f[21] = static_cast<float>(nPerTc[j]);
+>             for (int i = 0; i < kDedupFeat; ++i)
+>               if (!std::isfinite(f[i]))
+>                 f[i] = 0.f;
+>           };
+> 
+>           // (iv) THE DECISION. Same OR over the seed's candidates the original block
+>           // takes, on the new score.
+>           if (xcHead >= 0.5f) {
+>             float ff[kDedupFeat];
+>             for (const XcCand& cd : cands) {
+>               if (xcRetired[cd.seed])
+>                 continue;
+>               buildFeat(cd, ff);
+>               if (dedupLogit(ff) >= xcTheta) {
+>                 xcRetired[cd.seed] = 1;
+>                 ++nXcChainKill;
+>               }
+>             }
+>           }
+> 
+>           // (v) THE DUMP. Truth class exactly as -XCD 2 defines it (cover = an accepted
+>           // chain TC or one of OUR delivered pT3-class rows), restricted to the seeds
+>           // whose fate this arm actually decides: the post-deletion universe, not
+>           // consumed by a delivery, not already blocked by -RPS. Writes only its file.
+>           if (xcDump != nullptr && !ev.pLS_isDupAlgPass2.empty()) {
+>             T3SimSets xpT3;
+>             buildT3SimSets(ev, xpT3);
+>             std::unordered_map<int, char> covered;
+>             {
+>               std::vector<int> common, tmp;
+>               for (std::size_t j = 0; j < outTCs.size() && j < outTCChain.size(); ++j) {
+>                 const int c = outTCChain[j];
+>                 if (c < 0)
+>                   continue;
+>                 const int ib = chains.offsets[c], ie = chains.offsets[c + 1];
+>                 if (ib >= ie)
+>                   continue;
+>                 common = xpT3.sims[chains.items[ib]];
+>                 for (int k = ib + 1; k < ie && !common.empty(); ++k) {
+>                   const auto& s = xpT3.sims[chains.items[k]];
+>                   tmp.clear();
+>                   std::set_intersection(common.begin(), common.end(), s.begin(), s.end(),
+>                                         std::back_inserter(tmp));
+>                   common.swap(tmp);
+>                 }
+>                 for (int s : common)
+>                   covered[s] = 1;
+>               }
+>               for (int t = 0; t < static_cast<int>(ga.t3Pls.size()) && t < static_cast<int>(xpT3.sims.size());
+>                    ++t) {
+>                 if (ga.t3Pls[t] < 0)
+>                   continue;
+>                 for (int s : xpT3.sims[t])
+>                   covered[s] = 1;
+>               }
+>             }
+>             float ff[kDedupFeat];
+>             for (const XcCand& cd : cands) {
+>               const int p = cd.seed;
+>               if (p >= static_cast<int>(ev.pLS_isDupAlgPass2.size()) || ev.pLS_isDupAlgPass2[p] != 0)
+>                 continue;
+>               if (isRpsBlocked(p))
+>                 continue;
+>               int cls = 2;  // C: no true match
+>               if (p < static_cast<int>(ev.pLS_simIdxAll.size()) && !ev.pLS_simIdxAll[p].empty()) {
+>                 cls = 1;  // B: true match, sim has no covering TC
+>                 for (int s : ev.pLS_simIdxAll[p])
+>                   if (covered.count(s) != 0) {
+>                     cls = 0;  // A: true match, sim already covered
+>                     break;
+>                   }
+>               }
+>               buildFeat(cd, ff);
+>               std::fprintf(xcDump, "%u %u %llu %d %d %d", ev.run, ev.lumi,
+>                            static_cast<unsigned long long>(ev.evt), p, cd.tc, cls);
+>               for (int i = 0; i < kDedupFeat; ++i)
+>                 std::fprintf(xcDump, " %.6g", ff[i]);
+>               std::fprintf(xcDump, "\n");
+>             }
+>           }
+>         }
+> 
+5183a5517,5518
+>     if (xcDump != nullptr)
+>       std::fclose(xcDump);
+5308a5644,5647
+>           std::printf("  XC dedup head   -XCH %d (%s) | head available=%d | -XCP %s\n",
+>                       static_cast<int>(xcHead + 0.5f),
+>                       xcHead >= 0.5f ? "purpose-built dedup head" : "attach logit (original path)",
+>                       dedupHeadAvailable() ? 1 : 0, xcDumpPath.empty() ? "(off)" : xcDumpPath.c_str());

@@ -1,0 +1,496 @@
+--- protoFIN/main.cc	2026-08-04 20:23:38.338901523 -0400
++++ protoA03/main.cc	2026-08-04 21:58:33.399254820 -0400
+@@ -414,6 +414,28 @@
+                "              in PixelAttachCand.h). -CFW <0|1> additionally enforces the\n"
+                "              analytic windows on map candidates (default 0: the map IS the\n"
+                "              prefilter and the windows are features only).\n"
++               " ---- A03 ATTACH-PREFILTER ENDCAP RECALL ----\n"
++               "  -PWE <w>    eta-flat |dTanLambda| prefilter window (default 0 = OFF, frozen).\n"
++               "              The frozen W1 window is a constant 0.6 in tanLambda = sinh(eta),\n"
++               "              so its ETA reach is 0.6/cosh(eta): 0.6 at eta 0 but only 0.13 at\n"
++               "              |eta| 2.2 and 0.06 at 3 -- TIGHTER than the dR<0.141 window the\n"
++               "              ported CrossCleanpLS dedups in, and it feeds BOTH delivery and\n"
++               "              (through plsBestChainLogit) the seed dedup. With -PWE w the\n"
++               "              half-width becomes max(0.6, w*cosh(eta_target)), i.e. flat in eta\n"
++               "              at reach w. It can only WIDEN, so the candidate set stays a\n"
++               "              provable superset (audit it with -CFA 1: nMissing must be 0) and\n"
++               "              -PWE 0 is bit-exact. -PWE 0.6 gives the endcap the barrel's reach.\n"
++               "  -ATS <s>    eta calibration of the stage-B margin (default 0 = OFF, frozen).\n"
++               "              margin(eta) = -AT3 + s*max(0, |eta| - -ATP), -ATP default 1.1, i.e.\n"
++               "              everything inside the pivot keeps the shipped -AT3 and the endcap\n"
++               "              gets a tighter margin. -ATP is one of the two region boundaries the\n"
++               "              harness reports at (1.1, 1.7); both were measured.\n"
++               "              the shipped -AT3 and the endcap gets a tighter one. The attach\n"
++               "              logit is measured to be eta-miscalibrated (one global margin\n"
++               "              over-delivers the endcap ~3x against LST's own pT3 mix), and the\n"
++               "              endcap is the ONE region where the pT3 stage costs efficiency.\n"
++               "              The SAME margin governs the -RPS 'this seed had OT evidence'\n"
++               "              predicate, so a refused delivery genuinely leaves its seed alive.\n"
+                " ---- M20 pT3-CLASS HIT-OVERLAP CONTENTION (the CrossCleanpT3 analogue) ----\n"
+                "  -CC <0|1>   (-A 4) run a post-assembly hit-overlap contention over the\n"
+                "              bare-T3 (type-5) deliveries. They are decided AFTER the K9 claim\n"
+@@ -818,6 +840,13 @@
+   float auZp8 = 0.f;   // -ZP8 <0|1|2>: post-deletion bare-pLS TC universe (see below)
+   float replPls = 0.f;             // -RPS: drop contested carried type-8 rows
+   float thetaAttachT3 = 6.0f;      // -AT3: per-class bare-T3 attach margin (tight by default)
++  // A03 (ENDCAP): eta calibration of that margin. margin(eta) = -AT3 + -ATS * max(0,|eta|-1.1).
++  // Default 0 = the frozen flat margin, bit-exact. See the gaMarginT3 block in
++  // AttachDelivery.h for the measurement that motivates it.
++  float at3Slope = 0.f;            // -ATS
++  float at3Pivot = 1.1f;           // -ATP: hinge |eta|. NOT a free constant -- it is one of
++                                   // the two region boundaries the harness already reports
++                                   // at (1.1 and 1.7); both were measured, one is shipped.
+   float dcaAttach4 = 1e9f;         // -D4: -A 4 attach-eligibility dca gate (default OFF)
+   float seedDupClean = 0.f;        // -RD: seed-family dedup of the attach owners. Plan 11
+                                    // keeps exactly ONE piece of the old crossclean stack --
+@@ -906,6 +935,15 @@
+   float candPhiPad = 0.02f;  // -CFP  extra pad on the inserted phi arc [rad]
+   float candMapWin = 0.f;    // -CFW  mode 2: ALSO enforce the analytic windows
+   float candChainToo = 0.f;  // -CFC  apply the candidate finder to CHAIN targets too
++  // A03 (ENDCAP RECALL). The attach prefilter's W1 window is flat in tanLambda = sinh(eta),
++  // so its ETA reach collapses as 1/cosh(eta) and above |eta| ~ 2.2 it is TIGHTER than the
++  // dR^2 < 0.02 window the ported CrossCleanpLS dedups in -- and the same prefilter feeds
++  // BOTH pT5-class/pT3-class delivery AND (through plsBestChainLogit) the seed dedup.
++  // -PWE <w> adds an eta-flat window of half-width w: the effective |dTanLambda| half-width
++  // becomes max(0.6, w * cosh(eta_target)). It can only WIDEN, so -PWE 0 (the default) is
++  // bit-exact and any w > 0 is a provable superset. -PWE 0.6 is the natural point: it makes
++  // the window's eta reach constant at the value the BARREL already had.
++  float prefDEta = 0.f;      // -PWE  eta-flat |dTanLambda| window half-width (0 = frozen)
+   float t3StageEnable = -1.f;  // -T3E bare-T3 stage B: -1 = follow -RT3 (frozen coupling),
+                                //      0 = force off, 1 = force on even with pT3 carried
+                                //      (a DIAGNOSTIC: carrying LST's pT3 rows AND
+@@ -1115,6 +1153,12 @@
+       dst = &replT3;
+     else if (s == "-RPS")
+       dst = &replPls;
++    // A03 -ATS MUST precede -AT3 here only for documentation (the scan is exact equality),
++    // but it must be pre-scanned regardless: getopt's "-A" would swallow the suffix.
++    else if (s == "-ATS")
++      dst = &at3Slope;
++    else if (s == "-ATP")
++      dst = &at3Pivot;
+     else if (s == "-AT3")
+       dst = &thetaAttachT3;
+     else if (s == "-D4")
+@@ -1154,6 +1198,9 @@
+       dst = &candChainToo;
+     else if (s == "-CF")
+       dst = &candMode;
++    // A03 endcap recall. MUST be pre-scanned: getopt's "-P" is a no-arg option.
++    else if (s == "-PWE")
++      dst = &prefDEta;
+     else if (s == "-T3E")
+       dst = &t3StageEnable;
+     // M20 pT3-class hit-overlap contention. -CCT/-CCP/-CCK MUST precede -CC in this
+@@ -1675,6 +1722,7 @@
+     // displaced strata of the true-pair population, because the pT5-class and pT3-class
+     // deliveries are judged separately (plan 11).
+     AttachParams apre;  // default prefilter windows (PixelAttach.h: 0.6 / 0.4)
++    apre.prefDEta = prefDEta;  // A03: eta-flat W1 (0 = frozen), so a dump matches hybrid
+     // M20: pairdump-local candidate-finder state (the hybrid block owns its own).
+     const int candModeI = static_cast<int>(candMode + 0.5f);
+     PlsCandIndex pdCandIdx;
+@@ -2401,6 +2449,34 @@
+         std::printf("  NOTE: -PU 0 -- the pre-claim is OFF, so the suppression/owner-list ordering"
+                     " has no effect on K9 (the accepted set, and hence the attach universe,"
+                     " is unchanged by the suppression).\n");
++      // A03: report the eta-flat W1 window and what it costs in tanLambda reach, so the
++      // endcap-recall setting is visible in every log without reading the source.
++      if (prefDEta > 0.f) {
++        AttachParams aw;
++        aw.prefDEta = prefDEta;
++        std::printf(
++            "  A03 prefilter W1 (-PWE %.4g): eta-flat window max(%.3f, %.4g*cosh(eta_target)) --"
++            " |dTanLambda| reach %.3f at |eta| 0, %.3f at 1.5, %.3f at 2.2, %.3f at 3.0"
++            " (frozen was %.3f everywhere)\n",
++            prefDEta, aw.prefDTanL, prefDEta, attachDTanLWindow(aw, 0.f),
++            attachDTanLWindow(aw, std::sinh(1.5f)), attachDTanLWindow(aw, std::sinh(2.2f)),
++            attachDTanLWindow(aw, std::sinh(3.0f)), aw.prefDTanL);
++      } else {
++        std::printf("  A03 prefilter W1: -PWE 0 -- FROZEN flat-in-tanLambda window %.3f\n",
++                    AttachParams().prefDTanL);
++      }
++      if (at3Slope > 0.f)
++        std::printf("  A03 stage-B margin (-ATS %.4g -ATP %.3g): %.3f + %.4g*max(0,|eta|-%.3g) --"
++                    " %.3f in the barrel, %.3f at |eta| 1.4, %.3f at 2.0, %.3f at 2.4,"
++                    " %.3f at 3.0 (frozen was %.3f everywhere)\n",
++                    at3Slope, at3Pivot, thetaAttachT3, at3Slope, at3Pivot,
++                    gaMarginT3(thetaAttachT3, at3Slope, at3Pivot, 0.5f),
++                    gaMarginT3(thetaAttachT3, at3Slope, at3Pivot, 1.4f), gaMarginT3(thetaAttachT3, at3Slope, at3Pivot, 2.0f),
++                    gaMarginT3(thetaAttachT3, at3Slope, at3Pivot, 2.4f), gaMarginT3(thetaAttachT3, at3Slope, at3Pivot, 3.0f),
++                    thetaAttachT3);
++      else
++        std::printf("  A03 stage-B margin: -ATS 0 -- FROZEN flat margin %.3f at every |eta|\n",
++                    thetaAttachT3);
+     }
+     if (chainGateMode == 6)
+       std::printf("gate (-G 6, 3-class fake/prompt/displaced, head=%s): dcaSplit=%.3f cm;"
+@@ -2590,6 +2666,15 @@
+     // Same split for targets that had NO true pLS available at all: any attach they make
+     // is necessarily wrong, so this isolates head failures the head could not have avoided.
+     long long cmTgtNoTrue = 0, cmTgtNoTrueAttached = 0;
++    // A03 (DIAGNOSTIC ONLY, inside the PROTO_ATTACH_CM block): the same recall classes
++    // SPLIT BY REGION, because the endcap-recall question is a per-region one and the
++    // aggregate hides it. Region = |eta| of the pLS (asinh(pz/pt)), binned on the code's
++    // own XC convention: 0 barrel |eta| < 1.1, 1 transition 1.1-1.7, 2 endcap > 1.7.
++    // cmTruePairPrefR / cmTruePairPossR IS the per-region PREFILTER RECALL -- the exact
++    // quantity the -PWE widening is supposed to move.
++    long long cmTruePairPrefR[3] = {0, 0, 0}, cmTruePairPossR[3] = {0, 0, 0};
++    long long cmAttSameR[3] = {0, 0, 0}, cmMissBelowThetaR[3] = {0, 0, 0}, cmMissArbR[3] = {0, 0, 0};
++    long long cmTgtHadTrueR[3] = {0, 0, 0}, cmTgtGotRightR[3] = {0, 0, 0}, cmTgtGotNoneR[3] = {0, 0, 0};
+     // Suppression accounting: what the contention rule actually retired, by truth.
+     long long cmSuppRealPls = 0, cmSuppFakePls = 0;  // -RPS'd type-8 rows by pLS truth
+     long long cmSuppRealPlsSameSimOwner = 0;         // ...of which the owner shares the sim
+@@ -2971,12 +3056,17 @@
+       GeneralAttachParams gap;
+       gap.pref.thetaAttach = thetaAttach;
+       gap.thetaAttachT3 = thetaAttachT3;
++      gap.thetaAttachT3Slope = at3Slope;  // A03: 0 = frozen flat margin
++      gap.thetaAttachT3Pivot = at3Pivot;
+       // ---- M20 CANDIDATE FINDING (PixelAttachCand.h). candMode 0 leaves every field at
+       // its default, so the frozen full analytic scan is untouched.
+       gap.pref.candMode = candModeI;
+       gap.pref.candAudit = (candAudit >= 0.5f);
+       gap.pref.candMapWindows = (candMapWin >= 0.5f);
+       gap.pref.candChainToo = (candChainToo >= 0.5f);
++      // A03: eta-flat W1 window. 0 = frozen (bit-exact). MUST be set BEFORE
++      // k8BuildPlsCandIndex so the index is sized against the same params object.
++      gap.pref.prefDEta = prefDEta;
+       if (candModeI != kCandAnalytic) {
+         gap.pref.candStats = &candStats;
+         const auto tcb0 = std::chrono::steady_clock::now();
+@@ -3043,6 +3133,7 @@
+         }
+         AttachParams apar;
+         apar.thetaAttach = thetaAttach;
++        apar.prefDEta = prefDEta;  // A03: eta-flat W1 (0 = frozen)
+         const auto ta0 = std::chrono::steady_clock::now();
+         k8AttachPixels(ev, chains, thetaPass, cfHyb, gateLogit, apar, att);
+         const auto ta1 = std::chrono::steady_clock::now();
+@@ -3399,7 +3490,11 @@
+             // "attached anywhere OR lost a contention above the class margin": the pLS had
+             // a scored pair above its margin but is not the owner. A bare-pLS TC of a seed
+             // the outer tracker can explain is precisely what plsembdnn is for.
+-            drop = drop || ga.plsBestChainLogit[pls] >= thetaAttach || ga.plsBestT3Logit[pls] >= thetaAttachT3;
++            // A03: the -AT3 half of the predicate uses the SAME eta-calibrated margin the
++            // stage-B accept uses -- otherwise a seed the endcap margin refused to consume
++            // would still have its bare row retired (the -CCR 1 failure mode).
++            drop = drop || ga.plsBestChainLogit[pls] >= thetaAttach ||
++                   ga.plsBestT3Logit[pls] >= gaMarginT3(thetaAttachT3, at3Slope, at3Pivot, ev.pLS_eta[pls]);
+           if (drop) {
+             m16RowSuppressed[it] = 1;
+             (ty == 7 ? nM16SuppT7 : (ty == 5 ? nM16SuppT5 : nM16SuppT8)) += 1;
+@@ -4252,6 +4347,11 @@
+             it = chainSimCache.emplace(row, chainSimsOf(row)).first;
+           return it->second;
+         };
++        // A03: region of a pLS by |eta| (the XC eta-bin convention). Diagnostic only.
++        auto cmRegOfPls = [&](int p) {
++          const float ae = std::fabs(ev.pLS_eta[p]);
++          return (ae < 1.1f) ? 0 : (ae < 1.7f ? 1 : 2);
++        };
+         auto intersects = [](const std::vector<int>& a, const std::vector<int>& b) {
+           std::size_t i = 0, j = 0;
+           while (i < a.size() && j < b.size()) {
+@@ -4269,9 +4369,10 @@
+           const std::vector<int>& ps = plsSimsCM[p];
+           const bool tgtReal = !ts.empty(), plsReal = !ps.empty();
+           const bool same = tgtReal && plsReal && intersects(ts, ps);
+-          if (same)
++          if (same) {
+             ++cmAttSame;
+-          else if (tgtReal && plsReal)
++            ++cmAttSameR[cmRegOfPls(p)];  // A03
++          } else if (tgtReal && plsReal)
+             ++cmAttCross;
+           else if (tgtReal)
+             ++cmAttTgtFakePls;
+@@ -4307,17 +4408,25 @@
+           if (!same)
+             continue;
+           ++cmTruePairPref;
++          const int cmReg = cmRegOfPls(pr.plsRow);  // A03
++          ++cmTruePairPrefR[cmReg];
+           const int owned = isT3 ? (pr.tgtRow < static_cast<int>(ga.t3Pls.size()) ? ga.t3Pls[pr.tgtRow] : -1)
+                                  : (pr.tgtRow < static_cast<int>(ga.chainPls.size()) ? ga.chainPls[pr.tgtRow] : -1);
+           if (owned == pr.plsRow)
+             continue;  // this true pair IS the attach -- already counted as cmAttSame
+-          const float margin = isT3 ? thetaAttachT3 : thetaAttach;
+-          if (pr.logit < margin)
++          // A03: the CM must judge against the margin the decision ACTUALLY used.
++          const float margin =
++              isT3 ? gaMarginT3(thetaAttachT3, at3Slope, at3Pivot, ev.pLS_eta[pr.plsRow]) : thetaAttach;
++          if (pr.logit < margin) {
+             ++cmMissBelowTheta;  // HEAD failure: the true pair was scored too low
+-          else if (ga.plsOwned[pr.plsRow])
++            ++cmMissBelowThetaR[cmReg];
++          } else if (ga.plsOwned[pr.plsRow]) {
+             ++cmMissContention;  // ARBITRATION: the pLS went to a different target
+-          else
++            ++cmMissArbR[cmReg];
++          } else {
+             ++cmMissOther;  // the target itself picked a different (higher-logit) pLS
++            ++cmMissArbR[cmReg];
++          }
+         }
+         for (const auto& kv : bestPerTgt)
+           (kv.second.second ? cmHistBestSame : cmHistBestBad)[cmBin(kv.second.first)] += 1;
+@@ -4325,7 +4434,11 @@
+         {
+           // Which targets had a same-sim pLS anywhere in their prefiltered pairs, and
+           // which pLS (if any) each target ended up owning.
+-          std::unordered_map<long long, char> tgtHadTrue;
++          // A03: second slot carries the REGION of the target (taken from a true pLS of
++          // that target when one exists, else from any pLS it was paired with -- both sides
++          // of a prefiltered pair are within the windows, so either is the same region up
++          // to the window width). Diagnostic only.
++          std::unordered_map<long long, std::pair<char, signed char>> tgtHadTrue;
+           for (const auto& pr : ga.pairLog) {
+             if (pr.plsRow < 0 || pr.plsRow >= nPlsCM)
+               continue;
+@@ -4333,25 +4446,34 @@
+             const std::vector<int>& ps = plsSimsCM[pr.plsRow];
+             const bool same = !ts.empty() && !ps.empty() && intersects(ts, ps);
+             auto& h = tgtHadTrue[tkey(pr.ttype, pr.tgtRow)];
+-            h = static_cast<char>(h | (same ? 1 : 0));
++            const signed char reg = static_cast<signed char>(cmRegOfPls(pr.plsRow));
++            if (same && !h.first)
++              h.second = reg;  // first TRUE pair wins the region label
++            else if (h.second < 0)
++              h.second = reg;
++            h.first = static_cast<char>(h.first | (same ? 1 : 0));
+           }
+           for (const auto& kv : tgtHadTrue) {
+             const int8_t ty = static_cast<int8_t>(kv.first & 1);
+             const int row = static_cast<int>(kv.first >> 1);
++            const int reg = (kv.second.second < 0) ? 0 : static_cast<int>(kv.second.second);
+             const int owned = (ty == static_cast<int8_t>(kAttachTargetT3))
+                                   ? (row < static_cast<int>(ga.t3Pls.size()) ? ga.t3Pls[row] : -1)
+                                   : (row < static_cast<int>(ga.chainPls.size()) ? ga.chainPls[row] : -1);
+-            if (!kv.second) {
++            if (!kv.second.first) {
+               ++cmTgtNoTrue;
+               if (owned >= 0)
+                 ++cmTgtNoTrueAttached;
+               continue;
+             }
+             ++cmTgtHadTrue;
++            ++cmTgtHadTrueR[reg];
+             if (owned < 0) {
+               ++cmTgtGotNone;
++              ++cmTgtGotNoneR[reg];
+             } else if (intersects(tgtSimsOf(ty, row), plsSimsCM[owned])) {
+               ++cmTgtGotRight;
++              ++cmTgtGotRightR[reg];
+             } else {
+               ++cmTgtGotWrong;
+             }
+@@ -4375,6 +4497,8 @@
+             std::sort(cand.begin(), cand.end());
+             cand.erase(std::unique(cand.begin(), cand.end()), cand.end());
+             cmTruePairPoss += static_cast<long long>(cand.size());
++            for (int p : cand)  // A03: same region convention as cmTruePairPrefR
++              ++cmTruePairPossR[cmRegOfPls(p)];
+           };
+           for (int c : thetaPass)
+             countPossible(static_cast<int8_t>(kAttachTargetChain), c);
+@@ -4954,7 +5078,8 @@
+           // Same verdict m16RefreshSupp applies to a carried row of this pLS.
+           bool drop = p < static_cast<int>(ga.plsOwned.size()) && ga.plsOwned[p] != 0;
+           if (!drop && replPls >= 0.5f && p < static_cast<int>(ga.plsBestChainLogit.size()))
+-            drop = ga.plsBestChainLogit[p] >= thetaAttach || ga.plsBestT3Logit[p] >= thetaAttachT3;
++            drop = ga.plsBestChainLogit[p] >= thetaAttach ||
++                   ga.plsBestT3Logit[p] >= gaMarginT3(thetaAttachT3, at3Slope, at3Pivot, ev.pLS_eta[p]);  // A03
+           // Channel (b) of the ported crossclean: the seeds LST's own CrossCleanpLS used
+           // to remove. Counted apart so the port's INCREMENTAL effect is visible.
+           if (!drop && p < static_cast<int>(xcRetired.size()) && xcRetired[p]) {
+@@ -5051,7 +5176,8 @@
+           if (p < static_cast<int>(ga.plsOwned.size()) && ga.plsOwned[p] != 0)
+             fate = 0;  // consumed by a pT5-class / pT3-class delivery
+           else if (replPls >= 0.5f && p < static_cast<int>(ga.plsBestChainLogit.size()) &&
+-                   (ga.plsBestChainLogit[p] >= thetaAttach || ga.plsBestT3Logit[p] >= thetaAttachT3))
++                   (ga.plsBestChainLogit[p] >= thetaAttach ||
++                    ga.plsBestT3Logit[p] >= gaMarginT3(thetaAttachT3, at3Slope, at3Pivot, ev.pLS_eta[p])))  // A03
+             fate = 1;  // already blocked by the pre-existing -RPS predicate
+           else if (p < static_cast<int>(xcRetired.size()) && xcRetired[p])
+             fate = 2;  // NEWLY retired by the ported crossclean
+@@ -5420,6 +5546,26 @@
+         std::printf("[ATTACHCM] SUPPRESSED type-8 rows: real_pLS=%lld (of which owner shares the sim=%lld)"
+                     " fake_pLS=%lld\n",
+                     cmSuppRealPls, cmSuppRealPlsSameSimOwner, cmSuppFakePls);
++        // ---- A03 PER-REGION recall (region = |eta| of the pLS: B < 1.1 < T < 1.7 < E) ----
++        // "wrecall" is PREFILTER recall (true pairs kept / true pairs that exist). It is
++        // the number the -PWE widening must move if the endcap defect is prefilter-limited.
++        {
++          static const char* kRegN[3] = {"barrel", "transit", "endcap"};
++          std::printf("[ATTACHCM] --- A03 PER REGION (pLS |eta|; B<1.1<T<1.7<E) ---\n");
++          for (int r = 0; r < 3; ++r) {
++            const double possD = cmTruePairPossR[r] > 0 ? static_cast<double>(cmTruePairPossR[r]) : 1.0;
++            const long long tTot = cmAttSameR[r] + cmMissBelowThetaR[r] + cmMissArbR[r];
++            const double tD = tTot > 0 ? static_cast<double>(tTot) : 1.0;
++            const double hD = cmTgtHadTrueR[r] > 0 ? static_cast<double>(cmTgtHadTrueR[r]) : 1.0;
++            std::printf("[ATTACHCM]   %s pairs poss=%.2f/evt kept=%.2f/evt wrecall=%.4f |"
++                        " attached=%.4f below_theta=%.4f arb=%.4f |"
++                        " targets_with_true=%.2f/evt got_right=%.4f got_none=%.4f\n",
++                        kRegN[r], cmTruePairPossR[r] / nEvD, cmTruePairPrefR[r] / nEvD,
++                        static_cast<double>(cmTruePairPrefR[r]) / possD, cmAttSameR[r] / tD,
++                        cmMissBelowThetaR[r] / tD, cmMissArbR[r] / tD, cmTgtHadTrueR[r] / nEvD,
++                        cmTgtGotRightR[r] / hD, cmTgtGotNoneR[r] / hD);
++          }
++        }
+         // The threshold frontier: for every candidate cut t, what the BEST-pair-per-target
+         // population looks like at or above t. This is what picks the -a scan points.
+         std::printf("[ATTACHCM] BEST-PER-TARGET frontier (cut : n_attachable same cross/fake precision)\n");
+--- protoFIN/PixelAttach.h	2026-08-03 17:33:14.156302212 -0400
++++ protoA03/PixelAttach.h	2026-08-04 21:37:57.863434606 -0400
+@@ -66,6 +66,8 @@
+ // branch carry exactly these values).
+ enum AttachTargetType : int { kAttachTargetChain = 0, kAttachTargetT3 = 1 };
+ 
++#include <algorithm>
++#include <cmath>
+ #include <vector>
+ 
+ #include "ChainFeatures.h"
+@@ -82,6 +84,19 @@
+   // Prefilter windows (loose, efficiency-first; measured before tightening):
+   float prefDPhi = 0.4f;        // |dPhiAtInnermost| window
+   float prefDTanL = 0.6f;       // |dTanLambda| window
++  // ---- A03 (ENDCAP RECALL): make the W1 window FLAT IN ETA instead of flat in tanLambda.
++  // tanLambda = sinh(eta), so a CONSTANT |dTanLambda| window has an eta reach of
++  // prefDTanL / cosh(eta): 0.6 at eta 0, 0.13 at |eta| 2.2, 0.06 at |eta| 3. Everything
++  // else in the algorithm (LST's own ported dedup pre-window dR^2 < 0.02, i.e. dR < 0.141)
++  // works at a FIXED reach in eta, so above |eta| ~ 2.2 the prefilter is the tighter of the
++  // two and pairs that the dedup would have judged are never enumerated at all -- and the
++  // same prefilter feeds delivery. prefDEta > 0 widens the half-width for target T to
++  //   W(T) = max(prefDTanL, prefDEta * cosh(eta_T)),   cosh(eta_T) = sqrt(1 + tanLambda_T^2)
++  // (|tanLambda| capped at kAttachTanCap for the scaling only). Because it is a max with
++  // the frozen constant it can only WIDEN: the candidate set is a strict superset and
++  // prefDEta = 0 is bit-exact. W depends on the TARGET alone, which is what keeps the
++  // binned index's scan range (PixelAttachCand.h, W1 axis) well defined and provable.
++  float prefDEta = 0.f;         // -PWE  0 = frozen flat-in-tanLambda window
+   float thetaAttach = 0.f;      // pair-head logit threshold to attach
+   bool suppressPixel = true;    // suppress baseline pT5/pLS TCs of the attached pLS
+   // ---- M20 candidate finding (all defaults == the frozen behaviour) -------------------
+@@ -95,6 +110,23 @@
+   CandStats* candStats = nullptr;      // optional volume / audit counters
+ };
+ 
++// A03: |tanLambda| cap used ONLY to scale the eta-flat window, so a degenerate target
++// (t3 anchors with ds02 -> 0 gives tanLambda ~ 1e9) cannot demand the whole axis. |eta| 4.4
++// is already outside the tracker.
++constexpr float kAttachTanCap = 40.f;
++
++// A03: the effective |dTanLambda| half-width for ONE target. THE SINGLE DEFINITION -- both
++// the analytic window test (evalPair) and the binned index's scan range call this, so
++// index-window >= eval-window holds by construction and the superset proof is unchanged.
++inline float attachDTanLWindow(const AttachParams& p, float targetTanLambda) {
++  if (!(p.prefDEta > 0.f))
++    return p.prefDTanL;
++  if (!std::isfinite(targetTanLambda))
++    return p.prefDTanL;
++  const float t = std::min(std::fabs(targetTanLambda), kAttachTanCap);
++  return std::max(p.prefDTanL, p.prefDEta * std::sqrt(1.f + t * t));
++}
++
+ struct Attachments {
+   // Parallel to the acceptedChains vector passed in: best pLS row (into ev.pLS_*) or -1,
+   // and the pair-head logit for it (-inf if none).
+--- protoFIN/PixelAttach.cc	2026-08-03 17:33:14.155302210 -0400
++++ protoA03/PixelAttach.cc	2026-08-04 21:38:13.540460972 -0400
+@@ -401,13 +401,16 @@
+               bool enforceWindows = true) {
+   const float dTanL = pls.tanLambda - cp.tanLambda;
+   absDTanL = std::fabs(dTanL);
+-  if (enforceWindows && !evalAll && absDTanL >= params.prefDTanL)
++  // A03: eta-flat W1. attachDTanLWindow returns params.prefDTanL exactly when -PWE is 0,
++  // so this line is bit-identical to the frozen one in that case.
++  const float wTanL = attachDTanLWindow(params, cp.tanLambda);
++  if (enforceWindows && !evalAll && absDTanL >= wTanL)
+     return false;
+ 
+   const float dPhi = dPhiAtInnermost(pls, cp);
+   absDPhi = std::fabs(dPhi);
+   const bool pass =
+-      !enforceWindows || (absDTanL < params.prefDTanL && absDPhi < params.prefDPhi);
++      !enforceWindows || (absDTanL < wTanL && absDPhi < params.prefDPhi);
+   if (!pass || fOut == nullptr)
+     return pass;
+ 
+@@ -624,8 +627,12 @@
+   }
+   const int rb = rtBinOf(cp.rtInner, idx.rtW, idx.nRt);
+   const float ct = std::min(std::max(cp.tanLambda, -idx.tanClamp), idx.tanClamp);
+-  const int tLo = tanBinOf(ct - params.prefDTanL, idx.tanClamp, idx.tanW, idx.nTan);
+-  const int tHi = tanBinOf(ct + params.prefDTanL, idx.tanClamp, idx.tanW, idx.nTan);
++  // A03: the SAME window function evalPair uses, on the SAME (unclamped) target tanLambda,
++  // so the scanned bin range can never be narrower than the window the pair test applies --
++  // the PixelAttachCand.h W1 superset argument carries over verbatim.
++  const float wTanL = attachDTanLWindow(params, cp.tanLambda);
++  const int tLo = tanBinOf(ct - wTanL, idx.tanClamp, idx.tanW, idx.nTan);
++  const int tHi = tanBinOf(ct + wTanL, idx.tanClamp, idx.tanW, idx.nTan);
+ 
+   const int epoch = ++idx.qEpoch;
+   auto take = [&](int p) {
+--- protoFIN/AttachDelivery.h	2026-08-03 17:33:14.155302210 -0400
++++ protoA03/AttachDelivery.h	2026-08-04 21:58:06.902167424 -0400
+@@ -48,6 +48,7 @@
+ // tightest"): a 3-layer target contributes far less independent evidence, so the pair
+ // head must be far more certain before a pT3-class TC is delivered.
+ 
++#include <cmath>
+ #include <vector>
+ 
+ #include "ChainFeatures.h"
+@@ -58,8 +59,39 @@
+ struct GeneralAttachParams {
+   AttachParams pref;           // prefilter windows + thetaAttach (chain-target margin, -a)
+   float thetaAttachT3 = 6.0f;  // -AT3: bare-T3-target margin on the SAME logit scale
++  // ---- A03: ETA CALIBRATION OF THE STAGE-B MARGIN -------------------------------------
++  // The attach logit is MEASURED to be eta-miscalibrated: one global margin delivers
++  // 72.6/93.5/419.7 rows per event in barrel/transition/endcap against LST's own pT3 mix
++  // of 322.4/139.0/127.3, and the per-region thresholds that reproduce LST's mix differ by
++  // ~4.6 logit units end to end. The consequence is measurable end to end: the endcap is
++  // the ONE region where turning the pT3 stage on COSTS efficiency (effE .75216 stage-off
++  // -> .74740 stage-on at -XC 0), because an over-delivered pT3-class row consumes the
++  // seed and retires its bare type-8 row, and a wrong-T3 delivery matches no sim at all
++  // while the bare row did. Raising -AT3 globally fixes the endcap and wrecks the barrel:
++  // effE .74496 -> .74784 but effB .92660 -> .91442 going 6 -> 8.
++  // ONE constant repairs the calibration instead of trading regions off against each
++  // other: the margin acquires a slope in |eta|, hinged at the barrel edge |eta| = 1.1 the
++  // code already uses as a region boundary,
++  //     margin(eta) = thetaAttachT3 + thetaAttachT3Slope * max(0, |eta| - pivot)
++  // so every region inside the pivot keeps the shipped default 6.0 untouched. Slope 0 (the
++  // default) reproduces the frozen flat margin exactly, everywhere. The pivot is NOT a
++  // free constant: it is one of the two region boundaries the harness already reports at
++  // (1.1 barrel/transition, 1.7 transition/endcap) and it was CHOSEN by measuring both.
++  float thetaAttachT3Slope = 0.f;  // -ATS
++  float thetaAttachT3Pivot = 1.1f;  // -ATP
+ };
+ 
++// A03: THE SINGLE DEFINITION of the stage-B margin. Every site that consumes -AT3 -- the
++// delivery accept in gaStageT3 AND the three -RPS "this seed had OT evidence" predicates
++// in main.cc -- must use it, or raising the endcap margin would suppress a delivery while
++// still retiring the seed's bare row (exactly the -CCR 1 failure mode).
++inline float gaMarginT3(float base, float slope, float pivot, float plsEta) {
++  if (!(slope > 0.f))
++    return base;
++  const float ae = std::fabs(plsEta);
++  return base + slope * ((ae > pivot) ? (ae - pivot) : 0.f);
++}
++
+ struct GeneralAttach {
+   // Per CHAIN row (size = nChains): the pLS this chain owns, or -1.
+   std::vector<int> chainPls;
+--- protoFIN/AttachDelivery.cc	2026-08-03 17:33:14.154302209 -0400
++++ protoA03/AttachDelivery.cc	2026-08-04 21:58:14.705193162 -0400
+@@ -132,7 +132,8 @@
+       io.plsBestT3Logit[p] = lo;
+     if (io.plsOwned[p])
+       continue;  // stage A owns it: one pLS, one owner, across all target types
+-    if (lo < params.thetaAttachT3)
++    // A03: eta-calibrated margin (slope 0 -> the frozen flat -AT3, bit-exact).
++    if (lo < gaMarginT3(params.thetaAttachT3, params.thetaAttachT3Slope, params.thetaAttachT3Pivot, ev.pLS_eta[p]))
+       continue;
+     const int t = pr.t3Row;
+     if (t < 0 || t >= static_cast<int>(io.t3Pls.size()))

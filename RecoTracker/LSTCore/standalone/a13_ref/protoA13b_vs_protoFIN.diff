@@ -1,0 +1,305 @@
+--- protoFIN/main.cc	2026-08-04 20:23:38.338901523 -0400
++++ protoA13b/main.cc	2026-08-04 21:45:40.261628502 -0400
+@@ -461,7 +461,26 @@
+                "              means a 5+ layer chain TC only (the -T3E 0 question); 2 = the\n"
+                "              DELIVERED pT3-class rows count as covering too (use this\n"
+                "              whenever the pT3 stage is on). Diagnostic only: changes no\n"
+-               "              decision and no output row.\n",
++               "              decision and no output row.\n"
++               " ---- A13 DELIVERY-CONDITIONED SEED RETIREMENT (-DC) --------------------------\n"
++               "  -DC <mask>  retire a bare seed when one of ITS OWN attach targets was\n"
++               "              actually DELIVERED: the object the seed points at is already in\n"
++               "              the output, so its bare row is a second delivery of it. Pure\n"
++               "              ownership -- no dR window, no embedding. 0 = OFF (default,\n"
++               "              bit-identical). bit 0 (1) = bare-T3 arm (target is a delivered\n"
++               "              pT3-class row owned by another seed). bit 1 (2) = chain arm\n"
++               "              (target is a chain row that reached the output as a TC).\n"
++               "  -DCT <v>    pair-logit bar for the above, on the -a / -AT3 scale. Default\n"
++               "              1e9 = nothing is ever retired.\n"
++               "  -DCO <0|1>  chain arm only: 1 = the chain must ALSO have a seed of its own\n"
++               "              (a different one). 0 (default) = seedless chain TCs count too.\n"
++               "  -RPSA <v>   UNWELD the -RPS seed bar on plsBestChainLogit from the DELIVERY\n"
++               "              margin -a. Default = -a, i.e. bit-identical to the shipped\n"
++               "              behaviour.\n"
++               "  -RPST <v>   same for plsBestT3Logit; default = -AT3. Splitting these is what\n"
++               "              lets the pT3-class delivery be made stricter (the only knob that\n"
++               "              moves the FAKE rate) without weakening the seed retirement (the\n"
++               "              knob that sets the DUPLICATE rate).\n",
+                prog);
+ }
+ 
+@@ -877,6 +896,49 @@
+   // worth the pair log.
+   float xcGlobalScore = 0.f;  // -XCG  <0|1>
+ 
++  // ---- A13: DELIVERY-CONDITIONED SEED RETIREMENT (-DC / -DCT) ----------------------
++  // The ported crossclean retires a bare seed for being ANGULARLY CLOSE to a delivered
++  // track candidate (plus a score test). This mechanism asks a strictly structural
++  // question instead: DID THE OUTER TRACKER ALREADY DELIVER ONE OF THIS SEED'S OWN
++  // ATTACH TARGETS TO SOMEBODY ELSE? If a seed bid for target X and X is now a track
++  // candidate owned by another seed (or a chain TC in its own right), then the object the
++  // seed points at is already in the output and the seed's bare row is a second delivery
++  // of it. No dR, no eta/phi window, no embedding: the predicate is
++  //     (seed, target) was enumerated and scored  AND  target is DELIVERED  AND
++  //     that pair's logit >= -DCT.
++  // The map is TARGET -> delivered?, built once per event in O(nTargets); the decision
++  // sweeps the pair log the delivery already produced, so it is linear in pairs that were
++  // scored anyway and introduces no candidate-vs-candidate loop.
++  //
++  // WHY IT SHOULD BEAT THE dR ARM. The port's own truth partition says the residual
++  // class-A survivors are seeds whose covering chain TOOK A DIFFERENT SEED. For those the
++  // dR arm has to find the survivor within dR^2 < 0.02 of the TC and then clear a logit
++  // bar whose separating power collapses below ~4; the ownership question needs neither.
++  //
++  // -DC is a BITMASK so the two arms ablate independently:
++  //   bit 0 (1) = bare-T3 arm    (target delivered as a pT3-class row, post-revocation)
++  //   bit 1 (2) = chain arm      (target emitted as a chain TC, bare OR seed-attached)
++  //   3 = both.
++  float dcMode = 0.f;     // -DC  <mask>: 0 = OFF (default; bit-identical to no mechanism)
++  float dcTheta = 1e9f;   // -DCT <logit>: pair-logit bar; 1e9 = nothing ever retires
++  // -DCO 1 additionally requires the delivered target's owner seed to be a DIFFERENT seed
++  // (chain arm only -- a bare chain TC has no owner and would otherwise never qualify).
++  // 0 (default) = a delivered target retires the bidder whether or not it has an owner.
++  float dcOwned = 0.f;    // -DCO <0|1>
++
++  // ---- A13: UNWELD THE -RPS SEED BAR FROM THE DELIVERY MARGIN (-RPSA / -RPST) -------
++  // The -RPS predicate is "this seed had a scored pair at or above ITS CLASS MARGIN but is
++  // not the owner", and the class margins it reads are the DELIVERY thresholds -a and
++  // -AT3. That makes -AT3 two knobs welded into one: raising it makes the pT3-class
++  // delivery stricter (which is the only thing that moves the fake rate) and at the same
++  // time makes the seed retirement WEAKER (which raises the duplicate rate). The measured
++  // consequence on the assembled baseline is that fake can only be bought by giving up
++  // efficiency and duplicate rate together.
++  // -RPSA / -RPST are the same bars for the RETIREMENT question alone. Both default to
++  // the delivery margins, so every existing command line is bit-identical.
++  float rpsTheta = 1e9f;    // -RPSA <logit>: seed bar on plsBestChainLogit (default: -a)
++  float rpsThetaT3 = 1e9f;  // -RPST <logit>: seed bar on plsBestT3Logit   (default: -AT3)
++
+   // M16 pairdump scope / volume knobs (read ONLY by pairdump mode; inert everywhere else,
+   // so no other mode's bit-exactness can be touched by them).
+   //   -PDT 0 = chain targets only (the M7 dump), 1 = bare T3 targets only, 2 = BOTH
+@@ -1191,6 +1253,18 @@
+       dst = &xcGlobalScore;
+     else if (s == "-XC")
+       dst = &xcMode;
++    // A13 DELIVERY-CONDITIONED SEED RETIREMENT. Longer names first, and all of them must
++    // be caught HERE: getopt would read "-DC" as "-D" with the optarg "C".
++    else if (s == "-DCT")
++      dst = &dcTheta;
++    else if (s == "-RPSA")
++      dst = &rpsTheta;
++    else if (s == "-RPST")
++      dst = &rpsThetaT3;
++    else if (s == "-DCO")
++      dst = &dcOwned;
++    else if (s == "-DC")
++      dst = &dcMode;
+     // P1 DEPENDENCY AUDIT flags.
+     else if (s == "-ZPF")
+       dst = &auZpf;
+@@ -1352,6 +1426,13 @@
+   }
+   // M16: the replacement modes only mean anything inside the general attach (-A 4). Fail
+   // loudly rather than silently ignore -- an A/B run with a mistyped -A is a wasted run.
++  // A13: the -RPS seed bars default to the DELIVERY margins, which is the shipped
++  // behaviour exactly. Done here rather than in the pre-scan defaults block because -a is
++  // a getopt option and is not final until the loop above has run.
++  if (rpsTheta >= 1e8f)
++    rpsTheta = thetaAttach;
++  if (rpsThetaT3 >= 1e8f)
++    rpsThetaT3 = thetaAttachT3;
+   const bool wantRepl = replT5 >= 0.5f || replT3 >= 0.5f || replPls >= 0.5f;
+   if (wantRepl && attachMode != 4) {
+     std::fprintf(stderr, "Error: -RT5/-RT3/-RPS require -A 4 (M16 general attach delivery).\n");
+@@ -2525,6 +2606,15 @@
+     long long totXcChainKill = 0;   // seeds retired: bare-chain window + score >= -XCT
+     long long totXcCarried = 0;     // of those, carried type-8 rows newly retired
+     long long totXcZp8 = 0;         // of those, -ZP8 additions newly blocked
++    // ---- A13 DELIVERY-CONDITIONED SEED RETIREMENT (-DC) ledger -----------------------
++    const int dcBits = (dcMode >= 0.5f) ? static_cast<int>(dcMode + 0.5f) : 0;
++    const bool dcT3Arm = (dcBits & 1) != 0;
++    const bool dcChainArm = (dcBits & 2) != 0;
++    long long totDcT3 = 0;       // seeds retired: bid for a T3 that was DELIVERED
++    long long totDcChain = 0;    // seeds retired: bid for a chain that became a TC
++    long long totDcCarried = 0;  // of those, carried type-8 rows newly retired
++    long long totDcZp8 = 0;      // of those, -ZP8 additions newly blocked
++    long long totDcNewVsXc = 0;  // retired by -DC that -XC did NOT already retire
+     // Truth partition of the post-deletion bare-seed universe (-XCD 1). Rows =
+     // {A: true match whose sim already has an accepted chain TC, B: true match whose sim
+     // has none, C: no true match}; columns = the FATE of the seed, in pipeline order:
+@@ -3004,7 +3094,7 @@
+         // Diagnostic pair log; no effect on any decision. The -XC bare-chain branch reads
+         // it too -- it IS the (seed, chain) score the delivery decision was made from, so
+         // consulting the log is exactly "plumb it, do not recompute".
+-        ga.recordPairs = attachCM || xcChain;
++        ga.recordPairs = attachCM || xcChain || dcBits != 0;
+         chainAttachPls.assign(nChainsAll, -1);
+         // The pixel-consumed drop exists only because a kept baseline pixel row already
+         // delivers that track. Wholesale replacement removes those rows, so the
+@@ -3399,7 +3489,7 @@
+             // "attached anywhere OR lost a contention above the class margin": the pLS had
+             // a scored pair above its margin but is not the owner. A bare-pLS TC of a seed
+             // the outer tracker can explain is precisely what plsembdnn is for.
+-            drop = drop || ga.plsBestChainLogit[pls] >= thetaAttach || ga.plsBestT3Logit[pls] >= thetaAttachT3;
++            drop = drop || ga.plsBestChainLogit[pls] >= rpsTheta || ga.plsBestT3Logit[pls] >= rpsThetaT3;
+           if (drop) {
+             m16RowSuppressed[it] = 1;
+             (ty == 7 ? nM16SuppT7 : (ty == 5 ? nM16SuppT5 : nM16SuppT8)) += 1;
+@@ -4789,6 +4879,93 @@
+         totXcCarried += nXcCarried;
+       }
+ 
++      // ---- A13: DELIVERY-CONDITIONED SEED RETIREMENT (-DC) ---------------------------
++      // Runs at the same point as the ported crossclean (every track candidate exists,
++      // the -CC revocations have already happened, the bare seeds are not yet rows) and
++      // feeds the same two channels. The question is purely one of OWNERSHIP:
++      //
++      //     this seed bid for target X; is X in the output, delivered to somebody else?
++      //
++      // If yes, the outer-tracker object the seed points at has already been reconstructed
++      // and the seed's bare type-8 row is a second delivery of the same track. There is no
++      // dR, no eta/phi window and no embedding anywhere in this block -- the only number
++      // is the bar -DCT on the logit of a pair the delivery already scored, which is what
++      // makes "bid for" mean "was a plausible partner of" rather than "was enumerated by
++      // the prefilter".
++      //
++      // COST / SHAPE. One O(nChains) pass builds the delivered-chain map, then ONE sweep
++      // over ga.pairLog. Both are linear in objects the delivery already produced; there
++      // is no candidate-vs-candidate comparison and no geometric search structure.
++      std::vector<char> dcRetired;
++      long long nDcT3 = 0, nDcChain = 0, nDcCarried = 0, nDcNew = 0;
++      if (attachMode == 4 && dcBits != 0 && !ga.pairLog.empty()) {
++        const int nPlsDc = static_cast<int>(ev.pLS_pt.size());
++        dcRetired.assign(nPlsDc, 0);
++        // TARGET -> delivered? Chain rows that reached the output as a track candidate,
++        // bare (type 4/9) or seed-attached (type 7) alike: outTCChain is the map the
++        // assembly already keeps.
++        std::vector<char> chainDelivered(chains.nLayers.size(), 0);
++        for (std::size_t j = 0; j < outTCs.size() && j < outTCChain.size(); ++j) {
++          const int c = outTCChain[j];
++          if (c >= 0 && c < static_cast<int>(chainDelivered.size()))
++            chainDelivered[c] = 1;
++        }
++        for (const auto& sp : ga.pairLog) {
++          const int p = sp.plsRow;
++          if (p < 0 || p >= nPlsDc || dcRetired[p])
++            continue;
++          if (!ev.pLS_isQuad[p])
++            continue;
++          // A seed the delivery consumed is an anchor, not a candidate: it has no bare row.
++          if (p < static_cast<int>(ga.plsOwned.size()) && ga.plsOwned[p] != 0)
++            continue;
++          if (!(sp.logit >= dcTheta))
++            continue;
++          bool covered = false;
++          if (sp.ttype == static_cast<int8_t>(kAttachTargetT3)) {
++            // ga.t3Pls is POST-revocation: -RD and -CC have both already written -1 into
++            // the rows they killed, so ">= 0" is exactly the delivered pT3-class set.
++            if (dcT3Arm && sp.tgtRow >= 0 && sp.tgtRow < static_cast<int>(ga.t3Pls.size()) &&
++                ga.t3Pls[sp.tgtRow] >= 0 && ga.t3Pls[sp.tgtRow] != p) {
++              covered = true;
++              ++nDcT3;
++            }
++          } else if (dcChainArm && sp.tgtRow >= 0 && sp.tgtRow < static_cast<int>(chainDelivered.size()) &&
++                     chainDelivered[sp.tgtRow]) {
++            // -DCO 1: only chains that ended up with a DIFFERENT seed of their own count.
++            // That is the narrow "the covering chain took another seed" question; the
++            // default also retires against seedless chain TCs, which is the wider one.
++            const int owner = (sp.tgtRow < static_cast<int>(ga.chainPls.size())) ? ga.chainPls[sp.tgtRow] : -1;
++            if (dcOwned < 0.5f || (owner >= 0 && owner != p)) {
++              covered = true;
++              ++nDcChain;
++            }
++          }
++          if (covered) {
++            dcRetired[p] = 1;
++            if (p >= static_cast<int>(xcRetired.size()) || !xcRetired[p])
++              ++nDcNew;
++          }
++        }
++        // Channel (a): the carried type-8 rows.
++        if (!m16RowSuppressed.empty()) {
++          for (std::size_t it = 0; it < ev.tc_type.size(); ++it) {
++            if (m16RowSuppressed[it] || ev.tc_type[it] != 8)
++              continue;
++            const int p = rowPls(it, 8);
++            if (p >= 0 && p < nPlsDc && dcRetired[p]) {
++              m16RowSuppressed[it] = 1;
++              ++nM16SuppT8;
++              ++nDcCarried;
++            }
++          }
++        }
++        totDcT3 += nDcT3;
++        totDcChain += nDcChain;
++        totDcCarried += nDcCarried;
++        totDcNewVsXc += nDcNew;
++      }
++
+       // ---- P1 DEPENDENCY AUDIT: POST-DELETION BARE-pLS TC UNIVERSE (-ZP8) ------------
+       // Today's carried type-8 rows are LST's set AFTER CheckHitspLS pass 2 (Kernels.h:
+       // 786, secondpass=true, LSTEvent.dev.cc:3020) AND CrossCleanpLS (TrackCandidate.h:
+@@ -4954,13 +5131,18 @@
+           // Same verdict m16RefreshSupp applies to a carried row of this pLS.
+           bool drop = p < static_cast<int>(ga.plsOwned.size()) && ga.plsOwned[p] != 0;
+           if (!drop && replPls >= 0.5f && p < static_cast<int>(ga.plsBestChainLogit.size()))
+-            drop = ga.plsBestChainLogit[p] >= thetaAttach || ga.plsBestT3Logit[p] >= thetaAttachT3;
++            drop = ga.plsBestChainLogit[p] >= rpsTheta || ga.plsBestT3Logit[p] >= rpsThetaT3;
+           // Channel (b) of the ported crossclean: the seeds LST's own CrossCleanpLS used
+           // to remove. Counted apart so the port's INCREMENTAL effect is visible.
+           if (!drop && p < static_cast<int>(xcRetired.size()) && xcRetired[p]) {
+             drop = true;
+             ++totXcZp8;
+           }
++          // A13 channel (b): the same for delivery-conditioned retirement.
++          if (!drop && p < static_cast<int>(dcRetired.size()) && dcRetired[p]) {
++            drop = true;
++            ++totDcZp8;
++          }
+           if (drop) {
+             ++totZp8Blocked;
+             continue;
+@@ -5051,10 +5233,11 @@
+           if (p < static_cast<int>(ga.plsOwned.size()) && ga.plsOwned[p] != 0)
+             fate = 0;  // consumed by a pT5-class / pT3-class delivery
+           else if (replPls >= 0.5f && p < static_cast<int>(ga.plsBestChainLogit.size()) &&
+-                   (ga.plsBestChainLogit[p] >= thetaAttach || ga.plsBestT3Logit[p] >= thetaAttachT3))
++                   (ga.plsBestChainLogit[p] >= rpsTheta || ga.plsBestT3Logit[p] >= rpsThetaT3))
+             fate = 1;  // already blocked by the pre-existing -RPS predicate
+-          else if (p < static_cast<int>(xcRetired.size()) && xcRetired[p])
+-            fate = 2;  // NEWLY retired by the ported crossclean
++          else if ((p < static_cast<int>(xcRetired.size()) && xcRetired[p]) ||
++                   (p < static_cast<int>(dcRetired.size()) && dcRetired[p]))
++            fate = 2;  // NEWLY retired by the ported crossclean and/or -DC
+           ++xcTruth[cls][fate];
+         }
+       }
+@@ -5289,6 +5472,11 @@
+                     totM16Supp[0], totM16Supp[1], totM16Supp[2], totM16Supp[0] + totM16Supp[1] + totM16Supp[2],
+                     (totM16Supp[0] + totM16Supp[1] + totM16Supp[2]) / nEvD, replT5 >= 0.5f ? 1 : 0,
+                     replT3 >= 0.5f ? 1 : 0, replPls >= 0.5f ? 1 : 0, thetaAttach, thetaAttachT3);
++        if (replPls >= 0.5f)
++          std::printf("  RPS seed bars   -RPSA %.4g (chain; -a is %.4g) -RPST %.4g (bare-T3; -AT3 is %.4g)%s\n",
++                      rpsTheta, thetaAttach, rpsThetaT3, thetaAttachT3,
++                      (rpsTheta == thetaAttach && rpsThetaT3 == thetaAttachT3) ? "  [welded = shipped]"
++                                                                              : "  [UNWELDED]");
+         if (auZp8 >= 0.5f)
+           std::printf("  AUDIT -ZP8 %d   quad pLS=%lld mean=%.1f | already delivered=%lld mean=%.1f"
+                       " | blocked by our contention=%lld mean=%.1f | ADDED type-8 TCs=%lld mean=%.1f\n",
+@@ -5307,6 +5495,16 @@
+                       totXcPixHit, totXcPixHit / nEvD, totXcPixDR, totXcPixDR / nEvD, totXcChainKill,
+                       totXcChainKill / nEvD, totXcCarried, totXcCarried / nEvD, totXcZp8, totXcZp8 / nEvD);
+         }
++        if (dcBits != 0) {
++          const long long dtot = totDcT3 + totDcChain;
++          std::printf("  DC delivcond    -DC %d (t3=%d chain=%d) -DCT %.4g -DCO %d"
++                      " | retirement hits=%lld mean=%.1f [t3=%lld/%.1f chain=%lld/%.1f]"
++                      " | seeds NOT already retired by -XC=%lld mean=%.1f"
++                      " | carried type-8 rows killed=%lld mean=%.1f | -ZP8 additions blocked=%lld mean=%.1f\n",
++                      dcBits, dcT3Arm ? 1 : 0, dcChainArm ? 1 : 0, dcTheta, dcOwned >= 0.5f ? 1 : 0, dtot,
++                      dtot / nEvD, totDcT3, totDcT3 / nEvD, totDcChain, totDcChain / nEvD, totDcNewVsXc,
++                      totDcNewVsXc / nEvD, totDcCarried, totDcCarried / nEvD, totDcZp8, totDcZp8 / nEvD);
++        }
+         if (xcDiag >= 0.5f) {
+           static const char* kCls[3] = {"A true, sim has cover TC", "B true, sim has NO cover TC",
+                                         "C no true match         "};

@@ -1,0 +1,383 @@
+--- protoFIN/main.cc	2026-08-04 20:23:38.338901523 -0400
++++ protoA09/main.cc	2026-08-04 21:48:23.666145502 -0400
+@@ -461,7 +461,28 @@
+                "              means a 5+ layer chain TC only (the -T3E 0 question); 2 = the\n"
+                "              DELIVERED pT3-class rows count as covering too (use this\n"
+                "              whenever the pT3 stage is on). Diagnostic only: changes no\n"
+-               "              decision and no output row.\n",
++               "              decision and no output row.\n"
++               " ---- A09 SEED-RETIREMENT UNIFICATION ----\n"
++               "  -RPS 2      CHAIN HALF ONLY of the -RPS seed-contention predicate: keep\n"
++               "              plsBestChainLogit >= -a, drop the plsBestT3Logit >= -AT3 term.\n"
++               "              That term is the ONLY reason -AT3 doubles as a seed-dedup knob\n"
++               "              and the only reason -CCR 2 has any effect. -RPS 0 and 1 are\n"
++               "              unchanged.\n"
++               "  -RPS 3      STRUCTURAL both halves: retire the seed only if a target it\n"
++               "              scored above the class margin was actually DELIVERED, and to a\n"
++               "              DIFFERENT seed. Ownership lookup over the pair log the delivery\n"
++               "              already wrote -- no pairwise loop, no proximity test. Makes\n"
++               "              -CCR structurally unnecessary: a revoked pT3-class delivery has\n"
++               "              t3Pls == -1, so its seed is released automatically.\n"
++               "  -RPS 4      as 3 but only the bare-T3 half is structural; the chain half\n"
++               "              keeps the shipped score test.\n"
++               "  -UM <0|1>   SEED-RETIREMENT UNIFICATION MAP. For every seed in the\n"
++               "              post-deletion universe, record the SET of mechanisms that WOULD\n"
++               "              retire it -- owned / RPS chain half / RPS T3 half / XC\n"
++               "              pixel-anchored / XC bare-chain -- independent of the pipeline\n"
++               "              order they actually run in, and histogram the sets by truth\n"
++               "              class. Reads the -XCD 2 cover definition, so run it with\n"
++               "              -XCD 2. Diagnostic only: changes no decision and no output row.\n",
+                prog);
+ }
+ 
+@@ -876,6 +897,11 @@
+   // which is looser by construction. The ablation answers whether the distinction is
+   // worth the pair log.
+   float xcGlobalScore = 0.f;  // -XCG  <0|1>
++  // -UM: SEED-RETIREMENT UNIFICATION MAP (A09). Diagnostic only. For every seed in the
++  // post-deletion universe it records the SET of retirement mechanisms that would fire on
++  // it, independently of the pipeline order in which they actually run, so overlaps and
++  // single-owner retirements can be read directly instead of inferred from ablations.
++  float uMap = 0.f;           // -UM <0|1>
+ 
+   // M16 pairdump scope / volume knobs (read ONLY by pairdump mode; inert everywhere else,
+   // so no other mode's bit-exactness can be touched by them).
+@@ -1191,6 +1217,8 @@
+       dst = &xcGlobalScore;
+     else if (s == "-XC")
+       dst = &xcMode;
++    else if (s == "-UM")
++      dst = &uMap;
+     // P1 DEPENDENCY AUDIT flags.
+     else if (s == "-ZPF")
+       dst = &auZpf;
+@@ -2525,6 +2553,15 @@
+     long long totXcChainKill = 0;   // seeds retired: bare-chain window + score >= -XCT
+     long long totXcCarried = 0;     // of those, carried type-8 rows newly retired
+     long long totXcZp8 = 0;         // of those, -ZP8 additions newly blocked
++    // A09 -UM: per truth class, the histogram of WHICH-MECHANISMS-WOULD-FIRE sets over the
++    // post-deletion universe. Bits: 1 owned (consumed by a delivery), 2 -RPS chain half,
++    // 4 -RPS bare-T3 half, 8 -XC pixel-anchored shared hit, 16 -XC pixel-anchored dR,
++    // 32 -XC bare-chain, 64 STRUCTURAL T3 half (-RPS 3/4), 128 STRUCTURAL chain half
++    // (-RPS 3). Every bit is the RAW predicate, recorded whatever -RPS is actually set to,
++    // so one map reads under any setting; all are evaluated AFTER -CCR, the operative
++    // moment. Bit 1 excludes bits 8/16/32 by construction: the XC arms never look at a
++    // consumed seed.
++    long long umMask[3][256] = {};
+     // Truth partition of the post-deletion bare-seed universe (-XCD 1). Rows =
+     // {A: true match whose sim already has an accepted chain TC, B: true match whose sim
+     // has none, C: no true match}; columns = the FATE of the seed, in pipeline order:
+@@ -3004,7 +3041,9 @@
+         // Diagnostic pair log; no effect on any decision. The -XC bare-chain branch reads
+         // it too -- it IS the (seed, chain) score the delivery decision was made from, so
+         // consulting the log is exactly "plumb it, do not recompute".
+-        ga.recordPairs = attachCM || xcChain;
++        // -RPS 3 / -RPS 4 (A09) read the same log to ask "was the target this seed scored
++        // on actually delivered, and to somebody else?", so they need it recorded too.
++        ga.recordPairs = attachCM || xcChain || replPls >= 2.5f || uMap >= 0.5f;
+         chainAttachPls.assign(nChainsAll, -1);
+         // The pixel-consumed drop exists only because a kept baseline pixel row already
+         // delivers that track. Wholesale replacement removes those rows, so the
+@@ -3382,6 +3421,69 @@
+           }
+         }
+       }
++      // A09: the -RPS seed-contention predicate, in ONE place. It used to be written out
++      // three times (m16RefreshSupp for the carried type-8 rows, the -ZP8 addition channel,
++      // and the -XCD partition), which is how the -AT3 coupling stayed invisible.
++      //   -RPS 0  off
++      //   -RPS 1  BOTH halves (shipped): chain evidence >= -a OR bare-T3 evidence >= -AT3
++      //   -RPS 2  CHAIN HALF ONLY. The T3 half is what makes -AT3 a seed-dedup knob as well
++      //           as a delivery knob, and it is the only thing -CCR 2 exists to undo.
++      //   -RPS 3  STRUCTURAL, both halves. Same two questions, but each is conditioned on
++      //           the target having actually been DELIVERED, to a DIFFERENT seed. A seed is
++      //           retired only when the outer-tracker object that explains it is on the
++      //           output as somebody else's track -- never merely because a high-scoring
++      //           pair existed somewhere. This is an ownership lookup (one pass over the
++      //           pair log the delivery already wrote, one array read per pair): no
++      //           pairwise candidate loop, no proximity criterion. It also makes -CCR
++      //           structurally unnecessary -- a revoked pT3-class delivery has t3Pls == -1,
++      //           so the seed is released automatically instead of by hand.
++      //   -RPS 4  as 3 but only the T3 half is structural; the chain half stays the shipped
++      //           score test. Isolates the half stage B introduced.
++      // rpsStruct[p] bits: 1 = a bare-T3 this seed scored >= -AT3 on was DELIVERED to a
++      // different seed; 2 = the same for a chain target and -a. Computed whenever a
++      // structural -RPS mode is in force, and also under -UM so the map can compare the
++      // structural and score-only forms of the same predicate side by side.
++      std::vector<char> rpsStruct;
++      auto rpsRefreshStruct = [&]() {
++        if (replPls < 2.5f && uMap < 0.5f)
++          return;
++        rpsStruct.assign(ev.pLS_pt.size(), 0);
++        const int nPlsR = static_cast<int>(rpsStruct.size());
++        for (const auto& sp : ga.pairLog) {
++          const int p = sp.plsRow;
++          if (p < 0 || p >= nPlsR)
++            continue;
++          if (sp.ttype == static_cast<int8_t>(kAttachTargetT3)) {
++            if ((rpsStruct[p] & 1) || !(sp.logit >= thetaAttachT3) || sp.tgtRow < 0 ||
++                sp.tgtRow >= static_cast<int>(ga.t3Pls.size()))
++              continue;
++            if (ga.t3Pls[sp.tgtRow] >= 0 && ga.t3Pls[sp.tgtRow] != p)
++              rpsStruct[p] |= 1;
++          } else {
++            if ((rpsStruct[p] & 2) || !(sp.logit >= thetaAttach) || sp.tgtRow < 0 ||
++                sp.tgtRow >= static_cast<int>(ga.chainPls.size()))
++              continue;
++            if (ga.chainPls[sp.tgtRow] >= 0 && ga.chainPls[sp.tgtRow] != p)
++              rpsStruct[p] |= 2;
++          }
++        }
++      };
++      auto rpsRetires = [&](int p) {
++        if (replPls < 0.5f || p < 0 || p >= static_cast<int>(ga.plsBestChainLogit.size()))
++          return false;
++        if (replPls >= 2.5f) {
++          // -RPS 4 keeps the shipped score test for the chain half; -RPS 3 is structural
++          // on both halves.
++          if (replPls >= 3.5f && ga.plsBestChainLogit[p] >= thetaAttach)
++            return true;
++          if (p >= static_cast<int>(rpsStruct.size()))
++            return false;
++          return (replPls >= 3.5f) ? ((rpsStruct[p] & 1) != 0) : (rpsStruct[p] != 0);
++        }
++        if (ga.plsBestChainLogit[p] >= thetaAttach)
++          return true;
++        return (replPls < 1.5f) && ga.plsBestT3Logit[p] >= thetaAttachT3;
++      };
+       // CONTENTION + -RPS refresh. Idempotent (already-suppressed rows are skipped), so it
+       // can be called after every attach stage; each call only ever adds rows.
+       auto m16RefreshSupp = [&]() {
+@@ -3399,7 +3501,7 @@
+             // "attached anywhere OR lost a contention above the class margin": the pLS had
+             // a scored pair above its margin but is not the owner. A bare-pLS TC of a seed
+             // the outer tracker can explain is precisely what plsembdnn is for.
+-            drop = drop || ga.plsBestChainLogit[pls] >= thetaAttach || ga.plsBestT3Logit[pls] >= thetaAttachT3;
++            drop = drop || rpsRetires(pls);
+           if (drop) {
+             m16RowSuppressed[it] = 1;
+             (ty == 7 ? nM16SuppT7 : (ty == 5 ? nM16SuppT5 : nM16SuppT8)) += 1;
+@@ -3659,6 +3761,7 @@
+           ga.nChainAttached -= nSeedDedup;
+         }
+         chainAttachPls = ga.chainPls;
++        rpsRefreshStruct();
+         m16RefreshSupp();
+       }
+ 
+@@ -4204,6 +4307,9 @@
+           // pre-claim -- they were still owners when K9 ran -- so the chains faced a
+           // slightly STRICTER claim than the final output implies. Conservative and
+           // stated; at real integration both universes resolve before the single claim.
++          // -RPS 3/4 recompute here, i.e. AFTER stage B and AFTER the -CC revocations, so
++          // a revoked pT3-class delivery releases its seed by construction.
++          rpsRefreshStruct();
+           m16RefreshSupp();
+         }
+         attachMs += attachT3Ms;
+@@ -4638,10 +4744,16 @@
+       //     seed-inner exactly as LST is, and linear in the pairs the delivery already
+       //     scored. No pairwise candidate loop is introduced anywhere.
+       std::vector<char> xcRetired;
++      // A09 (-UM, diagnostic): which XC ARM would retire the seed, independent of the order
++      // the arms run in. 1 = pixel-anchored shared hit, 2 = pixel-anchored dR, 4 = bare
++      // chain. xcRetired keeps its exact meaning and value; this is a second array.
++      std::vector<unsigned char> xcArm;
++      const bool uMapOn = (uMap >= 0.5f);
+       long long nXcPixHit = 0, nXcPixDR = 0, nXcChainKill = 0, nXcCarried = 0;
+       if (attachMode == 4 && xcBits != 0) {
+         const int nPlsXc = static_cast<int>(ev.pLS_pt.size());
+         xcRetired.assign(nPlsXc, 0);
++        xcArm.assign(nPlsXc, 0);
+         // A seed the delivery already consumed is an ANCHOR, never a candidate for
+         // retirement: it is not a bare row in the first place.
+         auto isAnchor = [&](int p) {
+@@ -4683,8 +4795,13 @@
+               }
+             if (shared) {
+               xcRetired[p] = 1;
++              xcArm[p] |= 1;
+               ++nXcPixHit;
+-              continue;
++              // -UM only: fall through to the dR test as well, so the map can say whether
++              // the two pixel-anchored branches are redundant with each other. xcRetired is
++              // already 1, so no counter and no verdict can change.
++              if (!uMapOn)
++                continue;
+             }
+             const long long ie0 = static_cast<long long>(std::floor(ev.pLS_eta[p] / cellW));
+             const int ip0 = phiCellOf(ev.pLS_phi[p]);
+@@ -4708,8 +4825,11 @@
+               }
+             }
+             if (close) {
+-              xcRetired[p] = 1;
+-              ++nXcPixDR;
++              xcArm[p] |= 2;
++              if (!xcRetired[p]) {
++                xcRetired[p] = 1;
++                ++nXcPixDR;
++              }
+             }
+           }
+         }
+@@ -4752,7 +4872,14 @@
+               continue;
+             for (const auto& pr : f->second) {
+               const int p = pr.first;
+-              if (p < 0 || p >= nPlsXc || xcRetired[p] || !ev.pLS_isQuad[p] || isAnchor(p))
++              if (p < 0 || p >= nPlsXc || !ev.pLS_isQuad[p] || isAnchor(p))
++                continue;
++              // Frozen behaviour: a seed the pixel-anchored arm already retired is skipped.
++              // Under -UM the skip is on THIS arm's own bit instead, so the map learns
++              // whether the bare-chain arm would have caught it too. nXcChainKill still
++              // only counts seeds this arm is the first to retire, so the counters and the
++              // verdict are bit-identical either way.
++              if (uMapOn ? ((xcArm[p] & 4) != 0) : (xcRetired[p] != 0))
+                 continue;
+               const float sc = (xcGlobalScore >= 0.5f && p < static_cast<int>(ga.plsBestChainLogit.size()))
+                                    ? ga.plsBestChainLogit[p]
+@@ -4762,8 +4889,11 @@
+               const float dEta = ev.pLS_eta[p] - outTCs[j].eta;
+               const float dPhi = wrapDPhi(ev.pLS_phi[p] - outTCs[j].phi);
+               if (dEta * dEta + dPhi * dPhi < xcDR2Chain) {
+-                xcRetired[p] = 1;
+-                ++nXcChainKill;
++                xcArm[p] |= 4;
++                if (!xcRetired[p]) {
++                  xcRetired[p] = 1;
++                  ++nXcChainKill;
++                }
+               }
+             }
+           }
+@@ -4953,8 +5083,8 @@
+             continue;
+           // Same verdict m16RefreshSupp applies to a carried row of this pLS.
+           bool drop = p < static_cast<int>(ga.plsOwned.size()) && ga.plsOwned[p] != 0;
+-          if (!drop && replPls >= 0.5f && p < static_cast<int>(ga.plsBestChainLogit.size()))
+-            drop = ga.plsBestChainLogit[p] >= thetaAttach || ga.plsBestT3Logit[p] >= thetaAttachT3;
++          if (!drop)
++            drop = rpsRetires(p);
+           // Channel (b) of the ported crossclean: the seeds LST's own CrossCleanpLS used
+           // to remove. Counted apart so the port's INCREMENTAL effect is visible.
+           if (!drop && p < static_cast<int>(xcRetired.size()) && xcRetired[p]) {
+@@ -5050,12 +5180,37 @@
+           int fate = 3;  // survives as a bare type-8 TC row
+           if (p < static_cast<int>(ga.plsOwned.size()) && ga.plsOwned[p] != 0)
+             fate = 0;  // consumed by a pT5-class / pT3-class delivery
+-          else if (replPls >= 0.5f && p < static_cast<int>(ga.plsBestChainLogit.size()) &&
+-                   (ga.plsBestChainLogit[p] >= thetaAttach || ga.plsBestT3Logit[p] >= thetaAttachT3))
++          else if (rpsRetires(p))
+             fate = 1;  // already blocked by the pre-existing -RPS predicate
+           else if (p < static_cast<int>(xcRetired.size()) && xcRetired[p])
+             fate = 2;  // NEWLY retired by the ported crossclean
+           ++xcTruth[cls][fate];
++          if (uMapOn) {
++            int mask = 0;
++            if (p < static_cast<int>(ga.plsOwned.size()) && ga.plsOwned[p] != 0)
++              mask |= 1;
++            if (p < static_cast<int>(ga.plsBestChainLogit.size())) {
++              if (ga.plsBestChainLogit[p] >= thetaAttach)
++                mask |= 2;
++              if (ga.plsBestT3Logit[p] >= thetaAttachT3)
++                mask |= 4;
++            }
++            if (p < static_cast<int>(xcArm.size())) {
++              if (xcArm[p] & 1)
++                mask |= 8;
++              if (xcArm[p] & 2)
++                mask |= 16;
++              if (xcArm[p] & 4)
++                mask |= 32;
++            }
++            if (p < static_cast<int>(rpsStruct.size())) {
++              if (rpsStruct[p] & 1)
++                mask |= 64;
++              if (rpsStruct[p] & 2)
++                mask |= 128;
++            }
++            ++umMask[cls][mask];
++          }
+         }
+       }
+ 
+@@ -5288,7 +5443,10 @@
+                     " | -RT5=%d -RT3=%d -RPS=%d -a=%.3f -AT3=%.3f\n",
+                     totM16Supp[0], totM16Supp[1], totM16Supp[2], totM16Supp[0] + totM16Supp[1] + totM16Supp[2],
+                     (totM16Supp[0] + totM16Supp[1] + totM16Supp[2]) / nEvD, replT5 >= 0.5f ? 1 : 0,
+-                    replT3 >= 0.5f ? 1 : 0, replPls >= 0.5f ? 1 : 0, thetaAttach, thetaAttachT3);
++                    replT3 >= 0.5f ? 1 : 0,
++                    // A09: report the -RPS VALUE, not a boolean -- 1 and 2 are different
++                    // predicates and both used to print "1" here.
++                    static_cast<int>(replPls + 0.5f), thetaAttach, thetaAttachT3);
+         if (auZp8 >= 0.5f)
+           std::printf("  AUDIT -ZP8 %d   quad pLS=%lld mean=%.1f | already delivered=%lld mean=%.1f"
+                       " | blocked by our contention=%lld mean=%.1f | ADDED type-8 TCs=%lld mean=%.1f\n",
+@@ -5321,6 +5479,66 @@
+                         xcTruth[c][0] / nEvD, xcTruth[c][1] / nEvD, xcTruth[c][2] / nEvD, xcTruth[c][3] / nEvD);
+           }
+         }
++        // ---- A09 SEED-RETIREMENT UNIFICATION MAP (-UM) ------------------------------
++        if (uMap >= 0.5f) {
++          static const char* kUmCls[3] = {"A", "B", "C"};
++          static const char* kUmBit[8] = {"owned",    "rpsChain", "rpsT3",     "xcPixHit",
++                                          "xcPixDR",  "xcChain",  "strT3",     "strChain"};
++          std::printf("  UM map          post-deletion universe, per event over %.0f events."
++                      " Bits: 1=owned 2=rpsChain 4=rpsT3 8=xcPixHit 16=xcPixDR 32=xcChain"
++                      " 64=strT3 128=strChain. Every bit is the RAW predicate, recorded"
++                      " whatever -RPS is set to.\n", nEvD);
++          // (i) MARGINALS: how many seeds each mechanism would retire, and how many it is
++          // the ONLY mechanism for (= what deleting it costs, before any retune).
++          std::printf("  UM marg         %-10s %8s %8s %8s %8s %8s %8s\n", "mechanism", "A", "B", "C", "onlyA",
++                      "onlyB", "onlyC");
++          for (int b = 0; b < 8; ++b) {
++            const int bit = 1 << b;
++            double fire[3] = {0, 0, 0}, only[3] = {0, 0, 0};
++            for (int c = 0; c < 3; ++c)
++              for (int m = 0; m < 256; ++m)
++                if ((m & bit) != 0) {
++                  fire[c] += static_cast<double>(umMask[c][m]);
++                  if (m == bit)
++                    only[c] += static_cast<double>(umMask[c][m]);
++                }
++            std::printf("  UM marg         %-10s %8.1f %8.1f %8.1f %8.1f %8.1f %8.1f\n", kUmBit[b], fire[0] / nEvD,
++                        fire[1] / nEvD, fire[2] / nEvD, only[0] / nEvD, only[1] / nEvD, only[2] / nEvD);
++          }
++          // (ii) PAIRWISE OVERLAP of the two seed-dedup families that are candidates for
++          // unification: the -RPS predicate (bits 2|4) against the ported crossclean
++          // (bits 8|16|32), restricted to seeds no delivery consumed.
++          {
++            double rpsOnly[3] = {0, 0, 0}, xcOnly[3] = {0, 0, 0}, both[3] = {0, 0, 0}, neither[3] = {0, 0, 0};
++            for (int c = 0; c < 3; ++c)
++              for (int m = 0; m < 256; ++m) {
++                if ((m & 1) != 0)
++                  continue;  // consumed seeds are not in either mechanism's scope
++                const bool r = (m & 6) != 0, x = (m & 56) != 0;
++                double* d = r ? (x ? both : rpsOnly) : (x ? xcOnly : neither);
++                d[c] += static_cast<double>(umMask[c][m]);
++              }
++            std::printf("  UM overlap      %-10s %8s %8s %8s %8s\n", "class", "RPSonly", "XConly", "BOTH", "neither");
++            for (int c = 0; c < 3; ++c)
++              std::printf("  UM overlap      %-10s %8.1f %8.1f %8.1f %8.1f\n", kUmCls[c], rpsOnly[c] / nEvD,
++                          xcOnly[c] / nEvD, both[c] / nEvD, neither[c] / nEvD);
++          }
++          // (iii) the full set histogram, non-empty masks only, so nothing is hidden.
++          std::printf("  UM sets         %-8s %8s %8s %8s   %s\n", "mask", "A", "B", "C", "members");
++          for (int m = 0; m < 256; ++m) {
++            if (umMask[0][m] + umMask[1][m] + umMask[2][m] == 0)
++              continue;
++            std::string members;
++            for (int b = 0; b < 8; ++b)
++              if ((m & (1 << b)) != 0) {
++                if (!members.empty())
++                  members += "+";
++                members += kUmBit[b];
++              }
++            std::printf("  UM sets         %-8d %8.1f %8.1f %8.1f   %s\n", m, umMask[0][m] / nEvD,
++                        umMask[1][m] / nEvD, umMask[2][m] / nEvD, (m == 0) ? "(none: survives)" : members.c_str());
++          }
++        }
+         // ---- M20 CANDIDATE FINDER (-CF) + SUPERSET AUDIT (-CFA) ---------------------
+         if (candModeI != kCandAnalytic) {
+           const char* cfName = (candModeI == kCandBinned) ? "binned prefilter" : "map candidates";

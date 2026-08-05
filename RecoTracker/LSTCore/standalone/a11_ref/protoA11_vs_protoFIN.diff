@@ -1,0 +1,129 @@
+--- protoFIN/main.cc	2026-08-04 20:23:38.338901523 -0400
++++ protoA11/main.cc	2026-08-04 21:54:17.920353050 -0400
+@@ -375,6 +375,22 @@
+                "              pLS attached anywhere OR lost a contention above -a / -AT3\n"
+                "              (i.e. had real OT evidence but is not the owner). The\n"
+                "              contention rule replacing CrossCleanpLS / plsembdnn.\n"
++               "  -RPSA <v>   (A11) the -RPS SEED-RETIREMENT margin on the chain logit,\n"
++               "              SPLIT from the delivery margin -a. Default 1e9 = unset =\n"
++               "              follow -a exactly (bit-identical). One constant used to answer\n"
++               "              two different questions -- 'is this pair good enough to ATTACH'\n"
++               "              and 'does this seed have enough OT evidence to RETIRE its bare\n"
++               "              row' -- is what made -a unmovable: lowering it to attach more\n"
++               "              also retired more seeds and paid efficiency for it.\n"
++               "  -RPST <v>   same for the bare-T3 logit (default: follow -AT3).\n"
++               "  -T3F <v>    (A11) stage-B TARGET ADMISSION: a bare T3 with upstream\n"
++               "              t3_fakeScore > v never enters the pT3-class pair enumeration.\n"
++               "              Default 1e9 = OFF = bit-identical. The attach head is BLIND to\n"
++               "              T3 quality (a bare-T3 target is handed gateLogit = 0 and\n"
++               "              nLayersF = 3) while the bare-T3 universe is only ~21%% true, so\n"
++               "              the pT3-class delivery is picking out of an unfiltered pool.\n"
++               "              t3_fakeScore is computed at T3 build time and survives the P2.7\n"
++               "              deletion; ChainFeatures 20/21 already consume it.\n"
+                "  -RD <0|1>   (-A 4) SEED-FAMILY dedup of the attach owners (default 0 = off):\n"
+                "              among attached pLS, one sharing >= 2 pixel hit rows with a\n"
+                "              higher-logit attached pLS loses its attachment (its target\n"
+@@ -818,6 +834,15 @@
+   float auZp8 = 0.f;   // -ZP8 <0|1|2>: post-deletion bare-pLS TC universe (see below)
+   float replPls = 0.f;             // -RPS: drop contested carried type-8 rows
+   float thetaAttachT3 = 6.0f;      // -AT3: per-class bare-T3 attach margin (tight by default)
++  // A11: the -RPS SEED-RETIREMENT margins, split from the DELIVERY margins -a / -AT3.
++  // One constant used to serve two different questions ("is this pair good enough to
++  // attach?" and "does this seed have enough outer-tracker evidence to retire its bare
++  // row?"), which made the attach margin unmovable: lowering -a to attach more also
++  // retired more seeds. 1e9 = unset = follow -a / -AT3 exactly (bit-identical default).
++  float rpsThetaChain = 1e9f;      // -RPSA
++  float rpsThetaT3 = 1e9f;         // -RPST
++  // A11 -T3F: stage-B TARGET ADMISSION on the upstream t3dnn fake score. 1e9 = off.
++  float t3FakeMax = 1e9f;
+   float dcaAttach4 = 1e9f;         // -D4: -A 4 attach-eligibility dca gate (default OFF)
+   float seedDupClean = 0.f;        // -RD: seed-family dedup of the attach owners. Plan 11
+                                    // keeps exactly ONE piece of the old crossclean stack --
+@@ -1113,6 +1138,11 @@
+       dst = &replT5;
+     else if (s == "-RT3")
+       dst = &replT3;
++    // A11: -RPSA / -RPST MUST precede -RPS (exact string equality, longest first).
++    else if (s == "-RPSA")
++      dst = &rpsThetaChain;
++    else if (s == "-RPST")
++      dst = &rpsThetaT3;
+     else if (s == "-RPS")
+       dst = &replPls;
+     else if (s == "-AT3")
+@@ -1154,6 +1184,10 @@
+       dst = &candChainToo;
+     else if (s == "-CF")
+       dst = &candMode;
++    // A11: -T3F MUST precede -T3E only in intent (exact string equality); both are here
++    // because getopt's "-T" would swallow them.
++    else if (s == "-T3F")
++      dst = &t3FakeMax;
+     else if (s == "-T3E")
+       dst = &t3StageEnable;
+     // M20 pT3-class hit-overlap contention. -CCT/-CCP/-CCK MUST precede -CC in this
+@@ -1398,6 +1432,14 @@
+     }
+   }
+ 
++  // A11: -RPSA / -RPST default to the DELIVERY margins -a / -AT3, so every pre-A11
++  // command line keeps the single-constant behaviour bit-for-bit. Resolved HERE (not with
++  // the pre-scan defaults) because -a comes through getopt, which has only just run.
++  if (rpsThetaChain >= 1e8f)
++    rpsThetaChain = thetaAttach;
++  if (rpsThetaT3 >= 1e8f)
++    rpsThetaT3 = thetaAttachT3;
++
+   NtupleReader reader(lstPath, trkPath);
+   const long long nTotal = reader.nEntries();
+   const long long nRun = (maxEvents < 0 || maxEvents > nTotal) ? nTotal : maxEvents;
+@@ -2971,6 +3013,7 @@
+       GeneralAttachParams gap;
+       gap.pref.thetaAttach = thetaAttach;
+       gap.thetaAttachT3 = thetaAttachT3;
++      gap.t3FakeMax = t3FakeMax;  // A11 -T3F: stage-B target admission (1e9 = off)
+       // ---- M20 CANDIDATE FINDING (PixelAttachCand.h). candMode 0 leaves every field at
+       // its default, so the frozen full analytic scan is untouched.
+       gap.pref.candMode = candModeI;
+@@ -3399,7 +3442,7 @@
+             // "attached anywhere OR lost a contention above the class margin": the pLS had
+             // a scored pair above its margin but is not the owner. A bare-pLS TC of a seed
+             // the outer tracker can explain is precisely what plsembdnn is for.
+-            drop = drop || ga.plsBestChainLogit[pls] >= thetaAttach || ga.plsBestT3Logit[pls] >= thetaAttachT3;
++            drop = drop || ga.plsBestChainLogit[pls] >= rpsThetaChain || ga.plsBestT3Logit[pls] >= rpsThetaT3;
+           if (drop) {
+             m16RowSuppressed[it] = 1;
+             (ty == 7 ? nM16SuppT7 : (ty == 5 ? nM16SuppT5 : nM16SuppT8)) += 1;
+@@ -4954,7 +4997,7 @@
+           // Same verdict m16RefreshSupp applies to a carried row of this pLS.
+           bool drop = p < static_cast<int>(ga.plsOwned.size()) && ga.plsOwned[p] != 0;
+           if (!drop && replPls >= 0.5f && p < static_cast<int>(ga.plsBestChainLogit.size()))
+-            drop = ga.plsBestChainLogit[p] >= thetaAttach || ga.plsBestT3Logit[p] >= thetaAttachT3;
++            drop = ga.plsBestChainLogit[p] >= rpsThetaChain || ga.plsBestT3Logit[p] >= rpsThetaT3;
+           // Channel (b) of the ported crossclean: the seeds LST's own CrossCleanpLS used
+           // to remove. Counted apart so the port's INCREMENTAL effect is visible.
+           if (!drop && p < static_cast<int>(xcRetired.size()) && xcRetired[p]) {
+@@ -5051,7 +5094,7 @@
+           if (p < static_cast<int>(ga.plsOwned.size()) && ga.plsOwned[p] != 0)
+             fate = 0;  // consumed by a pT5-class / pT3-class delivery
+           else if (replPls >= 0.5f && p < static_cast<int>(ga.plsBestChainLogit.size()) &&
+-                   (ga.plsBestChainLogit[p] >= thetaAttach || ga.plsBestT3Logit[p] >= thetaAttachT3))
++                   (ga.plsBestChainLogit[p] >= rpsThetaChain || ga.plsBestT3Logit[p] >= rpsThetaT3))
+             fate = 1;  // already blocked by the pre-existing -RPS predicate
+           else if (p < static_cast<int>(xcRetired.size()) && xcRetired[p])
+             fate = 2;  // NEWLY retired by the ported crossclean
+@@ -5285,10 +5328,12 @@
+                     " (of %lld accepted chain TCs) | extra type-5 TCs=%lld mean=%.1f\n",
+                     totDelivT5, totDelivT5 / nEvD, totChainTCs, totDelivT3, totDelivT3 / nEvD);
+         std::printf("  M16 suppression carried rows retired: pT5=%lld pT3=%lld pLS=%lld (total=%lld mean=%.1f)"
+-                    " | -RT5=%d -RT3=%d -RPS=%d -a=%.3f -AT3=%.3f\n",
++                    " | -RT5=%d -RT3=%d -RPS=%d -a=%.3f -AT3=%.3f | retire margins"
++                    " -RPSA=%.3f -RPST=%.3f | -T3F=%.4g\n",
+                     totM16Supp[0], totM16Supp[1], totM16Supp[2], totM16Supp[0] + totM16Supp[1] + totM16Supp[2],
+                     (totM16Supp[0] + totM16Supp[1] + totM16Supp[2]) / nEvD, replT5 >= 0.5f ? 1 : 0,
+-                    replT3 >= 0.5f ? 1 : 0, replPls >= 0.5f ? 1 : 0, thetaAttach, thetaAttachT3);
++                    replT3 >= 0.5f ? 1 : 0, replPls >= 0.5f ? 1 : 0, thetaAttach, thetaAttachT3, rpsThetaChain,
++                    rpsThetaT3, t3FakeMax);
+         if (auZp8 >= 0.5f)
+           std::printf("  AUDIT -ZP8 %d   quad pLS=%lld mean=%.1f | already delivered=%lld mean=%.1f"
+                       " | blocked by our contention=%lld mean=%.1f | ADDED type-8 TCs=%lld mean=%.1f\n",
