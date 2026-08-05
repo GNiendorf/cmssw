@@ -1,0 +1,53 @@
+{
+ "resident": {
+  "n_rows": 266538,
+  "n_fake": 102759,
+  "n_prompt": 161906,
+  "n_disp": 1873,
+  "mP prompt-vs-fake": 0.9676979738311788,
+  "mD disp-vs-fake": 0.9402739833513907,
+  "mX alltrue-vs-fake": 0.9659829930421159,
+  "mD disp(vxy>=5)-vs-fake": 0.9380480993695407,
+  "nL=4 mX alltrue": 0.9625536799331132,
+  "nL=4 mD disp": 0.9367734518628773,
+  "IP5+ mX alltrue": 0.9446642752294268,
+  "IP5+ mP prompt": 0.9455236672590828,
+  "exempt5+ mX alltrue": 0.9282221703629849,
+  "exempt5+ mD disp": 0.9002415179485453,
+  "exempt5+ mP prompt": 0.932584337098023
+ },
+ "m17a": {
+  "n_rows": 266538,
+  "n_fake": 102759,
+  "n_prompt": 161906,
+  "n_disp": 1873,
+  "mP prompt-vs-fake": 0.9675012627503681,
+  "mD disp-vs-fake": 0.9381842368934321,
+  "mX alltrue-vs-fake": 0.9654959470325112,
+  "mD disp(vxy>=5)-vs-fake": 0.9360824505813937,
+  "nL=4 mX alltrue": 0.9623101828261087,
+  "nL=4 mD disp": 0.9347958575475342,
+  "IP5+ mX alltrue": 0.9449038445443189,
+  "IP5+ mP prompt": 0.9459887552262405,
+  "exempt5+ mX alltrue": 0.9264641431261227,
+  "exempt5+ mD disp": 0.8962266019627145,
+  "exempt5+ mP prompt": 0.9319288949717588
+ },
+ "m17b": {
+  "n_rows": 266538,
+  "n_fake": 102759,
+  "n_prompt": 161906,
+  "n_disp": 1873,
+  "mP prompt-vs-fake": 0.9682099799072346,
+  "mD disp-vs-fake": 0.9385867331950566,
+  "mX alltrue-vs-fake": 0.9672204181600309,
+  "mD disp(vxy>=5)-vs-fake": 0.9360908911032151,
+  "nL=4 mX alltrue": 0.9645383659052191,
+  "nL=4 mD disp": 0.9361474168621762,
+  "IP5+ mX alltrue": 0.9452607535341457,
+  "IP5+ mP prompt": 0.9458175791628098,
+  "exempt5+ mX alltrue": 0.9307627031710928,
+  "exempt5+ mD disp": 0.8954017808311386,
+  "exempt5+ mP prompt": 0.933213820570509
+ }
+}

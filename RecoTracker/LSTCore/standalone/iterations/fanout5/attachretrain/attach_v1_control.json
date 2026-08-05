@@ -1,0 +1,50 @@
+{
+ "v1_model": "/mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/fanout3/m16/attach_mlp_v1.pt",
+ "gen_model": "/mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/fanout3/m16/attach_mlp_g1.pt",
+ "rows": 1278702,
+ "test": {
+  "ALL chain pairs": {
+   "n_true": 6827,
+   "n_fake": 1271875,
+   "auc_v1": 0.9956391601060827,
+   "auc_gen": 0.9944093905503837,
+   "delta": -0.0012297695556989785
+  },
+  "prompt vxy<1": {
+   "n_true": 272,
+   "n_fake": 1271875,
+   "auc_v1": 0.9952383176759647,
+   "auc_gen": 0.9930955427084839,
+   "delta": -0.0021427749674808316
+  },
+  "displaced vxy [1,5)": {
+   "n_true": 12,
+   "n_fake": 1271875,
+   "auc_v1": 0.9906982473382473,
+   "auc_gen": 0.9746232268632269,
+   "delta": -0.016075020475020407
+  },
+  "displaced vxy >=5": {
+   "n_true": 0,
+   "n_fake": 1271875,
+   "auc_v1": null,
+   "auc_gen": null,
+   "delta": null
+  },
+  "displaced vxy >=1 (all)": {
+   "n_true": 12,
+   "n_fake": 1271875,
+   "auc_v1": 0.9906982473382473,
+   "auc_gen": 0.9746232268632269,
+   "delta": -0.016075020475020407
+  },
+  "pileup-sim true": {
+   "n_true": 6543,
+   "n_fake": 1271875,
+   "auc_v1": 0.9956648853229871,
+   "auc_gen": 0.9945002969506959,
+   "delta": -0.0011645883722912753
+  }
+ },
+ "note": "M7 published chain-only test AUC 0.99851 was measured on the M7 h4b-shape dump (different target universe); the only fair comparison is these same-row numbers."
+}

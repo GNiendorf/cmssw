@@ -1,0 +1,36 @@
+
+=== W_X4 (977 evts) : TCs and fakes by type ===
+type              nTC      nFake   fakeRate  fakes/evt
+pLS            877078      40329    0.04598       41.3
+pT5            568839       4413    0.00776        4.5
+T5cls          420846      37339    0.08872       38.2
+pT3cls         133407      18952    0.14206       19.4
+T4cls           33698       9935    0.29482       10.2
+ALL           2033868     110968    0.05456      113.6
+  bare OT (type 4/9) fakes by region x nhitOT, top 8:
+   barrel   nhitOT=10  nTC/evt=   98.3 fakes/evt=  16.1 fakeRate=0.1634
+   trans    nhitOT=10  nTC/evt=   87.3 fakes/evt=  11.1 fakeRate=0.1275
+   barrel   nhitOT=8   nTC/evt=   12.3 fakes/evt=   7.9 fakeRate=0.6433
+   barrel   nhitOT=12  nTC/evt=  109.4 fakes/evt=   3.8 fakeRate=0.0345
+   endcap   nhitOT=10  nTC/evt=   50.5 fakes/evt=   3.3 fakeRate=0.0659
+   trans    nhitOT=12  nTC/evt=   50.4 fakes/evt=   2.6 fakeRate=0.0518
+   endcap   nhitOT=8   nTC/evt=   18.4 fakes/evt=   1.7 fakeRate=0.0931
+   endcap   nhitOT=12  nTC/evt=   26.2 fakes/evt=   1.1 fakeRate=0.0435
+
+=== LST (977 evts) : TCs and fakes by type ===
+type              nTC      nFake   fakeRate  fakes/evt
+pLS            881388      40813    0.04631       41.8
+pT5            792588      11995    0.01513       12.3
+pT3cls         149024       5276    0.03540        5.4
+T5cls          137314       8912    0.06490        9.1
+T4cls           38180      23273    0.60956       23.8
+ALL           1998494      90269    0.04517       92.4
+  bare OT (type 4/9) fakes by region x nhitOT, top 8:
+   barrel   nhitOT=8   nTC/evt=   16.8 fakes/evt=  13.7 fakeRate=0.8138
+   endcap   nhitOT=8   nTC/evt=   15.6 fakes/evt=   5.6 fakeRate=0.3610
+   barrel   nhitOT=10  nTC/evt=   24.1 fakes/evt=   4.7 fakeRate=0.1969
+   trans    nhitOT=8   nTC/evt=    6.7 fakes/evt=   4.5 fakeRate=0.6754
+   trans    nhitOT=10  nTC/evt=   24.3 fakes/evt=   2.5 fakeRate=0.1023
+   barrel   nhitOT=12  nTC/evt=   34.7 fakes/evt=   0.7 fakeRate=0.0206
+   trans    nhitOT=12  nTC/evt=   19.9 fakes/evt=   0.5 fakeRate=0.0239
+   endcap   nhitOT=10  nTC/evt=   14.4 fakes/evt=   0.4 fakeRate=0.0255

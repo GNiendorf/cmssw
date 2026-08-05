@@ -1,0 +1,294 @@
+{
+ "v3": {
+  "e0": {
+   "unknown vxy(-999)|E1": {
+    "n_true": 726828,
+    "pass_true": 0.9178375076359193,
+    "n_fake": 3477696,
+    "pass_fake": 0.06524032002797255
+   },
+   "unknown vxy(-999)|E2": {
+    "n_true": 811755,
+    "pass_true": 0.9058114825285954,
+    "n_fake": 1003508,
+    "pass_fake": 0.23840367989094258
+   },
+   "prompt [0,1)|E1": {
+    "n_true": 68742,
+    "pass_true": 0.7419190596723982,
+    "n_fake": 0,
+    "pass_fake": 0.0
+   },
+   "prompt [0,1)|E2": {
+    "n_true": 69316,
+    "pass_true": 0.7568959547579203,
+    "n_fake": 0,
+    "pass_fake": 0.0
+   },
+   "displ [1,5)|E1": {
+    "n_true": 10380,
+    "pass_true": 0.47639691714836224,
+    "n_fake": 0,
+    "pass_fake": 0.0
+   },
+   "displ [1,5)|E2": {
+    "n_true": 9404,
+    "pass_true": 0.5867715865589112,
+    "n_fake": 0,
+    "pass_fake": 0.0
+   },
+   "displ >=5|E1": {
+    "n_true": 20786,
+    "pass_true": 0.4835466179159049,
+    "n_fake": 0,
+    "pass_fake": 0.0
+   },
+   "displ >=5|E2": {
+    "n_true": 21075,
+    "pass_true": 0.6026097271648873,
+    "n_fake": 0,
+    "pass_fake": 0.0
+   },
+   "_all": {
+    "all_pass": 0.3224079466322801,
+    "true_pass": 0.8854049333653956,
+    "fake_pass": 0.1040180272980208,
+    "thr": 0.0
+   }
+  },
+  "equal_kill_e": 0.0,
+  "ref_all_pass": 0.3224079466322801
+ },
+ "d4": {
+  "e0": {
+   "unknown vxy(-999)|E1": {
+    "n_true": 726828,
+    "pass_true": 0.8929045111085429,
+    "n_fake": 3477696,
+    "pass_fake": 0.07094467141463774
+   },
+   "unknown vxy(-999)|E2": {
+    "n_true": 811755,
+    "pass_true": 0.9169921959211831,
+    "n_fake": 1003508,
+    "pass_fake": 0.36062094173638876
+   },
+   "prompt [0,1)|E1": {
+    "n_true": 68742,
+    "pass_true": 0.7669401530359896,
+    "n_fake": 0,
+    "pass_fake": 0.0
+   },
+   "prompt [0,1)|E2": {
+    "n_true": 69316,
+    "pass_true": 0.8781810837324716,
+    "n_fake": 0,
+    "pass_fake": 0.0
+   },
+   "displ [1,5)|E1": {
+    "n_true": 10380,
+    "pass_true": 0.6132947976878613,
+    "n_fake": 0,
+    "pass_fake": 0.0
+   },
+   "displ [1,5)|E2": {
+    "n_true": 9404,
+    "pass_true": 0.8924925563589962,
+    "n_fake": 0,
+    "pass_fake": 0.0
+   },
+   "displ >=5|E1": {
+    "n_true": 20786,
+    "pass_true": 0.602232271721351,
+    "n_fake": 0,
+    "pass_fake": 0.0
+   },
+   "displ >=5|E2": {
+    "n_true": 21075,
+    "pass_true": 0.8473072360616845,
+    "n_fake": 0,
+    "pass_fake": 0.0
+   },
+   "_all": {
+    "all_pass": 0.34740758486628326,
+    "true_pass": 0.8928841398941256,
+    "fake_pass": 0.13581394643046824,
+    "thr": 0.0
+   }
+  },
+  "equal_kill": {
+   "unknown vxy(-999)|E1": {
+    "n_true": 726828,
+    "pass_true": 0.874010082165244,
+    "n_fake": 3477696,
+    "pass_fake": 0.05784174349914426
+   },
+   "unknown vxy(-999)|E2": {
+    "n_true": 811755,
+    "pass_true": 0.8940850379732801,
+    "n_fake": 1003508,
+    "pass_fake": 0.29147550393220584
+   },
+   "prompt [0,1)|E1": {
+    "n_true": 68742,
+    "pass_true": 0.7334235256466207,
+    "n_fake": 0,
+    "pass_fake": 0.0
+   },
+   "prompt [0,1)|E2": {
+    "n_true": 69316,
+    "pass_true": 0.8430521091811415,
+    "n_fake": 0,
+    "pass_fake": 0.0
+   },
+   "displ [1,5)|E1": {
+    "n_true": 10380,
+    "pass_true": 0.5467244701348748,
+    "n_fake": 0,
+    "pass_fake": 0.0
+   },
+   "displ [1,5)|E2": {
+    "n_true": 9404,
+    "pass_true": 0.8531475967673331,
+    "n_fake": 0,
+    "pass_fake": 0.0
+   },
+   "displ >=5|E1": {
+    "n_true": 20786,
+    "pass_true": 0.5497931299913403,
+    "n_fake": 0,
+    "pass_fake": 0.0
+   },
+   "displ >=5|E2": {
+    "n_true": 21075,
+    "pass_true": 0.7851008303677343,
+    "n_fake": 0,
+    "pass_fake": 0.0
+   },
+   "_all": {
+    "all_pass": 0.3224079466322801,
+    "true_pass": 0.8695686440551209,
+    "fake_pass": 0.11016101922608298,
+    "thr": 0.24906307442922457
+   }
+  },
+  "equal_kill_e": 0.24906307442922457,
+  "pass_at_e0": 0.34740758486628326
+ },
+ "d5": {
+  "e0": {
+   "unknown vxy(-999)|E1": {
+    "n_true": 726828,
+    "pass_true": 0.8934520959566775,
+    "n_fake": 3477696,
+    "pass_fake": 0.07188178610206297
+   },
+   "unknown vxy(-999)|E2": {
+    "n_true": 811755,
+    "pass_true": 0.9325855707695055,
+    "n_fake": 1003508,
+    "pass_fake": 0.4270309753385125
+   },
+   "prompt [0,1)|E1": {
+    "n_true": 68742,
+    "pass_true": 0.7586482790724739,
+    "n_fake": 0,
+    "pass_fake": 0.0
+   },
+   "prompt [0,1)|E2": {
+    "n_true": 69316,
+    "pass_true": 0.9048848750649201,
+    "n_fake": 0,
+    "pass_fake": 0.0
+   },
+   "displ [1,5)|E1": {
+    "n_true": 10380,
+    "pass_true": 0.541907514450867,
+    "n_fake": 0,
+    "pass_fake": 0.0
+   },
+   "displ [1,5)|E2": {
+    "n_true": 9404,
+    "pass_true": 0.922479795831561,
+    "n_fake": 0,
+    "pass_fake": 0.0
+   },
+   "displ >=5|E1": {
+    "n_true": 20786,
+    "pass_true": 0.5973732319830656,
+    "n_fake": 0,
+    "pass_fake": 0.0
+   },
+   "displ >=5|E2": {
+    "n_true": 21075,
+    "pass_true": 0.8831316725978647,
+    "n_fake": 0,
+    "pass_fake": 0.0
+   },
+   "_all": {
+    "all_pass": 0.3609832960580369,
+    "true_pass": 0.9012440990723045,
+    "fake_pass": 0.15141287921728178,
+    "thr": 0.0
+   }
+  },
+  "equal_kill": {
+   "unknown vxy(-999)|E1": {
+    "n_true": 726828,
+    "pass_true": 0.8625562031182068,
+    "n_fake": 3477696,
+    "pass_fake": 0.05221876782789525
+   },
+   "unknown vxy(-999)|E2": {
+    "n_true": 811755,
+    "pass_true": 0.901640273235151,
+    "n_fake": 1003508,
+    "pass_fake": 0.3155360993634331
+   },
+   "prompt [0,1)|E1": {
+    "n_true": 68742,
+    "pass_true": 0.702554479066655,
+    "n_fake": 0,
+    "pass_fake": 0.0
+   },
+   "prompt [0,1)|E2": {
+    "n_true": 69316,
+    "pass_true": 0.8580702868024699,
+    "n_fake": 0,
+    "pass_fake": 0.0
+   },
+   "displ [1,5)|E1": {
+    "n_true": 10380,
+    "pass_true": 0.4628131021194605,
+    "n_fake": 0,
+    "pass_fake": 0.0
+   },
+   "displ [1,5)|E2": {
+    "n_true": 9404,
+    "pass_true": 0.8689919183326245,
+    "n_fake": 0,
+    "pass_fake": 0.0
+   },
+   "displ >=5|E1": {
+    "n_true": 20786,
+    "pass_true": 0.5049071490426248,
+    "n_fake": 0,
+    "pass_fake": 0.0
+   },
+   "displ >=5|E2": {
+    "n_true": 21075,
+    "pass_true": 0.8011387900355872,
+    "n_fake": 0,
+    "pass_fake": 0.0
+   },
+   "_all": {
+    "all_pass": 0.3224079466322801,
+    "true_pass": 0.8669281119447548,
+    "fake_pass": 0.11118529752271934,
+    "thr": 0.39195198245245855
+   }
+  },
+  "equal_kill_e": 0.39195198245245855,
+  "pass_at_e0": 0.3609832960580369
+ }
+}

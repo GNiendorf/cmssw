@@ -1,0 +1,22 @@
+  only chT4, K=2                                  0.06225  -0.00005  0.05372  -0.00180     1002        49
+      dropped by class: {'chT4': 1147}
+  only chT5, K=1                                  0.05869  -0.00361  0.04882  -0.00669     7505      3807
+      dropped by class: {'chT5': 9462}
+  only chT5, K=2                                  0.05925  -0.00305  0.04991  -0.00560     5275      1958
+      dropped by class: {'chT5': 6625}
+  ALL OT classes, shared/own >= 0.30              0.06210  -0.00020  0.05535  -0.00016      156        20
+      dropped by class: {'aPT3': 112, 'chT5': 40, 'chT4': 28}
+  ALL OT classes, shared/own >= 0.40              0.06227  -0.00003  0.05546  -0.00006       40         7
+      dropped by class: {'chT5': 27, 'aPT3': 16, 'chT4': 5}
+  ALL OT classes, shared/own >= 0.50              0.06228  -0.00002  0.05550  -0.00002       17         2
+      dropped by class: {'aPT3': 16, 'chT4': 5}
+  ALL OT classes, shared/own >= 0.60              0.06230  +0.00000  0.05551  +0.00000        0         0
+      dropped by class: {}
+  ALL OT classes, shared/own >= 0.75              0.06230  +0.00000  0.05551  +0.00000        0         0
+      dropped by class: {}
+  only chT5+chT4, shared/own >= 0.40              0.06230  -0.00000  0.05547  -0.00004       27         5
+      dropped by class: {'chT5': 27, 'chT4': 5}
+  only chT5+chT4, shared/own >= 0.50              0.06230  +0.00000  0.05551  -0.00001        4         0
+      dropped by class: {'chT4': 5}
+  only chT5+chT4, shared/own >= 0.60              0.06230  +0.00000  0.05551  +0.00000        0         0
+      dropped by class: {}

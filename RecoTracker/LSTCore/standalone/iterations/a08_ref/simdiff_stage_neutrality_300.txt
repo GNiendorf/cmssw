@@ -1,0 +1,16 @@
+### vxy:10:30
+--- B vs A ---   LOST=0  GAINED=0  net=+0
+### vxy:5:10
+--- B vs A ---   LOST=0  GAINED=1  net=+1
+### vxy:30:60
+--- B vs A ---   LOST=0  GAINED=0  net=+0
+### dxy:1:30
+--- B vs A ---   LOST=0  GAINED=0  net=+0
+### vxy:10:30
+--- B vs A ---   LOST=0  GAINED=0  net=+0
+### vxy:5:10
+--- B vs A ---   LOST=0  GAINED=0  net=+0
+### vxy:30:60
+--- B vs A ---   LOST=0  GAINED=0  net=+0
+### dxy:1:30
+--- B vs A ---   LOST=0  GAINED=0  net=+0

@@ -1,0 +1,13 @@
+DISTINCT DISPLACED SIMS  (displacement = max(vxy, |dxy|); no vxy/dxy double count)
+A = FINBASE   B = MR10   input = LSTNtuple_instr_977evt.root
+tier         nSim        LST    FINBASE       MR10   A vs LST (lost/gained)
+DISP1       16369       7782       8512       8457   377/1107 net +730
+DISP5       11809       4238       4859       4808   280/901 net +621
+DISP10       9819       2956       3423       3378   236/703 net +467
+DISP30       5721        392        494        484   110/212 net +102
+
+A OVER B (what the change from B to A moved), distinct displaced sims:
+  DISP1    LOST 4  GAINED 59  net +55   [gained TC types: T5=59]
+  DISP5    LOST 1  GAINED 52  net +51   [gained TC types: T5=52]
+  DISP10   LOST 1  GAINED 46  net +45   [gained TC types: T5=46]
+  DISP30   LOST 0  GAINED 10  net +10   [gained TC types: T5=10]

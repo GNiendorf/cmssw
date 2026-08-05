@@ -1,0 +1,8 @@
+bk1_t5_a5_w025 -BK 1 -BT 5 -B 5 -W 0.25
+bk1_t5_a5_w100 -BK 1 -BT 5 -B 5 -W 1.00
+bk1_t5_a20_w025 -BK 1 -BT 5 -B 20 -W 0.25
+bk1_t5_a20_w100 -BK 1 -BT 5 -B 20 -W 1.00
+bk1_t5_a40_w025 -BK 1 -BT 5 -B 40 -W 0.25
+bk1_t5_a40_w100 -BK 1 -BT 5 -B 40 -W 1.00
+bk2_a5 -BK 2 -B 5
+bk2_a20 -BK 2 -B 20

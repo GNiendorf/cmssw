@@ -1,0 +1,155 @@
+NOTE: M16 attach deliveries -- 298088 type-7 (deliv 2), 0 type-5 (deliv 3); 0 legacy in-place upgrades (deliv 1, type 7)
+Per-type A/B compare
+  proto: /mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/fanout3/m16/ab_r1b_am1.root  (300 events)
+  base:  /mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/LSTNtuple_PU200RelVal_300evt.root  (300 events)
+TC cuts: pt > 0.9, |eta| < 4.5. Sim acceptance: pt > 0.9, |eta| < 4.5, q != 0, |vz| < 30;
+  prompt adds vxy < 2.5; displaced rows use vxy bands with the vxy cut dropped.
+Sim denominators (proto | base): prompt vxy<2.5: 21877 | 21877  disp vxy[1,5): 1415 | 1415  disp vxy[5,30): 1858 | 1858
+
+slice                 metric                        proto         base        delta
+-----------------------------------------------------------------------------------
+pT5 (7)               nTC                          338478       212553      +125925
+                      nTC_per_event                1128.3        708.5       +419.8
+                      FR                           0.0749       0.0145      +0.0604
+                      DR                           0.4860       0.0096      +0.4765
+                      mean_nhitOT                  11.255       11.546       -0.291
+                      effN prompt vxy<2.5           12418        12041         +377
+                      eff prompt vxy<2.5           0.5676       0.5504      +0.0172
+                      effN disp vxy[1,5)              688          550         +138
+                      eff disp vxy[1,5)            0.4862       0.3887      +0.0975
+                      effN disp vxy[5,30)             390           49         +341
+                      eff disp vxy[5,30)           0.2099       0.0264      +0.1835
+-----------------------------------------------------------------------------------
+pT3 (5)               nTC                           25991        31253        -5262
+                      nTC_per_event                  86.6        104.2        -17.5
+                      FR                           0.0370       0.0377      -0.0006
+                      DR                           0.0961       0.0282      +0.0679
+                      mean_nhitOT                   6.000        6.000       +0.000
+                      effN prompt vxy<2.5             941         1286         -345
+                      eff prompt vxy<2.5           0.0430       0.0588      -0.0158
+                      effN disp vxy[1,5)               54           98          -44
+                      eff disp vxy[1,5)            0.0382       0.0693      -0.0311
+                      effN disp vxy[5,30)               7           19          -12
+                      eff disp vxy[5,30)           0.0038       0.0102      -0.0065
+-----------------------------------------------------------------------------------
+pLS (8)               nTC                          185709       188230        -2521
+                      nTC_per_event                 619.0        627.4         -8.4
+                      FR                           0.0492       0.0493      -0.0001
+                      DR                           0.1025       0.0995      +0.0031
+                      mean_nhitOT                   0.000        0.000       +0.000
+                      effN prompt vxy<2.5            4476         4573          -97
+                      eff prompt vxy<2.5           0.2046       0.2090      -0.0044
+                      effN disp vxy[1,5)              145          151           -6
+                      eff disp vxy[1,5)            0.1025       0.1067      -0.0042
+                      effN disp vxy[5,30)               7            6           +1
+                      eff disp vxy[5,30)           0.0038       0.0032      +0.0005
+-----------------------------------------------------------------------------------
+T5 (4)                nTC                           16770        33541       -16771
+                      nTC_per_event                  55.9        111.8        -55.9
+                      FR                           0.2400       0.0672      +0.1728
+                      DR                           0.0514       0.0471      +0.0043
+                      mean_nhitOT                  10.807       11.232       -0.425
+                      effN prompt vxy<2.5             286          603         -317
+                      eff prompt vxy<2.5           0.0131       0.0276      -0.0145
+                      effN disp vxy[1,5)              147          289         -142
+                      eff disp vxy[1,5)            0.1039       0.2042      -0.1004
+                      effN disp vxy[5,30)             596         1096         -500
+                      eff disp vxy[5,30)           0.3208       0.5899      -0.2691
+-----------------------------------------------------------------------------------
+T4 (9)                nTC                            5275         9635        -4360
+                      nTC_per_event                  17.6         32.1        -14.5
+                      FR                           0.3403       0.6046      -0.2643
+                      DR                           0.3168       0.1213      +0.1954
+                      mean_nhitOT                   8.000        8.000       +0.000
+                      effN prompt vxy<2.5              16           33          -17
+                      eff prompt vxy<2.5           0.0007       0.0015      -0.0008
+                      effN disp vxy[1,5)               11            6           +5
+                      eff disp vxy[1,5)            0.0078       0.0042      +0.0035
+                      effN disp vxy[5,30)              31           14          +17
+                      eff disp vxy[5,30)           0.0167       0.0075      +0.0091
+-----------------------------------------------------------------------------------
+chain-slice (4+9)     nTC                          282213        43176      +239037
+                      nTC_per_event                 940.7        143.9       +796.8
+                      FR                           0.1049       0.1871      -0.0822
+                      DR                           0.3282       0.0636      +0.2646
+                      mean_nhitOT                  11.083       10.510       +0.573
+                      effN prompt vxy<2.5            9564          636        +8928
+                      eff prompt vxy<2.5           0.4372       0.0291      +0.4081
+                      effN disp vxy[1,5)              698          295         +403
+                      eff disp vxy[1,5)            0.4933       0.2085      +0.2848
+                      effN disp vxy[5,30)             997         1110         -113
+                      eff disp vxy[5,30)           0.5366       0.5974      -0.0608
+-----------------------------------------------------------------------------------
+pixel-slice (7+5+8)   nTC                          290010       432036      -142026
+                      nTC_per_event                 966.7       1440.1       -473.4
+                      FR                           0.0402       0.0313      +0.0089
+                      DR                           0.3309       0.0501      +0.2808
+                      mean_nhitOT                   3.659        6.114       -2.455
+                      effN prompt vxy<2.5            8573        17900        -9327
+                      eff prompt vxy<2.5           0.3919       0.8182      -0.4263
+                      effN disp vxy[1,5)              347          799         -452
+                      eff disp vxy[1,5)            0.2452       0.5647      -0.3194
+                      effN disp vxy[5,30)              34           74          -40
+                      eff disp vxy[5,30)           0.0183       0.0398      -0.0215
+-----------------------------------------------------------------------------------
+all                   nTC                          572223       475212       +97011
+                      nTC_per_event                1907.4       1584.0       +323.4
+                      FR                           0.0722       0.0455      +0.0267
+                      DR                           0.3295       0.0513      +0.2782
+                      mean_nhitOT                   7.320        6.514       +0.807
+                      effN prompt vxy<2.5           18137        18536         -399
+                      eff prompt vxy<2.5           0.8290       0.8473      -0.0182
+                      effN disp vxy[1,5)             1045         1094          -49
+                      eff disp vxy[1,5)            0.7385       0.7731      -0.0346
+                      effN disp vxy[5,30)            1031         1184         -153
+                      eff disp vxy[5,30)           0.5549       0.6372      -0.0823
+-----------------------------------------------------------------------------------
+
+Pixel-slice sanity check (types 7/5/8, no plot cuts, mode: subset):
+  rows: proto 394718, base 557115; events with count mismatch: 300
+  K8-suppressed rows : 162397 (kept rows are base rows minus the attached pLS's
+                       pT5/pLS rows); subsequence-embedding failures: 0
+  tc_isDuplicate     : 86225 pixel rows gained the dup flag, 448 lost it (LEGITIMATE:
+                       dup flags are recomputed over the merged pixel+chain TC set,
+                       so chain TCs sharing a sim with a pixel TC add dup flags;
+                       counts/kinematics/tc_isFake CANNOT legitimately change.)
+  verdict: OK -- kept pixel rows are an exact subset of base (K8 suppression; only dup flags moved)
+
+============================================================================================================
+M16 DELIVERY-CLASS TABLE -- efficiency contribution by class and vxy stratum (proto - base), plus TC rates
+  Class totals ('* ALL') are the replacement A/B verdict rows; the indented rows decompose them by provenance.
+============================================================================================================
+sim denominators (proto): prompt vxy<2.5: 21877  vxy[0,1): 21137  vxy[1,5): 1415  vxy[5,10): 634  vxy[10,30): 1224
+class                       nTC/evt       FR       DR | prompt vxy<2.5       vxy[0,1)       vxy[1,5)      vxy[5,10)     vxy[10,30)
+----------------------------------------------------------------------------------------------------------------------------------
+pT5-class ALL (7)            1128.3   0.0749   0.4860 | 0.5676(+0.0172) 0.5674(+0.0159) 0.4862(+0.0975) 0.2855(+0.2114) 0.1708(+0.1691)
+  carried pT5                 261.0   0.0201   0.9502 | 0.1443(-0.4061) 0.1446(-0.4069) 0.1046(-0.2841) 0.0300(-0.0442) 0.0008(-0.0008)
+  attach pT5                  867.2   0.0915   0.3463 | 0.4234(+0.4234) 0.4228(+0.4228) 0.3816(+0.3816) 0.2555(+0.2555) 0.1699(+0.1699)
+pT3-class ALL (5)              86.6   0.0370   0.0961 | 0.0430(-0.0158) 0.0432(-0.0152) 0.0382(-0.0311) 0.0110(-0.0189) 0.0000(+0.0000)
+  carried pT3                  86.6   0.0370   0.0961 | 0.0430(-0.0158) 0.0432(-0.0152) 0.0382(-0.0311) 0.0110(-0.0189) 0.0000(+0.0000)
+  attach pT3                    0.0      n/a      n/a | 0.0000(+0.0000) 0.0000(+0.0000) 0.0000(+0.0000) 0.0000(+0.0000) 0.0000(+0.0000)
+pLS-class ALL (8)             619.0   0.0492   0.1025 | 0.2046(-0.0044) 0.2084(-0.0044) 0.1025(-0.0042) 0.0110(+0.0016) 0.0000(+0.0000)
+bare chain (4+9)               73.5   0.2640   0.1149 | 0.0138(-0.0153) 0.0111(-0.0135) 0.1117(-0.0968) 0.2918(-0.2476) 0.3611(-0.2663)
+pixel-class ALL (7+5+8)      1833.9   0.0645   0.3382 | 0.8152(-0.0030) 0.8191(-0.0036) 0.6269(+0.0622) 0.3076(+0.1940) 0.1708(+0.1691)
+attach deliveries             867.2   0.0915   0.3463 | 0.4234(+0.4234) 0.4228(+0.4228) 0.3816(+0.3816) 0.2555(+0.2555) 0.1699(+0.1699)
+all                          1907.4   0.0722   0.3295 | 0.8290(-0.0182) 0.8303(-0.0171) 0.7385(-0.0346) 0.5994(-0.0536) 0.5319(-0.0972)
+----------------------------------------------------------------------------------------------------------------------------------
+baseline reference (same rows, base file):
+pT5-class ALL (7)             708.5   0.0145   0.0096 |         0.5504         0.5515         0.3887         0.0741         0.0016
+  carried pT5                 708.5   0.0145   0.0096 |         0.5504         0.5515         0.3887         0.0741         0.0016
+  attach pT5                    0.0      n/a      n/a |         0.0000         0.0000         0.0000         0.0000         0.0000
+pT3-class ALL (5)             104.2   0.0377   0.0282 |         0.0588         0.0584         0.0693         0.0300         0.0000
+  carried pT3                 104.2   0.0377   0.0282 |         0.0588         0.0584         0.0693         0.0300         0.0000
+  attach pT3                    0.0      n/a      n/a |         0.0000         0.0000         0.0000         0.0000         0.0000
+pLS-class ALL (8)             627.4   0.0493   0.0995 |         0.2090         0.2128         0.1067         0.0095         0.0000
+bare chain (4+9)              143.9   0.1871   0.0636 |         0.0291         0.0246         0.2085         0.5394         0.6275
+pixel-class ALL (7+5+8)      1440.1   0.0313   0.0501 |         0.8182         0.8227         0.5647         0.1136         0.0016
+attach deliveries               0.0      n/a      n/a |         0.0000         0.0000         0.0000         0.0000         0.0000
+all                          1584.0   0.0455   0.0513 |         0.8473         0.8473         0.7731         0.6530         0.6291
+
+M16 REPLACEMENT VERDICT (class total must be >= baseline in EVERY band):
+  pT5-class ALL (7)        PASS  worst band vxy[0,1)     +0.0159 | FR 0.0749 vs 0.0145
+  pT3-class ALL (5)        FAIL  worst band vxy[1,5)     -0.0311 | FR 0.0370 vs 0.0377
+  pLS-class ALL (8)        FAIL  worst band prompt vxy<2.5 -0.0044 | FR 0.0492 vs 0.0493
+  pixel-class ALL (7+5+8)  FAIL  worst band vxy[0,1)     -0.0036 | FR 0.0645 vs 0.0313
+wrote /mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/fanout3/m16/ct_r1b_am1.json

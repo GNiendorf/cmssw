@@ -1,0 +1,146 @@
+====================================================================================================
+A. TC / DUP / FAKE per BAND x CLASS  (per event)
+====================================================================================================
+band   class         CF.nTC      dup     fake    LST.nTC      dup     fake
+B      T4chain        12.32     0.28     7.92      16.82     0.12    13.69
+B      T5chain       134.95     9.06    18.68      58.85     2.59     5.46
+B      barePLS        50.07     7.36     1.38      42.50     1.66     1.25
+B      pT3cls         66.61     0.18     1.37      85.55     0.59     1.80
+B      seeded        318.04     1.00     2.08     367.34     0.51     3.37
+B      ALL           581.99    17.88    31.43     571.06     5.47    25.57
+T      T4chain         3.75     0.13     0.53       6.67     0.19     4.51
+T      T5chain       102.37     4.55    12.92      44.22     1.15     2.96
+T      barePLS        24.75     3.18     2.20      22.61     1.18     2.18
+T      pT3cls         24.17     0.21     1.47      34.60     0.53     1.14
+T      seeded        160.62     0.96     2.30     200.34     0.79     3.30
+T      ALL           315.66     9.01    19.42     308.44     3.84    14.10
+E      T4chain        18.40     1.06     1.71      15.59     4.07     5.63
+E      T5chain        63.87     5.44     4.23      37.48     2.71     0.70
+E      barePLS       814.43    69.43    37.53     837.03    76.94    38.34
+E      pT3cls         30.65     1.08     3.51      32.38     2.37     2.46
+E      seeded        233.15     2.13     2.66     243.56     6.58     5.60
+E      ALL          1160.51    79.14    49.63    1166.04    92.67    52.72
+
+====================================================================================================
+B. DUPLICATE PATTERN CENSUS  (dup TC class | partner classes), per event
+====================================================================================================
+-- band B --
+dupClass  coveredWith                               CF       LST
+T5chain   barePLS                                7.275     1.502
+barePLS   T5chain                                7.168     1.496
+T5chain   T5chain                                0.595     0.988
+seeded    T5chain                                0.956     0.003
+T5chain   seeded                                 0.943     0.003
+seeded    pT3cls                                 0.003     0.336
+pT3cls    seeded                                 0.003     0.336
+T5chain   pT3cls                                 0.169     0.042
+T4chain   barePLS                                0.168     0.038
+barePLS   T4chain                                0.166     0.038
+pT3cls    T5chain                                0.165     0.041
+pT3cls    pT3cls                                 0.004     0.131
+barePLS   seeded                                 0.018     0.095
+seeded    barePLS                                0.019     0.094
+pT3cls    T4chain                                0.005     0.086
+T4chain   pT3cls                                 0.005     0.086
+seeded    seeded                                 0.000     0.074
+T5chain   T4chain                                0.068     0.000
+TOTAL                                           17.878     5.475
+
+-- band T --
+dupClass  coveredWith                               CF       LST
+barePLS   T5chain                                3.068     0.818
+T5chain   barePLS                                2.980     0.762
+T5chain   seeded                                 0.823     0.000
+seeded    T5chain                                0.811     0.000
+T5chain   T5chain                                0.539     0.336
+seeded    barePLS                                0.043     0.318
+barePLS   seeded                                 0.045     0.298
+seeded    pT3cls                                 0.033     0.238
+pT3cls    seeded                                 0.033     0.237
+seeded    seeded                                 0.018     0.178
+pT3cls    pT3cls                                 0.005     0.176
+pT3cls    T5chain                                0.156     0.013
+T5chain   pT3cls                                 0.155     0.011
+pT3cls    T4chain                                0.013     0.098
+T4chain   pT3cls                                 0.012     0.076
+seeded    T4chain                                0.052     0.054
+barePLS   T4chain                                0.053     0.053
+T4chain   seeded                                 0.051     0.038
+TOTAL                                            9.014     3.837
+
+-- band E --
+dupClass  coveredWith                               CF       LST
+barePLS   barePLS                               64.506    65.417
+barePLS   seeded                                 0.292     5.392
+seeded    barePLS                                0.293     5.373
+barePLS   T5chain                                3.725     2.051
+T5chain   barePLS                                3.705     2.102
+T4chain   barePLS                                0.629     2.915
+barePLS   T4chain                                0.593     2.900
+T5chain   seeded                                 1.002     0.000
+seeded    T5chain                                1.001     0.000
+pT3cls    barePLS                                0.171     0.657
+barePLS   pT3cls                                 0.171     0.656
+pT3cls    seeded                                 0.501     0.640
+seeded    pT3cls                                 0.501     0.639
+T4chain   pT3cls                                 0.108     0.604
+pT3cls    T4chain                                0.107     0.581
+T5chain   T5chain                                0.459     0.382
+pT3cls    pT3cls                                 0.155     0.418
+barePLS   T4chain,barePLS                        0.023     0.364
+TOTAL                                           79.145    92.671
+
+====================================================================================================
+C. MULTI-TC SIM PROFILES per band (the PAIR patterns), per event
+====================================================================================================
+-- band B --
+profile                                               CF       LST
+T5chain+barePLS                                    7.228     1.513
+T5chain+seeded                                     0.948     0.003
+T5chain+T5chain                                    0.299     0.496
+pT3cls+seeded                                      0.003     0.335
+T5chain+pT3cls                                     0.168     0.041
+T4chain+barePLS                                    0.167     0.038
+barePLS+seeded                                     0.019     0.095
+T4chain+pT3cls                                     0.005     0.086
+T4chain+T5chain                                    0.068     0.000
+pT3cls+pT3cls                                      0.002     0.066
+seeded+seeded                                      0.000     0.037
+T5chain+T5chain+barePLS                            0.005     0.027
+T4chain+seeded                                     0.019     0.000
+T4chain+T4chain                                    0.006     0.000
+
+-- band T --
+profile                                               CF       LST
+T5chain+barePLS                                    3.005     0.791
+T5chain+seeded                                     0.818     0.000
+barePLS+seeded                                     0.043     0.302
+T5chain+T5chain                                    0.268     0.164
+pT3cls+seeded                                      0.033     0.238
+T5chain+pT3cls                                     0.156     0.013
+T4chain+pT3cls                                     0.013     0.093
+seeded+seeded                                      0.009     0.089
+pT3cls+pT3cls                                      0.003     0.088
+T4chain+seeded                                     0.051     0.050
+T4chain+barePLS                                    0.040     0.045
+T4chain+T5chain                                    0.040     0.024
+barePLS+pT3cls                                     0.001     0.007
+T5chain+T5chain+barePLS                            0.006     0.001
+
+-- band E --
+profile                                               CF       LST
+barePLS+barePLS                                   32.253    32.708
+barePLS+seeded                                     0.293     5.388
+T5chain+barePLS                                    3.727     2.061
+T4chain+barePLS                                    0.605     2.908
+T5chain+seeded                                     1.002     0.000
+barePLS+pT3cls                                     0.171     0.656
+pT3cls+seeded                                      0.501     0.640
+T4chain+pT3cls                                     0.107     0.586
+T5chain+T5chain                                    0.229     0.192
+pT3cls+pT3cls                                      0.077     0.209
+T4chain+barePLS+barePLS                            0.011     0.182
+seeded+seeded                                      0.081     0.181
+T4chain+seeded                                     0.179     0.179
+T4chain+T5chain                                    0.079     0.151
+

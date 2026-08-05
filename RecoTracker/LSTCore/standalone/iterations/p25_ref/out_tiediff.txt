@@ -1,0 +1,20 @@
+ evt     old     new  common  onlyOld  onlyNew   same%
+   0    4242    4248    3709      533      539  87.44%
+   1    4288    4281    3745      543      536  87.34%
+   2    4224    4223    3695      529      528  87.48%
+   3    4740    4746    4125      615      621  87.03%
+   4    3320    3323    2886      434      437  86.93%
+   5    4697    4696    4122      575      574  87.76%
+   6    4043    4043    3463      580      580  85.65%
+   7    5259    5251    4463      796      788  84.86%
+   8    5381    5381    4642      739      739  86.27%
+   9    4582    4578    4040      542      538  88.17%
+
+TOTAL old=44776 new=44770 common=38890  (86.8546% of the old set survives)
+one-sided: old-only=5886  new-only=5880   (a balanced count means a re-route,
+           not a gain or a loss of chains)
+  chain score  old-only  mean=-408426761.1692 median=18.7231 min=-1000000000.0000 max=43.1693
+  chain score  new-only  mean=-404931958.4181 median=18.8773 min=-1000000000.0000 max=43.1693
+  score population shift (new - old, means): +3494802.75103
+  nLayers old-only: {4: 1875, 5: 2657, 6: 1307, 7: 47}
+  nLayers new-only: {4: 1832, 5: 2658, 6: 1343, 7: 47}

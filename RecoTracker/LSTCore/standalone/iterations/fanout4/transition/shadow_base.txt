@@ -1,0 +1,66 @@
+== dca distribution of chain TCs per band (why the exempt branch is over-populated) ==
+  barrel      n5+= 110825  exempt(dca>=0.5)=  20.1%  | TRUE-only exempt= 16.7%  dca p50=0.095 p90=1.278
+  transition  n5+=  64285  exempt(dca>=0.5)=  48.7%  | TRUE-only exempt= 46.0%  dca p50=0.483 p90=1.655
+  endcap      n5+=  77150  exempt(dca>=0.5)=  39.4%  | TRUE-only exempt= 37.8%  dca p50=0.338 p90=1.481
+
+== mX quantiles, 5+exempt branch, per band ==
+  barrel      FAKE n=  4657 mX p5/10/25/50/75/90 =  -1.68  -1.56  -1.13  -0.25   0.74   1.46
+  barrel      TRUE n= 17574 mX p5/10/25/50/75/90 =  -0.17   0.31   0.98   1.80   3.38   4.56
+  transition  FAKE n=  3879 mX p5/10/25/50/75/90 =  -1.60  -1.39  -0.85   0.04   1.01   2.08
+  transition  TRUE n= 27445 mX p5/10/25/50/75/90 =   0.11   0.63   1.67   3.10   4.17   4.94
+  endcap      FAKE n=  2218 mX p5/10/25/50/75/90 =  -1.51  -1.19  -0.47   0.49   1.48   2.72
+  endcap      TRUE n= 28161 mX p5/10/25/50/75/90 =   0.57   1.20   2.49   3.75   4.63   5.31
+
+== SHADOW SCAN: transition-band 5+exempt mX floor (claim frozen) ==
+   floor   killF   killT  killDupT | band n    band fake  (glob fake)
+   -1.80       0       0        0 |   76080   0.0765     (0.0536)
+   -1.00     801     220       18 |   75059   0.0669     (0.0521)
+   -0.50    1361     549       47 |   74170   0.0602     (0.0510)
+    0.00    1889    1181      107 |   73010   0.0539     (0.0500)
+    0.25    2183    1665      149 |   72232   0.0504     (0.0495)
+    0.50    2413    2337      195 |   71330   0.0478     (0.0491)
+    0.75    2660    3186      238 |   70234   0.0450     (0.0487)
+    1.00    2906    4103      286 |   69071   0.0422     (0.0483)
+    1.50    3235    6160      380 |   66685   0.0388     (0.0478)
+    2.00    3464    8223      467 |   64393   0.0366     (0.0475)
+
+== SHADOW SCAN: transition-band T4-exempt mD floor ==
+   floor   killF   killT | band fake
+   -0.75       0       0 | 0.0765
+   -0.50     103      76 | 0.0754
+   -0.25     179     154 | 0.0745
+    0.00     254     199 | 0.0736
+    0.25     304     244 | 0.0731
+    0.50     329     281 | 0.0728
+    1.00     358     320 | 0.0725
+   99.00     391     351 | 0.0721
+
+== SHADOW SCAN: transition-band cell (nNodes=2, nL=5) extra mP floor (mD floor fixed) ==
+   cell n=11642 fake=0.1166 (23.3% of band fakes)
+   mPfloor mDfloor   killF   killT | band fake
+      2.0   -2.0       0       0 | 0.0765
+      2.0   -1.0     715     415 | 0.0682
+      2.0    0.0    1059     901 | 0.0643
+      2.0    1.0    1191    1395 | 0.0630
+      3.0   -2.0       4      58 | 0.0765
+      3.0   -1.0     734     781 | 0.0682
+      3.0    0.0    1088    1646 | 0.0646
+      3.0    1.0    1235    2379 | 0.0633
+      4.0   -2.0       4      63 | 0.0766
+      4.0   -1.0     738     925 | 0.0683
+      4.0    0.0    1106    2735 | 0.0653
+      4.0    1.0    1268    4312 | 0.0646
+
+== SHADOW SCAN: transition-band 5+IP mX floor (-MRI 0.5 anchor) ==
+   floor   killF   killT | band fake
+    0.50       0       0 | 0.0765
+    1.00     138     465 | 0.0753
+    1.50     255    1176 | 0.0746
+    2.00     351    2325 | 0.0745
+    2.50     444    4197 | 0.0753
+
+== inner-layer >= 2 chains in the band (a composition signature) ==
+   n=3965 fake=0.2815  fakeshare=19.2%  -- by branch:
+      br=1 n=   397 fake=0.5542
+      br=2 n=   692 fake=0.0491
+      br=3 n=  2876 fake=0.2997

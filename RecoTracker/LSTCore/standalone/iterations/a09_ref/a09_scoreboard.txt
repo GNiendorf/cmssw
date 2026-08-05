@@ -1,0 +1,210 @@
+A09 -- SEED-RETIREMENT UNIFICATION -- SCOREBOARD
+================================================
+All rows: frozen 300-evt subset unless marked (977). Reference rows:
+  FINBASE (assembled baseline)  eff .80992  dup .06230  fake .05551  nTC 618793
+  LST     (target)              eff .80988  dup .05179  fake .04476  nTC 608190
+
+CAVEATS STATED WITH EVERY HEADLINE (inherited, not introduced here):
+  * the attach head is BORROWED -- trained on chain pairs, model-selected on chain-pair
+    validation, and a sibling found its bare-pair labels partly wrong. Every number that
+    involves an attach logit (-a, -AT3, -XCT, and the structural -RPS modes) inherits that.
+  * d510 / d1030 sit below LST on ~285-track denominators and have not moved a single track
+    for three rounds. Noise. Not tuned on, not claimed.
+  * mean nhitOT is diluted by the type-8 (bare seed) rows, which are ~40% of our TCs.
+  * the box was shared with ~14 sibling explorers all round (load average 120-135), so NO
+    timing statement of any kind is made here.
+
+THE REFERENCE -XCT CURVE (assembled baseline, -RPS 1 -AT3 6 -CCR 2; from fin_ref)
+```
+-XCT      eff      dup     fake     local slope d(eff)/d(dup)
+ 3.0  0.80776  0.05689  0.05562
+ 3.5  0.80904  0.05925  0.05558      0.542
+ 4.0  0.80992  0.06230  0.05551      0.289    <- THE BASELINE
+ 4.5  0.81037  0.06675  0.05539      0.101
+```
+The curve is concave: efficiency gets rapidly more expensive as -XCT is loosened. That is
+the yardstick every mechanism deletion has to beat -- deleting a mechanism also buys
+efficiency for duplicate rate, and the question is only which purchase is cheaper.
+
+BATCH 1 -- DECOMPOSITION (300 evts)
+```
+tag        change                      eff      dup     fake      nTC  surviveA      R
+A_NOOP     the assembled baseline  0.80992  0.06230  0.05551   618793     26.3     --
+A_R0       -RPS 0                  0.81182  0.07661  0.05536   624438     41.2    7.53
+A_R0CCR1   -RPS 0 -CCR 1           0.81182  0.07661  0.05536   624438     41.2    7.53
+A_XCB      -XC 2 (chain arm only)  0.81023  0.06745  0.05695   621663     31.9   16.61
+A_XCP      -XC 1 (pixel arms only) 0.81302  0.15634  0.05295   653007    134.4   30.34
+A_R0G1     -RPS 0 -XCG 1           0.81103  0.07193  0.05541   622445     36.2    8.67
+A_R0XC0    -RPS 0 -XC 0 (FLOOR)    0.81730  0.35541  0.05062   729962    374.3   39.72
+LST                                0.80988  0.05179  0.04476   608190      --     --
+```
+R = duplicate rate gained per unit of efficiency gained, vs the baseline. Compare against
+1/slope of the reference curve: 9.9 at -XCT 4 -> 4.5, 3.5 at 4.0 -> 3.5.
+
+DISPLACED IS UNTOUCHED BY EVERY ROW ABOVE: v510 .73356 and v1030 .74139 and d15 .61650 are
+IDENTICAL in A_NOOP, A_R0, A_XCB, A_XCP, A_R0XC0 -- exactly as the code says they must be
+(-RPS and -XC only ever suppress type-8 rows and nothing downstream reads that).
+
+(more tables appended as batches land)
+tag                    effB     effT     effE     dupB     dupT     dupE     fakB     fakT     fakE    nhAll      nhB      nhT      nhE     nSim      nTC
+A_NOOP              0.92660  0.88213  0.74496  0.04344  0.03431  0.08106  0.06680  0.06903  0.04525  6.44117  9.80254  9.87906  3.55956    62555   618793
+A_R0                0.92739  0.88366  0.74828  0.04489  0.03939  0.10485  0.06677  0.06888  0.04516  6.38057  9.78990  9.83585  3.50504    62555   624438
+A_R0G1              0.92637  0.88340  0.74740  0.03601  0.03874  0.10124  0.06707  0.06885  0.04511  6.40144  9.84215  9.84775  3.51471    62555   622445
+A_XCB               0.92660  0.88238  0.74562  0.04362  0.03575  0.08993  0.06754  0.07023  0.04720  6.41096  9.79318  9.85639  3.53303    62555   621663
+F_A6X3              0.92295  0.87958  0.74418  0.03498  0.02524  0.07834  0.06714  0.06940  0.04519  6.46832  9.86578  9.94317  3.56778    62555   616157
+LST(base)           0.92557  0.88187  0.74596  0.00989  0.01264  0.08556  0.04249  0.04454  0.04603  6.51865 10.14804 10.01546  3.56248    62555   608190
+dup = 0.040886 + 0.00084375 * survA
+eff = 0.817549 + -0.00059997 * Bretired
+tag            survA Bretired       dup       fit       eff       fit      fake
+F_A6X3          20.4     15.6   0.05689   0.05810   0.80776   0.80819   0.05562
+E_A6X35         22.9     14.2   0.05925   0.06021   0.80904   0.80903   0.05558
+FINBASE         26.3     13.0   0.06230   0.06308   0.80992   0.80975   0.05551
+F_A6X45         31.5     11.8   0.06675   0.06746   0.81037   0.81047   0.05539
+A_XCB           31.9     12.3   0.06745   0.06780   0.81023   0.81017   0.05695
+A_R0G1          36.2     11.1   0.07193   0.07143   0.81103   0.81089   0.05541
+A_R0            41.2      9.7   0.07661   0.07565   0.81182   0.81173   0.05536
+A_XCP          134.4      7.9   0.15634   0.15429   0.81302   0.81281   0.05295
+G_NOOP         140.2      7.2   0.16098   0.15918   0.81333   0.81323   0.05436
+A_R0XC0        374.3      0.0   0.35541   0.35670   0.81730   0.81755   0.05062
+  UM map          post-deletion universe, per event over 300 events. Bits: 1=owned 2=rpsChain 4=rpsT3 8=xcPixHit 16=xcPixDR 32=xcChain 64=strT3 128=strChain. Every bit is the RAW predicate, recorded whatever -RPS is set to.
+  UM marg         mechanism         A        B        C    onlyA    onlyB    onlyC
+  UM marg         owned         301.7      4.9      1.7      0.0      0.0      0.0
+  UM marg         rpsChain      411.5      5.0      3.4      0.0      0.0      0.0
+  UM marg         rpsT3         507.3     11.5      6.6      9.0      2.7      0.5
+  UM marg         xcPixHit      203.3      3.7      7.5      5.1      0.7      3.2
+  UM marg         xcPixDR        61.9      1.2      0.9      0.0      0.0      0.0
+  UM marg         xcChain       133.3      6.1      1.6    108.0      5.1      0.9
+  UM marg         strT3          22.8      1.1      0.6      0.0      0.0      0.0
+  UM marg         strChain      166.4      2.2      2.4      0.0      0.0      0.0
+  UM overlap      class       RPSonly   XConly     BOTH  neither
+  UM overlap      A              14.8    113.9    219.3     26.3
+  UM overlap      B               3.3      5.8      3.9    823.4
+  UM overlap      C               0.7      4.2      4.6     40.5
+--- sets, class-A ordered ---
+  UM sets         7           231.3      2.5      1.0   owned+rpsChain+rpsT3
+  UM sets         32          108.0      5.1      0.9   xcChain
+  UM sets         142          95.4      0.9      1.3   rpsChain+rpsT3+xcPixHit+strChain
+  UM sets         5            56.5      2.2      0.7   owned+rpsT3
+  UM sets         158          48.0      0.6      0.5   rpsChain+rpsT3+xcPixHit+xcPixDR+strChain
+  UM sets         0            26.3    823.4     40.5   (none: survives)
+  UM sets         36           21.3      0.9      0.5   rpsT3+xcChain
+  UM sets         12           14.1      0.3      1.3   rpsT3+xcPixHit
+  UM sets         3            13.4      0.2      0.1   owned+rpsChain
+  UM sets         76           13.1      0.4      0.3   rpsT3+xcPixHit+strT3
+  UM sets         138          10.7      0.1      0.2   rpsChain+xcPixHit+strChain
+  UM sets         4             9.0      2.7      0.5   rpsT3
+  UM sets         92            7.1      0.5      0.1   rpsT3+xcPixHit+xcPixDR+strT3
+  UM sets         8             5.1      0.7      3.2   xcPixHit
+  UM sets         134           4.2      0.2      0.1   rpsChain+rpsT3+strChain
+  UM sets         154           3.2      0.0      0.1   rpsChain+xcPixHit+xcPixDR+strChain
+  UM sets         28            1.7      0.0      0.1   rpsT3+xcPixHit+xcPixDR
+  UM sets         174           1.6      0.0      0.0   rpsChain+rpsT3+xcPixHit+xcChain+strChain
+  UM sets         130           0.9      0.2      0.1   rpsChain+strChain
+  UM sets         68            0.8      0.1      0.1   rpsT3+strT3
+  UM sets         190           0.8      0.0      0.0   rpsChain+rpsT3+xcPixHit+xcPixDR+xcChain+strChain
+  UM sets         222           0.4      0.0      0.0   rpsChain+rpsT3+xcPixHit+xcPixDR+strT3+strChain
+  UM sets         206           0.4      0.0      0.0   rpsChain+rpsT3+xcPixHit+strT3+strChain
+  UM sets         24            0.3      0.1      0.0   xcPixHit+xcPixDR
+  UM sets         135           0.3      0.0      0.0   owned+rpsChain+rpsT3+strChain
+  UM sets         72            0.2      0.0      0.0   xcPixHit+strT3
+tag                     eff    vxy01      v15     v510    v1030      d15     d510    d1030      dup     fake      nhB      nhT      nhE      nTC
+G2                  0.80992  0.84282  0.79459  0.73356  0.74139  0.61650  0.20161  0.03073  0.06230  0.05551  9.80254  9.87906  3.55956   618793
+A_UM                0.80992  0.84282  0.79459  0.73356  0.74139  0.61650  0.20161  0.03073  0.06230  0.05551  9.80254  9.87906  3.55956   618793
+B_R2                0.81169  0.84472  0.79532  0.73356  0.74139  0.61650  0.20161  0.03073  0.07132  0.05542  9.79065  9.83977  3.52418   622720
+B_R3                0.81151  0.84453  0.79532  0.73356  0.74139  0.61650  0.20161  0.03073  0.07070  0.05542  9.79093  9.84040  3.52676   622416
+B_R4                0.81151  0.84453  0.79532  0.73356  0.74139  0.61650  0.20161  0.03073  0.07070  0.05542  9.79093  9.84040  3.52676   622416
+B_R3C1              0.81151  0.84453  0.79532  0.73356  0.74139  0.61650  0.20161  0.03073  0.07070  0.05542  9.79093  9.84040  3.52676   622416
+B_R3A7              0.81019  0.84325  0.78874  0.73356  0.74139  0.61650  0.20161  0.03073  0.07137  0.04960  9.80391  9.87614  3.50514   616333
+B_R3X3              0.80913  0.84206  0.79313  0.73356  0.74139  0.61650  0.20161  0.03073  0.06411  0.05551  9.85637  9.91351  3.53889   619284
+LST(base)           0.80988  0.84296  0.77193  0.65430  0.66453  0.55407  0.20968  0.05674  0.05179  0.04476 10.14804 10.01546  3.56248   608190
+
+BATCH 3 -- THE DECISIVE FRONTIER COMPARISON (300 evts). Each -RPS mode gets its own -XCT
+curve; the modes are compared ONLY at matched duplicate rate.
+```
+curve                measured (dup:eff) points
+-RPS 1 (baseline)  .05689:.80776  .05925:.80904  .06230:.80992  .06675:.81037  .07355:.81125
+-RPS 2 (no T3 term).06473:.80926  .06750:.81063  .07132:.81169
+-RPS 3 (structural).06411:.80913  .07070:.81151
+-RPS 0 (deleted)   .06779:.80807  .07001:.80939  .07661:.81182
+```
+efficiency AT MATCHED duplicate rate (linear interpolation between measured points):
+```
+target dup     -RPS 1    -RPS 2    -RPS 3    -RPS 0
+  0.0650      0.81019   0.80939   0.80945     --      baseline WINS
+  0.0675      0.81046   0.81063   0.81036     --      crossover
+  0.0700      0.81079   0.81132   0.81126   0.80939   -RPS 2/3 WIN by +.0005
+```
+-RPS 0 is DOMINATED EVERYWHERE and is not a candidate. The crossover is at dup ~.0670: the
+simplified predicates buy a STEEPER curve, better above it and worse below it. The assembled
+baseline sits at .0623, i.e. on the wrong side -- which is why this angle does NOT beat the
+baseline at its own operating point, and does beat it at the fake-leaning one.
+
+THE ONE CONFIGURATION THAT BEATS ITS BASELINE COUNTERPART (fake-leaning operating point)
+```
+config                                     eff      dup     fake   tuned constants
+F_A7X475  baseline's alternative        0.80992  0.07259  0.04952   -AT3 7 AND -XCT 4.75
+D_R2A7    -RPS 2 -AT3 7  (-XCT 4)       0.81019  0.07187  0.04959   -AT3 7 only
+B_R3A7    -RPS 3 -AT3 7  (-XCT 4)       0.81019  0.07137  0.04960   -AT3 7 only
+```
+Better efficiency (+.00027), better duplicate rate (-.00072 / -.00122), same fake rate
+(+.00007), one fewer tuned constant, and `-CCR` disappears (proven inert at -RPS 3).
+
+-XCG 1 (bare-chain arm keyed on the seed's BEST chain logit, not the pair's own) -- a
+SIMPLIFICATION, frontier-NEUTRAL within resolution:
+```
+tag        config                    eff      dup     fake    survA  Bretired    dupB
+E_A6X35    -XCT 3.5               0.80904  0.05925  0.05558   22.9    14.2     0.02524*
+D_G1       -XCG 1 (-XCT 4)        0.80939  0.05958  0.05555   23.3    14.1     0.03490
+A_NOOP     the baseline           0.80992  0.06230  0.05551   26.3    13.0     0.04344
+```
+D_G1 and E_A6X35 sit on the SAME point of the two laws (survA 23.3 vs 22.9, Bretired 14.1
+vs 14.2); D_G1's +.00035 of efficiency at +.00033 of duplicate rate is at the level of the
+fit residual and is NOT claimed as a frontier gain. What -XCG 1 IS worth is structural: the
+arm stops needing the per-pair log. It also moves BARREL duplicates hard (.04344 -> .03490)
+for .0009 of barrel efficiency, at flat endcap.
+
+BATCH 4 -- THE -XCG 1 CURVE, AND THE COMBINATIONS (300 evts)
+```
+-XCG 1 curve (-RPS 1)   XCT 3.5 .80829/.05640   XCT 4 .80939/.05958
+                        XCT 4.5 .81006/.06415   XCT 5 .81098/.07118
+baseline curve          XCT 3.5 .80904/.05925   XCT 4 .80992/.06230
+                        XCT 4.5 .81037/.06675   XCT 5 .81125/.07355
+```
+efficiency at matched duplicate rate, -XCG 1 minus baseline:
+  dup .05925  +.00024 | dup .06230  -.00013 | dup .06675  +.00003 | dup .07118  +.00004
+i.e. FRONTIER-NEUTRAL to within +/-.00025 over the whole range. -XCG 1 is a SIMPLIFICATION,
+not a gain: the bare-chain arm stops consulting the per-pair log and reads the per-seed
+best chain logit that already exists. Claimed as such and nothing more.
+
+COMBINATIONS
+```
+tag          config                       eff      dup     fake     dupB     dupE
+A_NOOP       the assembled baseline    0.80992  0.06230  0.05551  0.04344  0.08106
+E_R2G1       -RPS 2 -XCG 1             0.81098  0.06811  0.05546  0.03598  0.09436
+D_R2A7       -RPS 2 -AT3 7             0.81019  0.07187  0.04959  0.04544  0.09568
+B_R3A7       -RPS 3 -AT3 7             0.81019  0.07137  0.04960  0.04544  0.09478
+E_R2G1A7     -RPS 2 -XCG 1 -AT3 7      0.80948  0.06861  0.04961  0.03643  0.09463
+E_R3G1A7     -RPS 3 -XCG 1 -AT3 7      0.80948  0.06813  0.04962  0.03643  0.09375
+F_A7X475     baseline's fake-leaning   0.80992  0.07259  0.04952  (fin_ref)
+LST                                    0.80988  0.05179  0.04476  0.00989  0.08556
+```
+`-RPS 2 -XCG 1` sits +.00043 above the BASELINE -XCT curve at its own duplicate rate
+(.06811: measured .81098 against .81055 interpolated) and +.00018 above the -RPS 2 curve --
+the only combination measured above both parents, and the one that needs NO pair log at all.
+Adding -XCG to the fake-leaning point buys .00326 of duplicate rate for .00071 of
+efficiency (4.6:1), better than -XCT can do anywhere on this curve.
+
+977-EVENT CONFIRMATION OF THE RECOMMENDATION
+```
+tag                                        eff      dup     fake     nTC
+W_X4     the assembled baseline        0.80905  0.06184  0.05607  2033868
+W_R2A7   -RPS 2 -AT3 7 (this angle)    0.80972  0.07146  0.04995  2025796
+W_A7X475 baseline's fake-leaning alt   0.80951  0.07226  0.04987  2027926
+LST                                    0.80987  0.05138  0.04538  1998494
+```
+vs W_A7X475 on the full sample: eff +.00021, dup -.00080, fake +.00008 -- the SAME three
+signs and nearly the same magnitudes as the 300 (+.00027/-.00072/+.00007). The result
+transfers. Per region on 977, W_R2A7 vs W_A7X475: dupB .04505 vs .05679 (-.0117),
+effB .92202 vs .92311, effE .74832 vs .74679, track length nhB 9.807 vs 9.731.
+DISPLACED IS UNTOUCHED IN EVERY ROW OF THIS ENTIRE ROUND (v510/v1030/d15/d510/d1030
+identical to the baseline throughout, as the code requires).

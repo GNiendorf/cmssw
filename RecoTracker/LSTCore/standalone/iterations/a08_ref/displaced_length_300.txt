@@ -1,0 +1,11 @@
+MEAN nhitOT OF THE MATCHED TC, matched sims only (300 evts, exact eff selection)
+band           protoLen   lstLen     dLen   proto matched-TC types           LST matched-TC types            
+vxy[0,1)          7.916    8.260   -0.345   pT5=40% T5=28% pLS=27% pT3=5%    pT5=65% pLS=25% pT3=7% T5=3%    
+vxy[1,5)          9.323    9.636   -0.313   T5=64% pT5=17% pLS=15% pT3=3%    pT5=50% T5=27% pLS=12% pT3=9%   
+vxy[5,10)        10.892   11.258   -0.366   T5=92% pT5=4% T4=3% pLS=1%       T5=81% pT5=13% pT3=5% T4=1%     
+vxy[10,30)       10.739   11.275   -0.536   T5=96% T4=4%                     T5=99% T4=1% pT5=0%             
+vxy[30,inf)       9.465    9.743   -0.278   T5=68% T4=32%                    T5=80% T4=20%                   
+dxy[0,1)          8.128    8.452   -0.324   pT5=37% T5=33% pLS=25% pT3=4%    pT5=62% pLS=24% T5=8% pT3=7%    
+dxy[1,5)         10.358   11.095   -0.737   T5=92% T4=8%                     T5=98% T4=2%                    
+dxy[5,10)         9.880   10.192   -0.312   T5=80% T4=20%                    T5=83% T4=17%                   
+dxy[10,30)        8.923    9.167   -0.244   T4=54% T5=46%                    T5=58% T4=42%                   

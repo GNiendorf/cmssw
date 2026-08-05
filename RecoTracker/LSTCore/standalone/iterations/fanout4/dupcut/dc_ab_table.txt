@@ -1,0 +1,37 @@
+DUPCUT lever A/B table -- all runs on the ctl_noatt authentic-replacement anchor
+  ANCHOR = -e 0 -L 0.5 -F 0.3 -G 6 -X 0.5 -M4 3.5 -M5 1e9 -M6 1e9 -M4D -0.75 -MD 1e9
+           -MR -1.800 -MRI 0.5 -U4 0 -U5 0 -U6 0 -B 10 -H 1 -W 0.50 -FC 1 -PU 2
+           -C25 2.0 -C25D -2.0
+  CTL    = -A 4 -a 999 -D 5 -RT5 1
+  input  = -m hybrid -i LSTNtuple_PU200RelVal_300evt.root -t <RelValTTbar CMSSW_12_5_0_pre3>
+  base gate reproduced EXACTLY: 301078 chain TCs, fake .0536, dup .0643 (pt>0.9)
+  LST reference (prototype/base300_hists.root): dup .0513  fake .0455  eff .8136
+
+CONSTRAINT: every eff band within 0.001 of base; fake must not exceed .0536.
+  base eff: overall .8017 | vxy[0,1) .8344 [1,5) .7852 [5,10) .7129 [10,30) .6961
+            | dxy[1,5) .5418 [5,10) .2491
+  Band granularity: vxy[5,10) den=634 -> 1 sim track = 0.0016; vxy[10,30) den=1224
+  -> 1 track = 0.0008; dxy[5,10) den=285 -> 1 track = 0.0035. The 0.001 criterion is
+  finer than one track in three of the six bands.
+
+tag  flags added                     chainTC   dup     fake   eff    vxy01  vxy15  vxy510 vxy1030 dxy15  dxy510  nTC     VERDICT
+---- ------------------------------- -------  ------  ------ ------ ------ ------ ------ ------- ------ ------- ------- -------
+base (anchor)                        301078   .0643   .0536  .8017  .8344  .7852  .7129  .6961   .5418  .2491   616467  reference
+t1   (rebuilt binary, no flags)      301078   .0643   .0536  .8017  .8344  .7852  .7129  .6961   .5418  .2491   616467  BIT-IDENTICAL (regression gate)
+s1   -FCX 1                          298873   .0613   .0518  .8012  .8338  .7852  .7114  .6944   .5386  .2491   614262  dup -.0030 but dxy[1,5) -.0032 (9 tracks) FAIL
+s3   -W 0.30                         299263   .0621   .0526  .8006  .8334  .7809  .7129  .6936   .5365  .2386   614652  dup -.0022, dxy[1,5) -.0053 FAIL
+s2   -FCX 1 -FC 0                    286879   .0550   .0430  .7885  .8214  .7611  .6987  .6413   .4903  .2211   602268  dup -.0093 fake -.0106 but eff -.0132 FAIL
+t2   -FCX 1 -FC 0 -FCE 1             297349   .0599   .0540  .7911  .8239  .7661  .7082  .6814   .5429  .2491   612738  eff -.0106 FAIL (fake also +.0004)
+t3   -FCX 1 -FCE 1                   300474   .0627   .0536  .8013  .8339  .7845  .7114  .6953   .5418  .2491   615863  BEST: dup -.0016, fake flat, eff -14 sims total
+t4   -FCX 1 -FCE 1 -W 0.30           298891   .0612   .0525  .8004  .8331  .7802  .7114  .6928   .5365  .2386   614280  dup -.0031 but dxy[1,5) -.0053 FAIL
+u1   -FCX 1 -FCE 2 -W 0.30           300296   .0626   .0537  .8006  .8333  .7830  .7114  .6953   .5418  .2491   615685  vxy[1,5) -.0022 FAIL, fake +.0001
+u3   -FCX 1 -FCE 2 -W 0.25           300276   .0626   .0537  .8006  .8333  .7830  .7114  .6953   .5418  .2491   615665  same as u1 FAIL
+u2   -FCX 1 -FCE 2 -W 0.20           299774   .0616   .0537  .7998  .8324  .7816  .7114  .6944   .5418  .2491   615163  eff -.0019 FAIL
+u4   -FCX 1 -FCE 2 -W 0.40           300591   .0629   .0536  .8013  .8339  .7845  .7114  .6953   .5418  .2491   615980  PASS-equivalent but dup worse than t3
+
+t3 efficiency detail (numerator counts, not rates):
+  vxy[0,1)  17637 -> 17626 (-11 of 21137)   vxy[1,5)  1111 -> 1110 (-1 of 1415)
+  vxy[5,10)   452 ->   451 (-1 of 634)      vxy[10,30) 852 ->  851 (-1 of 1224)
+  dxy[1,5)    505 ->   505 (0)              dxy[5,10)   71 ->   71 (0)
+  -> 14 sim tracks lost out of ~26100 in-cut; every displaced band loses <= 1 track.
+  Only vxy[5,10) exceeds the 0.001 letter of the gate, by exactly one track (0.0016).

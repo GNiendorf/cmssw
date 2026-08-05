@@ -1,0 +1,80 @@
+========================================================================================================
+FILE /mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/fin_ref/r_W_X4.root   (977 events, ptcut 0.90)
+-- region barrel       nTC/evt   483.10   mean nhitOT  9.80064
+     type pT5cls   deliv attachT5  n/evt   229.39  share  47.48%  meanOT  11.259  contrib  5.3459
+     type T5       deliv chain     n/evt   157.24  share  32.55%  meanOT  11.098  contrib  3.6122
+     type pT3cls   deliv attachT3  n/evt    54.08  share  11.19%  meanOT   6.000  contrib  0.6716
+     type pLS      deliv carried   n/evt    20.70  share   4.29%  meanOT   0.000  contrib  0.0000
+     type pLS      deliv zp8add    n/evt    11.37  share   2.35%  meanOT   0.000  contrib  0.0000
+     type T4       deliv chain     n/evt    10.32  share   2.14%  meanOT   8.000  contrib  0.1709
+     [fake]                     n/evt    32.63  share   6.75%  meanOT   8.591  contrib  0.5802
+     [dup ]                     n/evt    20.74  share   4.29%  meanOT   6.073  contrib  0.2608
+     [good]                     n/evt   429.73  share  88.95%  meanOT  10.072  contrib  8.9597
+-- region transition   nTC/evt   260.05   mean nhitOT  9.88373
+     type pT5cls   deliv attachT5  n/evt   114.07  share  43.86%  meanOT  11.044  contrib  4.8442
+     type T5       deliv chain     n/evt   109.16  share  41.97%  meanOT  10.838  contrib  4.5490
+     type pT3cls   deliv attachT3  n/evt    17.74  share   6.82%  meanOT   6.000  contrib  0.4092
+     type pLS      deliv carried   n/evt    12.66  share   4.87%  meanOT   0.000  contrib  0.0000
+     type pLS      deliv zp8add    n/evt     3.79  share   1.46%  meanOT   0.000  contrib  0.0000
+     type T4       deliv chain     n/evt     2.64  share   1.02%  meanOT   8.000  contrib  0.0812
+     [fake]                     n/evt    18.03  share   6.93%  meanOT   8.505  contrib  0.5896
+     [dup ]                     n/evt     8.78  share   3.38%  meanOT   6.499  contrib  0.2194
+     [good]                     n/evt   233.24  share  89.69%  meanOT  10.118  contrib  9.0748
+-- region endcap       nTC/evt   872.46   mean nhitOT  3.55719
+     type pLS      deliv carried   n/evt   572.58  share  65.63%  meanOT   0.000  contrib  0.0000
+     type pT5cls   deliv attachT5  n/evt   193.57  share  22.19%  meanOT  11.136  contrib  2.4706
+     type T5       deliv chain     n/evt    64.60  share   7.40%  meanOT  10.986  contrib  0.8134
+     type pT3cls   deliv attachT3  n/evt    22.16  share   2.54%  meanOT   6.000  contrib  0.1524
+     type T4       deliv chain     n/evt    13.17  share   1.51%  meanOT   8.000  contrib  0.1208
+     type pLS      deliv zp8add    n/evt     6.38  share   0.73%  meanOT   0.000  contrib  0.0000
+     [fake]                     n/evt    39.94  share   4.58%  meanOT   2.520  contrib  0.1154
+     [dup ]                     n/evt    70.40  share   8.07%  meanOT   1.667  contrib  0.1345
+     [good]                     n/evt   762.13  share  87.35%  meanOT   3.786  contrib  3.3073
+-- region ALL          nTC/evt  1615.62   mean nhitOT  6.44243
+     type pLS      deliv carried   n/evt   605.95  share  37.51%  meanOT   0.000  contrib  0.0000
+     type pT5cls   deliv attachT5  n/evt   537.03  share  33.24%  meanOT  11.169  contrib  3.7125
+     type T5       deliv chain     n/evt   331.00  share  20.49%  meanOT  10.990  contrib  2.2516
+     type pT3cls   deliv attachT3  n/evt    93.97  share   5.82%  meanOT   6.000  contrib  0.3490
+     type T4       deliv chain     n/evt    26.13  share   1.62%  meanOT   8.000  contrib  0.1294
+     type pLS      deliv zp8add    n/evt    21.54  share   1.33%  meanOT   0.000  contrib  0.0000
+     [fake]                     n/evt    90.59  share   5.61%  meanOT   5.897  contrib  0.3307
+     [dup ]                     n/evt    99.92  share   6.18%  meanOT   3.006  contrib  0.1859
+     [good]                     n/evt  1425.11  share  88.21%  meanOT   6.718  contrib  5.9258
+========================================================================================================
+FILE /mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/fin_ref/fin_base977.root   (977 events, ptcut 0.90)
+-- region barrel       nTC/evt   467.47   mean nhitOT 10.14984
+     type pT5cls   deliv -         n/evt   320.75  share  68.61%  meanOT  11.622  contrib  7.9743
+     type pT3cls   deliv -         n/evt    60.16  share  12.87%  meanOT   6.000  contrib  0.7721
+     type T5       deliv -         n/evt    49.05  share  10.49%  meanOT  11.242  contrib  1.1796
+     type pLS      deliv -         n/evt    24.43  share   5.23%  meanOT   0.000  contrib  0.0000
+     type T4       deliv -         n/evt    13.08  share   2.80%  meanOT   8.000  contrib  0.2239
+     [fake]                     n/evt    20.40  share   4.36%  meanOT   8.501  contrib  0.3710
+     [dup ]                     n/evt     4.54  share   0.97%  meanOT   7.247  contrib  0.0704
+     [good]                     n/evt   442.53  share  94.66%  meanOT  10.256  contrib  9.7084
+-- region transition   nTC/evt   253.66   mean nhitOT 10.00937
+     type pT5cls   deliv -         n/evt   175.91  share  69.35%  meanOT  11.219  contrib  7.7800
+     type T5       deliv -         n/evt    35.41  share  13.96%  meanOT  10.993  contrib  1.5344
+     type pT3cls   deliv -         n/evt    21.69  share   8.55%  meanOT   6.000  contrib  0.5130
+     type pLS      deliv -         n/evt    14.89  share   5.87%  meanOT   0.000  contrib  0.0000
+     type T4       deliv -         n/evt     5.77  share   2.27%  meanOT   8.000  contrib  0.1820
+     [fake]                     n/evt    11.52  share   4.54%  meanOT   7.924  contrib  0.3599
+     [dup ]                     n/evt     3.32  share   1.31%  meanOT   6.923  contrib  0.0906
+     [good]                     n/evt   238.82  share  94.15%  meanOT  10.153  contrib  9.5590
+-- region endcap       nTC/evt   872.04   mean nhitOT  3.55665
+     type pLS      deliv -         n/evt   590.79  share  67.75%  meanOT   0.000  contrib  0.0000
+     type pT5cls   deliv -         n/evt   216.66  share  24.85%  meanOT  11.681  contrib  2.9021
+     type T5       deliv -         n/evt    28.34  share   3.25%  meanOT  11.535  contrib  0.3748
+     type pT3cls   deliv -         n/evt    23.04  share   2.64%  meanOT   6.000  contrib  0.1585
+     type T4       deliv -         n/evt    13.21  share   1.51%  meanOT   8.000  contrib  0.1212
+     [fake]                     n/evt    40.38  share   4.63%  meanOT   2.770  contrib  0.1283
+     [dup ]                     n/evt    74.00  share   8.49%  meanOT   1.817  contrib  0.1542
+     [good]                     n/evt   757.67  share  86.88%  meanOT   3.768  contrib  3.2742
+-- region ALL          nTC/evt  1593.17   mean nhitOT  6.51862
+     type pT5cls   deliv -         n/evt   713.32  share  44.77%  meanOT  11.540  contrib  5.1670
+     type pLS      deliv -         n/evt   630.11  share  39.55%  meanOT   0.000  contrib  0.0000
+     type T5       deliv -         n/evt   112.79  share   7.08%  meanOT  11.238  contrib  0.7956
+     type pT3cls   deliv -         n/evt   104.88  share   6.58%  meanOT   6.000  contrib  0.3950
+     type T4       deliv -         n/evt    32.06  share   2.01%  meanOT   8.000  contrib  0.1610
+     [fake]                     n/evt    72.30  share   4.54%  meanOT   5.209  contrib  0.2364
+     [dup ]                     n/evt    81.85  share   5.14%  meanOT   2.325  contrib  0.1195
+     [good]                     n/evt  1439.01  share  90.32%  meanOT   6.823  contrib  6.1628

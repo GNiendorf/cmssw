@@ -1,0 +1,198 @@
+#!/usr/bin/env python3
+"""Export the edge-classifier MLP (torch state_dict + norm json) to a constexpr C++
+header, following the production src/alpaka/NeuralNetwork.h convention: weights are
+emitted TRANSPOSED (torch Linear stores [out,in]; the header stores wgt[in][out]) so
+the C++ inner loop is output[o] += input[i] * wgt[i][o], exactly like linear_layer
+in NeuralNetwork.h.
+
+Feature order (must match train_edge.py's input assembly and the DumpWriter branches):
+ni_00..ni_12, no_00..no_12, ef_00..ef_13 -> 40 inputs.
+
+Conditioning: the norm json may carry a "conditioning" spec (v2: clip / log10_1p ops
+applied BEFORE standardization). It is baked into kClipLo/kClipHi (+-1e30 = no-op) and
+kLog10p1 (x -> log10(1+x) before the clip). v1 has no spec -> all no-ops.
+
+Re-export against v2 (one command):
+  python3 export_weights.py --model edge_mlp_v2.pt --norm edge_norm_v2.json
+"""
+
+import argparse
+import json
+import os
+import sys
+
+PROTO_DIR = os.path.dirname(os.path.abspath(__file__))
+
+EXPECTED_ARCH = [40, 32, 32, 1]
+N_NODE_FEAT = 13
+N_EDGE_FEAT = 14
+UNCLIPPED = 1e30
+
+
+def parse_args():
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("--model", default=os.path.join(PROTO_DIR, "edge_mlp_v1.pt"))
+    p.add_argument("--norm", default=os.path.join(PROTO_DIR, "edge_norm_v1.json"))
+    p.add_argument("--out", default=os.path.join(PROTO_DIR, "edge_mlp_weights.h"))
+    return p.parse_args()
+
+
+def f32(v):
+    """Format a value as a float literal that round-trips float32 exactly."""
+    import numpy as np
+    s = f"{float(np.float32(v)):.9g}"
+    if "." not in s and "e" not in s and "n" not in s and "i" not in s:
+        s += ".0"
+    return s + "f"
+
+
+def fmt_array_1d(vals, per_line=6, indent="    "):
+    lines = []
+    for i in range(0, len(vals), per_line):
+        lines.append(indent + ", ".join(f32(v) for v in vals[i:i + per_line]) + ",")
+    body = "\n".join(lines)[:-1]  # drop the trailing comma
+    return "{\n" + body + "\n}"
+
+
+def fmt_array_2d(mat, indent="    "):
+    rows = [indent + fmt_array_1d(row, per_line=6, indent=indent + "    ") for row in mat]
+    return "{\n" + ",\n".join(rows) + "\n}"
+
+
+def main():
+    args = parse_args()
+    import numpy as np
+    import torch
+
+    try:
+        blob = torch.load(args.model, map_location="cpu")
+    except Exception:
+        blob = torch.load(args.model, map_location="cpu", weights_only=False)
+    sd = blob["state_dict"]
+    arch = blob.get("arch")
+    assert arch == EXPECTED_ARCH, f"unexpected arch {arch}, expected {EXPECTED_ARCH}"
+    n_in, n_hid = arch[0], arch[1]
+
+    with open(args.norm) as fh:
+        norm = json.load(fh)
+    names = norm["feature_names"]
+    mean = norm["mean"]
+    std = norm["std"]
+    assert len(names) == n_in == len(mean) == len(std), "norm json size mismatch"
+    assert n_in == 2 * N_NODE_FEAT + N_EDGE_FEAT
+
+    # Verify the feature ordering contract: ni_* x13, no_* x13, ef_* x14.
+    for j, nm in enumerate(names):
+        if j < N_NODE_FEAT:
+            assert nm.startswith("ni_"), f"slot {j}: {nm} not ni_*"
+        elif j < 2 * N_NODE_FEAT:
+            assert nm.startswith("no_"), f"slot {j}: {nm} not no_*"
+        else:
+            assert nm.startswith("ef_"), f"slot {j}: {nm} not ef_*"
+    model_names = blob.get("feature_names")
+    if model_names is not None:
+        assert model_names == names, "model/norm feature_names disagree"
+
+    # Conditioning spec (v2). v1 json has none -> all no-ops.
+    clip_lo = [-UNCLIPPED] * n_in
+    clip_hi = [UNCLIPPED] * n_in
+    log10p1 = [False] * n_in
+    conditioning = norm.get("conditioning") or []
+    for c in conditioning:
+        j = names.index(c["feature"])
+        if c["op"] == "clip":
+            clip_lo[j] = c["lo"]
+            clip_hi[j] = c["hi"]
+        elif c["op"] == "log10_1p":
+            log10p1[j] = True
+        else:
+            raise ValueError(f"unknown conditioning op {c['op']}")
+
+    def t2l(key):
+        return sd[key].to(torch.float32).tolist()  # no numpy interop in CMSSW torch
+
+    w1 = t2l("0.weight")   # [hid, in]  torch convention
+    b1 = t2l("0.bias")
+    w2 = t2l("2.weight")   # [hid, hid]
+    b2 = t2l("2.bias")
+    wo = t2l("4.weight")   # [1, hid]
+    bo = t2l("4.bias")
+    assert len(w1) == n_hid and len(w1[0]) == n_in
+    assert len(w2) == n_hid and len(w2[0]) == n_hid
+    assert len(wo) == 1 and len(wo[0]) == n_hid and len(bo) == 1
+
+    # Transpose to [in][out] (NeuralNetwork.h linear_layer convention).
+    w1_t = [[w1[o][i] for o in range(n_hid)] for i in range(n_in)]
+    w2_t = [[w2[o][i] for o in range(n_hid)] for i in range(n_hid)]
+    wo_t = wo[0]  # final layer has 1 output: flat [hid] vector, logit = dot + bias
+
+    feat_comment = "\n".join(
+        f"//  [{j:2d}] {nm}" for j, nm in enumerate(names))
+    cmd = "python3 export_weights.py " + " ".join(
+        f"--{k} {getattr(args, k)}" for k in ("model", "norm", "out"))
+
+    hdr = f"""// GENERATED by export_weights.py -- DO NOT EDIT BY HAND.
+// Sources:
+//   model: {args.model}
+//   norm:  {args.norm}
+// Command:
+//   {cmd}
+// Model meta: best_epoch={blob.get('best_epoch')} best_val_auc={blob.get('best_val_auc')}
+//             seed={blob.get('seed')} arch={arch}
+//
+// Convention (mirrors src/alpaka/NeuralNetwork.h): weights are stored TRANSPOSED,
+// wgt[in][out], so the inference inner loop is output[o] += input[i] * wgt[i][o].
+//
+// Per-input preprocessing, applied in this order (bakes in the norm json's
+// "conditioning" spec; all no-ops for v1):
+//   1. if (kLog10p1[i]) x = log10(1 + x)
+//   2. x = min(max(x, kClipLo[i]), kClipHi[i])   (+-1e30 = unclipped)
+//   3. x = (x - kFeatMean[i]) / kFeatStd[i]
+//
+// Input feature order (ni_00..ni_12, no_00..no_12, ef_00..ef_13):
+{feat_comment}
+#ifndef PROTOTYPE_EDGE_MLP_WEIGHTS_H
+#define PROTOTYPE_EDGE_MLP_WEIGHTS_H
+
+namespace edgemlp {{
+
+constexpr int kInput = {n_in};
+constexpr int kHidden = {n_hid};
+
+constexpr float kFeatMean[kInput] = {fmt_array_1d(mean)};
+
+constexpr float kFeatStd[kInput] = {fmt_array_1d(std)};
+
+constexpr float kClipLo[kInput] = {fmt_array_1d(clip_lo)};
+
+constexpr float kClipHi[kInput] = {fmt_array_1d(clip_hi)};
+
+constexpr bool kLog10p1[kInput] = {{{", ".join("true" if v else "false" for v in log10p1)}}};
+
+constexpr float wgt_l1[kInput][kHidden] = {fmt_array_2d(w1_t)};
+
+constexpr float bias_l1[kHidden] = {fmt_array_1d(b1)};
+
+constexpr float wgt_l2[kHidden][kHidden] = {fmt_array_2d(w2_t)};
+
+constexpr float bias_l2[kHidden] = {fmt_array_1d(b2)};
+
+constexpr float wgt_out[kHidden] = {fmt_array_1d(wo_t)};
+
+constexpr float bias_out = {f32(bo[0])};
+
+}}  // namespace edgemlp
+
+#endif
+"""
+    with open(args.out, "w") as fh:
+        fh.write(hdr)
+    n_par = n_in * n_hid + n_hid + n_hid * n_hid + n_hid + n_hid + 1
+    print(f"wrote {args.out}: kInput={n_in} kHidden={n_hid} ({n_par} parameters), "
+          f"{sum(1 for c in conditioning if c['op'] == 'clip')} clips, "
+          f"{sum(log10p1)} log10_1p ops")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

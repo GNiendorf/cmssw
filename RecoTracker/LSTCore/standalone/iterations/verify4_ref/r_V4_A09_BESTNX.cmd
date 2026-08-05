@@ -1,0 +1,2 @@
+BIN=/mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/protoA09/bin/chainproto_a09 NEV=-1 LSTN=/mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/rebase_ref/LSTNtuple_instr_300evt.root BASEHISTS=/mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/rebase_ref/rb_base300_hists.root OVERRIDES: -XC 3 -XCT 4 -T3E 1 -CC 1 -CCN 1 -CCR 2 -RPS 3 -AT3 7
+WALL_SECONDS 877.087279398

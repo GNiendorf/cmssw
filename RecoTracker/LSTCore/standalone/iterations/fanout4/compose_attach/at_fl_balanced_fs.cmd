@@ -1,0 +1,1 @@
+OVERRIDES: -TT 1.2 -a 8 -RPS 1 -RD 1 -FS 0.5 -DD 4

@@ -1,0 +1,1 @@
+BASE=flag OVERRIDES: -KL 3 -KG 0.5

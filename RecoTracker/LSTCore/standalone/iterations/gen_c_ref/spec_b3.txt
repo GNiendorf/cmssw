@@ -1,0 +1,6 @@
+y_pt3_off -RT3 1 -CF 1 -CFC 1 -T3E 0 -PT3 1
+y_a9_n1_pt3 -RT3 1 -CF 1 -CFC 1 -HT3 1 -AT3 9 -RDT 1 -CC 1 -CCG 1 -CCN 1 -PT3 1
+y_a75_n1_pt3 -RT3 1 -CF 1 -CFC 1 -HT3 1 -AT3 7.5 -RDT 1 -CC 1 -CCG 1 -CCN 1 -PT3 1
+y_a75_n2 -RT3 1 -CF 1 -CFC 1 -HT3 1 -AT3 7.5 -RDT 1 -CC 1 -CCG 1 -CCN 2
+y_a9_n2 -RT3 1 -CF 1 -CFC 1 -HT3 1 -AT3 9 -RDT 1 -CC 1 -CCG 1 -CCN 2
+y_a10_n1 -RT3 1 -CF 1 -CFC 1 -HT3 1 -AT3 10 -RDT 1 -CC 1 -CCG 1 -CCN 1

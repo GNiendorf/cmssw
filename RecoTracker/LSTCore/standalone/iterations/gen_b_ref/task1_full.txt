@@ -1,0 +1,85 @@
+events 300 | accepted sims 271525 | in-cut (pt>0.9) sims 54844 (182.8/evt)
+our pre-dedup deliveries (theta=-6) 1141190 = 3804.0/evt | LST pre-clean pT3 176611 = 588.7/evt
+
+=== OUR THRESHOLD CURVE (pre-dedup) vs LST OPERATING POINTS ===
+ thetaT3  rows/evt  fakefrac fake(pt>.9) simcov/evt   cov/row
+    -6.0    3804.0    0.6651    0.6585        33.1    0.0087
+    -4.0    3798.5    0.6646    0.6580        33.1    0.0087
+    -2.0    3781.4    0.6631    0.6566        33.1    0.0088
+     0.0    3479.6    0.6339    0.6286        33.1    0.0095
+     1.0    3062.8    0.5845    0.5806        33.1    0.0108
+     2.0    2523.6    0.4977    0.4955        33.0    0.0131
+     3.0    2008.6    0.3774    0.3766        32.8    0.0163
+     4.0    1617.1    0.2501    0.2504        32.4    0.0200
+     5.0    1346.2    0.1488    0.1499        31.5    0.0234
+     6.0    1132.7    0.0802    0.0815        29.1    0.0257
+     7.0     912.3    0.0403    0.0407        24.6    0.0270
+     8.0     642.8    0.0193    0.0194        17.4    0.0271
+     8.5     503.6    0.0134    0.0134        13.3    0.0263
+     9.0     373.3    0.0093    0.0094         9.7    0.0259
+     9.5     257.1    0.0066    0.0067         6.7    0.0262
+    10.0     159.7    0.0046    0.0046         4.4    0.0276
+    10.5      86.4    0.0036    0.0036         2.6    0.0304
+    11.0      39.2    0.0024    0.0023         1.3    0.0344
+    11.5      13.9    0.0022    0.0022         0.6    0.0398
+    12.0       3.9    0.0026    0.0026         0.2    0.0442
+  LSTpre     588.7    0.0477    0.0494         4.6    0.0078
+
+matched-count thresholds: theta=8.190 -> 588.7 rows/evt (== LST pre-clean 588.7)
+                          theta=10.046 -> 151.7 rows/evt (== LST post-clean 151.7)
+
+=== HEAD TO HEAD (matched count) ===
+set                              rows/evt  fakefrc fake(pt>.9) simcov/evt
+LST pre-clean (all pT3 cands)       588.7   0.0477      0.0494        4.6
+OURS @ LST-preclean count           588.7   0.0167      0.0168       15.9
+OURS @ LST-postclean count          151.7   0.0044      0.0044        4.2
+  overlap @preclean-count   ours-only  14.06/evt | LST-only   2.73/evt | shared    1.87/evt
+  overlap @postclean-count  ours-only   3.98/evt | LST-only   4.34/evt | shared    0.26/evt
+
+=== PER ETA REGION (coverage binned by SIM eta, purity by CANDIDATE eta) ===
+  in-cut sims barrel       80.2/evt
+  in-cut sims transit      36.4/evt
+  in-cut sims endcap       66.2/evt
+
+  at OUR theta = 8.19 (matched to LST PRE-clean count)
+  region      LSTrows   OURrows   LSTfake   OURfake    LSTcov    OURcov      dCov
+  barrel        320.7      73.6    0.0387    0.0293      2.85      4.37     +1.52
+  transit       140.1      94.1    0.0442    0.0224      0.91      4.08     +3.17
+  endcap        127.9     421.0    0.0739    0.0132      0.84      7.48     +6.64
+
+  at OUR theta = 10.05 (matched to LST POST-clean count)
+  region      LSTrows   OURrows   LSTfake   OURfake    LSTcov    OURcov      dCov
+  barrel        320.7       2.5    0.0387    0.0238      2.85      0.19     -2.66
+  transit       140.1      17.8    0.0442    0.0077      0.91      0.81     -0.10
+  endcap        127.9     131.3    0.0739    0.0036      0.84      3.25     +2.41
+
+=== PER pT BAND (coverage binned by SIM pt, purity by CANDIDATE pt) ===
+
+  at OUR theta = 8.19 (matched to LST PRE-clean count)
+  ptband      LSTrows   OURrows   LSTfake   OURfake    LSTcov    OURcov      dCov
+  0.9-1.5       305.0     313.4    0.0500    0.0189      2.03      5.38     +3.36
+  1.5-3         105.7     197.6    0.0479    0.0143      1.46      5.25     +3.79
+  3-10           17.7      36.4    0.0402    0.0107      0.89      4.47     +3.58
+  10+             1.4       1.5    0.1392    0.0540      0.23      0.82     +0.59
+
+  at OUR theta = 10.05 (matched to LST POST-clean count)
+  ptband      LSTrows   OURrows   LSTfake   OURfake    LSTcov    OURcov      dCov
+  0.9-1.5       305.0      70.7    0.0500    0.0054      2.03      1.43     -0.60
+  1.5-3         105.7      68.5    0.0479    0.0036      1.46      1.95     +0.49
+  3-10           17.7       9.3    0.0402    0.0025      0.89      0.82     -0.07
+  10+             1.4       0.1    0.1392    0.0000      0.23      0.05     -0.18
+
+=== PAIR-LEVEL OVERLAP ((t3,pls) identity; same index spaces) ===
+  theta  -6.00: ours  3804.0/evt | of LST pairs reproduced   16.9% | ours not in LST   97.4%
+  theta   8.19: ours   588.7/evt | of LST pairs reproduced    5.6% | ours not in LST   94.4%
+  theta  10.05: ours   151.7/evt | of LST pairs reproduced    0.4% | ours not in LST   98.4%
+  theta   6.00: ours  1132.7/evt | of LST pairs reproduced   15.2% | ours not in LST   92.1%
+
+=== T3 OWN-DNN SCORE SEPARATION on OUR deliveries (Task-2 feature probe) ===
+  t3_fakeScore         real mean   0.0561 med   0.0050 | fake mean   0.4764 med   0.4945
+  t3_promptScore       real mean   0.6141 med   0.7075 | fake mean   0.1302 med   0.0223
+  t3_displacedScore    real mean   0.3298 med   0.2720 | fake mean   0.3934 med   0.3449
+  AUC(real vs fake) attach logit         0.9696
+  AUC(real vs fake) t3_fakeScore         0.0883
+  AUC(real vs fake) t3_promptScore       0.9048
+  AUC(real vs fake) t3_displacedScore    0.4470

@@ -1,0 +1,8 @@
+[m16_ab] r3_rps : -A 4 -RT5 1 -RD 1 -a -1 -RPS 1
+AGG eff 0.7712 | vxy 0.8040/0.7138/0.5994/0.5335 | dxy 0.7897/0.4120/0.1930/0.0214 | fake 0.0803 dup 0.0917 | TC/evt 2032.9
+M16 REPLACEMENT VERDICT (class total must be >= baseline in EVERY band):
+  pT5-class ALL (7)        PASS  worst band vxy[0,1)     +0.0048 | FR 0.0915 vs 0.0145
+  pT3-class ALL (5)        FAIL  worst band vxy[1,5)     -0.0311 | FR 0.0370 vs 0.0377
+  pLS-class ALL (8)        FAIL  worst band vxy[1,5)     -0.0297 | FR 0.0445 vs 0.0493
+  pixel-class ALL (7+5+8)  FAIL  worst band prompt vxy<2.5 -0.0397 | FR 0.0709 vs 0.0313
+wrote /mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/fanout3/m16/ct_r3_rps.json

@@ -1,0 +1,33 @@
+A/B compare (Root__TC set): proto=a10_ref/r_W_A55_hists.root base=fin_ref/fin_base977_hists.root
+metric                            proto         base        delta
+-----------------------------------------------------------------
+eff overall (pt sums)            0.3273       0.3277      -0.0005
+eff overall (pt>0.9)             0.8093       0.8099      -0.0005
+eff vxy [0,1)                    0.8417       0.8429      -0.0011
+eff vxy [1,5)                    0.8004       0.7772      +0.0232
+eff vxy [5,10)                   0.7211       0.6442      +0.0769
+eff vxy [10,30)                  0.7099       0.6257      +0.0842
+eff dxy [0,1)                    0.8352       0.8296      +0.0056
+eff dxy [1,5)                    0.5812       0.5104      +0.0708
+eff dxy [5,10)                   0.2452       0.2291      +0.0161
+eff dxy [10,30)                  0.0315       0.0540      -0.0225
+eff barrel |eta|<1.1             0.9256       0.9243      +0.0013
+eff transition 1.1-1.7           0.8799       0.8800      -0.0002
+eff endcap >1.7                  0.7440       0.7466      -0.0026
+dup rate (pt sums)               0.0568       0.0499      +0.0070
+dup rate (pt>0.9)                0.0573       0.0514      +0.0060
+dup rate barrel                  0.0302       0.0097      +0.0205
+dup rate transition              0.0326       0.0131      +0.0195
+dup rate endcap                  0.0798       0.0849      -0.0051
+fake rate (pt sums)              0.0541       0.0452      +0.0090
+fake rate (pt>0.9)               0.0555       0.0454      +0.0102
+fake rate barrel                 0.0662       0.0436      +0.0225
+fake rate transition             0.0674       0.0454      +0.0220
+fake rate endcap                 0.0461       0.0463      -0.0002
+mean nhitOT                       6.472        6.519       -0.047
+mean nhitOT barrel                9.877       10.150       -0.273
+mean nhitOT transition            9.893       10.009       -0.116
+mean nhitOT endcap                3.557        3.557       +0.000
+n TC (fr denom)                 2027663      1998494       +29169
+n sim (ef denom)                 204388       204388           +0
+wrote a10_ref/r_W_A55.json

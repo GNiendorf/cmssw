@@ -1,0 +1,4 @@
+[cw] mri_10 : -MRI 1.0
+  chain TCs       total=300247 mean=1000.8 (T5-class=292195 T4-class=8052; 0 accepted chains below 4 layers dropped by K10)
+  M16 delivery    type-7 in-place upgrades of accepted chains=0 mean=0.0 (of 300247 accepted chain TCs) | extra type-5 TCs=0 mean=0.0
+mri_10         eff 0.8001 | vxy 0.8327/0.7852/0.7145/0.6936 | dxy 0.8267/0.5408/0.2491/0.0235 | fake 0.0533 dup 0.0641 | TC/evt 2052.1

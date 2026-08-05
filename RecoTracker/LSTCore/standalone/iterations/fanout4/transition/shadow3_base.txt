@@ -1,0 +1,32 @@
+== single levers ==
+  ex5 mX floor 0.00 (-ZR5 1.80)      killF= 1532 killT=  745 ratio=2.06 | band fake=0.0581  glob fake=0.0507
+  ex5 mX floor 0.25 (-ZR5 2.05)      killF= 1717 killT= 1014 ratio=1.69 | band fake=0.0560  glob fake=0.0503
+  ex5 mX floor 0.50 (-ZR5 2.30)      killF= 1869 killT= 1389 ratio=1.35 | band fake=0.0543  glob fake=0.0501
+  ex5 mX floor 0.75 (-ZR5 2.55)      killF= 2004 killT= 1793 ratio=1.12 | band fake=0.0528  glob fake=0.0498
+  ex5 mX floor 1.00 (-ZR5 2.80)      killF= 2135 killT= 2211 ratio=0.97 | band fake=0.0514  glob fake=0.0496
+  ex6 mX floor 0.00 (-ZR6 1.80)      killF=  357 killT=  436 ratio=0.82 | band fake=0.0726  glob fake=0.0530
+  ex6 mX floor 0.50 (-ZR6 2.30)      killF=  544 killT=  948 ratio=0.57 | band fake=0.0708  glob fake=0.0527
+  cell mD floor -1.0 (-ZCD 1.0)      killF=  715 killT=  415 ratio=1.72 | band fake=0.0682  glob fake=0.0523
+  cell mD floor 0.0 (-ZCD 2.0)       killF= 1059 killT=  901 ratio=1.18 | band fake=0.0643  glob fake=0.0516
+  cell mD floor 1.0 (-ZCD 3.0)       killF= 1191 killT= 1395 ratio=0.85 | band fake=0.0630  glob fake=0.0514
+  T4-exempt full kill (-ZM4D 99)     killF=  391 killT=  351 ratio=1.11 | band fake=0.0721  glob fake=0.0529
+
+== compositions ==
+  ex5<0.00 + cellmD<-2.0             killF= 1532 killT=  745 ratio=2.06 | band fake=0.0581  glob fake=0.0507
+  ex5<0.00 + cellmD<-2.0 + T4Ekill   killF= 1923 killT= 1096 ratio=1.75 | band fake=0.0534  glob fake=0.0499
+  ex5<0.00 + cellmD<-1.0             killF= 1643 killT=  977 ratio=1.68 | band fake=0.0569  glob fake=0.0505
+  ex5<0.00 + cellmD<-1.0 + T4Ekill   killF= 2034 killT= 1328 ratio=1.53 | band fake=0.0521  glob fake=0.0497
+  ex5<0.00 + cellmD<0.0              killF= 1738 killT= 1289 ratio=1.35 | band fake=0.0559  glob fake=0.0503
+  ex5<0.00 + cellmD<0.0 + T4Ekill    killF= 2129 killT= 1640 ratio=1.30 | band fake=0.0511  glob fake=0.0496
+  ex5<0.25 + cellmD<-2.0             killF= 1717 killT= 1014 ratio=1.69 | band fake=0.0560  glob fake=0.0503
+  ex5<0.25 + cellmD<-2.0 + T4Ekill   killF= 2108 killT= 1365 ratio=1.54 | band fake=0.0512  glob fake=0.0496
+  ex5<0.25 + cellmD<-1.0             killF= 1803 killT= 1237 ratio=1.46 | band fake=0.0550  glob fake=0.0502
+  ex5<0.25 + cellmD<-1.0 + T4Ekill   killF= 2194 killT= 1588 ratio=1.38 | band fake=0.0502  glob fake=0.0494
+  ex5<0.25 + cellmD<0.0              killF= 1873 killT= 1509 ratio=1.24 | band fake=0.0543  glob fake=0.0501
+  ex5<0.25 + cellmD<0.0 + T4Ekill    killF= 2264 killT= 1860 ratio=1.22 | band fake=0.0495  glob fake=0.0493
+  ex5<0.50 + cellmD<-2.0             killF= 1869 killT= 1389 ratio=1.35 | band fake=0.0543  glob fake=0.0501
+  ex5<0.50 + cellmD<-2.0 + T4Ekill   killF= 2260 killT= 1740 ratio=1.30 | band fake=0.0494  glob fake=0.0493
+  ex5<0.50 + cellmD<-1.0             killF= 1937 killT= 1596 ratio=1.21 | band fake=0.0536  glob fake=0.0500
+  ex5<0.50 + cellmD<-1.0 + T4Ekill   killF= 2328 killT= 1947 ratio=1.20 | band fake=0.0487  glob fake=0.0492
+  ex5<0.50 + cellmD<0.0              killF= 1997 killT= 1834 ratio=1.09 | band fake=0.0530  glob fake=0.0499
+  ex5<0.50 + cellmD<0.0 + T4Ekill    killF= 2388 killT= 2185 ratio=1.09 | band fake=0.0480  glob fake=0.0491

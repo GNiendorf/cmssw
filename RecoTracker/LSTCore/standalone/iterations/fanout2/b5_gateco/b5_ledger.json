@@ -1,0 +1,137 @@
+{
+ "T4-IP  (-M4 2.5)": {
+  "n": 36031,
+  "m12": {
+   "kill": 23180,
+   "fakes": 10041,
+   "trues": 13139,
+   "disp": 91
+  },
+  "v1_wide": {
+   "eq_true": {
+    "fakes": 10016,
+    "trues": 13138,
+    "disp": 95
+   },
+   "eq_rate": {
+    "fakes": 10016,
+    "trues": 13163,
+    "disp": 95
+   }
+  },
+  "v3_w64f": {
+   "eq_true": {
+    "fakes": 10029,
+    "trues": 13138,
+    "disp": 94
+   },
+   "eq_rate": {
+    "fakes": 10029,
+    "trues": 13150,
+    "disp": 94
+   }
+  },
+  "gbdt_big": {
+   "eq_true": {
+    "fakes": 10124,
+    "trues": 13138,
+    "disp": 97
+   },
+   "eq_rate": {
+    "fakes": 10120,
+    "trues": 13058,
+    "disp": 97
+   }
+  }
+ },
+ "IP5+   (-MRI 1.5)": {
+  "n": 89584,
+  "m12": {
+   "kill": 12844,
+   "fakes": 5583,
+   "trues": 7261,
+   "disp": 93
+  },
+  "v1_wide": {
+   "eq_true": {
+    "fakes": 5591,
+    "trues": 7260,
+    "disp": 87
+   },
+   "eq_rate": {
+    "fakes": 5589,
+    "trues": 7254,
+    "disp": 87
+   }
+  },
+  "v3_w64f": {
+   "eq_true": {
+    "fakes": 5610,
+    "trues": 7260,
+    "disp": 97
+   },
+   "eq_rate": {
+    "fakes": 5607,
+    "trues": 7236,
+    "disp": 97
+   }
+  },
+  "gbdt_big": {
+   "eq_true": {
+    "fakes": 5878,
+    "trues": 7260,
+    "disp": 105
+   },
+   "eq_rate": {
+    "fakes": 5837,
+    "trues": 7006,
+    "disp": 103
+   }
+  }
+ },
+ "exempt5+(-MR -0.8)": {
+  "n": 80992,
+  "m12": {
+   "kill": 25330,
+   "fakes": 22136,
+   "trues": 3194,
+   "disp": 160
+  },
+  "v1_wide": {
+   "eq_true": {
+    "fakes": 22327,
+    "trues": 3193,
+    "disp": 170
+   },
+   "eq_rate": {
+    "fakes": 22211,
+    "trues": 3118,
+    "disp": 167
+   }
+  },
+  "v3_w64f": {
+   "eq_true": {
+    "fakes": 22408,
+    "trues": 3193,
+    "disp": 179
+   },
+   "eq_rate": {
+    "fakes": 22246,
+    "trues": 3083,
+    "disp": 174
+   }
+  },
+  "gbdt_big": {
+   "eq_true": {
+    "fakes": 24016,
+    "trues": 3193,
+    "disp": 228
+   },
+   "eq_rate": {
+    "fakes": 22873,
+    "trues": 2456,
+    "disp": 197
+   }
+  }
+ }
+}

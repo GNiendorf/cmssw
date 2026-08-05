@@ -1,0 +1,10 @@
+[m16_ab] r2_at3_4 : -A 4 -RT5 1 -RT3 1 -RD 1 -a -1 -AT3 4
+Traceback (most recent call last):
+  File "<stdin>", line 7, in <module>
+TypeError: unsupported operand type(s) for /: 'NoneType' and 'float'
+M16 REPLACEMENT VERDICT (class total must be >= baseline in EVERY band):
+  pT5-class ALL (7)        FAIL  worst band vxy[0,1)     -0.0026 | FR 0.0915 vs 0.0145
+  pT3-class ALL (5)        FAIL  worst band vxy[1,5)     -0.0254 | FR 0.5764 vs 0.0377
+  pLS-class ALL (8)        FAIL  worst band vxy[0,1)     -0.0134 | FR 0.0470 vs 0.0493
+  pixel-class ALL (7+5+8)  FAIL  worst band prompt vxy<2.5 -0.0223 | FR 0.1853 vs 0.0313
+wrote /mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/fanout3/m16/ct_r2_at3_4.json

@@ -1,0 +1,506 @@
+================================================================================================
+M19 FREEZE RECORD -- chain-tracking prototype, final composition for P2 integration
+Workspace: S/fanout5/final     Date: 2026-08-02     Sample: LSTNtuple_PU200RelVal_300evt.root
+================================================================================================
+
+------------------------------------------------------------------------------------------------
+1. THE FROZEN CONFIGURATION
+------------------------------------------------------------------------------------------------
+BINARY : S/fanout5/final/bin/chainproto_r2      (merged tree, RETRAINED r2 attach head)
+         S/fanout5/final/bin/chainproto         (same sources, RESIDENT g1 attach head)
+
+FULL COMMAND:
+  bin/chainproto_r2 -m hybrid -i <ntuple> -t <trackingntuple dir> -o <out.root> \
+    ANCHOR CTL FLAGSHIP <M19 overrides>
+
+  ANCHOR   = -e 0 -L 0.5 -F 0.3 -G 6 -X 0.5 -M4 3.5 -M5 1e9 -M6 1e9 -M4D -0.75 -MD 1e9
+             -MR -1.800 -MRI 0.5 -U4 0 -U5 0 -U6 0 -B 10 -H 1 -W 0.50 -FC 1 -PU 2
+             -C25 2.0 -C25D -2.0
+  CTL      = -A 4 -a 999 -D 5 -RT5 1
+  FLAGSHIP = -BK 1 -BT 5 -TR 1 -TT 0.8 -TA 1.0 -F 0.20 -MRI -0.5 -M4 4.0 -M4D -1.2 -PU 1
+             -C25 0.0 -ZM4D 1.2 -ZM4 -0.5 -TT 1.2 -a 8 -RPS 1 -RD 1
+  M19      = -a 6.875 -WE 0.20 -WZ 1.5 -FBC 0 -EX 1 -EXW 0.25 -EXR 2.0 -EXS 1 -L 3.0
+
+RESOLVED VALUES OF EVERY FLAG THE M19 BLOCK TOUCHES (later flags win over earlier ones):
+  -a    6.875   (FLAGSHIP said 8; M19 overrides)     attach stage-A logit threshold
+  -L    3.0     (ANCHOR said 0.5; M19 overrides)     chain score length weight lambdaLen
+  -WE   0.20    band braid fraction  |  -WZ 1.5 band lower |eta| edge  |  -FBC 0 band claim budget
+  -EX   1 (outer end only) -EXW 0.25 -EXR 2.0 -EXS 1 (LS-linked)
+  All other -EX* keep their defaults: -EXF 2.0 -EXU 0 -EXD 60 -EXJ 1 -EXN 1 -EXL 4 -EXC 0
+  -WN, -FB, -XP3, -XP3Z, -XP3L, -XT3, -DD*, -TW*, -KL*: NOT SET -> default off, bit-exact legacy
+
+SHIPPING WEIGHT HEADERS (md5):
+  chain3_mlp_weights.h    d170f1742ea52ce14d89b174b3ca0817   <- canonical 3-class gate, UNCHANGED
+  edge_mlp_weights.h      087c1f61bce076209346734dedab6f89   <- v3 resident edge head, UNCHANGED
+  chain_mlp_weights.h     (golden, unchanged)                   a2 head, f11 provider for attach
+  attach_mlp_weights.h    eb4e1bf74b8d4c50a796239cc60da725   <- RETRAINED r2 (from fanout5/attachretrain)
+        the resident g1 header is preserved at attach_mlp_weights_g1.h.keep (3f072f89...)
+
+------------------------------------------------------------------------------------------------
+2. WHAT WAS ADOPTED AND WHAT WAS REJECTED
+------------------------------------------------------------------------------------------------
+ADOPTED (code):
+  ex_dupcc   band-aware braid + per-band claim tolerance    Stages.h, K9K10.cc, main.cc
+  ex_extend  chain extension at assembly                    Extend.cc/.h (new TU), Stages.h,
+                                                            K9K10.cc (read-only ownerOut), main.cc
+ADOPTED (flags only, golden surface):
+  ex_trim    -L 3.0   (the free length lever; -BT 4.5 / -TT 1.5 NOT adopted, see below)
+ADOPTED (weights):
+  attach retrain r2 head at -a 6.875
+
+REJECTED, with reason:
+  ex_dupwin (-DD/-DDT/-DDE gated dedup)  SKEPTIC-1 showed it attacks the identical cell as the
+        ex_dupcc band braid to the identical depth (window .0867 vs .0869) by a competing
+        mechanism, and is strictly dominated on a like-for-like comparison: worse dup, worse
+        fake, and it SPENDS v15/v510/v1030 where the braid holds them. They cannot both ship.
+  ex_lenorder (-KL/-KE/-KB/-KG/-KX)      SKEPTIC-2 showed the offered point is dominated by a
+        flags-only point (ex_trim's) on eff, transition length, dup, window dup, window length
+        and d510, and that -KL cannot be stacked on top of it (their sk_lo_stack fails EFF+D15).
+        It buys nothing the existing flag surface does not already reach.
+  ex_twoway (-TW/-TWC/-TWB)              Its own agent's NO-GO, confirmed and strengthened by
+        SKEPTIC-3 (bars 7 and 12 close the last gap: no free region exists).
+  EDGE RETRAIN                           Its own agent's explicit NO-GO. Every operating point
+        broke at least one hard floor and TRACK LENGTH regressed in all of them.
+  -BT 4.5 / -TT 1.5 on the freeze line   Measured here: they cost 4 more eff tracks and leave a
+        1.4-track margin. Offered as the LENGTH-LEANING alternate instead, not frozen.
+  -FB 0.19                               Reaches dup below the LST target but costs 6 eff tracks
+        on top of the extension. Offered as the DUP-LEANING alternate instead, not frozen.
+
+------------------------------------------------------------------------------------------------
+3. MERGE-PARITY GATE SUITE (critic item 5) -- ALL PASS
+------------------------------------------------------------------------------------------------
+(a) GOLDEN TREE UNTOUCHED. S/fanout4/compose_attach never written to; verified at start and end:
+      chain3_mlp_weights.h  d170f1742ea52ce14d89b174b3ca0817
+      main.cc               04d52a7bd56dba1d2385fce4c89a4a63
+      edge_mlp_weights.h    087c1f61bce076209346734dedab6f89
+      attach_mlp_weights.h  3f072f89b4ce476fa156423e77a6aa36
+      bin/chainproto        mtime 2026-08-02 12:08:05 (unchanged)
+    The canonical 3-class header md5 d170f174... is byte-identical in the merged copy.
+(b) DEFAULTS GATE  : 301078 chain TCs (T5-class 293049 / T4-class 8029), fake .05363, dup .06428
+                     -- EXACT match to the mandated values.
+(c) FLAGSHIP GATE  : eff .81325, vxy01 .84610, v15 .80424, v510 .72871, v1030 .71895,
+                     d15 .56330 (525/932), d510 numerator EXACTLY 71 of 285, fake .04743,
+                     dup .05708, nhitOT 9.7937/9.6980/3.4174, nTC 616650.
+                     ALL 300 PER-EVENT COUNTER LINES ARE BYTE-IDENTICAL to the golden binary,
+                     as are every summary line (attach ledger 144585 / 241726 / 65 / 1865 /
+                     revoked 337; trim ledger examined 471761, inner 8351, outer 64151,
+                     total 72502 -- matches RECON-1 F9 and ex_trim digit-for-digit).
+(d) PER-LEVER GATES: the merged binary with ONLY lever X on reproduces X's own workspace:
+      ex_dupcc  -WE 0.20 -WZ 1.5 -FBC 0        eff .81303 dup .05286 fake .04637 d510 71
+                                               d15 525 FULL v510/v1030 FULL nh 9.794/9.697/3.386
+      ex_extend -EX 1 -EXW .25 -EXR 2 -EXS 1   eff .81298 v15 .80353 dup .05707 fake .04761
+                                               d510 71 nh 9.881/9.852/3.448
+      ex_trim   -L 3.0 -BT 4.5 -TT 1.5         eff .81285 dup .05640 d510 72 d15 524
+                                               nh 9.838/9.771/3.457
+      attach r2 -a 6.875                       eff .81347 dup .05611 v1030 .71732 d510 71
+                                               fake .04723 nh 9.792/9.701/3.449
+    Each matches its source agent's declared numbers to the last reported digit.
+(e) FLAG RESOLUTION. Every new lever echoes its PARSED values in the run summary, e.g.
+      "EX_DUPCC band |eta| >= 1.50 and nNodes <= 1e+09 : braid -WE 0.2 (outside: -W 0.5),
+       claim -FB 0 -FBC 0 (outside: -F / -FC)"
+      "EX chain extend ... -EX 1 -EXW 0.25 -EXR 2 -EXF 2 -EXU 0 -EXD 60 -EXJ 1 -EXN 1
+       -EXL 4 -EXS 1 -EXC 0"
+    plus the pre-existing "-TT 1.2 -TL 5 -TP 1 -TA 1" and "-RT5=1 -RT3=0 -RPS=1 -a=6.875 -AT3=6"
+    lines. These are in every f_*.log and are the guard against an M18-class silent no-op.
+
+MERGE MECHANICS: the two code levers touch three shared files but in strictly DISJOINT hunks
+(patch applied with zero rejects and zero fuzz). Every other .cc/.h in the merged tree is
+byte-identical to the golden tree. The four pre-getopt multi-character flag scans use exact
+string equality, so no scan can shadow another; -EX/-EXW/-EXR/-EXS and -WE/-WZ/-FBC coexist.
+
+------------------------------------------------------------------------------------------------
+4. STANDING CAVEATS (critic item 11) -- RESTATED IN THE FREEZE RECORD ITSELF
+------------------------------------------------------------------------------------------------
+(a) HEAD OOS CONTAMINATION (P2_PORT_MAP R5). edge_mlp_v3, chain3_m12 and the a2 head were
+    trained on 649 events INCLUDING the 349 "true-OOS" events. The section-6 OOS result is clean
+    for CUTS / THRESHOLDS / ORDERING / ASSEMBLY -- which is what M19 changed -- but NOT for those
+    three heads. NEW THIS ROUND: the frozen line also carries the RETRAINED r2 ATTACH head, whose
+    training dump was regenerated over 649 events (300 primary + 498 salvage, 349 of them the OOS
+    events). So the attach head shares the same contamination. The OOS numbers must be read as
+    "clean for the M19 threshold/assembly changes, contaminated for all four heads".
+(b) pT3 CLASS CARRIED (P2_PORT_MAP 5.1(b)). The frozen line runs -RT3 0: ONLY the pT5 class is
+    replaced. pT3 rows and bare-pLS rows are LST rows carried verbatim. CreatePixelTripletsFromMap,
+    the superbin machinery and pt3dnn CANNOT be deleted at P2.7. This caveat is now load-bearing
+    in a new way: ex_dupcc measured the chain-vs-carried-pT3 duplicate cell at EXACTLY ZERO rows,
+    but only because -RT5 1 leaves ap.dropPartOfPT3 true. That cell reopens the moment -RT3 1 lands.
+(c) CheckHitspLS CONFIG MATCHING (P2_PORT_MAP 5.1(a)). This benchmark is pLS cleaning ON at both
+    sites / tc_pls_triplets OFF / pT 0.8. The Phase-2 seedingLST+trackingLST combined config flips
+    both and runs 0.6. The maintainer DEFERRED the target choice to the pT 0.8 offline config, so
+    THIS FROZEN CONFIG IS VALID ONLY FOR THAT TARGET. A seedingLST target requires regeneration
+    with --no_pls_dupclean --tc_pls_triplets and a full re-baseline -- and that shift grows the
+    pLS-pLS duplicate cell, already ~49% of the dup budget, i.e. it moves primary target #1
+    directly and would invalidate the dup numbers below.
+(d) dxy[10,30) IS A KNOWN, TRACED, UNFIXED REGRESSION. Declared here because the edge retrain was
+    REJECTED (critic item 13). In-sample: ours 13/523 = .0256 vs LST .0470. OOS: ours 4/247 =
+    .0162 vs LST .0364. Traced in M18 T4: 17 of 30 true edges score below the -e 0 weld threshold,
+    median true-edge score -0.53. The M19 edge retrain reproduced the diagnosis and FIXED it at
+    the head level (displaced weld pass .6026 -> .8617) but every end-to-end operating point broke
+    a hard floor and regressed track length, so nothing shipped. This value is unchanged by the
+    freeze in both samples (identical numerators) and must not be presented as neutral.
+(e) a2 / f11 DECISION STILL OPEN (P2_PORT_MAP 7 item 3). -BK removes the a2 head from the K9 key
+    and claim, but NOT from the attach MLP inputs (feature f11, PixelAttach.cc:420). The retrained
+    r2 head KEEPS f11. So either chain_mlp_weights.h ships purely as an f11 provider, or the
+    attach head must be retrained without it. Unresolved at freeze.
+
+------------------------------------------------------------------------------------------------
+5. NOT DONE / DEFERRED
+------------------------------------------------------------------------------------------------
+  * NO GIT COMMIT was made (critic item 14). My run instructions for this session forbid commits.
+    The freeze record, merged tree and all artifacts are on disk under S/fanout5/final for the
+    maintainer to commit; the PLAN milestone entry is likewise left to the maintainer.
+  * PORT-MAP REVISION (critic item 10) is NOT done -- it needs the frozen config, which is this
+    document. The four new surfaces it must describe are listed in section 9 below.
+  * Floors were NOT re-derived on more events (critic item 2(b)); instead the freeze candidate was
+    scored on the 349 OOS events (section 6) and every in-sample delta was given a discordant-pair
+    significance (section 7). Re-deriving the floors is a maintainer decision, not an agent one.
+
+------------------------------------------------------------------------------------------------
+6. TRUE-OOS ON THE 349 NON-OVERLAP EVENTS (critic item 3) -- THE STRONGEST RESULT OF THE ROUND
+------------------------------------------------------------------------------------------------
+Method: identical to M18b Task C. Ran the frozen line over LSTNtuple_PU200RelVal_1000evt.root,
+filtered the output tree to the frozen event list m18b_oos349_evts.txt with the golden
+m18b_filter_evts.C ("keeping 349 event keys / matched 349 / copied 349"), histogrammed the
+filtered tree, and compared against base_oos349_hists.root (LST on the same 349 events) and
+oos_balanced_349_hists.root (whose .cmd is "-TT 1.2 -a 8 -RPS 1 -RD 1", i.e. EXACTLY the M19
+FLAGSHIP, run by M18b on the golden binary).
+Reported as DELTAS: LST's own eff is .81355 on the 300 and .80978 here, so absolutes are not
+comparable across event sets. The 300-event floors are NOT applied here, by design.
+
+metric                       LST     FLAGSHIP    FREEZE  |  FRZ-FLAG    FRZ-LST
+eff overall (in-cut)      0.80978    0.80773   0.80777   |  +0.00004   -0.00201
+eff vxy [0,1)             0.84239    0.84030   0.84039   |  +0.00008   -0.00200
+eff vxy [1,5)             0.79567    0.80649   0.80395   |  -0.00255   +0.00827
+eff vxy [5,10)            0.62707    0.70827   0.70677   |  -0.00150   +0.07970
+eff vxy [10,30)           0.63921    0.71681   0.72090   |  +0.00408   +0.08169
+eff dxy [1,5)             0.50973    0.57393   0.57588   |  +0.00195   +0.06615
+eff dxy [5,10)            0.19880    0.23494   0.23494   |  +0.00000   +0.03614
+eff dxy [10,30)           0.03644    0.01619   0.01619   |  +0.00000   -0.02024  <- caveat 4(d)
+fake rate                 0.04505    0.04684   0.04579   |  -0.00105   +0.00073
+DUPLICATE RATE            0.05148    0.05718   0.05159   |  -0.00559   +0.00011
+dup barrel                0.00963    0.01434   0.01372   |  -0.00062   +0.00409
+dup transition            0.01361    0.02431   0.01870   |  -0.00561   +0.00508
+dup endcap                0.08499    0.08996   0.08169   |  -0.00827   -0.00329
+dup |eta| 1.5-2.5 WINDOW  0.06615    0.07783   0.05980   |  -0.01803   -0.00634
+dup |eta| 1.5-3.0 WINDOW  0.08828    0.09630   0.08404   |  -0.01226   -0.00423
+mean nhitOT barrel       10.15061    9.79715   9.89740   |  +0.10024   -0.25322
+mean nhitOT transition   10.00965    9.69655   9.88308   |  +0.18653   -0.12658
+mean nhitOT endcap        3.56044    3.41375   3.45873   |  +0.04498   -0.10171
+
+THE KEY READING -- EVERY M19 GAIN TRANSFERS, THE COST DOES NOT:
+  * dup             in-sample -0.00525, OOS -0.00559  -> transfers, slightly LARGER OOS
+  * dup window 1.5-2.5  in-sample -0.01749, OOS -0.01803 -> transfers
+  * dup window 1.5-3.0  in-sample -0.01191, OOS -0.01226 -> transfers
+  * nhitOT b/t/e    in-sample +0.101/+0.188/+0.050, OOS +0.100/+0.187/+0.045 -> transfers almost
+                    exactly; this is the single most reassuring number in the round
+  * fake            in-sample -0.00110, OOS -0.00105 -> transfers (and remains free)
+  * EFFICIENCY      in-sample -7 sim tracks, OOS +1 sim track. THE EFFICIENCY DEBIT DOES NOT
+                    REPRODUCE OUT OF SAMPLE. This is exactly what the discordant-pair statistic
+                    predicted in section 7 (z = -0.98, i.e. indistinguishable from neutral).
+  * v1030           in-sample -2 tracks, OOS +6 tracks (+0.00408). Also does not reproduce.
+  * d510            OOS numerator identical (39/166): unchanged, as in-sample (71 -> 72).
+  * d15             OOS +1 track (295 -> 296). The in-sample -1 does not reproduce either.
+  * v15/v510        OOS -4 / -1 tracks: these two DID move against us OOS while improving or
+                    holding in-sample. Reported as a genuine, if small, adverse transfer.
+AGAINST LST ON THE SAME EVENTS: the frozen config now sits at LST's duplicate rate (+0.00011,
+where the flagship was +0.00570) and is BELOW LST in the maintainer's window (-0.00634 at
+1.5-2.5, -0.00423 at 1.5-3.0) and in the endcap (-0.00329), while keeping the large displaced
+advantages (vxy[5,10) +0.0797, vxy[10,30) +0.0817, dxy[1,5) +0.0662, dxy[5,10) +0.0361).
+
+------------------------------------------------------------------------------------------------
+7. DISCORDANT-PAIR (McNEMAR) SIGNIFICANCE (critic item 2(a))
+------------------------------------------------------------------------------------------------
+Same events, same sim tracks -> the correct statistic on a delta is the discordant-pair count,
+not the binomial sigma of either rate. delta = n_gain - n_loss, sigma = sqrt(n_gain + n_loss).
+
+FREEZE vs FLAGSHIP:
+  band              delta   n_gain  n_loss  n_disc  sigma      z
+  eff overall         -7      22      29      51    7.14    -0.98
+  eff vxy [0,1)       -6      22      28      50    7.07    -0.85
+  eff vxy [1,5)       +1       2       1       3    1.73    +0.58
+  eff vxy [5,10)      +0       0       0       0    0.00     0.00   <- ZERO tracks changed status
+  eff vxy [10,30)     -2       3       5       8    2.83    -0.71
+  eff dxy [1,5)       -1       0       1       1    1.00    -1.00   <- the entire d15 debit is
+                                                                       ONE discordant track
+  eff dxy [5,10)      +1       1       0       1    1.00    +1.00   <- the d510 gain is likewise
+                                                                       ONE track
+  eff dxy [10,30)     +0       0       0       0    0.00     0.00
+DUP-LEANING alternate: eff -7 on 51 discordant (z -0.98); LENGTH-LEANING: eff -11 on 55 (z -1.48).
+
+WHAT THIS MEANS, STATED BOTH WAYS AS THE CRITIC REQUIRED:
+  * "The config spends 7 sim tracks of efficiency" is NOT established: |z| < 1 on 51 discordant
+    pairs, and the OOS sample moved it the other way (+1).
+  * Equally, "it holds d15 by 0.86 tracks" and "it improves d510 to 72" are each ONE track and
+    carry no statistical weight either. Nothing on those two floors is evidence of anything.
+  * v510 is the one exact statement available: ZERO vxy[5,10) sim tracks changed status between
+    the flagship and the frozen config. That floor is held identically, not luckily.
+
+------------------------------------------------------------------------------------------------
+8. LENGTH RE-EXPRESSED MIX-FREE (critic item 6) -- THE MEASUREMENT-VALIDITY CHECK
+------------------------------------------------------------------------------------------------
+compare_ab's mean_nhitOT = sum(tc_nhitOT)/nTC over the WHOLE delivered pool, which contains
+bare-pLS rows with tc_nhitOT == 0 (175,096 of ~260,000 endcap TCs, i.e. 67%). Deleting TCs
+therefore raises the mean with no track getting longer. Decomposition (tool: fn_len.py):
+    mean_new - mean_ref = REAL (dSum / N_ref)  +  MIX (S_new * (1/N_new - 1/N_ref))
+
+                    pooled d(mean)      REAL       MIX     d(sum OT hits)   d(nTC)
+FREEZE  barrel         +0.1013       +0.0652   +0.0361         +9,138        -512
+        transition     +0.1879       +0.1871   +0.0008        +14,176          -6
+        endcap         +0.0499       +0.0417   +0.0082        +10,860        -620
+The freeze candidate's length claim SURVIVES: 64% / 99.6% / 84% real, and all three regions gain
+REAL delivered OT hits. Mix-free means (denominators no dedup lever can move):
+        mean over OT-BEARING TCs   +0.1072 / +0.2016 / +0.1737
+        mean over SIM-MATCHED TCs  +0.1061 / +0.1940 / +0.0605
+
+THE SAME TEST APPLIED TO THE LEVERS INDIVIDUALLY, INCLUDING AGAINST THEIR OWN AGENTS:
+  -EX extension  : MIX is EXACTLY +0.0000 in all three regions (it deletes no TC, d(nTC) = 0).
+                   100% real: +12,208 / +11,682 / +8,084 hits. The cleanest length lever measured.
+  -L 3.0/-TT     : 94-99% real. ex_trim's and SKEPTIC-2's claims confirmed independently.
+  band braid ALONE: its length claim is REFUTED, as SKEPTIC-1 argued. transition d(mean) -0.0014
+                   = REAL -0.0490 + MIX +0.0476; endcap -0.0315 = REAL -0.0494 + MIX +0.0179.
+                   It LOSES 3,710 transition and 12,876 endcap real OT hits. This is exactly why
+                   the frozen line pairs it with the extension rather than shipping it alone.
+  DUP-LEANING alt: barrel REAL -0.0154 (-2,164 hits), endcap REAL -0.0096 (-2,492 hits). Its
+                   pooled "+0.020/+0.035/+0.006" is mostly MIX. Its surviving tracks ARE longer
+                   (mean/OT-TC +0.022/+0.041/+0.087) but it delivers FEWER total OT hits. Stated
+                   as such in section 10 rather than booked as a length gain.
+
+THE LST TARGET RECOMPUTED IDENTICALLY (from prototype/base300_identity.root, the LST baseline in
+the same tree format), because the critic correctly requires the target to use the same
+denominator as the claim:
+                          pooled     mean/OT-TC    mean/matched    total OT hits
+  LST         barrel     10.1506       10.7122        10.2270        1,410,502
+              transition 10.0098       10.6386        10.1120          757,360
+              endcap      3.5594       11.0267         3.5994          927,552
+  FLAGSHIP    barrel      9.7937       10.3260         9.8317        1,372,914
+              transition  9.6980       10.2878         9.7531          734,680
+              endcap      3.4174       10.4165         3.4718          890,540
+IMPORTANT CONSEQUENCE: the endcap "3.417 vs 3.559" comparison is a pLS/chain MIXING RATIO, not a
+length -- every TC at |eta| > 2.5 has nhitOT = 0. Per OT-BEARING TC the endcap gap to LST is
+0.610 hits, not 0.142, i.e. the real length gap is ~4x LARGER than the pooled metric suggests.
+Gap closed by the freeze candidate, in REAL delivered hits:
+  barrel 9,138 / 37,588 = 24.3%   transition 14,176 / 22,680 = 62.5%   endcap 10,860 / 37,012 = 29.3%
+
+------------------------------------------------------------------------------------------------
+9. THE EXTENSION DOES NOT MOVE EFFICIENCY, ONLY THE MATCHING FRACTION (critic item 7)
+------------------------------------------------------------------------------------------------
+Measured in the COMPOSED context by aligning c1 (no -EX) and c3 (-EX on) index-by-index -- valid
+because the pass creates and destroys no TC (tool: fn_extpurity.py):
+  TCs compared 614,208 | INDEX MISALIGNMENTS 0 | TCs extended 18,637 (3.03%), each exactly +2 OT
+  hits (37,274 total) | matched -> FAKE 116 | fake -> matched 27 | net fake numerator +89
+  BREAK RATE 0.622% of extensions destroyed an existing sim match
+ANSWER TO THE QUESTION THE CRITIC POSED: 100% of the extension's eff/fake movement is a
+matching-FRACTION change on TCs that exist in BOTH runs. The pass finds ZERO tracks and loses
+ZERO tracks. So the "-6 sims" that -EX appears to cost are dilution, not physics loss -- which
+means the extension is CHEAPER than its offer stated, and that is what made room for the band
+braid in the composition budget.
+HONEST LIMIT: 0.622% is a STRICT LOWER BOUND on wrong extensions. A foreign 2-hit append on a
+pure 10-hit TC leaves 10/12 = 0.833, still above the 0.75 matching threshold, and is invisible to
+the harness. Part of the +0.10/+0.19/+0.05 nhitOT move therefore rests on hits of provenance the
+harness cannot validate, and the only truth signal available (116 : 27) is unfavourable at the
+margin. This reproduces SKEPTIC-3's independent measurement (0.628% at 18,632 extensions) almost
+exactly, so composition does not degrade extension purity.
+
+------------------------------------------------------------------------------------------------
+10. TRANSFER-FRAGILITY TABLE FOR THE MAINTAINER VETO (critic item 12)
+------------------------------------------------------------------------------------------------
+Ranked MOST fragile first. The maintainer should cut from the TOP of this list, not the bottom.
+
+#1  -a 6.875  +  retrained r2 attach head          [MOST FRAGILE -- and load-bearing]
+    PHYSICS: attaching a pLS into a chain TC retires the standalone type-8 row, so MORE attaches
+      = LESS duplicate. The retrained head reaches precision .980 where the resident head
+      saturates at .968, so it can attach ~90 more correct targets/evt at a LOWER wrong rate.
+    GAIN ALONE (measured here): eff +5 tracks, dup -.00097, fake -.00020, endcap nhitOT +0.032.
+    COST ALONE: v1030 880 -> 878. THIS LEVER SPENDS THE ENTIRE v1030 BUDGET (floor 877.6).
+    DISTANCE TO CLIFF: 0.4 tracks on v1030. One more vxy[10,30) track and the line fails.
+    OOS: v1030 moved the OTHER way (+6 tracks). The in-sample debit did not reproduce.
+    FRAGILITY: it is a WEIGHT HEADER, not a threshold -- the least inspectable thing in the line,
+      and its training dump includes the 349 OOS events (caveat 4(a)). Its -a value was selected
+      to 3 decimal places on this one sample.
+    IF VETOED: measured as the ablation c4_noatt -- eff .81276 (18518, margin 1.4 tracks instead
+      of 5.4), dup .05281 instead of .05183, fake .04661, v1030 880 FULL, endcap nhitOT 3.434
+      instead of 3.467. The line still PASSES every floor but loses most of its margin and about
+      a fifth of its dup win. The head is a net positive; it is simply the riskiest item.
+
+#2  -L 3.0                                          [spends the d15 track]
+    PHYSICS: raises lambdaLen in chains.score so longer chains win arbitration.
+    GAIN ON TOP OF THE REST: +0.016/+0.032/+0.018 nhitOT AND d510 71 -> 72, at ZERO efficiency
+      cost in the composed line (c3 and c4 are both 18522).
+    COST: the single d15 track (525 -> 524, floor admits 524, margin 0.86 tracks).
+    DISTANCE TO CLIFF: 0.86 of one track. ex_lenorder measured that this floor flips
+      NON-MONOTONICALLY at one-track granularity, so this is a coin flip, not a plateau.
+    OOS: d15 went the other way (+1 track). Not reproduced.
+    IF VETOED: c3 -- eff .81294 (same), dup .05182 (same), nhitOT 9.879/9.854/3.449 (-0.016/
+      -0.032/-0.018), d15 525 FULL, d510 back to 71 (0.58-track margin instead of 1.58).
+
+#3  -WZ 1.5                                         [an exact edge, in one direction only]
+    PHYSICS: the band lower |eta| edge. RECON-0 measured that a 2-hit chain-chain overlap is a
+      real duplicate 44-57% of the time at |eta| 1.5-2.5 but only 8% in the barrel, so the tight
+      braid must not reach below 1.5.
+    ex_dupcc measured 1.5 as the exact edge: -WZ 1.4 already costs v510/v1030, -WZ 1.1 costs d510.
+    FRAGILITY: ASYMMETRIC. Tightening (lower -WZ) falls off a cliff; loosening (higher -WZ) only
+      gives back dup smoothly (-WZ 1.7 leaves the transition untouched). Safe direction available.
+
+#4  -EXR 2.0 / -EXW 0.25                            [plateau, with a cliff beyond]
+    PHYSICS: split xy/rz acceptance windows -- r-phi is measured to ~100 um while a 2S strip is
+      centimetres in z, so one combined window is forced to the worse coordinate.
+    ex_extend measured eff EXACTLY constant (.81298) at -EXR 1.0, 1.5 and 2.0: a genuine plateau.
+    I measured the far side: -EXR 3.5 FAILS v1030 (877) and d15 (523). Cliff is between 2.0 and 3.5.
+    FRAGILITY: LOW at the chosen point (mid-plateau), but the plateau's far edge is not resolved.
+
+#5  -WE 0.20, -FBC 0, -EXS 1, -EX 1                 [ROBUST -- discrete or binary, not thresholds]
+    -WE is NOT a continuous threshold: with -H 1 the braid denominator is the owner's hit count,
+      so every value in (0.167, 0.20] is EXACTLY -WE 0.20. It sits mid-plateau, width 0.033.
+    -FBC 0, -EXS 1, -EX 1 are binary/enumerated. There is no cliff to sit near.
+    -EXS 1 in particular replaces a hand-made window with the detector's own LS compatibility
+      statement, and SKEPTIC-3 showed it delivers 12x the volume at HALF the break rate of the
+      tightest free-space window -- it is the most physically-motivated item in the line.
+
+------------------------------------------------------------------------------------------------
+11. TIMING, SOLO AND UNCONTENDED (critic item 9)
+------------------------------------------------------------------------------------------------
+Run SEQUENTIALLY on an idle box (load < 1.1, zero other chainproto processes), all four with the
+same binary family, in this order: flagship, freeze, dup-leaning, length-leaning.
+  config           infer    weld   attach   arb+asm    fill    TOTAL ms/evt
+  FLAGSHIP        37.176   7.420  204.115     1.629   11.592      261.93
+  FREEZE          37.155   7.386  202.902     3.655   11.693      262.79   (+0.86, +0.33%)
+  DUP-LEANING     37.150   7.390  201.807     1.710   11.604      259.66   (-2.27, -0.87%)
+  LENGTH-LEANING  37.177   7.428  202.668     3.675   11.803      262.75   (+0.82, +0.31%)
+The ENTIRE cost of the freeze candidate is arb+asm 1.629 -> 3.655 = +2.03 ms/evt, which is the
+Extend stage (SKEPTIC-3 measured +2.01 solo for the same lever). The band braid is free (+0.08 ms;
+it rides a loop that already runs) and the dup-leaning config is NET FASTER because it delivers
+fewer TCs. attach still owns 203 of the 263 ms (77%).
+MANDATORY CAVEAT ON ABSOLUTE TOTALS: my binary runs the `infer` stage at 37.2 ms where the GOLDEN
+binary runs it at 42.5 ms with BIT-IDENTICAL output. SKEPTIC-1 found this same ~5 ms compiler/
+layout artifact in another rebuild. Absolute totals are therefore comparable only WITHIN one
+binary; the +0.86 ms above is a same-binary measurement and is the number to carry into P2.
+P2 BUDGET NOTE: P2_PORT_MAP R2 sizes the port against the FLAGSHIP's stage mix (265 -> ~68 ms via
+the grid prefilter). The frozen config adds a NEW sequential stage worth 2.0 ms that the port map
+does not describe; see section 12.
+
+------------------------------------------------------------------------------------------------
+12. WHAT P2 CHARACTERIZATION MUST STILL ABSORB (critic item 10) -- NOT DONE, ENUMERATED
+------------------------------------------------------------------------------------------------
+The port map is sized against the flagship. The frozen line adds surface it does not describe:
+ (a) Extend.cc/.h is an ENTIRELY NEW translation unit and a new stage between K9 and K10, with
+     its own claimed-hit bitmap (1 char per ph2 hit row), its own MD/LS lookups and a per-chain
+     refit. It needs a row in the section-1 stage table and a line in the section-2.7 memory
+     table. It is SEQUENTIAL BY CONSTRUCTION: chains are processed in K9 best-first order and
+     each marks its hits claimed so a later chain cannot take them. That places it in the same
+     R3 risk class as the K9 greedy walk and it needs the same propose-verify divergence
+     measurement. Multiplicity to size against: 18,637 extensions per 300 events = 62/evt,
+     12,363-23,966 candidate tests/evt depending on -EXR, 2.03 ms/evt.
+ (b) ex_dupcc changes ArbitrationParams (4 new fields) and the K9 claim inner loop (per-candidate
+     braid fraction from a band mask + claimOkV). This bears directly on the K9b atomic design.
+     The band mask is one char per chain, built from the innermost member T3's |eta|.
+ (c) The frozen line's -a 6.875 changes the attach operating point: 144,585 -> more attaches/evt,
+     which changes the pair-scoring volume the port map budgets.
+ (d) Section-7 item 6 of the plan (record the frozen flag line + the four shipping header md5s in
+     the milestone log) is satisfied by sections 1 and 3 of THIS document, but has not been
+     committed to git (see section 5).
+KNOWN LATENT ITEMS FROM THE CODE AUDIT, carried forward (all inert in the frozen line):
+  * Extend.cc:376 vs :425 -- the refit-chi2 gate builds its MD list in STORED order while the
+    final CSR rebuild emits it REVERSED, and chainFitChi2Combined's rz term is order-dependent.
+    INERT at -EX 1 -EXN 1 (addIn is always empty, at most one MD appended) and inner-end
+    extension is already a measured NO-GO. MUST BE FIXED before anyone revisits -EX 2/3.
+  * Neither code lever is wired into k9ArbitrateTwoPass (the -A 2 path). CTL is -A 4 so this is
+    unreachable in every M19 run, but -A 2 would silently ignore -WE/-FB/-FBC and would leave the
+    extension's claimed-hit map without source (a).
+  * ex_dupcc's per-band claim tolerance reads params.* while the base reads pp.*, so a band
+    candidate would not receive an -FS share-pass loosening. No -FS anywhere in M19; re-check if
+    -FS is ever composed with -WE/-FB.
+  * The nine -WE/-WZ/-WN/-FB/-FBC/-XP3*/-XT3 and eleven -EX* flags have no usage() help-text
+    entry (documented in code comments only). Cosmetic; matters at merge time.
+
+------------------------------------------------------------------------------------------------
+13. FULL DESCENT BOARD (12 composed runs + gates + per-lever + ablation + solo reruns)
+------------------------------------------------------------------------------------------------
+tag                   eff      v15     v510    v1030      d15  d510     fake      dup |    dupB    dupT    dupE |    nhb    nht    nhe |     nTC  ms/ev FLOORS
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+gate_fl           0.81325  0.80424  0.72871  0.71895  0.56330    71  0.04743  0.05708 | 0.01396 0.02305 0.09017 |  9.794  9.698  3.417 |  616650  261.5 pass
+lev_att           0.81347  0.80495  0.72871  0.71732  0.56330    71  0.04723  0.05611 | 0.01365 0.02359 0.08828 |  9.792  9.701  3.449 |  616353  261.5 pass
+lev_dupcc         0.81303  0.80495  0.72871  0.71895  0.56330    71  0.04637  0.05286 | 0.01396 0.01799 0.08404 |  9.794  9.697  3.386 |  614508  260.2 pass
+lev_extend        0.81298  0.80353  0.72871  0.71895  0.56330    71  0.04761  0.05707 | 0.01395 0.02299 0.09018 |  9.881  9.852  3.448 |  616650  263.6 pass
+lev_trim          0.81285  0.80424  0.72871  0.71895  0.56223    72  0.04756  0.05640 | 0.01378 0.02215 0.08930 |  9.838  9.771  3.457 |  616396  261.6 pass
+c1                0.81325  0.80565  0.72871  0.71732  0.56330    71  0.04614  0.05184 | 0.01365 0.01857 0.08206 |  9.792  9.699  3.417 |  614208  260.6 pass
+c2                0.81316  0.80424  0.72871  0.71732  0.56330    71  0.04738  0.05610 | 0.01364 0.02357 0.08827 |  9.879  9.854  3.480 |  616353  263.7 pass
+c3                0.81294  0.80495  0.72871  0.71732  0.56330    71  0.04629  0.05182 | 0.01364 0.01853 0.08205 |  9.879  9.854  3.449 |  614208  263.7 pass
+c4                0.81294  0.80495  0.72871  0.71732  0.56223    72  0.04633  0.05183 | 0.01360 0.01840 0.08211 |  9.895  9.886  3.467 |  614213  262.5 pass
+c5                0.81276  0.80495  0.72871  0.71732  0.56223    72  0.04632  0.05192 | 0.01356 0.01844 0.08227 |  9.902  9.897  3.482 |  614218  262.5 pass
+c6                0.81268  0.80353  0.72871  0.71732  0.56330    71  0.04583  0.05059 | 0.01364 0.01749 0.08013 |  9.879  9.854  3.436 |  613371  262.2 FAIL:EFF
+c7                0.81298  0.80424  0.72871  0.71732  0.56330    71  0.04570  0.05060 | 0.01365 0.01753 0.08013 |  9.792  9.699  3.404 |  613371  259.5 pass
+c8                0.81276  0.80495  0.72871  0.71732  0.56223    72  0.04644  0.05178 | 0.01352 0.01830 0.08208 |  9.903  9.913  3.478 |  614217  262.6 pass
+c9                0.81290  0.80495  0.72871  0.71732  0.56330    71  0.04629  0.05182 | 0.01364 0.01853 0.08204 |  9.879  9.854  3.449 |  614207  263.1 pass
+c10               0.81290  0.80495  0.72871  0.71732  0.56223    72  0.04633  0.05182 | 0.01360 0.01840 0.08210 |  9.895  9.886  3.467 |  614212  262.7 pass
+c11               0.81294  0.80424  0.72871  0.71732  0.56223    72  0.04571  0.05046 | 0.01360 0.01731 0.07997 |  9.814  9.733  3.423 |  613293  259.6 pass
+c12               0.81285  0.80424  0.72713  0.71650  0.56116    72  0.04642  0.05182 | 0.01357 0.01838 0.08211 |  9.920  9.930  3.472 |  614213  262.8 FAIL:V1030,D15
+c4_noatt          0.81276  0.80424  0.72871  0.71895  0.56223    72  0.04661  0.05281 | 0.01389 0.01784 0.08403 |  9.897  9.884  3.434 |  614505  262.8 pass
+
+track counts (numerator / denominator):
+tag                        eff         v15       v510       v1030       d15      d510
+gate_fl           18529/22784   1138/1415   462/634     880/1224   525/932   71/285 
+lev_att           18534/22784   1139/1415   462/634     878/1224   525/932   71/285 
+lev_dupcc         18524/22784   1139/1415   462/634     880/1224   525/932   71/285 
+lev_extend        18523/22784   1137/1415   462/634     880/1224   525/932   71/285 
+lev_trim          18520/22784   1138/1415   462/634     880/1224   524/932   72/285 
+c1                18529/22784   1140/1415   462/634     878/1224   525/932   71/285 
+c2                18527/22784   1138/1415   462/634     878/1224   525/932   71/285 
+c3                18522/22784   1139/1415   462/634     878/1224   525/932   71/285 
+c4                18522/22784   1139/1415   462/634     878/1224   524/932   72/285 
+c5                18518/22784   1139/1415   462/634     878/1224   524/932   72/285 
+c6                18516/22784   1137/1415   462/634     878/1224   525/932   71/285 
+c7                18523/22784   1138/1415   462/634     878/1224   525/932   71/285 
+c8                18518/22784   1139/1415   462/634     878/1224   524/932   72/285 
+c9                18521/22784   1139/1415   462/634     878/1224   525/932   71/285 
+c10               18521/22784   1139/1415   462/634     878/1224   524/932   72/285 
+c11               18522/22784   1138/1415   462/634     878/1224   524/932   72/285 
+c12               18520/22784   1138/1415   461/634     877/1224   523/932   72/285 
+c4_noatt          18518/22784   1138/1415   462/634     880/1224   524/932   72/285 
+
+LEGEND / CONFIGS (all on ANCHOR+CTL+FLAGSHIP; r2 = retrained attach head binary):
+  c1         OVERRIDES: -a 6.875 -WE 0.20 -WZ 1.5 -FBC 0
+  c2         OVERRIDES: -a 6.875 -EX 1 -EXW 0.25 -EXR 2.0 -EXS 1
+  c3         OVERRIDES: -a 6.875 -WE 0.20 -WZ 1.5 -FBC 0 -EX 1 -EXW 0.25 -EXR 2.0 -EXS 1
+  c4         OVERRIDES: -a 6.875 -WE 0.20 -WZ 1.5 -FBC 0 -EX 1 -EXW 0.25 -EXR 2.0 -EXS 1 -L 3.0
+  c5         OVERRIDES: -a 6.875 -WE 0.20 -WZ 1.5 -FBC 0 -EX 1 -EXW 0.25 -EXR 2.0 -EXS 1 -L 3.0 -BT 4.5
+  c6         OVERRIDES: -a 6.875 -WE 0.20 -WZ 1.5 -FBC 0 -EX 1 -EXW 0.25 -EXR 2.0 -EXS 1 -FB 0.19
+  c7         OVERRIDES: -a 6.875 -WE 0.20 -WZ 1.5 -FBC 0 -FB 0.19
+  c8         OVERRIDES: -a 6.875 -WE 0.20 -WZ 1.5 -FBC 0 -EX 1 -EXW 0.25 -EXR 2.0 -EXS 1 -L 3.0 -TT 1.5
+  c9         OVERRIDES: -a 6.875 -WE 0.20 -WZ 1.5 -FBC 0 -EX 1 -EXW 0.25 -EXR 2.0 -EXS 1 -FB 0.22
+  c10        OVERRIDES: -a 6.875 -WE 0.20 -WZ 1.5 -FBC 0 -EX 1 -EXW 0.25 -EXR 2.0 -EXS 1 -L 3.0 -FB 0.22
+  c11        OVERRIDES: -a 6.875 -WE 0.20 -WZ 1.5 -FBC 0 -FB 0.19 -L 3.0
+  c12        OVERRIDES: -a 6.875 -WE 0.20 -WZ 1.5 -FBC 0 -EX 1 -EXW 0.25 -EXR 2.0 -EXS 1 -L 3.0 -EXR 3.5
+  c4_noatt   OVERRIDES: -WE 0.20 -WZ 1.5 -FBC 0 -EX 1 -EXW 0.25 -EXR 2.0 -EXS 1 -L 3.0
+
+------------------------------------------------------------------------------------------------
+14. HOW TO REPRODUCE EVERYTHING IN THIS RECORD
+------------------------------------------------------------------------------------------------
+  S = /mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone
+  cd $S/fanout5/final
+  bash fn_build.sh                      # both binaries; md5s 15a6844b... (g1) / 8daf3176... (r2)
+  BASE=defaults bash fn_run.sh gate_def                       # repro gate 1
+  bash fn_run.sh gate_fl                                      # repro gate 2 (g1 binary)
+  BIN=$PWD/bin/chainproto_r2 bash fn_run.sh FREEZE \
+      -a 6.875 -WE 0.20 -WZ 1.5 -FBC 0 -EX 1 -EXW 0.25 -EXR 2.0 -EXS 1 -L 3.0
+  python3 fn_tab.py gate_fl FREEZE            # floors + per-band dup + nhitOT + d510 COUNT + ms
+  python3 fn_dupwin.py gate_fl FREEZE         # dup vs |eta| in 0.25 bins + window aggregates
+  python3 fn_len.py   gate_fl FREEZE LST      # MIX-FREE length + REAL/MIX decomposition
+  python3 fn_mcnemar.py gate_fl FREEZE        # discordant-pair significance of every delta
+  python3 fn_extpurity.py c1 c3               # extension matching-invariance / break rate
+  BIN=$PWD/bin/chainproto_r2 bash fn_oos.sh freeze <same overrides>   # true-OOS 349 events
+  python3 fn_oostab.py                        # the OOS table in section 6
+
+FILES
+  Extend.cc / Extend.h                 new TU (chain extension), from ex_extend
+  Stages.h / K9K10.cc / main.cc        the merged lever code (patches/ holds the six source diffs)
+  attach_mlp_weights_g1.h / _r2.h      the two attach heads; fn_build.sh selects between them
+  FREEZE_RECORD.txt                    this document
+  fn_run.sh fn_oos.sh fn_build.sh      drivers
+  fn_tab.py fn_dupwin.py fn_len.py fn_mcnemar.py fn_extpurity.py fn_oostab.py    analysis
+  f_<tag>.{root,log,json,cmd}, f_<tag>_hists.root, f_agg_<tag>.txt   per-run artifacts (23 runs)
+  oos_freeze*.{root,log,json}          the OOS run and its 349-event filtered tree
+  curves.log                           lst_plot_performance driver log
+CURVES
+  $S/performance/m19_freeze_b42d8fD-PU200_chainp-PU200/mtv/var/
+    TC_base_0_0_eff_eta.png  eff_pt.png  eff_vxy.png  eff_dxy.png
+    TC_duplrate_eta.png (+ etacoarse, etazoom)   TC_fakerate_eta.png   TC_avgOTlen_eta.png
+  (ratio/ num/ den/ hold the LST-vs-ChainFinal ratio panels; 352 variables x 2 formats)

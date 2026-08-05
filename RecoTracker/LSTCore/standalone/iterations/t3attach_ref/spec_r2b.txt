@@ -1,0 +1,4 @@
+r_off -RT3 1 -CF 1 -CFC 1 -T3E 0
+a14_n2 -RT3 1 -CF 1 -CFC 1 -AT3 14 -RDT 1 -CC 1
+a16_n2 -RT3 1 -CF 1 -CFC 1 -AT3 16 -RDT 1 -CC 1
+a12_n1 -RT3 1 -CF 1 -CFC 1 -AT3 12 -RDT 1 -CC 1 -CCN 1

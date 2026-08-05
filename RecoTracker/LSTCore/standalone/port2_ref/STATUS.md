@@ -195,3 +195,20 @@ STRIP EXECUTED (single sweep, building now):
 Maintainer addendum 2 (recorded): after post-strip verification, run timing CPU 1-stream and GPU
 1-stream (-n 200 -v 1 -w 0 -s 1, PU200), SEQUENTIALLY; report per-stage tables; no LST-baseline
 comparison here.
+
+## M5 -- STRIP COMPLETE (3 commits, all pushed to fork)
+* c1d7f52ca7d PORT (OFF gate PASS 48335; ON 48341, ~116 pT3-class rows/evt)
+* 7dff05be2ee STRIP (-12572 lines, 49 files; post-strip ON output IDENTICAL to pre-strip ON:
+  nTC 48341, T5 5273 / pT3 2897 / pT5 18537 / pLS 20794 / T4 840)
+* bbed527249a MASTER SWITCH REMOVED (chain-only path; output identical again, no flag)
+The OFF no-op gate is retired (OFF path no longer exists).
+
+## M6 -- PHASE 3 PLAN (verification + plots + timing)
+(a) clean -mCG build; CUDA n25 vs CPU n25 count agreement (small drift acceptable, precedent).
+(b) physics: PU200RelVal FIRST-300 run (-s 32) -> hists -> compare_ab vs port2_ref/
+    rv_off_n300_hists.root (M0 LST baseline, same events) + lst_plot_performance --compare;
+    PU200RelVal ALL-1000 run -> compare_ab --proto mine --base synth_ref/r_F3W977_hists.root
+    (integrated vs prototype CHAINFINAL2; CAVEAT: 1000 vs 977 event sets, the 977 ntuple is
+    missing 23 events, so ~2% sample delta is expected on top of port fidelity).
+(c) timing: lst_cpu then lst_cuda, -i PU200 -n 200 -v 1 -w 0 -s 1, sequential; report the new
+    Hits/MD/LS/T3/Graph/pLS/Chain/TC/Reset table.

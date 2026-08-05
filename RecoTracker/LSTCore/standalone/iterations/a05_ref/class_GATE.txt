@@ -1,0 +1,5 @@
+GATE                     attachT3   rows/evt   135.41  fake 0.1387  dup 0.0142  uniqSim/evt    3.79  covSim/evt    3.86
+GATE                     attachT5   rows/evt   575.93  fake 0.0079  dup 0.0065  uniqSim/evt   25.07  covSim/evt   25.22
+GATE                     c4         rows/evt    29.42  fake 0.0517  dup 0.6125  uniqSim/evt    0.63  covSim/evt    4.45
+GATE                     carried8   rows/evt   860.77  fake 0.0452  dup 0.0838  uniqSim/evt   19.25  covSim/evt   19.54
+GATE                     chain      rows/evt   461.11  fake 0.1027  dup 0.0675  uniqSim/evt   26.09  covSim/evt   30.33

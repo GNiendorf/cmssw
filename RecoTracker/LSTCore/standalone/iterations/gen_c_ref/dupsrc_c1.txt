@@ -1,0 +1,7 @@
+WHAT ALREADY COVERS THE SIM OUR pT3-CLASS ROW MATCHES  (per evt, 300 evts, old r2 head)
+T                     rows                fake      dup_of_chainTC    dup_of_carriedOT   dup_of_carriedPLS    dup_of_ourselves              UNIQUE
+6.0                 1132.7                90.8               884.4                 0.0                 0.0                50.6               106.9
+7.0                  912.3                36.8               749.3                 0.0                 0.0                39.3                86.9
+8.0                  642.8                12.4               554.3                 0.0                 0.0                25.9                50.1
+9.0                  373.3                 3.5               338.1                 0.0                 0.0                12.8                19.0
+10.0                 159.7                 0.7               148.6                 0.0                 0.0                 4.5                 5.9

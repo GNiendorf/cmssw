@@ -1,0 +1,37 @@
+[a08_simdiff] band=dxy:10:30  events a=300 input=300 common=300
+
+selection pt>0.9 |eta|<4.5 + band -> nSim=423
+  LST matched   24  (0.05674)
+  A   matched   14  (0.03310)   net vs LST -10
+  B   matched   13  (0.03073)   net vs A   -1
+
+--- A vs LST ---   LOST=12  GAINED=2  net=-10
+  LOST  (LST found, A did not) -- LST's matched TC: N=12
+    TC type   : T4=9 (75%)  T5=3 (25%)
+    nhitOT    : 8:9  10:3
+    pt        : min=0.90 q25=0.95 med=1.12 q75=1.48 max=2.29
+    |eta|     : min=0.09 q25=0.25 med=0.34 q75=0.65 max=1.25
+    vxy       : min=16.17 q25=26.15 med=35.79 q75=38.24 max=52.34
+    |dxy|     : min=10.16 q25=13.03 med=14.27 q75=16.14 max=20.93
+    |pdgId|   : 2212:8  211:3  11:1
+    eta region: barrel<1.1=11 (92%)  trans1.1-1.7=1 (8%)
+  GAINED(A found, LST did not) -- A's matched TC: N=2
+    TC type   : T4=2 (100%)
+    nhitOT    : 8:2
+    pt        : min=1.07 q25=1.07 med=1.35 q75=1.35 max=1.35
+    |eta|     : min=0.34 q25=0.34 med=0.53 q75=0.53 max=0.53
+    vxy       : min=50.63 q25=50.63 med=50.64 q75=50.64 max=50.64
+    |dxy|     : min=10.38 q25=10.38 med=10.97 q75=10.97 max=10.97
+    |pdgId|   : 11:1  211:1
+    eta region: barrel<1.1=2 (100%)
+
+--- B vs A ---   LOST=1  GAINED=0  net=-1
+  B LOST (A found, B did not) -- A's TC: N=1
+    TC type   : T4=1 (100%)
+    pt        : min=1.07 q25=1.07 med=1.07 q75=1.07 max=1.07
+    |eta|     : min=0.53 q25=0.53 med=0.53 q75=0.53 max=0.53
+    vxy       : min=50.63 q25=50.63 med=50.63 q75=50.63 max=50.63
+    |dxy|     : min=10.97 q25=10.97 med=10.97 q75=10.97 max=10.97
+    |pdgId|   : 211:1
+    eta region: barrel<1.1=1 (100%)
+  B GAINED (B found, A did not) -- B's TC: none

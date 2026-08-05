@@ -1,0 +1,121 @@
+{
+ "feature_names": [
+  "cf_nNodes",
+  "cf_nLayers",
+  "cf_sumEdgeLogit",
+  "cf_minEdgeLogit",
+  "cf_meanEdgeLogit",
+  "cf_fullFitChi2PerHit",
+  "cf_rzLineChi2PerHit",
+  "cf_fitKappa",
+  "cf_dKappaFitVsMedianT3",
+  "cf_ptEst",
+  "cf_innermostLayer",
+  "cf_layerSpan",
+  "cf_nPS",
+  "cf_nBarrel",
+  "cf_maxJunctionDegProduct",
+  "cf_chargeConsistency",
+  "cf_dcaXY"
+ ],
+ "conditioning": [
+  {
+   "feature": "cf_fullFitChi2PerHit",
+   "op": "log10_1p"
+  },
+  {
+   "feature": "cf_rzLineChi2PerHit",
+   "op": "log10_1p"
+  },
+  {
+   "feature": "cf_maxJunctionDegProduct",
+   "op": "log10_1p"
+  },
+  {
+   "feature": "cf_fitKappa",
+   "op": "clip",
+   "lo": -1.0,
+   "hi": 1.0
+  },
+  {
+   "feature": "cf_dKappaFitVsMedianT3",
+   "op": "clip",
+   "lo": -2.0,
+   "hi": 2.0
+  },
+  {
+   "feature": "cf_dcaXY",
+   "op": "log10_1p"
+  },
+  {
+   "feature": "cf_dcaXY",
+   "op": "clip",
+   "lo": 0.0,
+   "hi": 1.4913617
+  }
+ ],
+ "mean": [
+  2.3956828117370605,
+  4.837653160095215,
+  5.349447727203369,
+  3.296312093734741,
+  3.51698899269104,
+  0.01478107925504446,
+  0.25637489557266235,
+  -0.0003034141263924539,
+  0.0009889148641377687,
+  1.5673277378082275,
+  1.9813019037246704,
+  5.322985649108887,
+  2.8541178703308105,
+  3.2200753688812256,
+  0.8657228350639343,
+  0.9521215558052063,
+  0.3129124939441681
+ ],
+ "std": [
+  0.6093674302101135,
+  0.7873640656471252,
+  4.3209991455078125,
+  2.022850513458252,
+  2.0576882362365723,
+  0.07795990258455276,
+  0.2589142620563507,
+  0.009453337639570236,
+  0.0033570483792573214,
+  4.66210412979126,
+  1.8280001878738403,
+  2.175814628601074,
+  1.1094220876693726,
+  1.8098571300506592,
+  0.44589927792549133,
+  0.20509064197540283,
+  0.3000239133834839
+ ],
+ "seed": 42,
+ "class_spec": {
+  "0": "fake",
+  "1": "prompt-true (simVxy<1)",
+  "2": "displaced-true (simVxy>=1)"
+ },
+ "displaced_weighting": {
+  "rule": "w=1 fakes; w=pos_weight prompt-true; w=pos_weight*mid for true vxy in [1,5); w=pos_weight*hi for true vxy>=5",
+  "pos_weight": 0.4006097775500166,
+  "displaced_weight_mid": 8.0,
+  "displaced_weight_hi": 16.0,
+  "n_mid_train": 5524,
+  "n_hi_train": 17136
+ },
+ "train_args": {
+  "epochs": 90,
+  "patience": 10,
+  "batch_size": 16384,
+  "lr": 0.001,
+  "hidden": 32,
+  "inputs": [
+   "chains17_300evt.root",
+   "chains17_1000evt.root"
+  ],
+  "pool_train_frac": 0.75
+ }
+}

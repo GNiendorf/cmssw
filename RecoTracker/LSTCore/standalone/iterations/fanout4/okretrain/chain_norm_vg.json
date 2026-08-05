@@ -1,0 +1,151 @@
+{
+ "feature_names": [
+  "cf_nNodes",
+  "cf_nLayers",
+  "cf_sumEdgeLogit",
+  "cf_minEdgeLogit",
+  "cf_meanEdgeLogit",
+  "cf_fullFitChi2PerHit",
+  "cf_rzLineChi2PerHit",
+  "cf_fitKappa",
+  "cf_dKappaFitVsMedianT3",
+  "cf_ptEst",
+  "cf_innermostLayer",
+  "cf_layerSpan",
+  "cf_nPS",
+  "cf_nBarrel",
+  "cf_maxJunctionDegProduct",
+  "cf_chargeConsistency",
+  "cf_maxXyResid",
+  "cf_maxRzResid",
+  "cf_stdEdgeLogit",
+  "cf_maxBridgeChi2",
+  "cf_minT3FakeScore",
+  "cf_maxT3FakeScore",
+  "cf_meanT3PromptScore",
+  "cf_minT3DisplacedScore",
+  "cf_meanT3DisplacedScore"
+ ],
+ "conditioning": [
+  {
+   "feature": "cf_fullFitChi2PerHit",
+   "op": "log10_1p"
+  },
+  {
+   "feature": "cf_rzLineChi2PerHit",
+   "op": "log10_1p"
+  },
+  {
+   "feature": "cf_maxJunctionDegProduct",
+   "op": "log10_1p"
+  },
+  {
+   "feature": "cf_fitKappa",
+   "op": "clip",
+   "lo": -1.0,
+   "hi": 1.0
+  },
+  {
+   "feature": "cf_dKappaFitVsMedianT3",
+   "op": "clip",
+   "lo": -2.0,
+   "hi": 2.0
+  },
+  {
+   "feature": "cf_maxXyResid",
+   "op": "log10_1p"
+  },
+  {
+   "feature": "cf_maxRzResid",
+   "op": "log10_1p"
+  },
+  {
+   "feature": "cf_maxBridgeChi2",
+   "op": "log10_1p"
+  }
+ ],
+ "mean": [
+  2.3947625160217285,
+  4.835810661315918,
+  5.317589282989502,
+  3.274083375930786,
+  3.4933838844299316,
+  0.014934347942471504,
+  0.25681257247924805,
+  -0.0002943306171800941,
+  0.0009994347346946597,
+  1.5839958190917969,
+  1.9895013570785522,
+  5.315072536468506,
+  2.851287841796875,
+  3.2195324897766113,
+  0.869525134563446,
+  0.9517179131507874,
+  0.060380637645721436,
+  0.3376481235027313,
+  0.20827792584896088,
+  0.01350308395922184,
+  0.06779682636260986,
+  0.2508555054664612,
+  0.4521321654319763,
+  0.2843335270881653,
+  0.3943433463573456
+ ],
+ "std": [
+  0.6095241904258728,
+  0.7867786288261414,
+  4.326241493225098,
+  2.0254642963409424,
+  2.0619938373565674,
+  0.07875335216522217,
+  0.25865858793258667,
+  0.0094530638307333,
+  0.003390408819541335,
+  5.748708724975586,
+  1.8348209857940674,
+  2.17482328414917,
+  1.1120517253875732,
+  1.8102025985717773,
+  0.4500592052936554,
+  0.20601795613765717,
+  0.08341586589813232,
+  0.1890954226255417,
+  0.42189061641693115,
+  0.07249166816473007,
+  0.13687343895435333,
+  0.30680781602859497,
+  0.26969167590141296,
+  0.17995861172676086,
+  0.18217019736766815
+ ],
+ "seed": 42,
+ "degenerate_columns": [],
+ "displaced_weighting": {
+  "rule": "tiered: true chains with 1<=simVxy<5 get weight x mid, simVxy>=5 get x hi; fakes and prompt true 1",
+  "displaced_weight_mid": 8.0,
+  "displaced_weight_hi": 16.0,
+  "n_weighted_mid_train": 1801,
+  "n_weighted_hi_train": 4634,
+  "survivor_weight": 32.0,
+  "n_survivor_train": 428721,
+  "survivor_only": false,
+  "target": "label"
+ },
+ "train_args": {
+  "epochs": 200,
+  "patience": 15,
+  "batch_size": 16384,
+  "lr": 0.001,
+  "feature_clip": true,
+  "displaced_weight": 4.0,
+  "displaced_weight_mid": 8.0,
+  "displaced_weight_hi": 16.0,
+  "select_metric": "surv_auc",
+  "hidden": 32,
+  "n_input": 0,
+  "inputs": [
+   "/mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/fanout4/okretrain/chains_m18.root"
+  ],
+  "pool_train_frac": 0.75
+ }
+}

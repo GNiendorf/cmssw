@@ -1,0 +1,21 @@
+N-SHARED-UNIT FRONTIER (M21 head, MD granularity, no -CCL, no -RPO)
+   dup 0.04569  eff 0.80293   N=1 @6
+   dup 0.04707  eff 0.80385   N=1 @7
+   dup 0.04762  eff 0.80394   N=1 @7.5
+   dup 0.04890  eff 0.80131   N=1 @8.5
+   dup 0.04948  eff 0.79960   N=1 @9
+   dup 0.07001  eff 0.80267   N=2 @9
+   dup 0.07268  eff 0.80750   N=2 @7.5
+
+LAYER-CONTAINMENT POINTS vs THAT FRONTIER AT THE SAME DUPLICATE RATE
+config                   eff       dup      fake eff-frontier
+CCL only @7.5        0.80508   0.06605   0.05068    +0.00301
+CCL+N=2 @7.5         0.80486   0.05232   0.05064    +0.00484
+CCL only @6          0.80416   0.06802   0.06126    +0.00179
+CCL only @5          0.80039   0.06740   0.07920    -0.00189
+CCL+N=1 @7.5         0.80394   0.04762   0.05002    +0.00000
+CCL+N=2 @7           0.80478   0.05215   0.05252    +0.00478
+CCL+N=2 @8           0.80403   0.05252   0.04945    +0.00398
+
+A positive last column means the layer rule delivers more efficiency at the same
+duplicate rate than any mixture of the N-shared-unit rules can.

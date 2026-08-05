@@ -1,0 +1,14 @@
+bk1_a10_t2 -BK 1 -BT 2
+bk1_a10_t3 -BK 1 -BT 3
+bk1_a10_t8 -BK 1 -BT 8
+bk1_a10_t12 -BK 1 -BT 12
+bk1_a2_t5 -BK 1 -BT 5 -B 2
+bk1_a5_t5 -BK 1 -BT 5 -B 5
+bk1_a20_t5 -BK 1 -BT 5 -B 20
+bk2_a80 -BK 2 -B 80
+bk3_a2 -BK 3 -B 2
+bk3_a10 -BK 3 -B 10
+bk7_t1 -BK 7 -BT 1.0
+bk8 -BK 8
+bk9_t0 -BK 9 -BT 0
+bk9_t5 -BK 9 -BT 5

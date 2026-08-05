@@ -1,0 +1,2 @@
+OVERRIDES: -M4 -1e9 -M4D -1e9 -M5 -1e9 -M6 -1e9 -MD -1e9 -MR -1e9 -MRI -1e9 -C25 -1e9 -C25D -1e9 -ZM4 0 -ZM4D 0 -F 2 -W 0 -FC -1 -PU 0 -a 999 -T4 -1e9 -T5 -1e9 -T6 -1e9 -U4 -1e9 -U5 -1e9 -U6 -1e9 -P
+STACK: -BK 1 -BT 5 -TR 1 -TT 0.8 -TA 1.0 -F 0.20 -MRI -0.5 -M4 4.0 -M4D -1.2 -PU 1 -C25 0.0 -ZM4D 1.2 -ZM4 -0.5 -TT 1.2 -a 8 -RPS 1 -RD 1

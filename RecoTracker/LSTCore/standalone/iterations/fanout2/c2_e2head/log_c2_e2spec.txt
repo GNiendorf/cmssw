@@ -1,0 +1,35 @@
+[     4.8s] seed=42 device=cuda
+[    14.0s] loaded cache /mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/fanout2/c2_e2head/edgecache.npz: (70366854, 40)
+[    14.0s] data ready: (70366854, 40)
+[    48.2s] COMBINED event split: frozen test = 60 primary events (unchanged); pool 589 events -> train 442 (181 primary + 261 extra) / val 147 (59 primary + 88 extra) -> 47507410/16639954/6219490 edges (train/val/test)
+[    82.3s] train: 13079838 true / 34427584 fake -> pos_weight=2.6321; etype counts train E1=32904526 E2=14602884
+[    92.9s] tensors ready
+[    95.6s] === variant e2spec: 2401 params, 14602884 train rows, pos_weight=1.1268, 90 epochs
+/cvmfs/cms.cern.ch/el9_amd64_gcc13/external/py3-torch-cuda/2.11.0-c59031ba99d1f4ae881ea12bb72253cc/lib/python3.12/site-packages/torch/nn/modules/linear.py:134: UserWarning: Requested unified CUBLASLT workspace size of 1048576 bytes exceeds CUBLAS workspace size of 131072 bytes. Please increase CUBLAS workspace size via CUBLAS_WORKSPACE_CONFIG or decrease requested CUBLASLT_WORKSPACE_SIZE. Otherwise CUBLASLT workspace size will be limited to the CUBLAS workspace size. (Triggered internally at /data/cmsbld/jenkins/workspace/build-any-ib/w/BUILD/el9_amd64_gcc13/external/py3-torch-cuda/2.11.0-c59031ba99d1f4ae881ea12bb72253cc/cmsdist-pip-src/py3-torch-cuda-2.11.0/aten/src/ATen/cuda/CublasHandlePool.cpp:228.)
+  return F.linear(input, self.weight, self.bias)
+[   101.0s]   e2spec epoch   1 loss=0.50426 val_auc=0.88823
+[   119.9s]   e2spec epoch   5 loss=0.39758 val_auc=0.90959
+[   145.1s]   e2spec epoch  10 loss=0.38743 val_auc=0.91429
+[   169.2s]   e2spec epoch  15 loss=0.38533 val_auc=0.91527
+[   193.3s]   e2spec epoch  20 loss=0.38293 val_auc=0.91633
+[   216.2s]   e2spec epoch  25 loss=0.38136 val_auc=0.91700
+[   238.7s]   e2spec epoch  30 loss=0.38036 val_auc=0.91743
+[   261.4s]   e2spec epoch  35 loss=0.37974 val_auc=0.91779
+[   283.9s]   e2spec epoch  40 loss=0.37919 val_auc=0.91813
+[   306.4s]   e2spec epoch  45 loss=0.37875 val_auc=0.91836
+[   328.7s]   e2spec epoch  50 loss=0.37843 val_auc=0.91845
+[   351.3s]   e2spec epoch  55 loss=0.37818 val_auc=0.91859
+[   373.7s]   e2spec epoch  60 loss=0.37795 val_auc=0.91869
+[   398.2s]   e2spec epoch  65 loss=0.37761 val_auc=0.91870
+[   423.0s]   e2spec epoch  70 loss=0.37727 val_auc=0.91891
+[   447.0s]   e2spec epoch  75 loss=0.37681 val_auc=0.91914
+[   470.0s]   e2spec epoch  80 loss=0.37653 val_auc=0.91930
+[   493.5s]   e2spec epoch  85 loss=0.37628 val_auc=0.91931
+[   517.0s]   e2spec epoch  90 loss=0.37615 val_auc=0.91925
+[   517.0s]   e2spec best val AUC 0.91949 @ epoch 88 (421s, 4.7s/epoch)
+
+=== e2spec on frozen TEST events ===
+             E2 sharedLS n_true=  911550 n_fake= 1003508 AUC=0.91954 rej@99%=0.26738 rej@99.5%=0.18638 rej@99.9%=0.06655
+     E2 sharedLS disp>=1 n_true=   30479 n_fake= 1003508 AUC=0.77653 rej@99%=0.17394 rej@99.5%=0.10828 rej@99.9%=0.02828
+     E2 sharedLS disp>=5 n_true=   21075 n_fake= 1003508 AUC=0.76947 rej@99%=0.15448 rej@99.5%=0.08037 rej@99.9%=0.02072
+[   521.6s] done

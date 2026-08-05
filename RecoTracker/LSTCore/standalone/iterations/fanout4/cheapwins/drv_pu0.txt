@@ -1,0 +1,4 @@
+[cw] pu0 : -PU 0
+  chain TCs       total=302736 mean=1009.1 (T5-class=294611 T4-class=8125; 0 accepted chains below 4 layers dropped by K10)
+  M16 delivery    type-7 in-place upgrades of accepted chains=0 mean=0.0 (of 302736 accepted chain TCs) | extra type-5 TCs=0 mean=0.0
+pu0            eff 0.8022 | vxy 0.8348/0.7859/0.7145/0.6961 | dxy 0.8287/0.5418/0.2491/0.0235 | fake 0.0544 dup 0.0671 | TC/evt 2060.4

@@ -1,0 +1,13 @@
+VOID -- this check was vacuous, do not quote it.
+
+Intent: ask whether our output contains a PARTIAL object for each displaced sim we lose
+(which would separate "built it but too short/too impure" from "never built it").
+
+Why it cannot answer that: tc_simIdxAll in the prototype output is written from
+matchedSimTrkIdxsAndFracs(..., kMatchFrac), which keeps ONLY fractions strictly above
+kMatchFrac = 0.75 (OutputWriter.cc:120-132). So membership in tc_simIdxAll is the SAME
+condition as sim_tcIdx >= 0, and the test necessarily returns zero partials for every
+lost sim. It did (12/12, 16/16, 38/38 "none"), which is arithmetic, not physics.
+
+Answering the real question needs a sub-threshold overlap list (or the chain-level kill
+counters), i.e. a source change. Not done this round.

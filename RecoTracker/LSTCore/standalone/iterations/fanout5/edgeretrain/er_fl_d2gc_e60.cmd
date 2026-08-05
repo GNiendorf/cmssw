@@ -1,0 +1,1 @@
+BIN: /mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/fanout5/edgeretrain/bin/chainproto_d2g ; STACK: -BK 1 -BT 5 -TR 1 -TT 0.8 -TA 1.0 -F 0.20 -MRI -0.5 -M4 4.0 -M4D -1.2 -PU 1 -C25 0.0 -ZM4D 1.2 -ZM4 -0.5 ; OVERRIDES: -TT 1.2 -a 8 -RPS 1 -RD 1 -M4 4.2429 -M4D -1.2301 -MRI -0.5939 -MR -1.9466 -C25 -0.0832 -C25D -1.9648 -e 0.60

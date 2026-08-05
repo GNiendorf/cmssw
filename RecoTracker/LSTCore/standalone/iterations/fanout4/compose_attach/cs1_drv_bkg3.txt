@@ -1,0 +1,2 @@
+[cs1] bkg3 : -BK 1 -BT 5 -ZR 1.55 -ZM4 -1.0 -ZM4D 99 -ZBA 20
+[cs1] DONE bkg3

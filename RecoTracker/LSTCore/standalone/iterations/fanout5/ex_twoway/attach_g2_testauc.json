@@ -1,0 +1,127 @@
+{
+ "model": "attach_mlp_g2.pt",
+ "per_type": true,
+ "best_epoch": 98,
+ "best_val_auc": 0.9988552582328509,
+ "test": {
+  "ALL (both target types)": {
+   "auc": 0.9988399464405893,
+   "n_true": 3142166,
+   "n_fake": 11902641,
+   "eff_fake": 341456448.0,
+   "eff_true": 3142166.0
+  },
+  "CHAIN targets (ttype 0)": {
+   "auc": 0.9939218763480313,
+   "n_true": 6827,
+   "n_fake": 1271875,
+   "eff_fake": 1271875.0,
+   "eff_true": 6827.0
+  },
+  "  tt0 prompt vxy<1": {
+   "auc": 0.9924153259141495,
+   "n_true": 272,
+   "n_fake": 1271875,
+   "eff_fake": 1271875.0,
+   "eff_true": 272.0
+  },
+  "  tt0 displaced vxy [1,5)": {
+   "auc": 0.9554494348894349,
+   "n_true": 12,
+   "n_fake": 1271875,
+   "eff_fake": 1271875.0,
+   "eff_true": 12.0
+  },
+  "  tt0 displaced vxy [5,10)": {
+   "auc": null,
+   "n_true": 0,
+   "n_fake": 1271875,
+   "eff_fake": 1271875.0,
+   "eff_true": 0.0
+  },
+  "  tt0 displaced vxy >=10": {
+   "auc": null,
+   "n_true": 0,
+   "n_fake": 1271875,
+   "eff_fake": 1271875.0,
+   "eff_true": 0.0
+  },
+  "  tt0 displaced vxy >=1 (all)": {
+   "auc": 0.9554494348894349,
+   "n_true": 12,
+   "n_fake": 1271875,
+   "eff_fake": 1271875.0,
+   "eff_true": 12.0
+  },
+  "  tt0 pileup-sim true": {
+   "auc": 0.9940550646432352,
+   "n_true": 6543,
+   "n_fake": 1271875,
+   "eff_fake": 1271875.0,
+   "eff_true": 6543.0
+  },
+  "BARE-T3 targets (ttype 1)": {
+   "auc": 0.998847930337897,
+   "n_true": 3135339,
+   "n_fake": 10630766,
+   "eff_fake": 340184512.0,
+   "eff_true": 3135339.0
+  },
+  "  tt1 prompt vxy<1": {
+   "auc": 0.9980367846669943,
+   "n_true": 153719,
+   "n_fake": 10630766,
+   "eff_fake": 340184512.0,
+   "eff_true": 153719.0
+  },
+  "  tt1 displaced vxy [1,5)": {
+   "auc": 0.9964667723054642,
+   "n_true": 6530,
+   "n_fake": 10630766,
+   "eff_fake": 340184512.0,
+   "eff_true": 6530.0
+  },
+  "  tt1 displaced vxy [5,10)": {
+   "auc": 0.9974834002511648,
+   "n_true": 637,
+   "n_fake": 10630766,
+   "eff_fake": 340184512.0,
+   "eff_true": 637.0
+  },
+  "  tt1 displaced vxy >=10": {
+   "auc": null,
+   "n_true": 0,
+   "n_fake": 10630766,
+   "eff_fake": 340184512.0,
+   "eff_true": 0.0
+  },
+  "  tt1 displaced vxy >=1 (all)": {
+   "auc": 0.9965571297774066,
+   "n_true": 7167,
+   "n_fake": 10630766,
+   "eff_fake": 340184512.0,
+   "eff_true": 7167.0
+  },
+  "  tt1 pileup-sim true": {
+   "auc": 0.9988953698735035,
+   "n_true": 2974453,
+   "n_fake": 10630766,
+   "eff_fake": 340184512.0,
+   "eff_true": 2974453.0
+  },
+  "chain nLayers=5": {
+   "auc": 0.9941731009766517,
+   "n_true": 3907,
+   "n_fake": 701823,
+   "eff_fake": 701823.0,
+   "eff_true": 3907.0
+  },
+  "chain nLayers>=6": {
+   "auc": 0.9936725704499536,
+   "n_true": 2920,
+   "n_fake": 570052,
+   "eff_fake": 570052.0,
+   "eff_true": 2920.0
+  }
+ }
+}

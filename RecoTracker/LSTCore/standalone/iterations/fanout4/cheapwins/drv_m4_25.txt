@@ -1,0 +1,4 @@
+[cw] m4_25 : -M4 2.5
+  chain TCs       total=303260 mean=1010.9 (T5-class=292337 T4-class=10923; 0 accepted chains below 4 layers dropped by K10)
+  M16 delivery    type-7 in-place upgrades of accepted chains=0 mean=0.0 (of 303260 accepted chain TCs) | extra type-5 TCs=0 mean=0.0
+m4_25          eff 0.8025 | vxy 0.8352/0.7873/0.7192/0.6961 | dxy 0.8292/0.5418/0.2491/0.0235 | fake 0.0536 dup 0.0680 | TC/evt 2062.2

@@ -1,0 +1,23 @@
+NOISE FLOOR of each displaced band. '1 track' = the rate step one reconstructed sim
+makes; sigma = binomial 1-sigma on OUR OWN rate (the floor below which a move is
+indistinguishable from statistics even before the LST side is counted).
+band              N300   1trk300    sig300 sig/trk      N977   1trk977    sig977 sig/trk
+vxy[1,5)          1368   0.00073   0.01092    14.9      4560   0.00022   0.00591    27.0
+vxy[5,10)          593   0.00169   0.01815    10.8      1990   0.00050   0.01005    20.0
+vxy[10,30)        1249   0.00080   0.01239    15.5      4098   0.00024   0.00705    28.9
+vxy[30,60)         410   0.00244   0.02284     9.4         -         -         -       -
+dxy[1,5)           897   0.00111   0.01624    14.6      3023   0.00033   0.00897    27.1
+dxy[5,10)          248   0.00403   0.02548     6.3       991   0.00101   0.01367    13.5
+dxy[10,30)         423   0.00236   0.00839     3.5      1555   0.00064   0.00443     6.9
+eff overall      22633   0.00004   0.00261    59.0     73782   0.00001   0.00145   106.8
+
+READ: sig/trk is how many TRACKS the 1-sigma statistical band is worth. A band whose
+measured move is fewer tracks than this is NOISE. On the frozen 300 the d1030 floor is
+~6 tracks and d510 ~10 tracks -- which is why both looked 'unmoved' all round; on the
+977 the d1030 floor is ~11 tracks against a measured -35, so it clears.
+
+NOTE ON WHICH SIGMA: the table column is the ONE-SIDED floor (our own rate only). The
+proto-vs-LST comparison needs the COMBINED sigma, which is larger because LST's rate in
+these bands is different: for d1030 it is 5.9 tracks at 300 evts and 11.3 tracks at 977,
+against measured deltas of -11 and -35 -> -1.85 and -3.11 sigma. For d510 it is 9.0
+tracks at 300 and 18.9 at 977, against -2 and +16 -> pure noise on both.

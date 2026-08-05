@@ -1,0 +1,18 @@
+chain TCs (pt>0.9): 258322
+
+SHARED-OT-HIT SPECTRUM of accepted chain pairs (pt>0.9 both)
+shared    DUP pairs   of which     COLLAT   of which  dup/tot   dup by band B/T/E
+hits     (same sim)   share MD (diff sim)   share MD         
+0                57          0          0          0    1.000   4/6/47
+1                52          0       4105          0    0.013   6/10/36
+2              1257       1213       7867       7817    0.138   200/333/724
+3               806        802        811        799    0.498   174/205/427
+4                21         21         20         20    0.512   0/0/21
+TOTAL          2193       2036      12803       8636
+
+min-nLayers of the dup pair, by shared-hit count (which chain a shorter-loses rule would drop)
+  shared=0 : 4:30 5:23 6:4
+  shared=1 : 4:13 5:35 6:4
+  shared=2 : 4:419 5:773 6:65
+  shared=3 : 4:7 5:738 6:60 7:1
+  shared=4 : 5:1 6:8 7:12

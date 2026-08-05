@@ -1,0 +1,2 @@
+[cs1] full_bt3 : -BK 1 -BT 5 -TR 1 -TT 0.8 -TA 1.0 -F 0.20 -MRI -0.5 -M4 4.0 -M4D -1.2 -PU 1 -C25 0.0 -ZR 1.55 -ZM4 -1.0 -ZM4D 99 -ZBA 20 -FCX 1 -FCE 1 -BT 3
+[cs1] DONE full_bt3

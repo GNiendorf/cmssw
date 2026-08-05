@@ -1,0 +1,115 @@
+Per-type A/B compare
+  proto: a04_ref/r_I_A6T7.root  (300 events)
+  base:  rebase_ref/rb_base300.root  (300 events)
+TC cuts: pt > 0.9, |eta| < 4.5. Sim acceptance: pt > 0.9, |eta| < 4.5, q != 0, |vz| < 30;
+  prompt adds vxy < 2.5; displaced rows use vxy bands with the vxy cut dropped.
+Sim denominators (proto | base): prompt vxy<2.5: 21741 | 21741  disp vxy[1,5): 1368 | 1368  disp vxy[5,30): 1842 | 1842
+
+slice                 metric                        proto         base        delta
+-----------------------------------------------------------------------------------
+pT5 (7)               nTC                          191256       211973       -20717
+                      nTC_per_event                 637.5        706.6        -69.1
+                      FR                           0.0095       0.0150      -0.0055
+                      DR                           0.0063       0.0099      -0.0036
+                      mean_nhitOT                  11.176       11.544       -0.368
+                      effN prompt vxy<2.5            8860        11841        -2981
+                      eff prompt vxy<2.5           0.4075       0.5446      -0.1371
+                      effN disp vxy[1,5)              260          532         -272
+                      eff disp vxy[1,5)            0.1901       0.3889      -0.1988
+                      effN disp vxy[5,30)              27           52          -25
+                      eff disp vxy[5,30)           0.0147       0.0282      -0.0136
+-----------------------------------------------------------------------------------
+pT3 (5)               nTC                           21786        31344        -9558
+                      nTC_per_event                  72.6        104.5        -31.9
+                      FR                           0.0760       0.0368      +0.0392
+                      DR                           0.0154       0.0286      -0.0132
+                      mean_nhitOT                   6.000        6.000       +0.000
+                      effN prompt vxy<2.5             749         1252         -503
+                      eff prompt vxy<2.5           0.0345       0.0576      -0.0231
+                      effN disp vxy[1,5)               18           97          -79
+                      eff disp vxy[1,5)            0.0132       0.0709      -0.0577
+                      effN disp vxy[5,30)               2           19          -17
+                      eff disp vxy[5,30)           0.0011       0.0103      -0.0092
+-----------------------------------------------------------------------------------
+pLS (8)               nTC                          188511       187399        +1112
+                      nTC_per_event                 628.4        624.7         +3.7
+                      FR                           0.0478       0.0483      -0.0005
+                      DR                           0.1101       0.0997      +0.0103
+                      mean_nhitOT                   0.000        0.000       +0.000
+                      effN prompt vxy<2.5            5013         4584         +429
+                      eff prompt vxy<2.5           0.2306       0.2108      +0.0197
+                      effN disp vxy[1,5)              169          132          +37
+                      eff disp vxy[1,5)            0.1235       0.0965      +0.0270
+                      effN disp vxy[5,30)               4            3           +1
+                      eff disp vxy[5,30)           0.0022       0.0016      +0.0005
+-----------------------------------------------------------------------------------
+T5 (4)                nTC                           67834        33577       +34257
+                      nTC_per_event                 226.1        111.9       +114.2
+                      FR                           0.1252       0.0664      +0.0588
+                      DR                           0.0736       0.0482      +0.0254
+                      mean_nhitOT                  10.887       11.244       -0.357
+                      effN prompt vxy<2.5            3624          609        +3015
+                      eff prompt vxy<2.5           0.1667       0.0280      +0.1387
+                      effN disp vxy[1,5)              617          287         +330
+                      eff disp vxy[1,5)            0.4510       0.2098      +0.2412
+                      effN disp vxy[5,30)            1277         1134         +143
+                      eff disp vxy[5,30)           0.6933       0.6156      +0.0776
+-----------------------------------------------------------------------------------
+T4 (9)                nTC                            7801         9459        -1658
+                      nTC_per_event                  26.0         31.5         -5.5
+                      FR                           0.3314       0.5908      -0.2594
+                      DR                           0.2389       0.1291      +0.1099
+                      mean_nhitOT                   8.000        8.000       +0.000
+                      effN prompt vxy<2.5              70           44          +26
+                      eff prompt vxy<2.5           0.0032       0.0020      +0.0012
+                      effN disp vxy[1,5)               15            8           +7
+                      eff disp vxy[1,5)            0.0110       0.0058      +0.0051
+                      effN disp vxy[5,30)              48           10          +38
+                      eff disp vxy[5,30)           0.0261       0.0054      +0.0206
+-----------------------------------------------------------------------------------
+chain-slice (4+9)     nTC                           75635        43036       +32599
+                      nTC_per_event                 252.1        143.5       +108.7
+                      FR                           0.1465       0.1816      -0.0352
+                      DR                           0.0907       0.0660      +0.0246
+                      mean_nhitOT                  10.589       10.531       +0.058
+                      effN prompt vxy<2.5            3694          653        +3041
+                      eff prompt vxy<2.5           0.1699       0.0300      +0.1399
+                      effN disp vxy[1,5)              632          295         +337
+                      eff disp vxy[1,5)            0.4620       0.2156      +0.2463
+                      effN disp vxy[5,30)            1325         1144         +181
+                      eff disp vxy[5,30)           0.7193       0.6211      +0.0983
+-----------------------------------------------------------------------------------
+pixel-slice (7+5+8)   nTC                          181318       430716      -249398
+                      nTC_per_event                 604.4       1435.7       -831.3
+                      FR                           0.0477       0.0311      +0.0166
+                      DR                           0.0927       0.0504      +0.0423
+                      mean_nhitOT                   0.000        6.118       -6.118
+                      effN prompt vxy<2.5            4486        17677       -13191
+                      eff prompt vxy<2.5           0.2063       0.8131      -0.6067
+                      effN disp vxy[1,5)              130          761         -631
+                      eff disp vxy[1,5)            0.0950       0.5563      -0.4613
+                      effN disp vxy[5,30)               3           74          -71
+                      eff disp vxy[5,30)           0.0016       0.0402      -0.0385
+-----------------------------------------------------------------------------------
+all                   nTC                          477188       473752        +3436
+                      nTC_per_event                1590.6       1579.2        +11.5
+                      FR                           0.0494       0.0448      +0.0046
+                      DR                           0.0611       0.0518      +0.0093
+                      mean_nhitOT                   6.432        6.519       -0.087
+                      effN prompt vxy<2.5           18316        18330          -14
+                      eff prompt vxy<2.5           0.8425       0.8431      -0.0006
+                      effN disp vxy[1,5)             1079         1056          +23
+                      eff disp vxy[1,5)            0.7887       0.7719      +0.0168
+                      effN disp vxy[5,30)            1358         1218         +140
+                      eff disp vxy[5,30)           0.7372       0.6612      +0.0760
+-----------------------------------------------------------------------------------
+
+Pixel-slice sanity check (types 7/5/8, no plot cuts, mode: subset):
+  rows: proto 260239, base 554850; events with count mismatch: 300
+  K8-suppressed rows : 294611 (kept rows are base rows minus the attached pLS's
+                       pT5/pLS rows); subsequence-embedding failures: 0
+  tc_isDuplicate     : 1012 pixel rows gained the dup flag, 139 lost it (LEGITIMATE:
+                       dup flags are recomputed over the merged pixel+chain TC set,
+                       so chain TCs sharing a sim with a pixel TC add dup flags;
+                       counts/kinematics/tc_isFake CANNOT legitimately change.)
+  verdict: OK -- kept pixel rows are an exact subset of base (K8 suppression; only dup flags moved)

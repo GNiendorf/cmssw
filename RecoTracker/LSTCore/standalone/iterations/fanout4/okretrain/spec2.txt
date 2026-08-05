@@ -1,0 +1,8 @@
+vc_b40_w035|chainproto_vc|-B 40 -W 0.35
+vc_b40_w040|chainproto_vc|-B 40 -W 0.40
+vc_b40_w045|chainproto_vc|-B 40 -W 0.45
+vc_b80_w050|chainproto_vc|-B 80
+vc_b160_w050|chainproto_vc|-B 160
+vf_b40_w050|chainproto_vf|-B 40
+ve_b40_w050|chainproto_ve|-B 40
+vf_b10_w050|chainproto_vf|-B 10

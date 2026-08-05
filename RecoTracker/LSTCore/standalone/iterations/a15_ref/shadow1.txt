@@ -1,0 +1,24 @@
+SHADOW OWNERSHIP SWEEP over 300 events (units = OT hit rows)
+  rule (victim classes / kill at >= K shared units)      dup    d(dup)     fake   d(fake)   TCdrop  simsLost
+  ALL OT classes aPT3,aPT5,chT4,chT5, K=1         0.05783  -0.00447  0.04561  -0.00990    11193      5832
+      dropped by class: {'aPT5': 1506, 'chT5': 9423, 'aPT3': 1289, 'chT4': 1573}
+  ALL OT classes aPT3,aPT5,chT4,chT5, K=2         0.05898  -0.00332  0.04802  -0.00750     6739      2402
+      dropped by class: {'chT5': 6621, 'aPT5': 461, 'chT4': 1115, 'aPT3': 102}
+  ALL OT classes aPT3,aPT5,chT4,chT5, K=3         0.06226  -0.00004  0.05541  -0.00010       75        14
+      dropped by class: {'chT5': 46, 'chT4': 28, 'aPT3': 16}
+  only aPT3, K=1                                  0.06163  -0.00067  0.05460  -0.00092     1081       572
+      dropped by class: {'aPT3': 1379}
+  only aPT3, K=2                                  0.06211  -0.00019  0.05544  -0.00007       98        11
+      dropped by class: {'aPT3': 112}
+  only aPT5, K=1                                  0.06233  +0.00003  0.05554  +0.00003     1354      1395
+      dropped by class: {'aPT5': 1506}
+  only aPT5, K=2                                  0.06227  -0.00002  0.05548  -0.00004      402       393
+      dropped by class: {'aPT5': 461}
+  only chT4, K=1                                  0.06203  -0.00027  0.05319  -0.00232     1405       136
+      dropped by class: {'chT4': 1636}
+  only chT4, K=2                                  0.06225  -0.00005  0.05372  -0.00180     1002        49
+      dropped by class: {'chT4': 1147}
+  only chT5, K=1                                  0.05869  -0.00361  0.04882  -0.00669     7505      3807
+      dropped by class: {'chT5': 9462}
+  only chT5, K=2                                  0.05925  -0.00305  0.04991  -0.00560     5275      1958
+      dropped by class: {'chT5': 6625}

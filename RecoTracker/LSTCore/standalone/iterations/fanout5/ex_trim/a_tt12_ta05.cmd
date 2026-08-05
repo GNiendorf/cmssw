@@ -1,0 +1,1 @@
+OVERRIDES: -TT 1.2 -TA 0.5

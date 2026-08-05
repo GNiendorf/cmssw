@@ -1,0 +1,283 @@
+A12 -- ATTACH RECALL. ALL 300-EVENT RESULTS (frozen subset).
+Runner: a12_ref/a12_run.sh. Base = the assembled baseline
+  -XC 3 -XCT 4 -T3E 1 -CC 1 -CCN 1 -CCR 2   (+ -XCD 2, proven inert)
+Only the listed override differs from that line in each row.
+
+A. FULL METRICS
+tag        override            eff    vxy01      v15     v510    v1030      d15     d510    d1030      dup     fake      nhB      nhT      nhE      nTC
+A_a80      -a 8.0          0.80922  0.84206  0.79532  0.73356  0.74219  0.61650  0.20161  0.03073  0.06700  0.05626  9.72775  9.87170  3.56345  620259
+FINBASE    (baseline)      0.80992  0.84282  0.79459  0.73356  0.74139  0.61650  0.20161  0.03073  0.06230  0.05551  9.80254  9.87906  3.55956  618793
+A_a60      -a 6.0          0.81032  0.84320  0.79459  0.73356  0.73899  0.61427  0.20161  0.03073  0.05909  0.05508  9.85636  9.88589  3.55888  617584
+A_a50      -a 5.0  *BEST*  0.81037  0.84325  0.79459  0.73187  0.73579  0.61204  0.20161  0.03073  0.05696  0.05515  9.89433  9.89183  3.55964  616319
+A_a40      -a 4.0          0.80944  0.84239  0.79094  0.71164  0.73018  0.60312  0.20161  0.03073  0.05547  0.05586  9.91699  9.90773  3.56502  614769
+A_a30      -a 3.0          0.80661  0.83940  0.78436  0.70489  0.71737  0.59420  0.20161  0.03073  0.04981  0.05747  9.99788  9.98597  3.58029  610630
+A_a20      -a 2.0          0.80069  0.83345  0.76827  0.68803  0.68215  0.55853  0.18548  0.03073  0.04600  0.06025 10.08094 10.07619  3.60569  605279
+LST                        0.80988  0.84296  0.77193  0.65430  0.66453  0.55407  0.20968  0.05674  0.05179  0.04476 10.14804 10.01546  3.56248  608190
+
+B. PER REGION
+tag           effB     effT     effE     dupB     dupT     dupE     fakB     fakT     fakE      nhB      nhT      nhE
+A_a80      0.92557  0.88060  0.74485  0.05773  0.03543  0.08148  0.06818  0.07129  0.04520  9.72775  9.87170  3.56345
+FINBASE    0.92660  0.88213  0.74496  0.04344  0.03431  0.08106  0.06680  0.06903  0.04525  9.80254  9.87906  3.55956
+A_a60      0.92751  0.88213  0.74507  0.03410  0.03357  0.08055  0.06590  0.06759  0.04536  9.85636  9.88589  3.55888
+A_a50      0.92762  0.88289  0.74474  0.02870  0.03294  0.07985  0.06542  0.06707  0.04587  9.89433  9.89183  3.55964
+A_a40      0.92637  0.88315  0.74352  0.02667  0.03195  0.07854  0.06605  0.06790  0.04659  9.91699  9.90773  3.56502
+A_a30      0.92250  0.88009  0.74152  0.01742  0.02288  0.07581  0.06820  0.07025  0.04770  9.99788  9.98597  3.58029
+A_a20      0.91522  0.87067  0.73787  0.01108  0.01739  0.07383  0.07223  0.07468  0.04931 10.08094 10.07619  3.60569
+LST        0.92557  0.88187  0.74596  0.00989  0.01264  0.08556  0.04249  0.04454  0.04603 10.14804 10.01546  3.56248
+
+C. MECHANISM COUNTERS (per event; accepted chain TCs = 311112 total = 1037.0/evt in EVERY row)
+-a          8    6.875      6        5        4        3        2     | LST
+attaches  366.3  575.9   705.1    785.0    822.4    846.6    872.0   | 803.5
+bare ch.   670.7  461.1   331.9    252.0    214.6    190.4    165.0  | 177.8
+XC chain-arm kills/evt:  6.875 -> 359.4 ; 6 -> 156.9 ; 5 -> 44.6 ; 4 -> 9.2 (12-evt probe)
+failed-attach sims/evt (T5chain+barePLS): 6.875 -> 17.70 ; 6 -> 15.02 ; 5 -> 13.04
+                        (T4chain+barePLS): 6.60 / 6.59 / 6.55  -- NEVER MOVES (k8 bids 5+ only)
+
+D. NO-OP GATE (tag GATE2, binary 9929870dfdfc18b120c2f632f4804c30, my flags at defaults)
+GATE2   0.80992 0.84282 0.79459 0.73356 0.74139 0.61650 0.20161 0.03073 0.06230 0.05551
+        9.80254 9.87906 3.55956 618793      == fin_ref/r_FINBASE on every metric and on nTC
+        exactly; 33/33 branches IDENTICAL under rebase_ref/cmp_branches.py.
+
+E. THE RECALL HISTOGRAM (300 evts, from GATE2). Chain bid targets/evt = 1000.5.
+   NO pair enumerated 0.0 | <-4 0.0 | [-4,0) 12.7 | [0,2) 89.5 | [2,4) 66.2 | [4,5) 41.3
+   | [5,6) 82.6 | [6,6.875) 131.0 | >=6.875 578.2 -> 575.9 attached, 1.4 lost to contention.
+
+F. MEASURED DEAD ENDS (do not re-measure)
+   -AC 1  (attach contention fallback)  : only 1.4 chain targets/evt are available; the
+          12-evt probe moved attaches 579.5 -> 579.7. Dead end.
+   -AC 2  (same for the bare-T3 stage)  : 2416 bid T3 targets/evt lose the contention, i.e.
+          one-seed-one-owner is the only thing bounding stage-B volume. Predicted harmful,
+          not run.
+   -D4 1.0 (chain-DCA attach gate)      : restores v510 exactly but costs dup +0.0164
+          (transition +0.0523) because a blocked chain's pairs never reach
+          plsBestChainLogit, so its seed keeps no evidence and survives. Wrong guard.
+   -RPT   (split the -RPS margin off -a): 12-evt probe, output TCs 2062.8 -> 2067.2. The
+          feared -a/-RPS coupling does not bite. Keep the flag, do not tune it.
+
+G. FULL METRIC DELTA, A_a50 (-a 5) MINUS THE ASSEMBLED BASELINE (300 evts)
+metric                      FINBASE      A_a50      delta
+dup_barrel                  0.04344    0.02870   -0.01474   <- the mechanism, in one line
+dup_transition              0.03431    0.03294   -0.00137
+dup_endcap                  0.08106    0.07985   -0.00121
+dup_overall_incut           0.06230    0.05696   -0.00534
+eff_barrel                  0.92660    0.92762   +0.00102
+eff_transition              0.88213    0.88289   +0.00076
+eff_endcap                  0.74496    0.74474   -0.00022
+eff_overall_incut           0.80992    0.81037   +0.00044
+eff_vxy_0_1                 0.84282    0.84325   +0.00043
+eff_vxy_1_5                 0.79459    0.79459   +0.00000
+eff_vxy_5_10                0.73356    0.73187   -0.00169   (denom 593 -> 1 track)
+eff_vxy_10_30               0.74139    0.73579   -0.00560   (denom 1249 -> 7 tracks)
+eff_dxy_1_5                 0.61650    0.61204   -0.00446   (denom 897 -> 4 tracks)
+eff_dxy_5_10                0.20161    0.20161   +0.00000
+eff_dxy_10_30               0.03073    0.03073   +0.00000
+fake_barrel                 0.06680    0.06542   -0.00139
+fake_transition             0.06903    0.06707   -0.00195
+fake_endcap                 0.04525    0.04587   +0.00062
+fake_overall_incut          0.05551    0.05515   -0.00036
+mean_nhitOT_barrel          9.80254    9.89433   +0.09179
+mean_nhitOT_transition      9.87906    9.89183   +0.01277
+mean_nhitOT_endcap          3.55956    3.55964   +0.00008
+n_tc                       618793     616319      -2474
+n_sim_denom                 62555      62555          0
+
+H. DELIVERY LEDGER, per event: assembled baseline -> -a 5
+  chain attaches (type-7 upgrades)          575.9 ->  785.0
+  pT3-class candidates before any dedup    1127.2 -> 1001.9
+  pT3-class pixel-side (-RD/-RDT) revoked   661.3 ->  707.4
+  pT3-class OT-side (-CC) revoked           330.5 ->  161.1
+  pT3-class DELIVERED                       135.4 ->  133.5
+  carried rows retired (-RT5/-RT3/-RPS)     988.7 ->  990.1
+  XC seeds retired TOTAL                   3235.2 -> 3112.7
+     of which pixel-anchored (LST verbatim) 2870.3 -> 3062.3   (+192.0)
+     of which the bare-chain arm (-XCT)      359.4 ->   44.6   (-314.8)
+  -ZP8 type-8 rows ADDED                     29.4 ->   24.4
+  output TCs                               2033.2 -> 2030.0
+
+THE ONE LINE THAT MATTERS STRUCTURALLY: the seed-retirement work MIGRATES from the arm we
+had to invent (dR window + attach logit at the tuned -XCT) to LST's VERBATIM shared-pixel-
+hit arm, because an attached chain now carries pixel hits and anchors the crossclean the way
+LST's pT5 does. And the output TC count barely moves (-3.2/evt), so the duplicate rate falls
+because pairs are MERGED into one longer track, not because rows are deleted.
+
+I. ARE THE NEWLY ATTACHED PAIRS ANY GOOD? (from the class decomposition, 300 evts)
+  seeded chain TCs        baseline 575.9 rows, 4.57 fake (0.79%), 3.72 dup
+  seeded chain TCs        -a 5     785.0 rows, 10.48 fake (1.34%), 4.48 dup
+  => the 209.1 NEWLY attached rows carry 5.91 extra fakes = 2.8% fake and 0.76 extra
+     duplicates = 0.4%, against a bare-chain population that is 8.7% fake.
+The pairs admitted in the [5, 6.875) logit band are PURER than the average bare chain they
+came from, and our seeded class stays cleaner than LST's own pT5 class (1.34% vs 1.55%
+fake). The shipped margin was not protecting purity; it was just leaving recall on the floor.
+
+J. BATCH 2 -- WHAT `-a 5` MAKES REDUNDANT, AND THE THREE OPERATING POINTS (300 evts)
+tag        override                eff    vxy01      v15     v510    v1030      d15      dup     fake      nhB      nhT      nhE      nTC
+FINBASE    (baseline)          0.80992  0.84282  0.79459  0.73356  0.74139  0.61650  0.06230  0.05551  9.80254  9.87906  3.55956  618793
+B_a55      -a 5.5              0.81037  0.84325  0.79459  0.73356  0.73739  0.61315  0.05783  0.05506  9.87865  9.88824  3.55956  616959
+A_a50      -a 5                0.81037  0.84325  0.79459  0.73187  0.73579  0.61204  0.05696  0.05515  9.89433  9.89183  3.55964  616319
+B_a5X1     -a 5 -XC 1          0.81138  0.84429  0.79532  0.73187  0.73579  0.61204  0.06706  0.05487  9.78268  9.77976  3.55221  620381
+B_a5X2     -a 5 -XCT 2         0.80564  0.83835  0.78947  0.73019  0.73579  0.61204  0.04819  0.05534  9.99969  9.99468  3.57386  612038
+B_a5T7     -a 5 -AT3 7         0.80935  0.84230  0.78874  0.73187  0.73579  0.61204  0.05880  0.04954  9.90380  9.91678  3.53143  611263
+LST                            0.80988  0.84296  0.77193  0.65430  0.66453  0.55407  0.05179  0.04476 10.14804 10.01546  3.56248  608190
+
+per region
+tag              effB     effT     effE     dupB     dupT     dupE     fakB     fakT     fakE
+FINBASE       0.92660  0.88213  0.74496  0.04344  0.03431  0.08106  0.06680  0.06903  0.04525
+B_a55         0.92773  0.88238  0.74485  0.03080  0.03313  0.08021  0.06551  0.06725  0.04561
+A_a50         0.92762  0.88289  0.74474  0.02870  0.03294  0.07985  0.06542  0.06707  0.04587
+B_a5X1        0.92899  0.88493  0.74507  0.04620  0.05232  0.08320  0.06473  0.06642  0.04584
+B_a5X2        0.92068  0.87525  0.74296  0.01441  0.01912  0.07548  0.06600  0.06767  0.04579
+B_a5T7        0.92409  0.88086  0.74651  0.02961  0.03406  0.08212  0.05693  0.05966  0.04248
+LST           0.92557  0.88187  0.74596  0.00989  0.01264  0.08556  0.04249  0.04454  0.04603
+
+READINGS
+* -a 5.5 is the DISPLACED-CONSERVATIVE TWIN of -a 5: identical overall efficiency, v510
+  BIT-IDENTICAL to the baseline, dup 0.05783 vs 0.05696. The displaced difference between
+  them is 1-2 tracks, i.e. noise; the duplicate difference is ~540 TCs, i.e. resolved. So
+  -a 5 is the pick and -a 5.5 is there for anyone who wants v510 untouched on principle.
+* -XC 1 at -a 5 is NOT inert (unlike at -a 4): it costs 0.0101 of duplicate rate. Keep the
+  ported bare-chain arm at -a 5. It does give the highest efficiency measured all round.
+* -XCT 2 at -a 5 reaches dup 0.04819, BELOW LST's 0.05179, but at -0.0047 of efficiency.
+  The duplicate axis is reachable; efficiency is what it costs.
+* -AT3 7 at -a 5 is the fake-leaning point and it DOMINATES the Baseline's own fake-leaning
+  alternative: same fake (0.04954 vs 0.04952), dup 0.05880 vs 0.07259, eff -0.0006. It is
+  also the only configuration measured this round with ENDCAP EFFICIENCY ABOVE LST
+  (0.74651 vs 0.74596) and endcap fake well below (0.04248 vs 0.04603).
+
+K. THE COMPLETE MARGIN FRONTIER (batch 1 + batch 2 refinement, 300 evts)
+-a         eff    vxy01      v15     v510    v1030      d15      dup     fake      nhB      nTC
+8.000  0.80922  0.84206  0.79532  0.73356  0.74219  0.61650  0.06700  0.05626  9.72775  620259
+6.875  0.80992  0.84282  0.79459  0.73356  0.74139  0.61650  0.06230  0.05551  9.80254  618793  shipped
+6.000  0.81032  0.84320  0.79459  0.73356  0.73899  0.61427  0.05909  0.05508  9.85636  617584
+5.500  0.81037  0.84325  0.79459  0.73356  0.73739  0.61315  0.05783  0.05506  9.87865  616959  PICK
+5.000  0.81037  0.84325  0.79459  0.73187  0.73579  0.61204  0.05696  0.05515  9.89433  616319
+4.500  0.81014  0.84310  0.79313  0.72513  0.73419  0.60758  0.05622  0.05538  9.90630  615617
+4.000  0.80944  0.84239  0.79094  0.71164  0.73018  0.60312  0.05547  0.05586  9.91699  614769
+3.000  0.80661  0.83940  0.78436  0.70489  0.71737  0.59420  0.04981  0.05747  9.99788  610630
+2.000  0.80069  0.83345  0.76827  0.68803  0.68215  0.55853  0.04600  0.06025 10.08094  605279
+LST    0.80988  0.84296  0.77193  0.65430  0.66453  0.55407  0.05179  0.04476 10.14804  608190
+Efficiency plateaus at 0.81037 over -a 5.0-5.5; v510 is BIT-IDENTICAL to the shipped point
+down to 5.5; fake bottoms at 5.5; barrel track length rises monotonically as -a falls.
+
+====================================================================================================
+L. BATCH 3 (300 evts) -- and the structural finding of the round
+====================================================================================================
+tag                     eff    vxy01      v15     v510    v1030      d15     d510    d1030      dup     fake      nhB      nhT      nhE      nTC
+A_a60               0.81032  0.84320  0.79459  0.73356  0.73899  0.61427  0.20161  0.03073  0.05909  0.05508  9.85636  9.88589  3.55888   617584
+A_a50               0.81037  0.84325  0.79459  0.73187  0.73579  0.61204  0.20161  0.03073  0.05696  0.05515  9.89433  9.89183  3.55964   616319
+C_aT65              0.80997  0.84291  0.79094  0.73187  0.73579  0.61204  0.20161  0.03073  0.05786  0.05154  9.90721  9.90749  3.54536   613575
+B_a5T7              0.80935  0.84230  0.78874  0.73187  0.73579  0.61204  0.20161  0.03073  0.05880  0.04954  9.90380  9.91678  3.53143   611263
+C_aX5               0.81138  0.84429  0.79532  0.73187  0.73579  0.61204  0.20161  0.03073  0.06706  0.05487  9.78268  9.77976  3.55221   620381
+B_a5X1              0.81138  0.84429  0.79532  0.73187  0.73579  0.61204  0.20161  0.03073  0.06706  0.05487  9.78268  9.77976  3.55221   620381
+C_a6X1              0.81240  0.84534  0.79605  0.73356  0.73899  0.61427  0.20161  0.03073  0.09804  0.05404  9.43965  9.50140  3.53497   632510
+C_aXC0              0.81182  0.84477  0.79532  0.73187  0.73579  0.61204  0.20161  0.03073  0.06997  0.05634  9.77204  9.76017  3.53288   622604
+GATE2               0.80992  0.84282  0.79459  0.73356  0.74139  0.61650  0.20161  0.03073  0.06230  0.05551  9.80254  9.87906  3.55956   618793
+LST(base)           0.80988  0.84296  0.77193  0.65430  0.66453  0.55407  0.20968  0.05674  0.05179  0.04476 10.14804 10.01546  3.56248   608190
+
+tag                    effB     effT     effE     dupB     dupT     dupE     fakB     fakT     fakE      nhB      nhT      nhE
+A_a60               0.92751  0.88213  0.74507  0.03410  0.03357  0.08055  0.06590  0.06759  0.04536  9.85636  9.88589  3.55888
+A_a50               0.92762  0.88289  0.74474  0.02870  0.03294  0.07985  0.06542  0.06707  0.04587  9.89433  9.89183  3.55964
+C_aT65              0.92637  0.88213  0.74529  0.02915  0.03353  0.08093  0.05988  0.06221  0.04375  9.90721  9.90749  3.54536
+B_a5T7              0.92409  0.88086  0.74651  0.02961  0.03406  0.08212  0.05693  0.05966  0.04248  9.90380  9.91678  3.53143
+C_aX5               0.92899  0.88493  0.74507  0.04620  0.05232  0.08320  0.06473  0.06642  0.04584  9.78268  9.77976  3.55221
+B_a5X1              0.92899  0.88493  0.74507  0.04620  0.05232  0.08320  0.06473  0.06642  0.04584  9.78268  9.77976  3.55221
+C_a6X1              0.93047  0.88518  0.74607  0.10581  0.10240  0.09223  0.06336  0.06525  0.04522  9.43965  9.50140  3.53497
+C_aXC0              0.92910  0.88518  0.74596  0.04631  0.05295  0.08828  0.06559  0.06772  0.04775  9.77204  9.76017  3.53288
+GATE2               0.92660  0.88213  0.74496  0.04344  0.03431  0.08106  0.06680  0.06903  0.04525  9.80254  9.87906  3.55956
+LST(base)           0.92557  0.88187  0.74596  0.00989  0.01264  0.08556  0.04249  0.04454  0.04603 10.14804 10.01546  3.56248
+
+READINGS -- BATCH 3
+
+L1. THE BAND. `C_aX5` (-a 5 -XCT 5) came out BIT-IDENTICAL to `B_a5X1` (-a 5 -XC 1, the
+    bare-chain arm switched OFF): all 14 headline metrics to 5 decimals, all 12 per-region
+    metrics, and nTC exactly (620381 = 620381). That is not a coincidence, it is
+    structural, and it reframes the round's tuned constant:
+
+      the pre-existing -RPS predicate (main.cc:3442) already retires EVERY seed whose best
+      chain logit is >= -a, unconditionally. The ported CrossCleanpLS bare-chain arm
+      retires a seed whose best chain logit is >= -XCT *and* which sits within dR^2 < 0.02
+      of a bare chain TC. So the arm is a strict subset of -RPS above -a, and the ONLY
+      band in which it can ever act is  [ -XCT , -a ).
+
+    In one sentence, the assembled algorithm's seed policy is:
+      logit >= -a           MERGE the seed into the chain (one longer track)
+      -XCT <= logit < -a    DELETE the seed (two rows -> one row)
+      logit <  -XCT         KEEP the seed as a bare type-8 row
+    The round tuned the DELETE band (-XCT, with -a pinned at its stale 6.875). This angle
+    moves the MERGE/DELETE boundary instead, and merging strictly dominates deleting: it
+    keeps the efficiency, removes the duplicate, and makes the track LONGER.
+
+L2. THE DELETE BAND IS WORTH LESS AND LESS AS THE MERGE BAND GROWS. Ablation `-XC 0` at
+    the same margin:
+      assembled baseline (-a 6.875):  -XC 3 0.06230  ->  -XC 0 0.16098   (worth 0.0987)
+      -a 5                         :  -XC 3 0.05696  ->  -XC 0 0.06997   (worth 0.0130)
+    The ported crossclean does 7.6x LESS work at -a 5, because the seeds it used to delete
+    are now consumed by an attach. It is still load-bearing (0.0130 is not nothing, and
+    `C_a6X1` shows that dropping it at -a 6 costs 0.039 of duplicate rate) -- but the
+    invented, non-verbatim half of the port has been demoted from the main mechanism to a
+    residual cleanup.
+
+L3. AND AT -a 4 THE BAND CLOSES COMPLETELY. -XCT's shipped-round value is 4, so at -a 4
+    the delete band [4, 4) is empty and the whole non-verbatim arm AND its one tuned
+    constant should be deletable. Measured bit-identical at 12 events (M7); `D_a4X1` in
+    batch 4 checks it on the frozen 300. If it holds, the SIMPLEST configuration on the
+    table is  `-XC 1 -a 4`  = LST's verbatim pixel-anchored crossclean arms only, ZERO
+    invented criteria, ZERO tuned constants, at 0.80944 / 0.05547 / 0.05586 -- better
+    duplicate rate than -a 5 and 0.0009 less efficiency, but v510 0.71164 (-0.022, 13
+    tracks of 593) is a real displaced cost and that is what makes -a 5 the pick instead.
+
+L4. THE FAKE AXIS AT THE NEW MARGIN. -AT3 is still the only knob that moves fake, and it
+    is CHEAPER here than it was at the shipped margin:
+      -a 5 -AT3 6.0  0.81037 / 0.05696 / 0.05515      <- the pick
+      -a 5 -AT3 6.5  0.80997 / 0.05786 / 0.05154      <- balanced: BOTH gaps ~halved
+      -a 5 -AT3 7.0  0.80935 / 0.05880 / 0.04954      <- fake-leaning
+      LST           0.80988 / 0.05179 / 0.04476
+    `C_aT65` is the most balanced configuration measured anywhere this round: efficiency
+    at LST parity (+0.00009), duplicate gap +0.0061 and fake gap +0.0068 where the
+    assembled baseline sits at +0.0105 and +0.0108. It costs a SECOND moved constant.
+    Note also that the Baseline's own fake-leaning alternative (-AT3 7 -XCT 4.75:
+    0.80992 / 0.07259 / 0.04952) is dominated outright by `B_a5T7` (0.80935 / 0.05880 /
+    0.04954): same fake, 0.0138 less duplicate rate, 0.0006 less efficiency.
+
+L5. THE EFFICIENCY CEILING OF THE ANGLE. `C_a6X1` (-a 6 with the delete band removed) is
+    0.81240 -- the highest efficiency measured by this agent all round, +0.0025 over LST,
+    with barrel efficiency 0.93047 vs LST's 0.92557. It is not offered as a configuration
+    (dup 0.09804) but it bounds what the merge/delete trade is buying and selling.
+
+M. OUTPUT DECOMPOSITION AT THE BALANCED POINT (a12_ref/decomp.py on r_C_aT65.root,
+   -a 5 -AT3 6.5, 300 evts, per event) -- compare with the assembled baseline in
+   decomp_table.txt and with LST.
+```
+class                  nTC     fake      dup   |  LST nTC  LST fake  LST dup
+bare chain (4+9)     252.0    42.06    25.69   |    177.8     31.88    10.85
+seeded  (7)          785.0    10.48     4.46   |    803.5     12.46     7.95
+pT3-class (5)        117.3    10.40     1.30   |    151.5      5.28     3.60
+bare pLS (8)         890.9    40.29    86.14   |    894.6     41.03    79.60
+TOTAL               2045.3   103.23   117.58   |   2027.3     90.64   102.02
+```
+Against the assembled baseline (decomp_table.txt: total 2062.6 / 111.15 / 126.90) the
+balanced point removes 9.3 duplicate TCs and 7.9 fake TCs per event while the total row
+count moves by 17. The seeded class is now within 2.4% of LST's count and is CLEANER than
+LST's own pT5 class on both axes (1.34% fake vs 1.55%, 0.57% dup vs 0.99%). What is left
+is (i) 252.0 bare chain rows against LST's 177.8, carrying 25.7 duplicates -- the
+remaining failed attaches, half of which are FOUR-layer chains that the attach head is
+hardcoded never to bid on -- and (ii) the pT3-class delivery's 8.9% fake rate against
+LST's 3.5%, which -AT3 buys down but does not fix.
+
+N. PER-SIM CO-OCCURRENCE AT THE BALANCED POINT (a12_ref/cooc.py on r_C_aT65.root, per evt)
+```
+profile                    baseline (-a 6.875)   -a 5 -AT3 6.5
+barePLS + barePLS                  32.26              32.28    endcap seed self-dup; we are
+                                                               already better than LST here
+T5chain + barePLS                  17.70              13.34    FAILED ATTACH -- the target
+T4chain + barePLS                   6.60               7.00    four-layer chains: the head
+                                                               is hardcoded never to bid
+T5chain + seeded                    2.24               2.97    the price of merging
+T5chain + T5chain                   1.28               0.51
+everything else                    < 1                < 0.7
+```
+The mechanism does exactly what the angle predicted and nothing else: the five-layer
+failed-attach population falls 25%, the endcap seed-vs-seed population (where we already
+beat LST) is untouched to 0.02/evt, and the four-layer population does not move at all
+because `k8` bids only `nLayers >= 5`. That last line is 7.0 sims/evt = 14 duplicate TCs
+left on the table by a hardcoded SCOPE, not by any threshold -- the single best-quantified
+follow-up this angle produces.

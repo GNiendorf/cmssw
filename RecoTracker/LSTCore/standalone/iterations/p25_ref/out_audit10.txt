@@ -1,0 +1,72 @@
+**** Following environment variables are going to be unset.
+      X86_64_V3_PATH
+      X86_64_V3_PYTHON3PATH
+      INTEL_LICENSE_FILE
+
+[audit] cpu, 10 events
+[audit] cuda, 10 events
+
+############ weld tie uniqueness census (CPU) ############
+Weld tie-break uniqueness census.
+A weld argmax is run-independent iff the packed key is unique inside every node's
+incident-edge list. The key's tie word is sid(inner) ^ sid(outer), so the requirement
+is: no two out-neighbours of a node share a stableId, and no two in-neighbours do.
+
+ evt    nodes  sidDupNodes     edges  outNbrColl  inNbrColl
+   0    35420            0     74597           0          0
+   1    37151            0     86223           0          0
+   2    38604            0     88289           0          0
+   3    44751            0    106450           0          0
+   4    25288            0     50090           0          0
+   5    42741            2     91522           0          0
+   6    36915            1     85470           0          0
+   7    49804            0    101579           0          0
+   8    52410            2    124740           0          0
+   9    38640            0     98527           0          0
+
+TOTAL nodes=401724 aliasing-stableIds=5 edges=907487 outNbrCollisions=0 inNbrCollisions=0
+VERDICT: weld key provably unique on this sample
+
+############ weld tie uniqueness census (GPU) ############
+Weld tie-break uniqueness census.
+A weld argmax is run-independent iff the packed key is unique inside every node's
+incident-edge list. The key's tie word is sid(inner) ^ sid(outer), so the requirement
+is: no two out-neighbours of a node share a stableId, and no two in-neighbours do.
+
+ evt    nodes  sidDupNodes     edges  outNbrColl  inNbrColl
+   0    35419            0     74597           0          0
+   1    37157            0     86243           0          0
+   2    38608            0     88312           0          0
+   3    44749            0    106449           0          0
+   4    25287            0     50088           0          0
+   5    42741            2     91528           0          0
+   6    36929            1     85539           0          0
+   7    49805            0    101589           0          0
+   8    52418            2    124729           0          0
+   9    38637            0     98486           0          0
+
+TOTAL nodes=401750 aliasing-stableIds=5 edges=907560 outNbrCollisions=0 inNbrCollisions=0
+VERDICT: weld key provably unique on this sample
+
+############ CPU-vs-GPU chain attribution ############
+CPU-vs-GPU chain-difference attribution.
+A chain is identified by its POST-TRIM MD hit-pair set (stable). Each chain present on
+one backend only is then classified by whether every one of its PRE-trim member nodes
+(identified by the node's six hit rows) also exists in the other backend's node set.
+
+ evt         nT3 c/g  nodesOnlyC  nodesOnlyG    chains c/g  common  onlyC  onlyG  C:upstream  C:chainside  G:upstream  G:chainside
+   0   35420/35419             1           0   4248/4248      4248      0      0           0            0           0            0
+   1   37151/37157             4          10   4281/4281      4276      5      5           0            5           0            5
+   2   38604/38608             5           9   4223/4226      4223      0      3           0            0           3            0
+   3   44751/44749            17          15   4746/4744      4739      7      5           3            4           2            3
+   4   25288/25287             2           1   3323/3323      3323      0      0           0            0           0            0
+   5   42741/42741             5           5   4696/4699      4693      3      6           0            3           3            3
+   6   36915/36929             2          16   4043/4045      4038      5      7           0            5           5            2
+   7   49804/49805             5           6   5251/5249      5244      7      5           2            5           3            2
+   8   52410/52418             3          11   5381/5381      5380      1      1           0            1           1            0
+   9   38640/38637             5           2   4578/4577      4577      1      0           1            0           0            0
+
+TOTAL chains CPU=44770 common=44741 (99.9352%)
+  nodes present on CPU only=49   on GPU only=75
+  CPU-only chains 29: upstream-attributed 6, CHAIN-SIDE RESIDUAL 23
+  GPU-only chains 32: upstream-attributed 17, CHAIN-SIDE RESIDUAL 15

@@ -1,0 +1,18 @@
+977 evts -- vxy TAIL (histogram overflow region, exact eff selection)
+band              proto      LST    denom   dTracks     drate  n_sigma
+vxy[30,40)  0.46988  0.41807      830       +43  +0.05181    +2.13
+vxy[40,50)  0.29114  0.11392      158       +28  +0.17722    +4.02
+vxy[50,60)  0.10413  0.04847      557       +31  +0.05566    +3.52
+vxy[60,80)  0.00000  0.00000      332        +0  +0.00000    +0.00
+vxy[80,inf)  0.00000  0.00000     3844        +0  +0.00000    +0.00
+vxy[30,60)   0.31974  0.25372     1545      +102  +0.06602    +4.07  <- the reconstructable tail
+
+977 evts -- dxy[10,30) LOSSES, exact selection: LOST=43 GAINED=8 net=-35
+  LST matched-TC type: T4=36 T5=7
+  LST matched nhitOT : 8:36 10:7
+  eta region         : barrel=42 trans=1
+  |pdgId|            : 2212:19 211:16 11:7 321:1
+  pt   : min=0.90 q25=1.01 med=1.08 q75=1.26 max=2.29
+  |eta|: min=0.02 q25=0.20 med=0.30 q75=0.56 max=1.25
+  vxy  : min=16.17 q25=25.48 med=35.79 q75=49.91 max=52.87
+  |dxy|: min=10.16 q25=12.22 med=14.27 q75=16.57 max=24.55

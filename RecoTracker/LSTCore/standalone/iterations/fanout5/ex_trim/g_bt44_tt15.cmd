@@ -1,0 +1,1 @@
+OVERRIDES: -L 3.0 -BT 4.4 -TT 1.5

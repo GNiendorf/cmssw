@@ -1,0 +1,10 @@
+bk1_a10_t0 -BK 1 -BT 0
+bk1_a10_t5 -BK 1 -BT 5
+bk1_a40_t5 -BK 1 -BT 5 -B 40
+bk2_a10 -BK 2
+bk2_a40 -BK 2 -B 40
+bk3_a1 -BK 3 -B 1
+bk3_a5 -BK 3 -B 5
+bk4 -BK 4
+bk5_a10_t5 -BK 5 -BT 5
+bk6 -BK 6

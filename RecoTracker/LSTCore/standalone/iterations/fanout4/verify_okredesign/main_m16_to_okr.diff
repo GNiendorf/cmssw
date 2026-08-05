@@ -1,0 +1,237 @@
+--- fanout3/m16/main.cc	2026-08-02 08:39:27.388115842 -0400
++++ fanout4/okredesign/main.cc	2026-08-02 10:00:33.675790164 -0400
+@@ -521,6 +521,37 @@
+                                   // chains.score - alpha * max(0, -gateLogit): chains the
+                                   // chain gate calls fake-suspect claim LATER, thresholds
+                                   // untouched (no cross-scale inversion). 0 = legacy order.
++  // OKR (order-key redesign). -B alone builds the K9 ordering penalty from the OLD
++  // 2-class chain gate (chain_mlp_weights.h), which was trained on a ~6x smaller
++  // claim-reaching population than the one authentic-replacement mode now feeds it.
++  // -BK selects the penalty SOURCE, -BT its hinge point. Both leave every ACCEPTANCE
++  // threshold on chains.score (the M9 cross-scale-inversion rule) and -BK 0 / -BT 0 is
++  // the bit-exact legacy key.
++  //   0 = 2-class gate logit (legacy) : pen = max(0, BT - gateLogit)
++  //   1 = 3-class mX margin           : pen = max(0, BT - mX), mX = max(zP,zD) - zF
++  //   2 = 3-class softmax fake prob   : pen = pFake in [0,1] (BT ignored)
++  //   3 = 3-class mX, unhinged        : pen = BT - mX  (key = score + alpha*mX + const)
++  //   4 = 3-class mX only             : key = mX; chains.score dropped from the ORDER
++  //   5 = 3-class mX hinge / nLayers  : pen = max(0, BT - mX) / nLayers
++  //   6 = nLayers-major               : rank-exact lexicographic (nLayers desc, then the
++  //                                     -BK 0 key); alpha still shapes the inner key
++  //   7 = matchFrac regressor         : pen = max(0, BT - predFrac) on the [0,1] scale
++  //   8 = matchFrac only              : key = predFrac; chains.score dropped from the ORDER
++  //   9 = matchFrac, logit scale      : pen = max(0, BT - predFracLogit)
++  //  10 = SECONDARY 3-class head mX   : pen = max(0, BT - mXb); ranking network swapped,
++  //                                     gate (and every kill threshold) left resident
++  //  11 = BANDED composite            : coarse quality classes from the 3-class mX (band
++  //                                     width BT), the LEGACY score ordering inside each
++  //                                     band. Rank-exact. The point: mode 1 at a large
++  //                                     hinge is quality-major and buys efficiency but
++  //                                     costs duplicates, because it also discards the
++  //                                     score's length preference -- which is exactly
++  //                                     what keeps a short duplicate behind the long
++  //                                     chain it shadows. Banding keeps both.
++  // Modes 1..5 need -G 6 (the 3-class head runs only there); modes 7..9 need a trained
++  // mf_mlp_weights.h. Without either, the key falls back to mode 0 with a warning.
++  float orderKeySrc = 0.f;        // -BK
++  float orderKeyHinge = 0.f;      // -BT
+   int hitLevelClaim = 0;          // -H: A8 claim universe. 0 = MDs (legacy), 1 = HITS --
+                                   // duplicate MD objects on the same hits make MD-disjoint
+                                   // chains that are hit-identical; only the hit map sees them.
+@@ -622,7 +653,12 @@
+       continue;
+     }
+     float* dst = nullptr;
+-    if (s == "-T4")
++    // OKR -BK/-BT must be consumed HERE: getopt's "-B" would otherwise swallow "K"/"T".
++    if (s == "-BK")
++      dst = &orderKeySrc;
++    else if (s == "-BT")
++      dst = &orderKeyHinge;
++    else if (s == "-T4")
+       dst = &thetaChain4;
+     else if (s == "-T5")
+       dst = &thetaChain5;
+@@ -1847,6 +1883,15 @@
+                   static_cast<int>(std::floor(claimCountMD)) * (hitLevelClaim ? 2 : 1),
+                   claimCountMD >= 0.f ? "ON" : "off", hitLevelClaim ? "HIT" : "MD", maxClaimedFrac,
+                   claimCountExcl >= 0.5f ? "DISABLED" : "OR'd", static_cast<int>(std::lround(orderKeyMode)));
++    if (orderKeySrc != 0.f || orderKeyHinge != 0.f) {
++      static const char* kBkName[12] = {"2class-gate-logit",  "3class-mX-hinge",  "3class-pFake",
++                                        "3class-mX-linear",   "3class-mX-only",   "3class-mX-hinge/nL",
++                                        "nLayers-major",      "matchFrac-hinge",  "matchFrac-only",
++                                        "matchFrac-logit-hinge", "3classB-mX-hinge", "mX-band-major"};
++      const int bk = static_cast<int>(std::lround(orderKeySrc));
++      std::printf("K9 order key (OKR): -BK %d (%s) -BT %.3f alpha=%.2f\n", bk,
++                  (bk >= 0 && bk <= 11) ? kBkName[bk] : "?", orderKeyHinge, fakeOrderAlpha);
++    }
+     OutputWriter writer(outPath, label);
+ 
+     // M7c dca-distribution study hook: PROTO_DCA_DUMP=<path> writes one line per
+@@ -1957,6 +2002,12 @@
+       // alive past the kill block so the POST-claim floors can be applied to the accepted
+       // set. Empty for every other -G mode (the floors are -G 6 only).
+       std::vector<float> m3mX, m3dcaAll;
++      // OKR: the raw 3-class logits, kept alive for the -BK order-key variants (the
++      // softmax fake probability needs all three, not just the margin). Empty unless -G 6.
++      std::vector<float> m3z3;
++      // OKR -BK 7: per-chain predicted harness match fraction (matchFrac regressor head).
++      // Empty unless a trained regressor is compiled in.
++      std::vector<float> mfPred;
+       if (chainGateMode >= 1 || attachMode) {
+         computeChainFeatures(ev, g, chains, scores, cfHyb);
+         runChainInference(cfHyb, gateLogit);
+@@ -1986,6 +2037,7 @@
+           exemptMask.assign(nC, 0);
+           m3mX.assign(nC, 0.f);
+           m3dcaAll = dcaAll;
++          m3z3 = z3;  // OKR: -BK order-key variants read the raw logits
+           for (std::size_t c = 0; c < nC; ++c) {
+             const float* z = &z3[3 * c];
+             const float mP = z[1] - z[0];
+@@ -2262,12 +2314,91 @@
+       // equal per-edge quality -- the M10 forensics population "pure 5-MD displaced
+       // chains starved by the length-monotone score". -OK reshapes ONLY the ordering key;
+       // every acceptance threshold still cuts on chains.score (M9 lesson).
++      // OKR (-BK / -BT): the ordering PENALTY SOURCE. Same contract as -B: the key is
++      // never a threshold. See the flag declaration above for the mode table.
+       const int okMode = static_cast<int>(std::lround(orderKeyMode));
+       std::vector<float> orderKeyVec;
+       const bool haveGateKey = gateLogit.size() == chains.score.size();
+-      const bool wantPenalty = fakeOrderAlpha > 0.f && haveGateKey;
+-      if (wantPenalty || okMode != 0) {
++      int bkMode = static_cast<int>(std::lround(orderKeySrc));
++      // -BK 7/8/9: run the matchFrac regressor once per event. mfPred is the [0,1]
++      // fraction, mfLogitV the raw pre-sigmoid output (a wider, unsaturated scale that
++      // behaves like the gate logits the alpha scan is calibrated on).
++      std::vector<float> mfLogitV;
++      // -BK 10: the SECONDARY 3-class head's mX margin. Same key shape as -BK 1 but a
++      // different ranking network, with the resident gate (and therefore every kill
++      // decision and threshold) left exactly as it is.
++      std::vector<float> m3bmX;
++      if (bkMode == 10 && !cfHyb.f.empty()) {
++        const std::size_t nC = chains.score.size();
++        std::vector<float> dcaAll(nC), z3b;
++        for (std::size_t c = 0; c < nC; ++c)
++          dcaAll[c] = m3dcaAll.size() == nC ? m3dcaAll[c] : chainDca(static_cast<int>(c));
++        runChainInference3b(cfHyb, dcaAll, z3b);
++        m3bmX.resize(nC);
++        for (std::size_t c = 0; c < nC; ++c) {
++          const float* z = &z3b[3 * c];
++          m3bmX[c] = std::max(z[1], z[2]) - z[0];
++        }
++      }
++      if (bkMode >= 7 && bkMode <= 9 && !cfHyb.f.empty()) {
++        if (!chainMatchFracAvailable()) {
++          std::fprintf(stderr, "-BK %d needs a TRAINED mf_mlp_weights.h (sentinel found)\n", bkMode);
++        } else {
++          const std::size_t nC = chains.score.size();
++          std::vector<float> dcaAll(nC);
++          for (std::size_t c = 0; c < nC; ++c)
++            dcaAll[c] = m3dcaAll.size() == nC ? m3dcaAll[c] : chainDca(static_cast<int>(c));
++          runChainInferenceMF(cfHyb, dcaAll, mfLogitV);
++          mfPred.resize(nC);
++          for (std::size_t c = 0; c < nC; ++c)
++            mfPred[c] = 1.f / (1.f + std::exp(-std::min(60.f, std::max(-60.f, mfLogitV[c]))));
++        }
++      }
++      const bool have3 = m3mX.size() == chains.score.size() && m3z3.size() == 3 * chains.score.size();
++      if (bkMode >= 1 && bkMode <= 5 && !have3) {
++        std::fprintf(stderr, "-BK %d needs the -G 6 three-class head; falling back to -BK 0\n", bkMode);
++        bkMode = 0;
++      }
++      if (bkMode >= 7 && bkMode <= 9 && mfPred.size() != chains.score.size()) {
++        std::fprintf(stderr, "-BK %d has no matchFrac predictions; falling back to -BK 0\n", bkMode);
++        bkMode = 0;
++      }
++      if (bkMode == 10 && m3bmX.size() != chains.score.size()) {
++        std::fprintf(stderr, "-BK 10 has no secondary-head margins; falling back to -BK 0\n");
++        bkMode = 0;
++      }
++      if (bkMode == 11 && !have3) {
++        std::fprintf(stderr, "-BK 11 needs the -G 6 three-class head; falling back to -BK 0\n");
++        bkMode = 0;
++      }
++      const bool wantPenalty = fakeOrderAlpha > 0.f && (bkMode != 0 || haveGateKey);
++      if (wantPenalty || okMode != 0 || bkMode == 4 || bkMode == 6 || bkMode == 8 || bkMode == 11) {
+         orderKeyVec.resize(chains.score.size());
++        // -BK 6 / -BK 11 need the EXACT legacy ordering inside each class, so the inner
++        // key is rank-encoded (a float cannot hold class*stride plus a fine-grained
++        // score without dropping low bits). rank[c] = position of c in the inner order.
++        std::vector<int> bkRank;
++        if (bkMode == 6 || bkMode == 11) {
++          const int n = static_cast<int>(chains.score.size());
++          std::vector<float> inner(n);
++          for (int c = 0; c < n; ++c)
++            inner[c] = bkMode == 11
++                           ? chains.score[c]
++                           : chains.score[c] - (haveGateKey ? fakeOrderAlpha *
++                                                                  std::max(0.f, orderKeyHinge - gateLogit[c])
++                                                            : 0.f);
++          std::vector<int> idx(n);
++          for (int c = 0; c < n; ++c)
++            idx[c] = c;
++          std::sort(idx.begin(), idx.end(), [&inner](int a, int b) {
++            if (inner[a] != inner[b])
++              return inner[a] > inner[b];
++            return a < b;
++          });
++          bkRank.assign(n, 0);
++          for (int r = 0; r < n; ++r)
++            bkRank[idx[r]] = r;
++        }
+         for (std::size_t c = 0; c < orderKeyVec.size(); ++c) {
+           float base = chains.score[c];
+           const float nL = static_cast<float>(std::max(1, chains.nLayers[c]));
+@@ -2279,7 +2410,50 @@
+             const int nEdges = std::max(1, chains.offsets[c + 1] - chains.offsets[c] - 1);
+             base = (base - lambdaLen * nL) / static_cast<float>(nEdges);
+           }
+-          orderKeyVec[c] = base - (wantPenalty ? fakeOrderAlpha * std::max(0.f, -gateLogit[c]) : 0.f);
++          // Penalty term (>= 0 subtracts from the key, i.e. the chain claims later).
++          float pen = 0.f;
++          if (bkMode == 0) {
++            pen = haveGateKey ? std::max(0.f, orderKeyHinge - gateLogit[c]) : 0.f;
++          } else if (bkMode == 1) {
++            pen = std::max(0.f, orderKeyHinge - m3mX[c]);
++          } else if (bkMode == 2) {
++            // softmax fake probability = 1 / (1 + exp(mP) + exp(mD)); written from the
++            // margins so the shared zF cancels and large logits cannot overflow.
++            const float* z = &m3z3[3 * c];
++            const float mP = std::min(60.f, z[1] - z[0]);
++            const float mD = std::min(60.f, z[2] - z[0]);
++            pen = 1.f / (1.f + std::exp(mP) + std::exp(mD));
++          } else if (bkMode == 3) {
++            pen = orderKeyHinge - m3mX[c];
++          } else if (bkMode == 5) {
++            pen = std::max(0.f, orderKeyHinge - m3mX[c]) / nL;
++          } else if (bkMode == 7) {
++            pen = std::max(0.f, orderKeyHinge - mfPred[c]);
++          } else if (bkMode == 9) {
++            pen = std::max(0.f, orderKeyHinge - mfLogitV[c]);
++          } else if (bkMode == 10) {
++            pen = std::max(0.f, orderKeyHinge - m3bmX[c]);
++          }
++          if (bkMode == 4) {
++            orderKeyVec[c] = m3mX[c];
++          } else if (bkMode == 8) {
++            orderKeyVec[c] = mfPred[c];
++          } else if (bkMode == 6) {
++            // nLayers-major, legacy key within: rank-exact, no float precision loss.
++            const int n = static_cast<int>(orderKeyVec.size());
++            orderKeyVec[c] = nL * static_cast<float>(n) + static_cast<float>(n - 1 - bkRank[c]);
++          } else if (bkMode == 11) {
++            // mX BAND-major (band width -BT, default 1), legacy score order within a band.
++            // Bands are clamped so band*n stays exactly representable in a float.
++            const int n = static_cast<int>(orderKeyVec.size());
++            const float w = orderKeyHinge > 0.f ? orderKeyHinge : 1.f;
++            int band = static_cast<int>(std::floor(m3mX[c] / w));
++            band = std::min(40, std::max(-8, band));
++            orderKeyVec[c] = static_cast<float>(band + 8) * static_cast<float>(n) +
++                             static_cast<float>(n - 1 - bkRank[c]);
++          } else {
++            orderKeyVec[c] = base - (wantPenalty ? fakeOrderAlpha * pen : 0.f);
++          }
+         }
+         ap.orderKey = &orderKeyVec;
+       }

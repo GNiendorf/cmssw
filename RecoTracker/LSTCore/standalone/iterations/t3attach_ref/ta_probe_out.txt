@@ -1,0 +1,31 @@
+[probe] cf0 rc=0 wall=48.773519673s  args: -RT3 1 -AT3 6
+  M16 attach      pairs=25577679 mean=2557768 scored=25577679 | chain-attached=4650 mean=465.0 | T3-attached=3529 mean=352.9 | dca-blocked=0 (-D4 1e+09) | seed-family dedup revoked=5150 mean=515.0 (-RD 1)
+  M16 delivery    type-7 in-place upgrades of accepted chains=4650 mean=465.0 (of 8232 accepted chain TCs) | extra type-5 TCs=3529 mean=352.9
+  M20 crossclean  -CC 0 -CCT 0 -CCP 1 -CCK 0 -T3E stageB ON | pT3-class deliveries revoked by hit overlap=0 (0.0/evt) of 3529 considered
+  time mean/evt   infer=24.562 weld=5.575 attach=4569.696 arb+asm=-4427.721 fill=4440.499 ms
+-----
+[probe] cf1 rc=0 wall=14.250198146s  args: -RT3 1 -AT3 6 -CF 1
+  M16 attach      pairs=25577679 mean=2557768 scored=25577679 | chain-attached=4650 mean=465.0 | T3-attached=3529 mean=352.9 | dca-blocked=0 (-D4 1e+09) | seed-family dedup revoked=5150 mean=515.0 (-RD 1)
+  M16 delivery    type-7 in-place upgrades of accepted chains=4650 mean=465.0 (of 8232 accepted chain TCs) | extra type-5 TCs=3529 mean=352.9
+  M20 candfind    -CF 1 (binned prefilter) | targets=261072 (26107/evt) full-scan pairs=4467143929 (4.47e+08/evt) | examined=195588132 (1.96e+07/evt, 0.04378x of full scan) | emitted=25577679 (2.56e+06/evt) | build=77.999 ms/evt
+  M20 candbins    rt 17 x 8.0 cm | tanLambda 134 x 0.6 (|t| <= 40) | phi 15 x 0.4189 rad | pad 0.02 | wild seeds=0 wild targets=0
+  M20 crossclean  -CC 0 -CCT 0 -CCP 1 -CCK 0 -T3E stageB ON | pT3-class deliveries revoked by hit overlap=0 (0.0/evt) of 3529 considered
+  time mean/evt   infer=24.614 weld=5.649 attach=1108.337 arb+asm=-888.813 fill=979.462 ms
+-----
+[probe] cf1audit rc=0 wall=33.580183127s  args: -RT3 1 -AT3 6 -CF 1 -CFA 1
+  M16 attach      pairs=25577679 mean=2557768 scored=25577679 | chain-attached=4650 mean=465.0 | T3-attached=3529 mean=352.9 | dca-blocked=0 (-D4 1e+09) | seed-family dedup revoked=5150 mean=515.0 (-RD 1)
+  M16 delivery    type-7 in-place upgrades of accepted chains=4650 mean=465.0 (of 8232 accepted chain TCs) | extra type-5 TCs=3529 mean=352.9
+  M20 candfind    -CF 1 (binned prefilter) | targets=261072 (26107/evt) full-scan pairs=4467143929 (4.47e+08/evt) | examined=195588132 (1.96e+07/evt, 0.04378x of full scan) | emitted=25577679 (2.56e+06/evt) | build=77.840 ms/evt
+  M20 candbins    rt 17 x 8.0 cm | tanLambda 134 x 0.6 (|t| <= 40) | phi 15 x 0.4189 rad | pad 0.02 | wild seeds=0 wild targets=0
+  M20 SUPERSET AUDIT (-CFA 1): analytic-accepted pairs=24802715 (2.48e+06/evt) | MISSING FROM THE CANDIDATE SET=0  ==> PASS (exact superset)
+  M20 crossclean  -CC 0 -CCT 0 -CCP 1 -CCK 0 -T3E stageB ON | pT3-class deliveries revoked by hit overlap=0 (0.0/evt) of 3529 considered
+  time mean/evt   infer=24.626 weld=5.597 attach=2985.638 arb+asm=-2766.349 fill=2856.948 ms
+-----
+[probe] cf1cAudit rc=0 wall=32.500347789s  args: -RT3 1 -AT3 6 -CF 1 -CFC 1 -CFA 1
+  M16 attach      pairs=25577679 mean=2557768 scored=25577679 | chain-attached=4650 mean=465.0 | T3-attached=3529 mean=352.9 | dca-blocked=0 (-D4 1e+09) | seed-family dedup revoked=5150 mean=515.0 (-RD 1)
+  M16 delivery    type-7 in-place upgrades of accepted chains=4650 mean=465.0 (of 8232 accepted chain TCs) | extra type-5 TCs=3529 mean=352.9
+  M20 candfind    -CF 1 (binned prefilter) | targets=261072 (26107/evt) full-scan pairs=4467143929 (4.47e+08/evt) | examined=61553598 (6.16e+06/evt, 0.01378x of full scan) | emitted=25577679 (2.56e+06/evt) | build=77.834 ms/evt
+  M20 candbins    rt 17 x 8.0 cm | tanLambda 134 x 0.6 (|t| <= 40) | phi 15 x 0.4189 rad | pad 0.02 | wild seeds=0 wild targets=0
+  M20 SUPERSET AUDIT (-CFA 1): analytic-accepted pairs=25577679 (2.56e+06/evt) | MISSING FROM THE CANDIDATE SET=0  ==> PASS (exact superset)
+  M20 crossclean  -CC 0 -CCT 0 -CCP 1 -CCK 0 -T3E stageB ON | pT3-class deliveries revoked by hit overlap=0 (0.0/evt) of 3529 considered
+  time mean/evt   infer=24.630 weld=5.576 attach=2937.103 arb+asm=-2762.984 fill=2853.373 ms

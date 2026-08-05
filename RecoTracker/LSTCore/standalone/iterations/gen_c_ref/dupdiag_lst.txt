@@ -1,0 +1,4 @@
+LST, 300 evts.  non-pT3 delivered rows/evt 1883.6 (harness-dup 0.0506)
+set                      rows/ev   distinct rows/dist   dupFrac  fakeFrac
+LST delivered pT3          151.7      146.0      1.04    0.0232    0.0348
+LST pre-clean pT3          588.7      147.1      4.00    0.9041    0.0477

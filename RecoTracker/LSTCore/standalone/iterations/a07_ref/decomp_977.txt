@@ -1,0 +1,85 @@
+========================================================================================================
+FILE /mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/fin_ref/r_W_X4.root   events=977
+  HEADLINE  in-cut TC (|eta|<4.5, pt>0.9): 1578457 (1615.6/evt)  fake 88508 (90.59/evt)  FAKE RATE 0.05607
+  (no-pt-cut cross-check, = compare_ab fake_overall: 0.05456)
+
+  deliv     type          N    N/evt      fake   fk/evt  fakerate  shareOfF rate_contr
+  chain     T5       323385   331.00     30091    30.80   0.09305    0.3400    0.01906
+  carried   pLS      592016   605.95     28440    29.11   0.04804    0.3213    0.01802
+  attachT3  pT3       91813    93.97     16308    16.69   0.17762    0.1843    0.01033
+  chain     T4        25529    26.13      8517     8.72   0.33362    0.0962    0.00540
+  attachT5  pT5      524674   537.03      3890     3.98   0.00741    0.0440    0.00246
+  zp8pLS    pLS       21040    21.54      1262     1.29   0.05998    0.0143    0.00080
+
+  per region (in-cut). rate_contr = this cell's fakes / ALL in-cut TC in that region
+    region B: N 471992 (483.1/evt) fake 31876  RATE 0.06754
+    region T: N 254069 (260.1/evt) fake 17613  RATE 0.06932
+    region E: N 852396 (872.5/evt) fake 39019  RATE 0.04578
+  deliv     type reg          N    N/evt      fake  fakerate rate_contr
+  chain     T5     B     153628   157.24     15929   0.10369    0.03375
+  attachT3  pT3    B      52833    54.08      7155   0.13543    0.01516
+  chain     T4     B      10081    10.32      6779   0.67245    0.01436
+  attachT5  pT5    B     224112   229.39      1029   0.00459    0.00218
+  carried   pLS    B      20228    20.70       800   0.03955    0.00169
+  zp8pLS    pLS    B      11110    11.37       184   0.01656    0.00039
+  carried   pLS    E     559415   572.58     26256   0.04693    0.03080
+  attachT3  pT3    E      21652    22.16      5509   0.25443    0.00646
+  chain     T5     E      63112    64.60      3514   0.05568    0.00412
+  attachT5  pT5    E     189117   193.57      1614   0.00853    0.00189
+  chain     T4     E      12868    13.17      1267   0.09846    0.00149
+  zp8pLS    pLS    E       6232     6.38       859   0.13784    0.00101
+  chain     T5     T     106645   109.16     10648   0.09985    0.04191
+  attachT3  pT3    T      17328    17.74      3644   0.21030    0.01434
+  carried   pLS    T      12373    12.66      1384   0.11186    0.00545
+  attachT5  pT5    T     111445   114.07      1247   0.01119    0.00491
+  chain     T4     T       2580     2.64       471   0.18256    0.00185
+  zp8pLS    pLS    T       3698     3.79       219   0.05922    0.00086
+
+  nhitOT profile (in-cut, fake/N)
+  chain     T5    10:23956/170171(0.141) 12:6000/146333(0.041) 14:135/6881(0.020)
+  carried   pLS   0:28440/592016(0.048)
+  attachT3  pT3   6:16308/91813(0.178)
+  chain     T4    8:8517/25529(0.334)
+  attachT5  pT5   10:2163/234291(0.009) 12:1643/274158(0.006) 14:84/16225(0.005)
+  zp8pLS    pLS   0:1262/21040(0.060)
+
+========================================================================================================
+FILE /mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/fin_ref/fin_base977.root   events=977
+  HEADLINE  in-cut TC (|eta|<4.5, pt>0.9): 1556524 (1593.2/evt)  fake 70637 (72.30/evt)  FAKE RATE 0.04538
+  (no-pt-cut cross-check, = compare_ab fake_overall: 0.04517)
+
+  deliv     type          N    N/evt      fake   fk/evt  fakerate  shareOfF rate_contr
+  carried   pLS      615620   630.11     30092    30.80   0.04888    0.4260    0.01933
+  carried   T4        31326    32.06     18922    19.37   0.60403    0.2679    0.01216
+  carried   pT5      696912   713.32     10234    10.47   0.01468    0.1449    0.00657
+  carried   T5       110198   112.79      7485     7.66   0.06792    0.1060    0.00481
+  carried   pT3      102468   104.88      3904     4.00   0.03810    0.0553    0.00251
+
+  per region (in-cut). rate_contr = this cell's fakes / ALL in-cut TC in that region
+    region B: N 456720 (467.5/evt) fake 19935  RATE 0.04365
+    region T: N 247823 (253.7/evt) fake 11255  RATE 0.04542
+    region E: N 851981 (872.0/evt) fake 39447  RATE 0.04630
+  deliv     type reg          N    N/evt      fake  fakerate rate_contr
+  carried   T4     B      12783    13.08     10445   0.81710    0.02287
+  carried   T5     B      47921    49.05      4573   0.09543    0.01001
+  carried   pT5    B     313376   320.75      2837   0.00905    0.00621
+  carried   pT3    B      58772    60.16      1218   0.02072    0.00267
+  carried   pLS    B      23868    24.43       862   0.03612    0.00189
+  carried   pLS    E     577205   590.79     27628   0.04787    0.03243
+  carried   pT5    E     211675   216.66      4723   0.02231    0.00554
+  carried   T4     E      12906    13.21      4697   0.36394    0.00551
+  carried   pT3    E      22509    23.04      1858   0.08254    0.00218
+  carried   T5     E      27686    28.34       541   0.01954    0.00063
+  carried   T4     T       5637     5.77      3780   0.67057    0.01525
+  carried   pT5    T     171861   175.91      2674   0.01556    0.01079
+  carried   T5     T      34591    35.41      2371   0.06854    0.00957
+  carried   pLS    T      14547    14.89      1602   0.11013    0.00646
+  carried   pT3    T      21187    21.69       828   0.03908    0.00334
+
+  nhitOT profile (in-cut, fake/N)
+  carried   pLS   0:30092/615620(0.049)
+  carried   T4    8:18922/31326(0.604)
+  carried   pT5   10:3636/171175(0.021) 12:6513/514724(0.013) 14:85/11013(0.008)
+  carried   T5    10:6213/44456(0.140) 12:1258/63298(0.020) 14:14/2444(0.006)
+  carried   pT3   6:3904/102468(0.038)
+

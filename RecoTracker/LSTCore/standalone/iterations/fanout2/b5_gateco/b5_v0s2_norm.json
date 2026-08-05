@@ -1,0 +1,128 @@
+{
+ "feature_names": [
+  "cf_nNodes",
+  "cf_nLayers",
+  "cf_sumEdgeLogit",
+  "cf_minEdgeLogit",
+  "cf_meanEdgeLogit",
+  "cf_fullFitChi2PerHit",
+  "cf_rzLineChi2PerHit",
+  "cf_fitKappa",
+  "cf_dKappaFitVsMedianT3",
+  "cf_ptEst",
+  "cf_innermostLayer",
+  "cf_layerSpan",
+  "cf_nPS",
+  "cf_nBarrel",
+  "cf_maxJunctionDegProduct",
+  "cf_chargeConsistency",
+  "cf_maxXyResid",
+  "cf_maxRzResid",
+  "cf_stdEdgeLogit",
+  "cf_minT3FakeScore",
+  "cf_maxT3FakeScore",
+  "cf_meanT3PromptScore",
+  "cf_minT3DisplacedScore",
+  "cf_meanT3DisplacedScore",
+  "cf_dcaXY"
+ ],
+ "conditioning": [
+  {
+   "feature": "cf_fullFitChi2PerHit",
+   "op": "log10_1p"
+  },
+  {
+   "feature": "cf_rzLineChi2PerHit",
+   "op": "log10_1p"
+  },
+  {
+   "feature": "cf_maxJunctionDegProduct",
+   "op": "log10_1p"
+  },
+  {
+   "feature": "cf_fitKappa",
+   "op": "clip",
+   "lo": -1.0,
+   "hi": 1.0
+  },
+  {
+   "feature": "cf_dKappaFitVsMedianT3",
+   "op": "clip",
+   "lo": -2.0,
+   "hi": 2.0
+  },
+  {
+   "feature": "cf_maxXyResid",
+   "op": "log10_1p"
+  },
+  {
+   "feature": "cf_maxRzResid",
+   "op": "log10_1p"
+  },
+  {
+   "feature": "cf_dcaXY",
+   "op": "log10_1p"
+  },
+  {
+   "feature": "cf_dcaXY",
+   "op": "clip",
+   "lo": 0.0,
+   "hi": 1.4913617
+  }
+ ],
+ "mean": [
+  2.3956828117370605,
+  4.837653160095215,
+  5.349447727203369,
+  3.296312093734741,
+  3.51698899269104,
+  0.01478107925504446,
+  0.25637489557266235,
+  -0.0003034141263924539,
+  0.0009889148641377687,
+  1.5673277378082275,
+  1.9813019037246704,
+  5.322985649108887,
+  2.8541178703308105,
+  3.2200753688812256,
+  0.8657228350639343,
+  0.9521215558052063,
+  0.0600639283657074,
+  0.3374204635620117,
+  0.20960849523544312,
+  0.06647445261478424,
+  0.24820925295352936,
+  0.45509397983551025,
+  0.28394025564193726,
+  0.39341452717781067,
+  0.3129124939441681
+ ],
+ "std": [
+  0.6093674302101135,
+  0.7873640656471252,
+  4.3209991455078125,
+  2.022850513458252,
+  2.0576882362365723,
+  0.07795990258455276,
+  0.2589142620563507,
+  0.009453337639570236,
+  0.0033570483792573214,
+  4.66210412979126,
+  1.8280001878738403,
+  2.175814628601074,
+  1.1094220876693726,
+  1.8098571300506592,
+  0.44589927792549133,
+  0.20509064197540283,
+  0.08306919038295746,
+  0.18924584984779358,
+  0.42409688234329224,
+  0.13532163202762604,
+  0.30584266781806946,
+  0.2692390978336334,
+  0.17980323731899261,
+  0.18219129741191864,
+  0.3000239133834839
+ ],
+ "seed": 42
+}

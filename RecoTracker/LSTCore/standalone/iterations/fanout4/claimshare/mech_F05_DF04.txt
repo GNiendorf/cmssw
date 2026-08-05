@@ -1,0 +1,18 @@
+A = cs_F05.root
+B = cs_F05_DD4_DF04.root
+denominator sims (pt>0.9,|eta|<4.5,|vz|<30,q!=0): 26123
+census              nTC       good  duplicate       fake
+all TC A         643382     530395      73016      39971
+all TC B         619104     546165      38561      34378
+removed           24278     -15770      34455       5593
+chainTC A        327993     255830      46265      25898
+chainTC B        303715     271578      11832      20305
+rm chain          24278     -15748      34433       5593
+sims matched in A only (LOST by B) = 84
+sims matched in B only (gained)    = 0
+net sims = -84
+per-sim TC multiplicity (denominator sims):
+   nTC :       0       1       2       3       4       5     >=6
+   A   :    5850   18919    1330      24       0       0       0
+   B   :    5934   19626     558       5       0       0       0
+lost sims: median pt=2.81 |eta|=1.08 vxy=0.00 ; vxy>=1 frac=0.31 (n=84)

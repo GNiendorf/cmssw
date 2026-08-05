@@ -1,0 +1,29 @@
+rep_bk1_t5 vs okredesign ok_bk1_a10_t5: ALL 29 METRICS IDENTICAL
+rep_ctl     vs okredesign ok_base: ALL 29 METRICS IDENTICAL
+rep_ctl     vs m16 ab_ctl_noatt: ALL 29 METRICS IDENTICAL
+
+metric                       BK1/BT5  ctl_noatt    d(ctl)       LST    d(LST)
+eff_overall_incut             0.8096     0.8017   +0.0079    0.8136   -0.0039
+eff_vxy_0_1                   0.8425     0.8344   +0.0080    0.8473   -0.0049
+eff_vxy_1_5                   0.7965     0.7852   +0.0113    0.7731   +0.0233
+eff_vxy_5_10                  0.7256     0.7129   +0.0126    0.6530   +0.0726
+eff_vxy_10_30                 0.7149     0.6961   +0.0188    0.6291   +0.0858
+eff_dxy_0_1                   0.8368     0.8282   +0.0086    0.8342   +0.0026
+eff_dxy_1_5                   0.5590     0.5418   +0.0172    0.4989   +0.0601
+eff_dxy_5_10                  0.2491     0.2491   +0.0000    0.2281   +0.0211
+eff_dxy_10_30                 0.0235     0.0235   +0.0000    0.0470   -0.0235
+eff_barrel                    0.9208     0.9091   +0.0117    0.9242   -0.0034
+eff_transition                0.8736     0.8603   +0.0133    0.8826   -0.0090
+eff_endcap                    0.7530     0.7505   +0.0026    0.7556   -0.0026
+dup_overall_incut             0.0660     0.0643   +0.0018    0.0513   +0.0147
+dup_barrel                    0.0160     0.0157   +0.0004    0.0097   +0.0063
+dup_transition                0.0309     0.0282   +0.0027    0.0130   +0.0179
+dup_endcap                    0.1023     0.1001   +0.0022    0.0846   +0.0177
+fake_overall_incut            0.0480     0.0536   -0.0056    0.0455   +0.0025
+fake_barrel                   0.0476     0.0553   -0.0077    0.0437   +0.0039
+fake_transition               0.0659     0.0765   -0.0107    0.0459   +0.0200
+fake_endcap                   0.0431     0.0462   -0.0031    0.0463   -0.0032
+mean_nhitOT                   6.3953     6.5213   -0.1261    6.5138   -0.1185
+mean_nhitOT_barrel            9.8980    10.0439   -0.1459   10.1506   -0.2525
+mean_nhitOT_transition        9.8017     9.9858   -0.1841   10.0098   -0.2081
+mean_nhitOT_endcap            3.5839     3.6790   -0.0951    3.5594   +0.0245

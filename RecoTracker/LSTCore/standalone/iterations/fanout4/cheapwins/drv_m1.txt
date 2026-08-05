@@ -1,0 +1,4 @@
+[cw] m1 : -TR 1 -TT 1.0 -F 0.20 -MRI 0.25 -M4 3.0 -TA 1.0 -PU 1 -B 20 -M4 3.2
+  chain TCs       total=300284 mean=1000.9 (T5-class=291332 T4-class=8952; 0 accepted chains below 4 layers dropped by K10)
+  M16 delivery    type-7 in-place upgrades of accepted chains=0 mean=0.0 (of 300284 accepted chain TCs) | extra type-5 TCs=0 mean=0.0
+m1             eff 0.8061 | vxy 0.8388/0.7943/0.7224/0.7010 | dxy 0.8330/0.5472/0.2491/0.0214 | fake 0.0491 dup 0.0639 | TC/evt 2052.2

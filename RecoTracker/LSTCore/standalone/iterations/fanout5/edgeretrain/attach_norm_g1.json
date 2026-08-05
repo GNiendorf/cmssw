@@ -1,0 +1,119 @@
+{
+ "feature_names": [
+  "af_log10PtIn",
+  "af_ptErrRel",
+  "af_etaErr",
+  "af_charge",
+  "af_isQuad",
+  "af_log10CircleRadius",
+  "af_plsDeltaPhi",
+  "af_fitKappaSigned",
+  "af_chainTanLambda",
+  "af_innermostLayer",
+  "af_nLayers",
+  "af_chainGateLogit",
+  "af_chargeAgree",
+  "af_dKappa",
+  "af_dTanLambda",
+  "af_dPhiAtInnermost",
+  "af_circleCenterDist",
+  "af_zResidAtInnermost",
+  "af_targetType"
+ ],
+ "conditioning": [
+  {
+   "feature": "af_ptErrRel",
+   "op": "log10_1p"
+  },
+  {
+   "feature": "af_circleCenterDist",
+   "op": "log10_1p"
+  },
+  {
+   "feature": "af_log10PtIn",
+   "op": "clip",
+   "lo": -1.0,
+   "hi": 4.0
+  },
+  {
+   "feature": "af_log10CircleRadius",
+   "op": "clip",
+   "lo": 1.0,
+   "hi": 5.0
+  },
+  {
+   "feature": "af_fitKappaSigned",
+   "op": "clip",
+   "lo": -1.0,
+   "hi": 1.0
+  },
+  {
+   "feature": "af_dKappa",
+   "op": "clip",
+   "lo": -1.0,
+   "hi": 1.0
+  }
+ ],
+ "mean": [
+  0.16812270879745483,
+  0.0006657327758148313,
+  0.0012546739308163524,
+  0.026675112545490265,
+  0.36236152052879333,
+  2.1114728450775146,
+  0.0020465205889195204,
+  -0.0008183533791452646,
+  0.006343410816043615,
+  3.4065892696380615,
+  3.2094504833221436,
+  0.19875438511371613,
+  0.5927475690841675,
+  0.0005337374750524759,
+  -0.0003633378946688026,
+  -1.7485390344518237e-05,
+  1.9948450326919556,
+  -0.08192672580480576,
+  0.9152897596359253
+ ],
+ "std": [
+  0.27413395047187805,
+  0.004255690146237612,
+  0.0005605750484392047,
+  0.9996441602706909,
+  0.48068249225616455,
+  0.2736051678657532,
+  0.06443227082490921,
+  0.009615983814001083,
+  2.2268497943878174,
+  2.4977519512176514,
+  0.7070374488830566,
+  0.8119984865188599,
+  0.4913225769996643,
+  0.012329288758337498,
+  0.31273314356803894,
+  0.20763196051120758,
+  0.6683132648468018,
+  19.152196884155273,
+  0.27845001220703125
+ ],
+ "seed": 42,
+ "degenerate_columns": [],
+ "per_type": false,
+ "sampling_weights": {
+  "rule": "loss and AUC weighted by the dump 'wgt' branch (bare-T3 FAKES downsampled 1-in-32, wgt=32; true pairs never downsampled) -> trained/judged on the full undownsampled deployed population",
+  "train_W_true": 9577652.0,
+  "train_W_fake": 1114953984.0,
+  "pos_weight": 116.4120375223489
+ },
+ "displaced_weighting": {
+  "rule": "none (M7/M16: pLS-side displaced true pairs are physically rare -- reported, never force-weighted)"
+ },
+ "train_args": {
+  "epochs": 100,
+  "patience": 10,
+  "batch_size": 16384,
+  "lr": 0.001,
+  "hidden": 24,
+  "feature_clip": true
+ }
+}

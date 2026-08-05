@@ -1,0 +1,13 @@
+HOW MANY OBJECTS COVER A MATCHED SIM? (300 evts; cover = TC with >0.75 match)
+Also: fraction of matched sims that have at least one PIXEL-SEEDED cover (type 7/5/8).
+tag       band         matchedSim meanCovers  fracWithPix
+FINBASE   vxy[0,1)          17727      1.079       0.7614
+FINBASE   vxy[1,5)           1087      1.104       0.4177
+FINBASE   vxy[5,10)           435      1.005       0.0552
+FINBASE   vxy[10,30)          926      1.001       0.0000
+FINBASE   vxy[30,60)          127      1.000       0.0000
+LST       vxy[0,1)          17730      1.023       0.9735
+LST       vxy[1,5)           1056      1.027       0.7254
+LST       vxy[5,10)           388      1.008       0.1830
+LST       vxy[10,30)          830      1.029       0.0036
+LST       vxy[30,60)          101      1.040       0.0000

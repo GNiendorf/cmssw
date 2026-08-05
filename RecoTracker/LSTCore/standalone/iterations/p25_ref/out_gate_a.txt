@@ -1,0 +1,37 @@
+**** Following environment variables are going to be unset.
+      X86_64_V3_PATH
+      X86_64_V3_PYTHON3PATH
+      INTEL_LICENSE_FILE
+
+[gate a] leg B: production flag-OFF, 10 events
+[gate a] leg P: prototype (FULL frozen command) on leg B
+  B1 claim-univ   mode=1 owners=1473 mean=147.3 | pre-claimed slots=8817 mean=881.7 | killed by pixel: frac=216 mean=21.6 braid=0 mean=0.0
+  chain funnel    in=44776 -> theta=24996 -> pixdrop=24422 -> claim=9808
+  chain TCs       total=9808 mean=980.8 (T5-class=9583 T4-class=225; 0 accepted chains below 4 layers dropped by K10)
+  EX_DUPCC band |eta| >= 1.50 and nNodes <= 1e+09 : braid -WE 0.2 (outside: -W 0.5), claim -FB 0 -FBC 0 (outside: -F / -FC)
+  C1 cell (2n,5L) seen=14206 mean=1420.6 | already killed by branch=2613 (18.4%) | killed by -C25 0 / -C25D -2 = 997 (7.0% of cell, 8.6% of branch survivors)
+  B2 terminal trim examined=15166 (1516.6/evt) trimmed inner=283 outer=2110 total=2393 (239.3/evt, 0.1578 of examined) | -TT 1.2 -TL 5 -TP 1 -TA 1 | 0.458 ms/evt
+  EX chain extend chains=9808 (980.8/evt, noFit=0) cand=22947 | extended chains=601 (60.1/evt, 0.0613 of examined) outer=601 inner=0 | chi2-rejected=78 uniq-rejected=0 fit-rejected=0 | -EX 1 -EXW 0.25 -EXR 2 -EXF 2 -EXU 0 -EXD 60 -EXJ 1 -EXN 1 -EXL 4 -EXS 1 -EXC 0 | 1.694 ms/evt
+  K8 attach       attached=5680 mean=568.0 | baseline pixel rows suppressed=8037 mean=803.7 | pairs prefiltered=0 scored=0 (thetaAttach=6.875 head=trained)
+  M16 attach      pairs=1209435 mean=120944 scored=1209435 | chain-attached=5680 mean=568.0 | T3-attached=0 mean=0.0 | dca-blocked=0 (-D4 1e+09) | seed-family dedup revoked=10 mean=1.0 (-RD 1)
+  M16 delivery    type-7 in-place upgrades of accepted chains=5680 mean=568.0 (of 9808 accepted chain TCs) | extra type-5 TCs=0 mean=0.0
+  M16 suppression carried rows retired: pT5=7965 pT3=2 pLS=70 (total=8037 mean=803.7) | -RT5=1 -RT3=0 -RPS=1 -a=6.875 -AT3=6.000
+  output TCs/evt  mean=1989.7 (pixel kept 1812.6 - suppressed 803.7 + chain 980.8 - k7 0.0 + attach deliveries 0.0)
+  time mean/evt   infer=30.761 weld=6.911 attach=193.378 arb+asm=3.177 fill=9.707 ms
+  wrote /mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/p25_ref/g25_proto.root
+[gate a] leg A: production flag-ON, 10 events
+[gate a] compare (type, outer-tracker hit list)
+ evt   proto    prod  common  onlyP  onlyR  per-type only(proto/prod)
+   0    1943    1941    1829    114    112  t4:51/49 t7:62/62 t9:1/1
+   1    1916    1916    1815    101    101  t4:38/36 t7:60/63 t9:3/2
+   2    1933    1933    1822    111    111  t4:38/39 t7:71/70 t9:2/2
+   3    2060    2060    1949    111    111  t4:40/40 t7:69/69 t9:2/2
+   4    1703    1704    1593    110    111  t4:43/47 t7:66/64 t9:1/0
+   5    2024    2023    1906    118    117  t4:45/45 t7:67/67 t9:6/5
+   6    1826    1827    1706    120    121  t4:43/42 t7:77/78 t9:0/1
+   7    2283    2282    2144    139    138  t4:59/59 t7:78/77 t9:2/2
+   8    2139    2141    1981    158    160  t4:64/66 t7:93/93 t9:1/1
+   9    2070    2071    1960    110    111  t4:43/44 t7:65/65 t9:2/2
+
+TOTAL common=18705 onlyProto=1192 onlyProd=1193
+GATE (a): MISMATCH

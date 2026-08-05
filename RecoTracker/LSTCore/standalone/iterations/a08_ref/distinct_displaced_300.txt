@@ -1,0 +1,41 @@
+DISTINCT DISPLACED SIMS  (displacement = max(vxy, |dxy|); no vxy/dxy double count)
+A = M4D16   B = FINBASE   input = LSTNtuple_instr_300evt.root
+tier         nSim        LST      M4D16    FINBASE   A vs LST (lost/gained)
+DISP1        4809       2375       2592       2575   106/323 net +217
+DISP5        3441       1319       1502       1488   82/265 net +183
+DISP10       2848        931       1064       1053   66/199 net +133
+DISP30       1599        101        133        127   28/60 net +32
+
+A OVER B (what the change from B to A moved), distinct displaced sims:
+  DISP1    LOST 1  GAINED 18  net +17   [gained TC types: T4=18]
+  DISP5    LOST 0  GAINED 14  net +14   [gained TC types: T4=14]
+  DISP10   LOST 0  GAINED 11  net +11   [gained TC types: T4=11]
+  DISP30   LOST 0  GAINED 6  net +6   [gained TC types: T4=6]
+
+DISTINCT DISPLACED SIMS  (displacement = max(vxy, |dxy|); no vxy/dxy double count)
+A = M4D25   B = FINBASE   input = LSTNtuple_instr_300evt.root
+tier         nSim        LST      M4D25    FINBASE   A vs LST (lost/gained)
+DISP1        4809       2375       2612       2575   103/340 net +237
+DISP5        3441       1319       1520       1488   79/280 net +201
+DISP10       2848        931       1080       1053   62/211 net +149
+DISP30       1599        101        137        127   27/63 net +36
+
+A OVER B (what the change from B to A moved), distinct displaced sims:
+  DISP1    LOST 2  GAINED 39  net +37   [gained TC types: T4=36  T5=3]
+  DISP5    LOST 1  GAINED 33  net +32   [gained TC types: T4=30  T5=3]
+  DISP10   LOST 0  GAINED 27  net +27   [gained TC types: T4=25  T5=2]
+  DISP30   LOST 0  GAINED 10  net +10   [gained TC types: T4=10]
+
+DISTINCT DISPLACED SIMS  (displacement = max(vxy, |dxy|); no vxy/dxy double count)
+A = FINBASE   B = MR10   input = LSTNtuple_instr_300evt.root
+tier         nSim        LST    FINBASE       MR10   A vs LST (lost/gained)
+DISP1        4809       2375       2575       2562   108/308 net +200
+DISP5        3441       1319       1488       1477   84/253 net +169
+DISP10       2848        931       1053       1044   67/189 net +122
+DISP30       1599        101        127        125   29/55 net +26
+
+A OVER B (what the change from B to A moved), distinct displaced sims:
+  DISP1    LOST 0  GAINED 13  net +13   [gained TC types: T5=13]
+  DISP5    LOST 0  GAINED 11  net +11   [gained TC types: T5=11]
+  DISP10   LOST 0  GAINED 9  net +9   [gained TC types: T5=9]
+  DISP30   LOST 0  GAINED 2  net +2   [gained TC types: T5=2]

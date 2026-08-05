@@ -1,0 +1,911 @@
+{
+  "proto_file": "/mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/fanout3/m16/ab_ctl_noatt.root",
+  "base_file": "/mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/LSTNtuple_PU200RelVal_300evt.root",
+  "nevents": {
+    "proto": 300,
+    "base": 300
+  },
+  "denominators": {
+    "proto": {
+      "prompt vxy<2.5": 21877,
+      "disp vxy[1,5)": 1415,
+      "disp vxy[5,30)": 1858
+    },
+    "base": {
+      "prompt vxy<2.5": 21877,
+      "disp vxy[1,5)": 1415,
+      "disp vxy[5,30)": 1858
+    }
+  },
+  "table": {
+    "pT5 (7)": {
+      "nTC": {
+        "proto": 0,
+        "base": 212553,
+        "delta": -212553
+      },
+      "nTC_per_event": {
+        "proto": 0.0,
+        "base": 708.51,
+        "delta": -708.51
+      },
+      "FR": {
+        "proto": null,
+        "base": 0.014490503544998189,
+        "delta": null
+      },
+      "DR": {
+        "proto": null,
+        "base": 0.00955526386360108,
+        "delta": null
+      },
+      "mean_nhitOT": {
+        "proto": null,
+        "base": 11.545826217461057,
+        "delta": null
+      },
+      "effN prompt vxy<2.5": {
+        "proto": 0,
+        "base": 12041,
+        "delta": -12041
+      },
+      "eff prompt vxy<2.5": {
+        "proto": 0.0,
+        "base": 0.5503953924212643,
+        "delta": -0.5503953924212643
+      },
+      "effN disp vxy[1,5)": {
+        "proto": 0,
+        "base": 550,
+        "delta": -550
+      },
+      "eff disp vxy[1,5)": {
+        "proto": 0.0,
+        "base": 0.38869257950530034,
+        "delta": -0.38869257950530034
+      },
+      "effN disp vxy[5,30)": {
+        "proto": 0,
+        "base": 49,
+        "delta": -49
+      },
+      "eff disp vxy[5,30)": {
+        "proto": 0.0,
+        "base": 0.0263724434876211,
+        "delta": -0.0263724434876211
+      }
+    },
+    "pT3 (5)": {
+      "nTC": {
+        "proto": 31253,
+        "base": 31253,
+        "delta": 0
+      },
+      "nTC_per_event": {
+        "proto": 104.17666666666666,
+        "base": 104.17666666666666,
+        "delta": 0.0
+      },
+      "FR": {
+        "proto": 0.037660384603078106,
+        "base": 0.037660384603078106,
+        "delta": 0.0
+      },
+      "DR": {
+        "proto": 0.0207980033916744,
+        "base": 0.02815729689949765,
+        "delta": -0.007359293507823248
+      },
+      "mean_nhitOT": {
+        "proto": 6.0,
+        "base": 6.0,
+        "delta": 0.0
+      },
+      "effN prompt vxy<2.5": {
+        "proto": 1295,
+        "base": 1286,
+        "delta": 9
+      },
+      "eff prompt vxy<2.5": {
+        "proto": 0.059194587923389864,
+        "base": 0.058783196964848926,
+        "delta": 0.00041139095854093866
+      },
+      "effN disp vxy[1,5)": {
+        "proto": 99,
+        "base": 98,
+        "delta": 1
+      },
+      "eff disp vxy[1,5)": {
+        "proto": 0.06996466431095406,
+        "base": 0.06925795053003533,
+        "delta": 0.0007067137809187302
+      },
+      "effN disp vxy[5,30)": {
+        "proto": 20,
+        "base": 19,
+        "delta": 1
+      },
+      "eff disp vxy[5,30)": {
+        "proto": 0.010764262648008612,
+        "base": 0.01022604951560818,
+        "delta": 0.0005382131324004318
+      }
+    },
+    "pLS (8)": {
+      "nTC": {
+        "proto": 188230,
+        "base": 188230,
+        "delta": 0
+      },
+      "nTC_per_event": {
+        "proto": 627.4333333333333,
+        "base": 627.4333333333333,
+        "delta": 0.0
+      },
+      "FR": {
+        "proto": 0.049322637199171224,
+        "base": 0.049322637199171224,
+        "delta": 0.0
+      },
+      "DR": {
+        "proto": 0.1074908356797535,
+        "base": 0.09945279710991872,
+        "delta": 0.008038038569834774
+      },
+      "mean_nhitOT": {
+        "proto": 0.0,
+        "base": 0.0,
+        "delta": 0.0
+      },
+      "effN prompt vxy<2.5": {
+        "proto": 4665,
+        "base": 4573,
+        "delta": 92
+      },
+      "eff prompt vxy<2.5": {
+        "proto": 0.21323764684371715,
+        "base": 0.2090323170452987,
+        "delta": 0.00420532979841845
+      },
+      "effN disp vxy[1,5)": {
+        "proto": 158,
+        "base": 151,
+        "delta": 7
+      },
+      "eff disp vxy[1,5)": {
+        "proto": 0.111660777385159,
+        "base": 0.10671378091872792,
+        "delta": 0.004946996466431083
+      },
+      "effN disp vxy[5,30)": {
+        "proto": 7,
+        "base": 6,
+        "delta": 1
+      },
+      "eff disp vxy[5,30)": {
+        "proto": 0.003767491926803014,
+        "base": 0.0032292787944025836,
+        "delta": 0.0005382131324004305
+      }
+    },
+    "T5 (4)": {
+      "nTC": {
+        "proto": 252260,
+        "base": 33541,
+        "delta": 218719
+      },
+      "nTC_per_event": {
+        "proto": 840.8666666666667,
+        "base": 111.80333333333333,
+        "delta": 729.0633333333334
+      },
+      "FR": {
+        "proto": 0.05235867755490367,
+        "base": 0.06720133567872157,
+        "delta": -0.014842658123817895
+      },
+      "DR": {
+        "proto": 0.03102751129786728,
+        "base": 0.047076712083718435,
+        "delta": -0.016049200785851155
+      },
+      "mean_nhitOT": {
+        "proto": 11.416427495441212,
+        "base": 11.23150770698548,
+        "delta": 0.18491978845573165
+      },
+      "effN prompt vxy<2.5": {
+        "proto": 12281,
+        "base": 603,
+        "delta": 11678
+      },
+      "eff prompt vxy<2.5": {
+        "proto": 0.5613658179823559,
+        "base": 0.02756319422224254,
+        "delta": 0.5338026237601133
+      },
+      "effN disp vxy[1,5)": {
+        "proto": 844,
+        "base": 289,
+        "delta": 555
+      },
+      "eff disp vxy[1,5)": {
+        "proto": 0.5964664310954063,
+        "base": 0.20424028268551236,
+        "delta": 0.39222614840989395
+      },
+      "effN disp vxy[5,30)": {
+        "proto": 1246,
+        "base": 1096,
+        "delta": 150
+      },
+      "eff disp vxy[5,30)": {
+        "proto": 0.6706135629709364,
+        "base": 0.589881593110872,
+        "delta": 0.08073196986006448
+      }
+    },
+    "T4 (9)": {
+      "nTC": {
+        "proto": 6062,
+        "base": 9635,
+        "delta": -3573
+      },
+      "nTC_per_event": {
+        "proto": 20.206666666666667,
+        "base": 32.11666666666667,
+        "delta": -11.91
+      },
+      "FR": {
+        "proto": 0.3229957109864731,
+        "base": 0.604566683964712,
+        "delta": -0.2815709729782389
+      },
+      "DR": {
+        "proto": 0.3302540415704388,
+        "base": 0.12132848988064349,
+        "delta": 0.20892555168979532
+      },
+      "mean_nhitOT": {
+        "proto": 8.0,
+        "base": 8.0,
+        "delta": 0.0
+      },
+      "effN prompt vxy<2.5": {
+        "proto": 26,
+        "base": 33,
+        "delta": -7
+      },
+      "eff prompt vxy<2.5": {
+        "proto": 0.001188462769118252,
+        "base": 0.001508433514650089,
+        "delta": -0.00031997074553183694
+      },
+      "effN disp vxy[1,5)": {
+        "proto": 10,
+        "base": 6,
+        "delta": 4
+      },
+      "eff disp vxy[1,5)": {
+        "proto": 0.007067137809187279,
+        "base": 0.004240282685512367,
+        "delta": 0.002826855123674912
+      },
+      "effN disp vxy[5,30)": {
+        "proto": 31,
+        "base": 14,
+        "delta": 17
+      },
+      "eff disp vxy[5,30)": {
+        "proto": 0.016684607104413347,
+        "base": 0.007534983853606028,
+        "delta": 0.009149623250807318
+      }
+    },
+    "chain-slice (4+9)": {
+      "nTC": {
+        "proto": 258322,
+        "base": 43176,
+        "delta": 215146
+      },
+      "nTC_per_event": {
+        "proto": 861.0733333333334,
+        "base": 143.92,
+        "delta": 717.1533333333334
+      },
+      "FR": {
+        "proto": 0.05870967242433862,
+        "base": 0.18711784324624792,
+        "delta": -0.1284081708219093
+      },
+      "DR": {
+        "proto": 0.03804941119997522,
+        "base": 0.06364647026125625,
+        "delta": -0.025597059061281027
+      },
+      "mean_nhitOT": {
+        "proto": 11.33625475182137,
+        "base": 10.510376134889754,
+        "delta": 0.8258786169316163
+      },
+      "effN prompt vxy<2.5": {
+        "proto": 12307,
+        "base": 636,
+        "delta": 11671
+      },
+      "eff prompt vxy<2.5": {
+        "proto": 0.5625542807514742,
+        "base": 0.029071627736892626,
+        "delta": 0.5334826530145815
+      },
+      "effN disp vxy[1,5)": {
+        "proto": 854,
+        "base": 295,
+        "delta": 559
+      },
+      "eff disp vxy[1,5)": {
+        "proto": 0.6035335689045936,
+        "base": 0.20848056537102475,
+        "delta": 0.39505300353356887
+      },
+      "effN disp vxy[5,30)": {
+        "proto": 1277,
+        "base": 1110,
+        "delta": 167
+      },
+      "eff disp vxy[5,30)": {
+        "proto": 0.6872981700753499,
+        "base": 0.5974165769644779,
+        "delta": 0.08988159311087196
+      }
+    },
+    "pixel-slice (7+5+8)": {
+      "nTC": {
+        "proto": 219483,
+        "base": 432036,
+        "delta": -212553
+      },
+      "nTC_per_event": {
+        "proto": 731.61,
+        "base": 1440.12,
+        "delta": -708.5099999999999
+      },
+      "FR": {
+        "proto": 0.047662005713426554,
+        "base": 0.031342295549444954,
+        "delta": 0.0163197101639816
+      },
+      "DR": {
+        "proto": 0.0951463211273766,
+        "base": 0.0500675869603459,
+        "delta": 0.045078734167030704
+      },
+      "mean_nhitOT": {
+        "proto": 0.854362296852148,
+        "base": 6.114346952568767,
+        "delta": -5.259984655716619
+      },
+      "effN prompt vxy<2.5": {
+        "proto": 5960,
+        "base": 17900,
+        "delta": -11940
+      },
+      "eff prompt vxy<2.5": {
+        "proto": 0.272432234767107,
+        "base": 0.818210906431412,
+        "delta": -0.545778671664305
+      },
+      "effN disp vxy[1,5)": {
+        "proto": 257,
+        "base": 799,
+        "delta": -542
+      },
+      "eff disp vxy[1,5)": {
+        "proto": 0.18162544169611308,
+        "base": 0.5646643109540636,
+        "delta": -0.3830388692579505
+      },
+      "effN disp vxy[5,30)": {
+        "proto": 27,
+        "base": 74,
+        "delta": -47
+      },
+      "eff disp vxy[5,30)": {
+        "proto": 0.014531754574811625,
+        "base": 0.03982777179763186,
+        "delta": -0.02529601722282024
+      }
+    },
+    "all": {
+      "nTC": {
+        "proto": 477805,
+        "base": 475212,
+        "delta": 2593
+      },
+      "nTC_per_event": {
+        "proto": 1592.6833333333334,
+        "base": 1584.04,
+        "delta": 8.64333333333343
+      },
+      "FR": {
+        "proto": 0.05363485103755716,
+        "base": 0.04549548412077136,
+        "delta": 0.008139366916785802
+      },
+      "DR": {
+        "proto": 0.0642772679231067,
+        "base": 0.05130131393988367,
+        "delta": 0.01297595398322303
+      },
+      "mean_nhitOT": {
+        "proto": 6.521325645399274,
+        "base": 6.513753861434475,
+        "delta": 0.007571783964798406
+      },
+      "effN prompt vxy<2.5": {
+        "proto": 18267,
+        "base": 18536,
+        "delta": -269
+      },
+      "eff prompt vxy<2.5": {
+        "proto": 0.8349865155185812,
+        "base": 0.8472825341683046,
+        "delta": -0.012296018649723406
+      },
+      "effN disp vxy[1,5)": {
+        "proto": 1111,
+        "base": 1094,
+        "delta": 17
+      },
+      "eff disp vxy[1,5)": {
+        "proto": 0.7851590106007067,
+        "base": 0.7731448763250883,
+        "delta": 0.012014134275618371
+      },
+      "effN disp vxy[5,30)": {
+        "proto": 1304,
+        "base": 1184,
+        "delta": 120
+      },
+      "eff disp vxy[5,30)": {
+        "proto": 0.7018299246501615,
+        "base": 0.6372443487621098,
+        "delta": 0.0645855758880517
+      }
+    }
+  },
+  "m16_bands": [
+    "prompt vxy<2.5",
+    "vxy[0,1)",
+    "vxy[1,5)",
+    "vxy[5,10)",
+    "vxy[10,30)"
+  ],
+  "m16_denominators": {
+    "proto": {
+      "prompt vxy<2.5": 21877,
+      "vxy[0,1)": 21137,
+      "vxy[1,5)": 1415,
+      "vxy[5,10)": 634,
+      "vxy[10,30)": 1224
+    },
+    "base": {
+      "prompt vxy<2.5": 21877,
+      "vxy[0,1)": 21137,
+      "vxy[1,5)": 1415,
+      "vxy[5,10)": 634,
+      "vxy[10,30)": 1224
+    }
+  },
+  "m16_table": {
+    "pT5-class ALL (7)": {
+      "proto": {
+        "nTC": 0,
+        "nTC_per_event": 0.0,
+        "FR": null,
+        "DR": null,
+        "mean_nhitOT": null,
+        "effN prompt vxy<2.5": 0,
+        "eff prompt vxy<2.5": 0.0,
+        "effN vxy[0,1)": 0,
+        "eff vxy[0,1)": 0.0,
+        "effN vxy[1,5)": 0,
+        "eff vxy[1,5)": 0.0,
+        "effN vxy[5,10)": 0,
+        "eff vxy[5,10)": 0.0,
+        "effN vxy[10,30)": 0,
+        "eff vxy[10,30)": 0.0
+      },
+      "base": {
+        "nTC": 212553,
+        "nTC_per_event": 708.51,
+        "FR": 0.014490503544998189,
+        "DR": 0.00955526386360108,
+        "mean_nhitOT": 11.545826217461057,
+        "effN prompt vxy<2.5": 12041,
+        "eff prompt vxy<2.5": 0.5503953924212643,
+        "effN vxy[0,1)": 11657,
+        "eff vxy[0,1)": 0.5514973742726026,
+        "effN vxy[1,5)": 550,
+        "eff vxy[1,5)": 0.38869257950530034,
+        "effN vxy[5,10)": 47,
+        "eff vxy[5,10)": 0.07413249211356467,
+        "effN vxy[10,30)": 2,
+        "eff vxy[10,30)": 0.0016339869281045752
+      }
+    },
+    "  carried pT5": {
+      "proto": {
+        "nTC": 0,
+        "nTC_per_event": 0.0,
+        "FR": null,
+        "DR": null,
+        "mean_nhitOT": null,
+        "effN prompt vxy<2.5": 0,
+        "eff prompt vxy<2.5": 0.0,
+        "effN vxy[0,1)": 0,
+        "eff vxy[0,1)": 0.0,
+        "effN vxy[1,5)": 0,
+        "eff vxy[1,5)": 0.0,
+        "effN vxy[5,10)": 0,
+        "eff vxy[5,10)": 0.0,
+        "effN vxy[10,30)": 0,
+        "eff vxy[10,30)": 0.0
+      },
+      "base": {
+        "nTC": 212553,
+        "nTC_per_event": 708.51,
+        "FR": 0.014490503544998189,
+        "DR": 0.00955526386360108,
+        "mean_nhitOT": 11.545826217461057,
+        "effN prompt vxy<2.5": 12041,
+        "eff prompt vxy<2.5": 0.5503953924212643,
+        "effN vxy[0,1)": 11657,
+        "eff vxy[0,1)": 0.5514973742726026,
+        "effN vxy[1,5)": 550,
+        "eff vxy[1,5)": 0.38869257950530034,
+        "effN vxy[5,10)": 47,
+        "eff vxy[5,10)": 0.07413249211356467,
+        "effN vxy[10,30)": 2,
+        "eff vxy[10,30)": 0.0016339869281045752
+      }
+    },
+    "  attach pT5": {
+      "proto": {
+        "nTC": 0,
+        "nTC_per_event": 0.0,
+        "FR": null,
+        "DR": null,
+        "mean_nhitOT": null,
+        "effN prompt vxy<2.5": 0,
+        "eff prompt vxy<2.5": 0.0,
+        "effN vxy[0,1)": 0,
+        "eff vxy[0,1)": 0.0,
+        "effN vxy[1,5)": 0,
+        "eff vxy[1,5)": 0.0,
+        "effN vxy[5,10)": 0,
+        "eff vxy[5,10)": 0.0,
+        "effN vxy[10,30)": 0,
+        "eff vxy[10,30)": 0.0
+      },
+      "base": {
+        "nTC": 0,
+        "nTC_per_event": 0.0,
+        "FR": null,
+        "DR": null,
+        "mean_nhitOT": null,
+        "effN prompt vxy<2.5": 0,
+        "eff prompt vxy<2.5": 0.0,
+        "effN vxy[0,1)": 0,
+        "eff vxy[0,1)": 0.0,
+        "effN vxy[1,5)": 0,
+        "eff vxy[1,5)": 0.0,
+        "effN vxy[5,10)": 0,
+        "eff vxy[5,10)": 0.0,
+        "effN vxy[10,30)": 0,
+        "eff vxy[10,30)": 0.0
+      }
+    },
+    "pT3-class ALL (5)": {
+      "proto": {
+        "nTC": 31253,
+        "nTC_per_event": 104.17666666666666,
+        "FR": 0.037660384603078106,
+        "DR": 0.0207980033916744,
+        "mean_nhitOT": 6.0,
+        "effN prompt vxy<2.5": 1295,
+        "eff prompt vxy<2.5": 0.059194587923389864,
+        "effN vxy[0,1)": 1243,
+        "eff vxy[0,1)": 0.058806831622273736,
+        "effN vxy[1,5)": 99,
+        "eff vxy[1,5)": 0.06996466431095406,
+        "effN vxy[5,10)": 20,
+        "eff vxy[5,10)": 0.031545741324921134,
+        "effN vxy[10,30)": 0,
+        "eff vxy[10,30)": 0.0
+      },
+      "base": {
+        "nTC": 31253,
+        "nTC_per_event": 104.17666666666666,
+        "FR": 0.037660384603078106,
+        "DR": 0.02815729689949765,
+        "mean_nhitOT": 6.0,
+        "effN prompt vxy<2.5": 1286,
+        "eff prompt vxy<2.5": 0.058783196964848926,
+        "effN vxy[0,1)": 1235,
+        "eff vxy[0,1)": 0.0584283483938118,
+        "effN vxy[1,5)": 98,
+        "eff vxy[1,5)": 0.06925795053003533,
+        "effN vxy[5,10)": 19,
+        "eff vxy[5,10)": 0.02996845425867508,
+        "effN vxy[10,30)": 0,
+        "eff vxy[10,30)": 0.0
+      }
+    },
+    "  carried pT3": {
+      "proto": {
+        "nTC": 31253,
+        "nTC_per_event": 104.17666666666666,
+        "FR": 0.037660384603078106,
+        "DR": 0.0207980033916744,
+        "mean_nhitOT": 6.0,
+        "effN prompt vxy<2.5": 1295,
+        "eff prompt vxy<2.5": 0.059194587923389864,
+        "effN vxy[0,1)": 1243,
+        "eff vxy[0,1)": 0.058806831622273736,
+        "effN vxy[1,5)": 99,
+        "eff vxy[1,5)": 0.06996466431095406,
+        "effN vxy[5,10)": 20,
+        "eff vxy[5,10)": 0.031545741324921134,
+        "effN vxy[10,30)": 0,
+        "eff vxy[10,30)": 0.0
+      },
+      "base": {
+        "nTC": 31253,
+        "nTC_per_event": 104.17666666666666,
+        "FR": 0.037660384603078106,
+        "DR": 0.02815729689949765,
+        "mean_nhitOT": 6.0,
+        "effN prompt vxy<2.5": 1286,
+        "eff prompt vxy<2.5": 0.058783196964848926,
+        "effN vxy[0,1)": 1235,
+        "eff vxy[0,1)": 0.0584283483938118,
+        "effN vxy[1,5)": 98,
+        "eff vxy[1,5)": 0.06925795053003533,
+        "effN vxy[5,10)": 19,
+        "eff vxy[5,10)": 0.02996845425867508,
+        "effN vxy[10,30)": 0,
+        "eff vxy[10,30)": 0.0
+      }
+    },
+    "  attach pT3": {
+      "proto": {
+        "nTC": 0,
+        "nTC_per_event": 0.0,
+        "FR": null,
+        "DR": null,
+        "mean_nhitOT": null,
+        "effN prompt vxy<2.5": 0,
+        "eff prompt vxy<2.5": 0.0,
+        "effN vxy[0,1)": 0,
+        "eff vxy[0,1)": 0.0,
+        "effN vxy[1,5)": 0,
+        "eff vxy[1,5)": 0.0,
+        "effN vxy[5,10)": 0,
+        "eff vxy[5,10)": 0.0,
+        "effN vxy[10,30)": 0,
+        "eff vxy[10,30)": 0.0
+      },
+      "base": {
+        "nTC": 0,
+        "nTC_per_event": 0.0,
+        "FR": null,
+        "DR": null,
+        "mean_nhitOT": null,
+        "effN prompt vxy<2.5": 0,
+        "eff prompt vxy<2.5": 0.0,
+        "effN vxy[0,1)": 0,
+        "eff vxy[0,1)": 0.0,
+        "effN vxy[1,5)": 0,
+        "eff vxy[1,5)": 0.0,
+        "effN vxy[5,10)": 0,
+        "eff vxy[5,10)": 0.0,
+        "effN vxy[10,30)": 0,
+        "eff vxy[10,30)": 0.0
+      }
+    },
+    "pLS-class ALL (8)": {
+      "proto": {
+        "nTC": 188230,
+        "nTC_per_event": 627.4333333333333,
+        "FR": 0.049322637199171224,
+        "DR": 0.1074908356797535,
+        "mean_nhitOT": 0.0,
+        "effN prompt vxy<2.5": 4665,
+        "eff prompt vxy<2.5": 0.21323764684371715,
+        "effN vxy[0,1)": 4585,
+        "eff vxy[0,1)": 0.21691820031224868,
+        "effN vxy[1,5)": 158,
+        "eff vxy[1,5)": 0.111660777385159,
+        "effN vxy[5,10)": 7,
+        "eff vxy[5,10)": 0.011041009463722398,
+        "effN vxy[10,30)": 0,
+        "eff vxy[10,30)": 0.0
+      },
+      "base": {
+        "nTC": 188230,
+        "nTC_per_event": 627.4333333333333,
+        "FR": 0.049322637199171224,
+        "DR": 0.09945279710991872,
+        "mean_nhitOT": 0.0,
+        "effN prompt vxy<2.5": 4573,
+        "eff prompt vxy<2.5": 0.2090323170452987,
+        "effN vxy[0,1)": 4498,
+        "eff vxy[0,1)": 0.2128021952027251,
+        "effN vxy[1,5)": 151,
+        "eff vxy[1,5)": 0.10671378091872792,
+        "effN vxy[5,10)": 6,
+        "eff vxy[5,10)": 0.00946372239747634,
+        "effN vxy[10,30)": 0,
+        "eff vxy[10,30)": 0.0
+      }
+    },
+    "bare chain (4+9)": {
+      "proto": {
+        "nTC": 258322,
+        "nTC_per_event": 861.0733333333334,
+        "FR": 0.05870967242433862,
+        "DR": 0.03804941119997522,
+        "mean_nhitOT": 11.33625475182137,
+        "effN prompt vxy<2.5": 12307,
+        "eff prompt vxy<2.5": 0.5625542807514742,
+        "effN vxy[0,1)": 11809,
+        "eff vxy[0,1)": 0.5586885556133794,
+        "effN vxy[1,5)": 854,
+        "eff vxy[1,5)": 0.6035335689045936,
+        "effN vxy[5,10)": 425,
+        "eff vxy[5,10)": 0.6703470031545742,
+        "effN vxy[10,30)": 852,
+        "eff vxy[10,30)": 0.696078431372549
+      },
+      "base": {
+        "nTC": 43176,
+        "nTC_per_event": 143.92,
+        "FR": 0.18711784324624792,
+        "DR": 0.06364647026125625,
+        "mean_nhitOT": 10.510376134889754,
+        "effN prompt vxy<2.5": 636,
+        "eff prompt vxy<2.5": 0.029071627736892626,
+        "effN vxy[0,1)": 520,
+        "eff vxy[0,1)": 0.02460140985002602,
+        "effN vxy[1,5)": 295,
+        "eff vxy[1,5)": 0.20848056537102475,
+        "effN vxy[5,10)": 342,
+        "eff vxy[5,10)": 0.5394321766561514,
+        "effN vxy[10,30)": 768,
+        "eff vxy[10,30)": 0.6274509803921569
+      }
+    },
+    "pixel-class ALL (7+5+8)": {
+      "proto": {
+        "nTC": 219483,
+        "nTC_per_event": 731.61,
+        "FR": 0.047662005713426554,
+        "DR": 0.0951463211273766,
+        "mean_nhitOT": 0.854362296852148,
+        "effN prompt vxy<2.5": 5960,
+        "eff prompt vxy<2.5": 0.272432234767107,
+        "effN vxy[0,1)": 5828,
+        "eff vxy[0,1)": 0.2757250319345224,
+        "effN vxy[1,5)": 257,
+        "eff vxy[1,5)": 0.18162544169611308,
+        "effN vxy[5,10)": 27,
+        "eff vxy[5,10)": 0.04258675078864353,
+        "effN vxy[10,30)": 0,
+        "eff vxy[10,30)": 0.0
+      },
+      "base": {
+        "nTC": 432036,
+        "nTC_per_event": 1440.12,
+        "FR": 0.031342295549444954,
+        "DR": 0.0500675869603459,
+        "mean_nhitOT": 6.114346952568767,
+        "effN prompt vxy<2.5": 17900,
+        "eff prompt vxy<2.5": 0.818210906431412,
+        "effN vxy[0,1)": 17390,
+        "eff vxy[0,1)": 0.8227279178691395,
+        "effN vxy[1,5)": 799,
+        "eff vxy[1,5)": 0.5646643109540636,
+        "effN vxy[5,10)": 72,
+        "eff vxy[5,10)": 0.11356466876971609,
+        "effN vxy[10,30)": 2,
+        "eff vxy[10,30)": 0.0016339869281045752
+      }
+    },
+    "attach deliveries": {
+      "proto": {
+        "nTC": 0,
+        "nTC_per_event": 0.0,
+        "FR": null,
+        "DR": null,
+        "mean_nhitOT": null,
+        "effN prompt vxy<2.5": 0,
+        "eff prompt vxy<2.5": 0.0,
+        "effN vxy[0,1)": 0,
+        "eff vxy[0,1)": 0.0,
+        "effN vxy[1,5)": 0,
+        "eff vxy[1,5)": 0.0,
+        "effN vxy[5,10)": 0,
+        "eff vxy[5,10)": 0.0,
+        "effN vxy[10,30)": 0,
+        "eff vxy[10,30)": 0.0
+      },
+      "base": {
+        "nTC": 0,
+        "nTC_per_event": 0.0,
+        "FR": null,
+        "DR": null,
+        "mean_nhitOT": null,
+        "effN prompt vxy<2.5": 0,
+        "eff prompt vxy<2.5": 0.0,
+        "effN vxy[0,1)": 0,
+        "eff vxy[0,1)": 0.0,
+        "effN vxy[1,5)": 0,
+        "eff vxy[1,5)": 0.0,
+        "effN vxy[5,10)": 0,
+        "eff vxy[5,10)": 0.0,
+        "effN vxy[10,30)": 0,
+        "eff vxy[10,30)": 0.0
+      }
+    },
+    "all": {
+      "proto": {
+        "nTC": 477805,
+        "nTC_per_event": 1592.6833333333334,
+        "FR": 0.05363485103755716,
+        "DR": 0.0642772679231067,
+        "mean_nhitOT": 6.521325645399274,
+        "effN prompt vxy<2.5": 18267,
+        "eff prompt vxy<2.5": 0.8349865155185812,
+        "effN vxy[0,1)": 17637,
+        "eff vxy[0,1)": 0.8344135875479017,
+        "effN vxy[1,5)": 1111,
+        "eff vxy[1,5)": 0.7851590106007067,
+        "effN vxy[5,10)": 452,
+        "eff vxy[5,10)": 0.7129337539432177,
+        "effN vxy[10,30)": 852,
+        "eff vxy[10,30)": 0.696078431372549
+      },
+      "base": {
+        "nTC": 475212,
+        "nTC_per_event": 1584.04,
+        "FR": 0.04549548412077136,
+        "DR": 0.05130131393988367,
+        "mean_nhitOT": 6.513753861434475,
+        "effN prompt vxy<2.5": 18536,
+        "eff prompt vxy<2.5": 0.8472825341683046,
+        "effN vxy[0,1)": 17910,
+        "eff vxy[0,1)": 0.8473293277191655,
+        "effN vxy[1,5)": 1094,
+        "eff vxy[1,5)": 0.7731448763250883,
+        "effN vxy[5,10)": 414,
+        "eff vxy[5,10)": 0.6529968454258676,
+        "effN vxy[10,30)": 770,
+        "eff vxy[10,30)": 0.6290849673202614
+      }
+    }
+  },
+  "pixel_check": {
+    "ok": true,
+    "n_pixel_proto": 315389,
+    "n_pixel_base": 557115,
+    "events_with_count_mismatch": 300,
+    "mode": "subset",
+    "suppressed_rows": 241726,
+    "subset_embed_failures": 0,
+    "pixel_dup_gained": 2525,
+    "pixel_dup_lost": 817
+  },
+  "warnings": []
+}

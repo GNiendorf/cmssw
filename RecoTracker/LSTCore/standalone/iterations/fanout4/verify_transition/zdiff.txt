@@ -1,0 +1,180 @@
+516a517,552
+>   // ============ FANOUT4 "transition" BAND-AWARE LEVERS (all default = bit-exact no-op) ==
+>   // Motivation: |eta| in [1.1, 1.7) is the worst band on BOTH axes at once (fake .0765 vs
+>   // LST .0459, eff .8603 vs .8826). Production LST already ships eta-binned WP tables, so
+>   // an eta-conditioned threshold is an accepted design pattern here. Every lever below is
+>   // an ADDITIVE delta applied to an EXISTING -G 6 / K9 threshold, and ONLY for chains whose
+>   // eta falls in the band. The chain's eta is the K10 TC eta by construction --
+>   // ev.t3_eta of the innermost member T3 (K9K10.cc: tc.eta = ev.t3_eta[t3Inner]) -- so the
+>   // band a chain is tightened in is exactly the band its TC is counted in.
+>   //   -ZE1 / -ZE2 : band edges (defaults 1.1 / 1.7). -ZE2 <= -ZE1 disables every lever.
+>   //   -ZRI  : added to -MRI, the IP-5+ OR-rescue mX floor  (the anchor's live IP-5+ cut,
+>   //           since -M5/-M6 are 1e9: an IP 5+ chain survives iff mX >= -MRI).
+>   //   -ZR   : added to -MR, the exempt-5+ OR-rescue mX floor (same reasoning, -MD = 1e9).
+>   //   -ZM4  : added to -M4,  the T4-class IP mX kill.
+>   //   -ZM4D : added to -M4D, the exempt T4-class mD kill.
+>   //   -ZCP / -ZCD : added to -C25 / -C25D, the (nNodes=2, nLayers=5) cell margins.
+>   //   -ZBA  : EXTRA -B order-key alpha in the band (ordering only; thresholds untouched,
+>   //           so this can never kill a chain -- it only makes fake-suspect band chains
+>   //           claim later, which frees their hits for real band chains).
+>   // POSITIVE values TIGHTEN (kill more); negative values LOOSEN (keep more).
+>   //   -ZR5 / -ZR6 : PER-LENGTH refinements of -ZR, added on top of it for exempt 5+ chains
+>   //           with nLayers == 5 / nLayers >= 6 respectively. The two lengths behave very
+>   //           differently in the band: at an mX floor of 0 the nL=5 exempt slice kills
+>   //           1532 fakes for 745 trues (2.06:1) while the nL>=6 slice kills 357 fakes for
+>   //           436 trues (0.82:1) -- the long exempt chains are where the genuinely
+>   //           displaced tracks live, so the tightening must not reach them.
+>   float zEta1 = 1.1f, zEta2 = 1.7f;
+>   float zdRI = 0.f, zdR = 0.f, zdM4 = 0.f, zdM4D = 0.f, zdCP = 0.f, zdCD = 0.f, zdAlpha = 0.f;
+>   //   -ZIL 1 : restrict EVERY band kill lever to chains whose INNERMOST chain MD sits in
+>   //           layer 1. Rationale (measured): a band chain that starts at layer >= 2 is
+>   //           6.0% of the band population but 21.9% of the band fakes AND is where the
+>   //           genuinely large-dxy tracks live -- a real dxy>5 track physically cannot
+>   //           leave a layer-1 MD. Tightening the layer-1 slice at an mX floor of 0.5
+>   //           puts 2 dxy>=5 sims at risk; the same floor without the restriction puts 21
+>   //           at risk, for a comparable fake gain. So the restriction buys the displaced
+>   //           floors back almost for free. 0 = no restriction (bit-exact).
+>   float zdR5 = 0.f, zdR6 = 0.f, zInLay1 = 0.f;
+682a719,743
+>     // FANOUT4 transition band-aware levers (see the block next to kGateKill).
+>     else if (s == "-ZE1")
+>       dst = &zEta1;
+>     else if (s == "-ZE2")
+>       dst = &zEta2;
+>     else if (s == "-ZRI")
+>       dst = &zdRI;
+>     else if (s == "-ZIL")
+>       dst = &zInLay1;
+>     else if (s == "-ZR5")
+>       dst = &zdR5;
+>     else if (s == "-ZR6")
+>       dst = &zdR6;
+>     else if (s == "-ZR")
+>       dst = &zdR;
+>     else if (s == "-ZM4D")
+>       dst = &zdM4D;
+>     else if (s == "-ZM4")
+>       dst = &zdM4;
+>     else if (s == "-ZCP")
+>       dst = &zdCP;
+>     else if (s == "-ZCD")
+>       dst = &zdCD;
+>     else if (s == "-ZBA")
+>       dst = &zdAlpha;
+1839a1901,1908
+>     if (zdRI != 0.f || zdR != 0.f || zdR5 != 0.f || zdR6 != 0.f || zdM4 != 0.f || zdM4D != 0.f ||
+>         zdCP != 0.f || zdCD != 0.f || zdAlpha != 0.f)
+>       std::printf("FANOUT4 transition band |eta| in [%.2f, %.2f): dRI=%+.3f dR=%+.3f (dR5=%+.3f"
+>                   " dR6=%+.3f) dM4=%+.3f dM4D=%+.3f dCP=%+.3f dCD=%+.3f dAlpha=%+.3f (additive to"
+>                   " -MRI/-MR/-M4/-M4D/-C25/-C25D/-B; chain eta = innermost T3 eta = the K10 TC eta;"
+>                   " inLay1-only=%s)\n",
+>                   zEta1, zEta2, zdRI, zdR, zdR5, zdR6, zdM4, zdM4D, zdCP, zdCD, zdAlpha,
+>                   zInLay1 >= 0.5f ? "yes" : "no");
+1959a2029,2033
+>       // FANOUT4 transition diagnostics: per-chain prompt/displaced margins and the -G 6
+>       // branch code (0 = T4 IP, 1 = T4 exempt, 2 = 5+ IP, 3 = 5+ exempt); -1 elsewhere.
+>       std::vector<float> dbgMP, dbgMD;
+>       std::vector<signed char> dbgBr;
+>       std::vector<char> zBandChain;  // 1 = chain eta inside [-ZE1, -ZE2)
+1987a2062,2064
+>           dbgMP.assign(nC, 0.f);
+>           dbgMD.assign(nC, 0.f);
+>           dbgBr.assign(nC, -1);
+1988a2066,2072
+>           // FANOUT4 transition band levers. inBand uses the chain's K10 eta (innermost
+>           // member T3), so a chain is tightened in exactly the eta band its TC is counted
+>           // in. All deltas default to 0 => the whole block is a no-op.
+>           const bool zOn = zEta2 > zEta1 &&
+>                            (zdRI != 0.f || zdR != 0.f || zdR5 != 0.f || zdR6 != 0.f || zdM4 != 0.f ||
+>                             zdM4D != 0.f || zdCP != 0.f || zdCD != 0.f);
+>           zBandChain.assign(nC, 0);
+1994a2079,2080
+>             dbgMP[c] = mP;
+>             dbgMD[c] = mD;
+1995a2082,2110
+>             dbgBr[c] = nL <= 4 ? (dcaAll[c] >= std::max(dcaSplit, t4ExemptDcaMin) ? 1 : 0)
+>                                : (dcaAll[c] < dcaSplit ? 2 : 3);
+>             // Band membership (also needed by the -ZBA ordering lever, which is live even
+>             // when zOn is false because it changes no threshold).
+>             bool inZ = false;
+>             if (zEta2 > zEta1 && chains.offsets[c + 1] > chains.offsets[c]) {
+>               const int t3In = chains.items[chains.offsets[c]];
+>               if (t3In >= 0 && t3In < static_cast<int>(ev.t3_eta.size())) {
+>                 const float ae = std::fabs(ev.t3_eta[t3In]);
+>                 inZ = ae >= zEta1 && ae < zEta2;
+>               }
+>             }
+>             zBandChain[c] = inZ ? 1 : 0;
+>             // -ZIL 1: the kill levers only reach chains starting in layer 1.
+>             bool ilOk = true;
+>             if (zInLay1 >= 0.5f) {
+>               ilOk = false;
+>               if (chains.mdOffsets[c + 1] > chains.mdOffsets[c]) {
+>                 const int m0 = chains.mdItems[chains.mdOffsets[c]];
+>                 ilOk = m0 >= 0 && m0 < static_cast<int>(ev.md_layer.size()) && ev.md_layer[m0] == 1;
+>               }
+>             }
+>             const bool zz = zOn && inZ && ilOk;
+>             const float dRI = zz ? zdRI : 0.f;
+>             const float dR = zz ? (zdR + (nL == 5 ? zdR5 : zdR6)) : 0.f;
+>             const float d4 = zz ? zdM4 : 0.f;
+>             const float d4D = zz ? zdM4D : 0.f;
+>             const float dCP = zz ? zdCP : 0.f;
+>             const float dCD = zz ? zdCD : 0.f;
+1999c2114
+<                 if (mD < m3Theta4D)
+---
+>                 if (mD < m3Theta4D + d4D)
+2002c2117
+<               } else if (mX < m3Theta4) {
+---
+>               } else if (mX < m3Theta4 + d4) {
+2010c2125
+<               if (mP < thr && mX < m3ThetaRI)
+---
+>               if (mP < thr && mX < m3ThetaRI + dRI)
+2016c2131
+<               if (mD < m3ThetaD && mX < m3ThetaR)
+---
+>               if (mD < m3ThetaD && mX < m3ThetaR + dR)
+2028c2143
+<                 if (mP < c25Theta && mD < c25ThetaD) {
+---
+>                 if (mP < c25Theta + dCP && mD < c25ThetaD + dCD) {
+2268c2383
+<       const bool wantPenalty = fakeOrderAlpha > 0.f && haveGateKey;
+---
+>       const bool wantPenalty = (fakeOrderAlpha > 0.f || zdAlpha != 0.f) && haveGateKey;
+2282c2397,2401
+<           orderKeyVec[c] = base - (wantPenalty ? fakeOrderAlpha * std::max(0.f, -gateLogit[c]) : 0.f);
+---
+>           // -ZBA: extra fake-order alpha for band chains (ORDERING ONLY -- thresholds
+>           // still cut on chains.score, so this can never kill a chain).
+>           const float alphaC =
+>               fakeOrderAlpha + ((zdAlpha != 0.f && c < zBandChain.size() && zBandChain[c]) ? zdAlpha : 0.f);
+>           orderKeyVec[c] = base - (wantPenalty ? alphaC * std::max(0.f, -gateLogit[c]) : 0.f);
+2658a2778,2801
+>           // FANOUT4 transition diagnostics (harness-invisible extra branches).
+>           otc.dbgNL = chains.nLayers[c];
+>           otc.dbgNNodes = chains.offsets[c + 1] - chains.offsets[c];
+>           otc.dbgNMD = chains.mdOffsets[c + 1] - chains.mdOffsets[c];
+>           {
+>             int nB = 0, nPS = 0;
+>             for (int mk = chains.mdOffsets[c]; mk < chains.mdOffsets[c + 1]; ++mk) {
+>               const int m = chains.mdItems[mk];
+>               if (ev.md_layer[m] <= 6)
+>                 ++nB;
+>               if (ev.md_type[m] == 1)
+>                 ++nPS;
+>             }
+>             otc.dbgNB = nB;
+>             otc.dbgNPS = nPS;
+>             otc.dbgInLay = chains.mdOffsets[c + 1] > chains.mdOffsets[c] ? ev.md_layer[chains.mdItems[chains.mdOffsets[c]]] : 0;
+>           }
+>           if (!dbgBr.empty()) {
+>             otc.dbgBranch = dbgBr[c];
+>             otc.dbgMP = dbgMP[c];
+>             otc.dbgMDm = dbgMD[c];
+>           }
+>           if (!m3dcaAll.empty())
+>             otc.dbgDca = m3dcaAll[c];

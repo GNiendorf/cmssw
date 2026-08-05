@@ -1,0 +1,139 @@
+========================================================================================================
+A15 DUPLICATE DECOMPOSITION  [A15 + -XC4 1 (hit axis)]  kind=proto  events=300  OT-hit axis=ON  metric pt>0.90
+========================================================================================================
+
+[1] TOTALS
+    all TCs        nTC=  616531  nDup=  34247  dup=0.05555
+    METRIC pt>0.9  nTC=  478657  nDup=  27131  dup=0.05668   <== headline
+    per event: 1595.5 TC, 90.4 dup (metric universe)
+
+[2] PER-CLASS (metric universe)
+  class        nTC     %TC      nDup    %dup   dupRate | dupRate  B / T / E      | nDup B/T/E
+  cPLS      179428   37.5%     16055   59.2%   0.08948 | 0.0477 / 0.0488 / 0.0919 | 291 / 185 / 15579
+  aPT5      159360   33.3%      1043    3.8%   0.00654 | 0.0029 / 0.0070 / 0.0105 | 199 / 238 / 606
+  chT5       98525   20.6%      5713   21.1%   0.05799 | 0.0664 / 0.0357 / 0.0753 | 3094 / 1165 / 1454
+  aPT3       27995    5.8%       461    1.7%   0.01647 | 0.0061 / 0.0128 / 0.0448 | 98 / 68 / 295
+  chT4        7801    1.6%       334    1.2%   0.04282 | 0.0195 / 0.0464 / 0.0599 | 59 / 37 / 238
+  zPLS        5548    1.2%      3525   13.0%   0.63536 | 0.7180 / 0.6165 / 0.4356 | 2399 / 561 / 565
+
+[2b] FAKE PER CLASS (metric universe; fake == no sim matched > 0.75)
+  class        nTC     nFake  fakeRate | fakeRate B / T / E
+  cPLS      179428      8540   0.04760 | 0.0380 / 0.1052 / 0.0467
+  aPT5      159360      1211   0.00760 | 0.0048 / 0.0109 / 0.0089
+  chT5       98525      9078   0.09214 | 0.1028 / 0.0999 / 0.0535
+  aPT3       27995      4868   0.17389 | 0.1320 / 0.2093 / 0.2478
+  chT4        7801      2585   0.33137 | 0.6748 / 0.1830 / 0.0990
+  zPLS        5548       342   0.06164 | 0.0147 / 0.0626 / 0.1820
+  ALL       478657     26624   0.05562  <== headline fake rate
+
+[3] PER REGION (metric universe)
+    B : nTC=  143266  nDup=   6140  dupRate=0.04286  (22.6% of all dups)
+    T : nTC=   77167  nDup=   2254  dupRate=0.02921  (8.3% of all dups)
+    E : nTC=  258224  nDup=  18737  dupRate=0.07256  (69.1% of all dups)
+
+[4] DUP PAIRS with >=1 member in the metric universe: 14627 (48.8/evt). [pairs by #members in-universe: 2=12566 1=2061 0=2543]
+  class pair            B        T        E     total   %pairs
+  cPLS+cPLS             0        0     8124      8124    55.5%
+  chT5+zPLS          2438      575      502      3515    24.0%
+  cPLS+chT5           280      189      550      1019     7.0%
+  aPT5+chT5           193      205      250       648     4.4%
+  chT5+chT5           116      111       94       321     2.2%
+  aPT3+chT5            91       62       67       220     1.5%
+  cPLS+chT4            26        4      149       179     1.2%
+  aPT3+aPT5             3        9      163       175     1.2%
+  aPT5+zPLS             3       13       81        97     0.7%
+  aPT5+chT4             2       12       53        67     0.5%
+  chT4+chT5            19       13       20        52     0.4%
+  aPT5+cPLS             1        2       43        46     0.3%
+  chT4+zPLS            11        3       21        35     0.2%
+  aPT3+cPLS             0        0       31        31     0.2%
+  aPT5+aPT5             0        1       22        23     0.2%
+  aPT3+chT4             2        2       19        23     0.2%
+  aPT3+aPT3             2        1       16        19     0.1%
+  cPLS+zPLS             0        0       13        13     0.1%
+  aPT3+zPLS             0        0       10        10     0.1%
+  chT4+chT4             0        3        5         8     0.1%
+  zPLS+zPLS             0        0        2         2     0.0%
+  ALL                3187     1205    10235     14627
+
+[5] SHARED STRUCTURE (OT hit sets of the two members)
+  class pair      identical   subset  partial  disjoint  one-noOT  both-noOT     total
+  cPLS+cPLS               0        0        0         0         0       8124      8124
+  chT5+zPLS               0        0        0         0      3515          0      3515
+  cPLS+chT5               0        0        0         0      1019          0      1019
+  aPT5+chT5               0        0      581        67         0          0       648
+  chT5+chT5               0        0      290        31         0          0       321
+  aPT3+chT5               0        0      105       115         0          0       220
+  cPLS+chT4               0        0        0         0       179          0       179
+  aPT3+aPT5               0        0       94        81         0          0       175
+  aPT5+zPLS               0        0        0         0        97          0        97
+  aPT5+chT4               0        0       44        23         0          0        67
+  chT4+chT5               0        0       41        11         0          0        52
+  aPT5+cPLS               0        0        0         0        46          0        46
+  chT4+zPLS               0        0        0         0        35          0        35
+  aPT3+cPLS               0        0        0         0        31          0        31
+  aPT5+aPT5               0        0       20         3         0          0        23
+  aPT3+chT4               0        0        4        19         0          0        23
+  aPT3+aPT3               0        0        3        16         0          0        19
+  cPLS+zPLS               0        0        0         0         0         13        13
+  aPT3+zPLS               0        0        0         0        10          0        10
+  chT4+chT4               0        0        4         4         0          0         8
+  zPLS+zPLS               0        0        0         0         0          2         2
+  ALL                     0        0     1186       370      4932       8139     14627
+
+[6] GROUP SIZES (sims matched by k TCs; all TCs)
+    k=2 :   17077 groups (56.92/evt)
+    k=3 :      31 groups (0.10/evt)
+
+[7] PER-DUP-TC PARTNER COMPOSITION (metric universe, top 22)
+  cPLS   reg E  partners cPLS                   :   14933 ( 55.0% of dups)
+  zPLS   reg B  partners chT5                   :    2385 (  8.8% of dups)
+  chT5   reg B  partners zPLS                   :    2342 (  8.6% of dups)
+  zPLS   reg T  partners chT5                   :     546 (  2.0% of dups)
+  chT5   reg T  partners zPLS                   :     515 (  1.9% of dups)
+  chT5   reg E  partners cPLS                   :     495 (  1.8% of dups)
+  chT5   reg E  partners zPLS                   :     464 (  1.7% of dups)
+  zPLS   reg E  partners chT5                   :     450 (  1.7% of dups)
+  cPLS   reg E  partners chT5                   :     439 (  1.6% of dups)
+  cPLS   reg B  partners chT5                   :     264 (  1.0% of dups)
+  chT5   reg B  partners cPLS                   :     251 (  0.9% of dups)
+  aPT5   reg E  partners chT5                   :     237 (  0.9% of dups)
+  chT5   reg E  partners aPT5                   :     232 (  0.9% of dups)
+  chT5   reg B  partners chT5                   :     218 (  0.8% of dups)
+  aPT5   reg T  partners chT5                   :     205 (  0.8% of dups)
+  chT5   reg T  partners chT5                   :     205 (  0.8% of dups)
+  chT5   reg T  partners aPT5                   :     198 (  0.7% of dups)
+  aPT5   reg B  partners chT5                   :     191 (  0.7% of dups)
+  chT5   reg B  partners aPT5                   :     182 (  0.7% of dups)
+  chT5   reg T  partners cPLS                   :     177 (  0.7% of dups)
+  cPLS   reg T  partners chT5                   :     176 (  0.6% of dups)
+  chT5   reg E  partners chT5                   :     174 (  0.6% of dups)
+
+[8] ORACLE YIELDS -- headline dup rate if that cell were solved perfectly
+  cell                                     dup after     delta TCdropped  simsLost    pairs
+  EVERYTHING (all dup pairs)                 0.00000  -0.05668     13477         0    14627
+  classpair cPLS+cPLS                        0.02586  -0.03082      7373         0     8124
+  classpair chT5+zPLS                        0.04296  -0.01372      3387         0     3515
+  classpair cPLS+chT5                        0.05298  -0.00370       893         0     1019
+  classpair aPT5+chT5                        0.05415  -0.00253       612         0      648
+  classpair chT5+chT5                        0.05546  -0.00122       299         0      321
+  classpair aPT3+chT5                        0.05586  -0.00082       207         0      220
+  classpair cPLS+chT4                        0.05606  -0.00062       153         0      179
+  classpair aPT3+aPT5                        0.05599  -0.00069       173         0      175
+  classpair aPT5+zPLS                        0.05633  -0.00035        86         0       97
+  classpair aPT5+chT4                        0.05642  -0.00027        66         0       67
+  classpair chT4+chT5                        0.05647  -0.00021        52         0       52
+  classpair aPT5+cPLS                        0.05651  -0.00017        41         0       46
+  structure partial                          0.05208  -0.00460      1126         0     1186
+  structure disjoint                         0.05527  -0.00141       351         0      370
+  structure one-noOT                         0.03778  -0.01891      4630         0     4932
+  structure both-noOT                        0.02581  -0.03087      7388         0     8139
+
+[9] DRILL-DOWN on cell chT5+zPLS
+  pairs=3515 (11.72/evt);  dR quantiles 10/50/90 = 0.0160 / 0.0708 / 0.1770; dR^2<0.02 (LST window): 65.8%
+  |eta| quantiles 10/50/90 = 0.11 / 0.59 / 1.84
+  nhitOT of chT5  : 10:1725 12:1740 14:50
+  nhitOT of zPLS  : 0:3515
+  shared OT hits  : 0:3515
+
+wrote a15_ref/dec_X4H_300.json

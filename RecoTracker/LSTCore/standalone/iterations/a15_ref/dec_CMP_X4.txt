@@ -1,0 +1,62 @@
+============================================================================================
+LIKE-FOR-LIKE DUP COMPOSITION DIFF   proto=A15 + -XC4 1 (post-attack) (300 evt)  vs  LST (300 evt)
+============================================================================================
+headline dup   proto 0.05668 (27131/478657)   LST 0.05179 (24535/473752)   delta +0.00489
+per event      proto 1595.5 TC / 90.4 dup      LST 1579.2 TC / 81.8 dup
+
+DUP TCs PER EVENT BY CLASS (ours mapped onto the LST class it replaces)
+  class  dup/evt P dup/evt L     delta |  TC/evt P  TC/evt L       dTC
+  T5         19.04      5.40    +13.64 |     328.4     111.9    +216.5
+  PT5         3.48      7.01     -3.54 |     531.2     706.6    -175.4
+  PLS        65.27     62.31     +2.96 |     616.6     624.7      -8.1
+  T4          1.11      4.07     -2.96 |      26.0      31.5      -5.5
+  PT3         1.54      2.99     -1.46 |      93.3     104.5     -11.2
+
+DUP PAIRS PER EVENT BY CELL (class-pair x region), sorted by |delta|
+  cell                    proto/evt    LST/evt      delta
+  PLS+T5|B                     9.06       1.39      +7.67
+  PLS+PT5|E                    0.41       4.94      -4.53
+  PLS+T4|E                     0.57       3.06      -2.49
+  PLS+T5|T                     2.55       0.70      +1.84
+  PLS+T5|E                     3.51       1.99      +1.52
+  PT5+T5|E                     0.83       0.00      +0.83
+  PT5+T5|T                     0.68       0.00      +0.68
+  PT5+T5|B                     0.64       0.00      +0.64
+  PT3+T4|E                     0.06       0.57      -0.51
+  PLS+PLS|E                   27.13      27.61      -0.48
+  PLS+PT3|E                    0.14       0.57      -0.43
+  PT3+T5|B                     0.30       0.03      +0.27
+  PT3+PT5|B                    0.01       0.26      -0.25
+  T5+T5|T                      0.37       0.12      +0.25
+  PT3+PT5|E                    0.54       0.75      -0.20
+  PT3+T5|T                     0.21       0.01      +0.20
+  PT3+T5|E                     0.22       0.02      +0.20
+  PLS+PT5|T                    0.05       0.24      -0.19
+  PT3+PT5|T                    0.03       0.21      -0.18
+  T5+T5|E                      0.31       0.15      +0.16
+  PT3+PT3|E                    0.05       0.19      -0.13
+  T4+T5|E                      0.07       0.18      -0.12
+  T5+T5|B                      0.39       0.49      -0.11
+  PT3+T4|T                     0.01       0.11      -0.10
+  PT5+PT5|T                    0.00       0.10      -0.10
+  PT5+PT5|E                    0.07       0.17      -0.10
+  PT3+T4|B                     0.01       0.09      -0.09
+  PLS+T4|B                     0.12       0.04      +0.08
+  PLS+PT5|B                    0.01       0.08      -0.07
+  T4+T5|B                      0.06       0.00      +0.06
+  PT3+PT3|T                    0.00       0.06      -0.05
+  PT3+PT3|B                    0.01       0.05      -0.04
+  PT5+PT5|B                    0.00       0.04      -0.04
+  PLS+T4|T                     0.02       0.05      -0.02
+  PT5+T4|E                     0.18       0.19      -0.01
+  TOTAL(all cells)            48.76      44.57      +4.18
+
+SHARED-STRUCTURE MIX PER EVENT
+  structure     proto/evt    LST/evt      delta
+  n/a               48.76       0.00     +48.76
+  both-noOT          0.00      27.61     -27.61
+  one-noOT           0.00      13.07     -13.07
+  partial            0.00       2.95      -2.95
+  identical          0.00       0.40      -0.40
+  subset             0.00       0.32      -0.32
+  disjoint           0.00       0.22      -0.22

@@ -1,0 +1,18 @@
+== ab_base.root ==
+   band T4-IP      n=   201 fake=0.0149 dup=0.2637  fakes=    3 dups=   53
+   band T4-exempt  n=   742 fake=0.5270 dup=0.1119  fakes=  391 dups=   83
+   band 5+IP       n= 32961 fake=0.0241 dup=0.0175  fakes=  795 dups=  576
+   band 5+exempt   n= 31324 fake=0.1238 dup=0.0287  fakes= 3879 dups=  899
+   band TOTAL n=76080 fake=0.0765 dup=0.0282 | global dup=0.0643
+== ab_w5.root ==
+   band T4-IP      n=  1058 fake=0.0529 dup=0.3062  fakes=   56 dups=  324
+   band T4-exempt  n=   734 fake=0.5272 dup=0.1117  fakes=  387 dups=   82
+   band 5+IP       n= 32702 fake=0.0240 dup=0.0221  fakes=  786 dups=  722
+   band 5+exempt   n= 31208 fake=0.1236 dup=0.0316  fakes= 3858 dups=  986
+   band TOTAL n=76554 fake=0.0763 dup=0.0347 | global dup=0.0653
+== ab_z2.root ==
+   band T4-IP      n=   201 fake=0.0149 dup=0.2637  fakes=    3 dups=   53
+   band T4-exempt  n=   803 fake=0.5181 dup=0.1046  fakes=  416 dups=   84
+   band 5+IP       n= 33152 fake=0.0243 dup=0.0167  fakes=  804 dups=  553
+   band 5+exempt   n= 28595 fake=0.0717 dup=0.0270  fakes= 2050 dups=  772
+   band TOTAL n=73603 fake=0.0547 dup=0.0269 | global dup=0.0642

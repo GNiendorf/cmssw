@@ -1,0 +1,29 @@
+[     4.8s] seed=42 device=cuda
+[    13.7s] loaded cache /mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/fanout2/c2_e2head/edgecache.npz: (70366854, 40)
+[    13.7s] data ready: (70366854, 40)
+[    47.1s] COMBINED event split: frozen test = 60 primary events (unchanged); pool 589 events -> train 442 (181 primary + 261 extra) / val 147 (59 primary + 88 extra) -> 47507410/16639954/6219490 edges (train/val/test)
+[    80.1s] train: 13079838 true / 34427584 fake -> pos_weight=2.6321; etype counts train E1=32904526 E2=14602884
+[    89.4s] tensors ready
+[    91.3s] === variant h1: 2434 params, 47507410 train rows, pos_weight=2.6321, 25 epochs
+/cvmfs/cms.cern.ch/el9_amd64_gcc13/external/py3-torch-cuda/2.11.0-c59031ba99d1f4ae881ea12bb72253cc/lib/python3.12/site-packages/torch/nn/modules/linear.py:134: UserWarning: Requested unified CUBLASLT workspace size of 1048576 bytes exceeds CUBLAS workspace size of 131072 bytes. Please increase CUBLAS workspace size via CUBLAS_WORKSPACE_CONFIG or decrease requested CUBLASLT_WORKSPACE_SIZE. Otherwise CUBLASLT workspace size will be limited to the CUBLAS workspace size. (Triggered internally at /data/cmsbld/jenkins/workspace/build-any-ib/w/BUILD/el9_amd64_gcc13/external/py3-torch-cuda/2.11.0-c59031ba99d1f4ae881ea12bb72253cc/cmsdist-pip-src/py3-torch-cuda-2.11.0/aten/src/ATen/cuda/CublasHandlePool.cpp:228.)
+  return F.linear(input, self.weight, self.bias)
+[   106.4s]   h1 epoch   1 loss=0.49952 val_auc=0.94713
+[   166.7s]   h1 epoch   5 loss=0.38627 val_auc=0.95678
+[   241.5s]   h1 epoch  10 loss=0.37582 val_auc=0.95877
+[   315.0s]   h1 epoch  15 loss=0.37149 val_auc=0.95960
+[   389.1s]   h1 epoch  20 loss=0.36941 val_auc=0.96001
+[   463.6s]   h1 epoch  25 loss=0.36809 val_auc=0.96029
+[   463.6s]   h1 best val AUC 0.96029 @ epoch 25 (372s, 14.9s/epoch)
+
+=== h1 on frozen TEST events ===
+                     all n_true= 1738286 n_fake= 4481204 AUC=0.96008 rej@99%=0.60520 rej@99.5%=0.53381 rej@99.9%=0.37801
+            prompt vxy<1 n_true= 1676641 n_fake= 4481204 AUC=0.96355 rej@99%=0.62335 rej@99.5%=0.55099 rej@99.9%=0.38776
+        displaced vxy>=1 n_true=   61645 n_fake= 4481204 AUC=0.86584 rej@99%=0.46018 rej@99.5%=0.39640 rej@99.9%=0.27148
+        displaced vxy>=5 n_true=   41861 n_fake= 4481204 AUC=0.87026 rej@99%=0.45658 rej@99.5%=0.37636 rej@99.9%=0.21188
+             E1 sharedMD n_true=  826736 n_fake= 3477696 AUC=0.97213 rej@99%=0.67897 rej@99.5%=0.59542 rej@99.9%=0.40870
+     E1 sharedMD disp>=1 n_true=   31166 n_fake= 3477696 AUC=0.89525 rej@99%=0.51120 rej@99.5%=0.44106 rej@99.9%=0.23830
+     E1 sharedMD disp>=5 n_true=   20786 n_fake= 3477696 AUC=0.89958 rej@99%=0.48373 rej@99.5%=0.41215 rej@99.9%=0.20529
+             E2 sharedLS n_true=  911550 n_fake= 1003508 AUC=0.91414 rej@99%=0.23467 rej@99.5%=0.16403 rej@99.9%=0.06053
+     E2 sharedLS disp>=1 n_true=   30479 n_fake= 1003508 AUC=0.75490 rej@99%=0.15520 rej@99.5%=0.10845 rej@99.9%=0.01788
+     E2 sharedLS disp>=5 n_true=   21075 n_fake= 1003508 AUC=0.75628 rej@99%=0.14310 rej@99.5%=0.07953 rej@99.9%=0.01143
+[   522.5s] done

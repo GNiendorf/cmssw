@@ -1,0 +1,30 @@
+====================================================================================================
+FILE /mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/fanout4/transition/ab_v3.root   nTC=613946
+  global fake(pt>0.9) = 0.0501   (chain 0.0523 / carried 0.0477)
+  barrel      fake=0.0553  n= 137988 | chain n= 112826 fake=0.0621 contrib=+0.0508 | carried n=  25162 fake=0.0249 contrib=+0.0045
+  transition  fake=0.0547  n=  73912 | chain n=  63060 fake=0.0521 contrib=+0.0445 | carried n=  10852 fake=0.0696 contrib=+0.0102
+  endcap      fake=0.0462  n= 263743 | chain n=  80274 fake=0.0386 contrib=+0.0117 | carried n= 183469 fake=0.0495 contrib=+0.0344
+
+  --- barrel: chain TCs by (branch, nLayers) ---   n=112826  fake=0.0621  fakes=7006
+      branch      nL        n    share     fake  fakeshr
+      5+exempt     5     9810     8.7%   0.3146    44.0%
+      5+exempt     6    12426    11.0%   0.1269    22.5%
+      T4-exempt    4     1959     1.7%   0.6034    16.9%
+      5+IP         6    64779    57.4%   0.0112    10.3%
+      5+IP         5    23814    21.1%   0.0183     6.2%
+
+  --- transition: chain TCs by (branch, nLayers) ---   n=63060  fake=0.0521  fakes=3287
+      branch      nL        n    share     fake  fakeshr
+      5+exempt     5    12691    20.1%   0.0855    33.0%
+      5+exempt     6    15795    25.0%   0.0607    29.2%
+      5+IP         6    18839    29.9%   0.0230    13.2%
+      T4-exempt    4      795     1.3%   0.5170    12.5%
+      5+IP         5    14052    22.3%   0.0259    11.1%
+      T4-IP        4      782     1.2%   0.0371     0.9%
+      5+IP         7       65     0.1%   0.0154     0.0%
+
+  --- endcap: chain TCs by (branch, nLayers) ---   n=80274  fake=0.0386  fakes=3098
+      branch      nL        n    share     fake  fakeshr
+      5+exempt     6    18639    23.2%   0.0577    34.7%
+      5+exempt     5     6931     8.6%   0.1247    27.9%
+      T4-exempt    4     1627     2.0%   0.2268    11.9%

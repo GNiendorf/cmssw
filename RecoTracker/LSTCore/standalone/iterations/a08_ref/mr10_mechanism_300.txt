@@ -1,0 +1,17 @@
+WHERE -MR -1.0 TAKES ITS FAKE GAIN (300 evts), bare OT objects (type 4/9)
+
+A08GATE   T4cls   34.2 TC/evt  10.0 fk | T5cls  426.9 TC/evt  37.3 fk | pT5  575.9 | pT3  135.4  18.8 fk | ALL fk/evt  111.2
+     barrel  nhitOT=10  TC/evt=   96.5 fk/evt=  15.8 rate=0.1633
+     trans   nhitOT=10  TC/evt=   86.5 fk/evt=  11.0 rate=0.1276
+     endcap  nhitOT=10  TC/evt=   50.3 fk/evt=   3.1 rate=0.0619
+     barrel  nhitOT=12  TC/evt=  108.9 fk/evt=   3.6 rate=0.0331
+     trans   nhitOT=12  TC/evt=   50.6 fk/evt=   2.5 rate=0.0500
+     barrel  nhitOT=8   TC/evt=   12.1 fk/evt=   7.7 rate=0.6421
+
+T_MR10    T4cls   34.3 TC/evt  10.1 fk | T5cls  417.4 TC/evt  29.8 fk | pT5  575.9 | pT3  137.2  19.1 fk | ALL fk/evt  104.0
+     barrel  nhitOT=10  TC/evt=   91.9 fk/evt=  11.9 rate=0.1294
+     trans   nhitOT=10  TC/evt=   83.5 fk/evt=   8.7 rate=0.1040
+     endcap  nhitOT=10  TC/evt=   49.6 fk/evt=   2.6 rate=0.0523
+     barrel  nhitOT=12  TC/evt=  108.2 fk/evt=   3.2 rate=0.0292
+     trans   nhitOT=12  TC/evt=   50.3 fk/evt=   2.3 rate=0.0466
+     barrel  nhitOT=8   TC/evt=   12.1 fk/evt=   7.8 rate=0.6433

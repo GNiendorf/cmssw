@@ -1,0 +1,97 @@
+{
+ "feature_names": [
+  "af_log10PtIn",
+  "af_ptErrRel",
+  "af_etaErr",
+  "af_charge",
+  "af_isQuad",
+  "af_log10CircleRadius",
+  "af_plsDeltaPhi",
+  "af_fitKappaSigned",
+  "af_chainTanLambda",
+  "af_innermostLayer",
+  "af_nLayers",
+  "af_chainGateLogit",
+  "af_chargeAgree",
+  "af_dKappa",
+  "af_dTanLambda",
+  "af_dPhiAtInnermost",
+  "af_circleCenterDist",
+  "af_zResidAtInnermost"
+ ],
+ "conditioning": [
+  {
+   "feature": "af_ptErrRel",
+   "op": "log10_1p"
+  },
+  {
+   "feature": "af_circleCenterDist",
+   "op": "log10_1p"
+  },
+  {
+   "feature": "af_log10PtIn",
+   "op": "clip",
+   "lo": -1.0,
+   "hi": 4.0
+  },
+  {
+   "feature": "af_log10CircleRadius",
+   "op": "clip",
+   "lo": 1.0,
+   "hi": 5.0
+  }
+ ],
+ "mean": [
+  0.16294658184051514,
+  0.0007395708817057312,
+  0.001271350891329348,
+  0.02285362035036087,
+  0.3421417772769928,
+  2.1062943935394287,
+  0.0018184392247349024,
+  -0.0005215333658270538,
+  0.0003304055717308074,
+  1.7485746145248413,
+  5.297882556915283,
+  1.3110926151275635,
+  0.5133835673332214,
+  0.0002722138015087694,
+  -3.390703398054029e-07,
+  3.540813486324623e-05,
+  2.080317974090576,
+  0.020950015634298325
+ ],
+ "std": [
+  0.27556946873664856,
+  0.004885956645011902,
+  0.0005687442608177662,
+  0.9997388124465942,
+  0.474426805973053,
+  0.27501240372657776,
+  0.06459420174360275,
+  0.009390700608491898,
+  2.326725721359253,
+  1.6286462545394897,
+  0.4852406084537506,
+  2.0904805660247803,
+  0.49982085824012756,
+  0.013270782306790352,
+  0.34146425127983093,
+  0.22760416567325592,
+  0.5009787082672119,
+  12.525497436523438
+ ],
+ "seed": 42,
+ "degenerate_columns": [],
+ "displaced_weighting": {
+  "rule": "none (M7: displaced true pairs are physically rare -- displaced tracks have no pLS)",
+  "n_true_displaced_total": 1312
+ },
+ "train_args": {
+  "epochs": 100,
+  "patience": 10,
+  "batch_size": 16384,
+  "lr": 0.001,
+  "feature_clip": true
+ }
+}

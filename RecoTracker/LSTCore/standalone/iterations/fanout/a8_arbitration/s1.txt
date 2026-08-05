@@ -1,0 +1,38 @@
+[a8] tag=h1 args: -G 5 -X 0.5 -T4 2 -T5 1 -U4 1e9 -L 0.5 -B 10 -F 0.3 -H 1
+  chain TCs       total=208617 mean=695.4 (T5-class=191815 T4-class=16802; 0 accepted chains below 4 layers dropped by K10)
+  output TCs/evt  mean=2552.4 (pixel 1857.0 + chain 695.4)
+  time mean/evt   infer=42.746 weld=4.468 arb+asm=0.697 fill=54.633 ms
+  wrote /mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/fanout/a8_arbitration/ab_h1.root
+A/B compare (Root__TC set): proto=/mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/fanout/a8_arbitration/ab_h1_hists.root base=/mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/prototype/base300_hists.root
+metric                            proto         base        delta
+-----------------------------------------------------------------
+eff overall (pt sums)            0.3286       0.3264      +0.0022
+eff overall (pt>0.9)             0.8178       0.8136      +0.0043
+eff vxy [0,1)                    0.8512       0.8473      +0.0038
+eff vxy [1,5)                    0.7965       0.7731      +0.0233
+eff vxy [5,10)                   0.7129       0.6530      +0.0599
+eff vxy [10,30)                  0.6781       0.6291      +0.0490
+eff dxy [0,1)                    0.8435       0.8342      +0.0093
+eff dxy [1,5)                    0.4925       0.4989      -0.0064
+eff dxy [5,10)                   0.2246       0.2281      -0.0035
+eff dxy [10,30)                  0.0235       0.0470      -0.0235
+eff barrel |eta|<1.1             0.9295       0.9242      +0.0053
+eff transition 1.1-1.7           0.8914       0.8826      +0.0088
+eff endcap >1.7                  0.7573       0.7556      +0.0017
+dup rate (pt sums)               0.2827       0.0499      +0.2328
+dup rate (pt>0.9)                0.3103       0.0513      +0.2590
+dup rate barrel                  0.3236       0.0097      +0.3139
+dup rate transition              0.3707       0.0130      +0.3576
+dup rate endcap                  0.2799       0.0846      +0.1953
+fake rate (pt sums)              0.1105       0.0451      +0.0654
+fake rate (pt>0.9)               0.1095       0.0455      +0.0640
+fake rate barrel                 0.1754       0.0437      +0.1317
+fake rate transition             0.1355       0.0459      +0.0896
+fake rate endcap                 0.0557       0.0463      +0.0093
+mean nhitOT                       7.331        6.514       +0.818
+mean nhitOT barrel               10.196       10.151       +0.046
+mean nhitOT transition           10.098       10.010       +0.088
+mean nhitOT endcap                4.410        3.559       +0.851
+n TC (fr denom)                  765732       610581      +155151
+n sim (ef denom)                  63603        63603           +0
+wrote /mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/fanout/a8_arbitration/ab_h1.json

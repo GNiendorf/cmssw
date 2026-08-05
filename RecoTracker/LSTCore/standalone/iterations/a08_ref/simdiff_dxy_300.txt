@@ -1,0 +1,50 @@
+########## dxy:10:30
+
+selection pt>0.9 |eta|<4.5 + band -> nSim=3484
+  LST matched   42  (0.01206)
+  A   matched   19  (0.00545)   net vs LST -23
+
+--- A vs LST ---   LOST=28  GAINED=5  net=-23
+  LOST  (LST found, A did not) -- LST's matched TC: N=28
+    TC type   : T4=21 (75%)  T5=7 (25%)
+    nhitOT    : 8:21  10:7
+    pt        : min=0.90 q25=1.03 med=1.24 q75=1.48 max=2.29
+    |eta|     : min=0.09 q25=0.44 med=1.06 q75=1.63 max=2.14
+    vxy       : min=16.17 q25=26.15 med=36.97 q75=48.71 max=53.86
+    |dxy|     : min=10.08 q25=11.81 med=13.37 q75=15.67 max=20.93
+    |pdgId|   : 2212:13  211:10  11:5
+    eta region: barrel<1.1=17 (61%)  trans1.1-1.7=6 (21%)  endcap>1.7=5 (18%)
+  GAINED(A found, LST did not) -- A's matched TC: N=5
+    TC type   : T5=3 (60%)  T4=2 (40%)
+    nhitOT    : 8:2  10:3
+    pt        : min=1.26 q25=1.35 med=1.41 q75=1.67 max=2.03
+    |eta|     : min=0.34 q25=0.75 med=0.82 q75=1.08 max=1.20
+    vxy       : min=26.78 q25=39.28 med=50.64 q75=52.96 max=53.27
+    |dxy|     : min=10.35 q25=10.38 med=10.38 q75=10.87 max=12.17
+    |pdgId|   : 11:3  211:2
+    eta region: barrel<1.1=4 (80%)  trans1.1-1.7=1 (20%)
+########## dxy:5:10
+
+selection pt>0.9 |eta|<4.5 + band -> nSim=1818
+  LST matched   142  (0.07811)
+  A   matched   127  (0.06986)   net vs LST -15
+
+--- A vs LST ---   LOST=52  GAINED=37  net=-15
+  LOST  (LST found, A did not) -- LST's matched TC: N=52
+    TC type   : T4=29 (56%)  T5=23 (44%)
+    nhitOT    : 8:29  10:22  12:1
+    pt        : min=0.92 q25=1.04 med=1.35 q75=1.72 max=3.56
+    |eta|     : min=0.01 q25=0.80 med=1.22 q75=1.61 max=2.21
+    vxy       : min=6.50 q25=26.93 med=37.27 q75=41.86 max=54.78
+    |dxy|     : min=5.09 q25=5.98 med=6.90 q75=9.07 max=9.76
+    |pdgId|   : 11:25  211:18  2212:8  321:1
+    eta region: trans1.1-1.7=26 (50%)  barrel<1.1=17 (33%)  endcap>1.7=9 (17%)
+  GAINED(A found, LST did not) -- A's matched TC: N=37
+    TC type   : T5=19 (51%)  T4=18 (49%)
+    nhitOT    : 8:18  10:17  12:2
+    pt        : min=0.90 q25=1.05 med=1.29 q75=1.62 max=3.11
+    |eta|     : min=0.11 q25=0.45 med=0.91 q75=1.37 max=2.45
+    vxy       : min=11.26 q25=27.32 med=37.48 q75=47.88 max=54.41
+    |dxy|     : min=5.13 q25=5.72 med=6.38 q75=7.85 max=9.71
+    |pdgId|   : 11:17  211:14  2212:5  321:1
+    eta region: barrel<1.1=25 (68%)  endcap>1.7=8 (22%)  trans1.1-1.7=4 (11%)

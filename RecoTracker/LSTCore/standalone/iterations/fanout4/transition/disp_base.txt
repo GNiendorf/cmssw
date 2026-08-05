@@ -1,0 +1,33 @@
+== TRUE chain TCs matched to a DISPLACED sim: where do they live? ==
+
+  vxy>=5        global n=  2294 | in-band n=  575 (25.1%)
+      band T4-exempt  nL<=4  n=   25 | would die at band mX floor 0.0:    7  0.5:   17
+      band 5+IP       nL=5   n=   70 | would die at band mX floor 0.0:    0  0.5:    0
+      band 5+IP       nL>=6  n=   78 | would die at band mX floor 0.0:    0  0.5:    0
+      band 5+exempt   nL=5   n=  213 | would die at band mX floor 0.0:   61  0.5:   90
+      band 5+exempt   nL>=6  n=  188 | would die at band mX floor 0.0:   25  0.5:   38
+
+  vxy>=10       global n=  1821 | in-band n=  469 (25.8%)
+      band T4-exempt  nL<=4  n=   24 | would die at band mX floor 0.0:    7  0.5:   17
+      band 5+IP       nL=5   n=   45 | would die at band mX floor 0.0:    0  0.5:    0
+      band 5+IP       nL>=6  n=   52 | would die at band mX floor 0.0:    0  0.5:    0
+      band 5+exempt   nL=5   n=  193 | would die at band mX floor 0.0:   56  0.5:   83
+      band 5+exempt   nL>=6  n=  155 | would die at band mX floor 0.0:   22  0.5:   33
+
+  dxy>=5        global n=   167 | in-band n=   42 (25.1%)
+      band T4-exempt  nL<=4  n=    7 | would die at band mX floor 0.0:    5  0.5:    7
+      band 5+exempt   nL=5   n=   29 | would die at band mX floor 0.0:   18  0.5:   21
+      band 5+exempt   nL>=6  n=    6 | would die at band mX floor 0.0:    4  0.5:    4
+
+  dxy>=1        global n=  1083 | in-band n=  271 (25.0%)
+      band T4-exempt  nL<=4  n=   18 | would die at band mX floor 0.0:    5  0.5:   14
+      band 5+exempt   nL=5   n=  151 | would die at band mX floor 0.0:   51  0.5:   74
+      band 5+exempt   nL>=6  n=   95 | would die at band mX floor 0.0:   11  0.5:   19
+
+  prompt vxy<1  global n=239992 | in-band n=59393 (24.7%)
+      band T4-exempt  nL<=4  n=  323 | would die at band mX floor 0.0:   72  0.5:  130
+      band 5+IP       nL=5   n=13613 | would die at band mX floor 0.0:    0  0.5:    0
+      band 5+IP       nL>=6  n=18284 | would die at band mX floor 0.0:    0  0.5:    0
+      band 5+exempt   nL=5   n=11951 | would die at band mX floor 0.0:  681  0.5: 1294
+      band 5+exempt   nL>=6  n=15025 | would die at band mX floor 0.0:  410  0.5:  903
+      band T4-IP      nL<=4  n=  197 | would die at band mX floor 0.0:    0  0.5:    0

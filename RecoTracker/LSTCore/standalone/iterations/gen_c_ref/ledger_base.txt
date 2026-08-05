@@ -1,0 +1,17 @@
+=== t_P25BASE.root  (300 evts, TCs with pt > 0.9) ===
+class               rows/ev   fakes/ev   fakefrc    dups/ev    dupfrc
+carried/type8         621.4      30.77    0.0495      61.57    0.0991
+attach-pT5/type7      526.0       3.43    0.0065       3.82    0.0073
+chainTC/type4         312.6      27.04    0.0865       9.83    0.0315
+carried/type5         104.0       3.89    0.0374       2.14    0.0206
+chainTC/type9          20.9       8.34    0.3994       4.86    0.2328
+TOTAL                1584.8      73.47    0.0464      82.23    0.0519
+
+=== t_r_off.root  (300 evts, TCs with pt > 0.9) ===
+class               rows/ev   fakes/ev   fakefrc    dups/ev    dupfrc
+carried/type8         621.3      30.77    0.0495      61.35    0.0987
+attach-pT5/type7      534.4       4.01    0.0075       3.68    0.0069
+chainTC/type4         328.6      30.60    0.0931       9.38    0.0285
+chainTC/type9          26.2       8.70    0.3325       4.94    0.1889
+TOTAL                1510.5      74.08    0.0490      79.36    0.0525
+

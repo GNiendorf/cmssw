@@ -1,0 +1,29 @@
+P2.6c brief item 3 -- grid-item slimming: MEASURED, REJECTED, FAT VERSION KEPT.
+
+Question posed by the brief: P2.4 carried the full 76-byte pLS pre-record per grid slot for a 2.5x
+score speedup; P2.6b's dedup changed the access pattern, so re-measure whether a plsRow-index
+variant now costs measurable time. If it does, KEEP the fat version (timing wins over memory).
+
+Variant implemented and built (then reverted): AttachGridItem { uint32_t row; float tanLambda;
+uint16_t phiMask; } = 12 B/slot, replacing the 76 B AttachPlsPre copy. The cell walk serves the
+duplicate suppression and the dTanL early exit straight from the slot, and reaches into the
+per-pLS AttachPlsPre array through `row` only for visits that survive both.
+
+Memory it would have saved: 54823 grid slots/evt (measured) x 64 B = 3.51 MB/evt of transient.
+
+Timing, 20 evt, -s 1, sequential, LST_CHAIN_TIMING=1, vs the validated P2.6c build:
+  CPU    K8::grid    4.199 -> 3.899   (-0.300)   cheaper scatter, writes 12 B not 76 B
+         K8::score  12.661 -> 13.086  (+0.425)   indirection into the 1.65 MB pLS array
+         CHAIN BLOCK TOTAL 50.824 -> 52.142      (+1.319 ms, +2.6%)
+  CUDA   K8::grid    0.109 -> 0.096   (-0.013)
+         K8::score   1.037 -> 1.103   (+0.066)
+         CHAIN BLOCK TOTAL  5.630 -> 5.679       (+0.048 ms)
+
+Every K8 work counter was IDENTICAL between the two (cand 322978.050, dup 40340.950,
+scored 121109.550, picks 569.900, attached 567.300, all +0.000), so the delta is purely the
+memory access pattern, not different work.
+
+CPU +1.319 ms exceeds the 0.5 ms non-regression gate. Per the stated priority (timing wins over
+memory), the fat 76-byte grid record is KEPT and the variant was reverted. The sequential streaming
+read of the cell block still beats the random re-fetch, exactly as P2.4 found; P2.6b's dedup did
+not change that conclusion.

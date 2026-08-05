@@ -1,0 +1,47 @@
+dump events 300 | in-cut sims 182.8/evt
+LST-UNIQUE (what the pT3 class buys today) 4.45/evt
+OUR CEILING (any delivery, any threshold)  4.77/evt
+RECALL of LST-UNIQUE by our candidate universe 4.01/evt = 90.1%
+  of the reached ones, best-delivery logit percentiles:
+     p5     5.350
+     p25    7.103
+     p50    8.049
+     p75    8.848
+     p95   10.288
+OUR-CEILING sims LST does not uniquely have: 0.76/evt
+
+  PER ETA REGION
+  bin           incut   LSTuniq   ourCeil   recall%
+  barrel         80.2      2.82      2.87      90.6
+  transit        36.4      0.89      1.05      85.7
+  endcap         66.2      0.74      0.86      93.7
+
+  PER pT BAND
+  bin           incut   LSTuniq   ourCeil   recall%
+  0.9-1.5        78.6      1.98      2.16      93.6
+  1.5-3          56.9      1.41      1.37      87.9
+  3-10           36.8      0.86      0.97      87.2
+  10+            10.5      0.21      0.28      84.1
+
+=== LST PRE-CLEAN CANDIDATE SET vs the SAME background R ===
+  rows/evt 588.7 | fakefrc 0.0477 | cov 4.60/evt | UNIQ 4.49/evt
+
+=== OUR THRESHOLD CURVE vs the SAME background R ===
+   theta  rows/evt   fakefrc   cov/evt  UNIQ/evt  %ceiling
+    -6.0    3804.0    0.6651     33.11      4.77     100.0
+     0.0    3479.6    0.6339     33.10      4.77     100.0
+     2.0    2523.6    0.4977     33.00      4.76      99.7
+     4.0    1617.1    0.2501     32.39      4.67      97.8
+     5.0    1346.2    0.1488     31.47      4.59      96.1
+     6.0    1132.7    0.0802     29.11      4.27      89.4
+     6.5    1027.1    0.0572     27.13      4.02      84.2
+     7.0     912.3    0.0403     24.60      3.63      76.0
+     7.5     782.9    0.0278     21.14      3.08      64.5
+     8.0     642.8    0.0193     17.41      2.43      50.8
+     8.5     503.6    0.0134     13.27      1.63      34.1
+     9.0     373.3    0.0093      9.65      0.99      20.7
+     9.5     257.1    0.0066      6.74      0.59      12.3
+    10.0     159.7    0.0046      4.41      0.30       6.4
+    10.5      86.4    0.0036      2.63      0.18       3.8
+    11.0      39.2    0.0024      1.35      0.11       2.3
+LST post-clean operating point: 151.7 rows/evt, fake .0345, UNIQ 4.45/evt

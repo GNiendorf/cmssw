@@ -1,0 +1,154 @@
+{
+ "feature_names": [
+  "cf_nNodes",
+  "cf_nLayers",
+  "cf_sumEdgeLogit",
+  "cf_minEdgeLogit",
+  "cf_meanEdgeLogit",
+  "cf_fullFitChi2PerHit",
+  "cf_rzLineChi2PerHit",
+  "cf_fitKappa",
+  "cf_dKappaFitVsMedianT3",
+  "cf_ptEst",
+  "cf_innermostLayer",
+  "cf_layerSpan",
+  "cf_nPS",
+  "cf_nBarrel",
+  "cf_maxJunctionDegProduct",
+  "cf_chargeConsistency",
+  "cf_maxXyResid",
+  "cf_maxRzResid",
+  "cf_stdEdgeLogit",
+  "cf_minT3FakeScore",
+  "cf_maxT3FakeScore",
+  "cf_meanT3PromptScore",
+  "cf_minT3DisplacedScore",
+  "cf_meanT3DisplacedScore",
+  "cf_dcaXY"
+ ],
+ "conditioning": [
+  {
+   "feature": "cf_fullFitChi2PerHit",
+   "op": "log10_1p"
+  },
+  {
+   "feature": "cf_rzLineChi2PerHit",
+   "op": "log10_1p"
+  },
+  {
+   "feature": "cf_maxJunctionDegProduct",
+   "op": "log10_1p"
+  },
+  {
+   "feature": "cf_fitKappa",
+   "op": "clip",
+   "lo": -1.0,
+   "hi": 1.0
+  },
+  {
+   "feature": "cf_dKappaFitVsMedianT3",
+   "op": "clip",
+   "lo": -2.0,
+   "hi": 2.0
+  },
+  {
+   "feature": "cf_maxXyResid",
+   "op": "log10_1p"
+  },
+  {
+   "feature": "cf_maxRzResid",
+   "op": "log10_1p"
+  },
+  {
+   "feature": "cf_dcaXY",
+   "op": "log10_1p"
+  },
+  {
+   "feature": "cf_dcaXY",
+   "op": "clip",
+   "lo": 0.0,
+   "hi": 1.4913617
+  }
+ ],
+ "mean": [
+  2.387239456176758,
+  4.823075771331787,
+  5.072041988372803,
+  3.2121331691741943,
+  3.42482328414917,
+  0.014099584892392159,
+  0.2482285052537918,
+  -0.00042299594497308135,
+  0.0009050199296325445,
+  1.5954509973526,
+  2.012814521789551,
+  5.336491584777832,
+  2.872229814529419,
+  3.1574299335479736,
+  0.8626134395599365,
+  0.9451180696487427,
+  0.05597781762480736,
+  0.33170387148857117,
+  0.20201796293258667,
+  0.05868077278137207,
+  0.23090609908103943,
+  0.4701831638813019,
+  0.284515380859375,
+  0.3907700479030609,
+  0.3085969388484955
+ ],
+ "std": [
+  0.6002824306488037,
+  0.794829785823822,
+  3.776203155517578,
+  1.743257999420166,
+  1.7598872184753418,
+  0.07913938164710999,
+  0.2543638050556183,
+  0.009452239610254765,
+  0.0033973860554397106,
+  4.033357620239258,
+  1.8705909252166748,
+  2.193279266357422,
+  1.1194995641708374,
+  1.8108254671096802,
+  0.4305969178676605,
+  0.21861058473587036,
+  0.08182298392057419,
+  0.1887335628271103,
+  0.4099581241607666,
+  0.12683823704719543,
+  0.29458823800086975,
+  0.26389366388320923,
+  0.17700907588005066,
+  0.1811714470386505,
+  0.3027690351009369
+ ],
+ "seed": 42,
+ "class_spec": {
+  "0": "fake",
+  "1": "prompt-true (simVxy<1)",
+  "2": "displaced-true (simVxy>=1)"
+ },
+ "displaced_weighting": {
+  "rule": "w=1 fakes; w=pos_weight prompt-true; w=pos_weight*mid for true vxy in [1,5); w=pos_weight*hi for true vxy>=5",
+  "pos_weight": 0.5941524457849073,
+  "displaced_weight_mid": 8.0,
+  "displaced_weight_hi": 16.0,
+  "n_mid_train": 4153,
+  "n_hi_train": 11143
+ },
+ "train_args": {
+  "epochs": 120,
+  "patience": 15,
+  "batch_size": 16384,
+  "lr": 0.001,
+  "hidden": 32,
+  "inputs": [
+   "/mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/fanout5/edgeretrain/chains_d2_300evt.root",
+   "/mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/fanout5/edgeretrain/chains_d2_498evt.root"
+  ],
+  "stage_mode": "all",
+  "pool_train_frac": 0.75
+ }
+}

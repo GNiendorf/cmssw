@@ -1,0 +1,80 @@
+[bitcheck cpu] leg BEFORE (p26_ref/bin_before/lst_cpu)
+[bitcheck cpu] leg AFTER (bin/lst_cpu)
+[bitcheck cpu] ntuple branch-by-branch
+ref : /mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/p26_ref/bit_cpu_before.root  entries=10  branches=473
+new : /mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/p26_ref/bit_cpu_after.root  entries=10  branches=473
+branches compared : 473
+values compared   : 146236685
+mismatches        : 12
+  MISMATCH ls_dAlphaInnerOuters: 42051/1472910 values differ (first at 812419: 9.404242e-38 vs 0.0)
+  MISMATCH ls_dAlphaInners: 20147/1472910 values differ (first at 944494: -1.7039626e-30 vs 0.0)
+  MISMATCH ls_dAlphaOuters: 42328/1472910 values differ (first at 944494: -8.423003 vs 0.0)
+  MISMATCH ls_dPhiChangeMaxs: 31952/1472910 values differ (first at 812419: 2.5254e-41 vs 0.0)
+  MISMATCH ls_dPhiChangeMins: 35268/1472910 values differ (first at 812419: 6.777e-42 vs 0.0)
+  MISMATCH ls_dPhiMaxs: 61592/1472910 values differ (first at 812419: 3.945978e-31 vs 0.0)
+  MISMATCH ls_dPhiMins: 39969/1472910 values differ (first at 812419: 1.0350068e-25 vs 0.0)
+  MISMATCH ls_dPhis: 48845/1472910 values differ (first at 812419: 2.7278307e-20 vs 0.0)
+  MISMATCH ls_rtHis: 65641/1472910 values differ (first at 812419: 1.8579972 vs 0.0)
+  MISMATCH ls_rtLos: 40604/1472910 values differ (first at 812478: 1e-45 vs 0.0)
+  MISMATCH ls_zHis: 60426/1472910 values differ (first at 812419: 6.018922e-36 vs 0.0)
+  MISMATCH ls_zLos: 65878/1472910 values differ (first at 812419: 6.7836204e-32 vs 0.0)
+RESULT: FAIL
+[bitcheck cpu] TC sidecar
+ evt       A       B  common  onlyA  onlyB   ident%
+   0    1941    1941    1941      0      0  100.00%
+   1    1916    1916    1916      0      0  100.00%
+   2    1933    1933    1933      0      0  100.00%
+   3    2060    2060    2060      0      0  100.00%
+   4    1704    1704    1704      0      0  100.00%
+   5    2023    2023    2023      0      0  100.00%
+   6    1827    1827    1827      0      0  100.00%
+   7    2282    2282    2282      0      0  100.00%
+   8    2141    2141    2141      0      0  100.00%
+   9    2071    2071    2071      0      0  100.00%
+
+TC TOTAL A=19898 B=19898 common=19898
+TC IDENTITY = 100.0000%  (worst event 0: 100.00%)
+[bitcheck cpu] chain sidecar
+nT3 / nEdgeRows per event:
+  evt   0  nT3 35420/35420   nEdge 74597/74597
+  evt   1  nT3 37151/37151   nEdge 86223/86223
+  evt   2  nT3 38604/38604   nEdge 88289/88289
+  evt   3  nT3 44751/44751   nEdge 106450/106450
+  evt   4  nT3 25288/25288   nEdge 50090/50090
+  evt   5  nT3 42741/42741   nEdge 91522/91522
+  evt   6  nT3 36915/36915   nEdge 85470/85470
+  evt   7  nT3 49804/49804   nEdge 101579/101579
+  evt   8  nT3 52410/52410   nEdge 124740/124740
+  evt   9  nT3 38640/38640   nEdge 98527/98527
+
+=== (1) chain identity on the stable MD-hit key alone ===
+ evt       A       B  common  onlyA  onlyB   ident%
+   0    4248    4248    4248      0      0  100.00%
+   1    4281    4281    4281      0      0  100.00%
+   2    4223    4223    4223      0      0  100.00%
+   3    4746    4746    4746      0      0  100.00%
+   4    3323    3323    3323      0      0  100.00%
+   5    4696    4696    4696      0      0  100.00%
+   6    4043    4043    4043      0      0  100.00%
+   7    5251    5251    5251      0      0  100.00%
+   8    5381    5381    5381      0      0  100.00%
+   9    4578    4578    4578      0      0  100.00%
+
+CHAIN(mds) TOTAL A=44770 B=44770 common=44770
+CHAIN(mds) IDENTITY = 100.0000%  (worst event 0: 100.00%)
+
+=== (2) chain identity on MD key + nLayers + branch + trim + flags + score bits ===
+ evt       A       B  common  onlyA  onlyB   ident%
+   0    4248    4248    4248      0      0  100.00%
+   1    4281    4281    4281      0      0  100.00%
+   2    4223    4223    4223      0      0  100.00%
+   3    4746    4746    4746      0      0  100.00%
+   4    3323    3323    3323      0      0  100.00%
+   5    4696    4696    4696      0      0  100.00%
+   6    4043    4043    4043      0      0  100.00%
+   7    5251    5251    5251      0      0  100.00%
+   8    5381    5381    5381      0      0  100.00%
+   9    4578    4578    4578      0      0  100.00%
+
+CHAIN(full) TOTAL A=44770 B=44770 common=44770
+CHAIN(full) IDENTITY = 100.0000%  (worst event 0: 100.00%)

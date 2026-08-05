@@ -1,0 +1,671 @@
+3c3
+< attach (-A 4, M16 GENERAL DELIVERY): thetaAttach=999.000 (chain class) thetaAttachT3=6.000 (bare-T3 class) attachHead=trained prefDTanL=0.600 prefDPhi=0.400 dcaEligibility=1e+09 cm
+---
+> attach (-A 4, M16 GENERAL DELIVERY): thetaAttach=999.000 (chain class) thetaAttachT3=6.000 (bare-T3 class) attachHead=trained prefDTanL=0.600 prefDPhi=0.400 dcaEligibility=5 cm
+10,309c10,309
+< evt 0 (run 1 lumi 49 event 4890): pixKept=1163 chains=2284 -> theta=1482 -> pixdrop=1442 -> claim=592 | chainTC=592 (T5c=573 T4c=19) | upgT5=0 delivT3=0 supp=461[461/0/0] dcaBlk=0 
+< evt 1 (run 1 lumi 49 event 4849): pixKept=1360 chains=2840 -> theta=1688 -> pixdrop=1648 -> claim=731 | chainTC=731 (T5c=716 T4c=15) | upgT5=0 delivT3=0 supp=613[613/0/0] dcaBlk=0 
+< evt 2 (run 1 lumi 49 event 4813): pixKept=1389 chains=3536 -> theta=1881 -> pixdrop=1853 -> claim=770 | chainTC=770 (T5c=745 T4c=25) | upgT5=0 delivT3=0 supp=613[613/0/0] dcaBlk=0 
+< evt 3 (run 1 lumi 88 event 8770): pixKept=1448 chains=3688 -> theta=2003 -> pixdrop=1942 -> claim=773 | chainTC=773 (T5c=755 T4c=18) | upgT5=0 delivT3=0 supp=629[629/0/0] dcaBlk=0 
+< evt 4 (run 1 lumi 75 event 7462): pixKept=1588 chains=3842 -> theta=2155 -> pixdrop=2111 -> claim=889 | chainTC=889 (T5c=867 T4c=22) | upgT5=0 delivT3=0 supp=725[725/0/0] dcaBlk=0 
+< evt 5 (run 1 lumi 75 event 7487): pixKept=1471 chains=3665 -> theta=1962 -> pixdrop=1928 -> claim=825 | chainTC=825 (T5c=803 T4c=22) | upgT5=0 delivT3=0 supp=685[685/0/0] dcaBlk=0 
+< evt 6 (run 1 lumi 49 event 4858): pixKept=1583 chains=3662 -> theta=2070 -> pixdrop=2017 -> claim=866 | chainTC=866 (T5c=842 T4c=24) | upgT5=0 delivT3=0 supp=713[713/0/0] dcaBlk=0 
+< evt 7 (run 1 lumi 75 event 7451): pixKept=1538 chains=3444 -> theta=1931 -> pixdrop=1888 -> claim=811 | chainTC=811 (T5c=795 T4c=16) | upgT5=0 delivT3=0 supp=658[658/0/0] dcaBlk=0 
+< evt 8 (run 1 lumi 88 event 8736): pixKept=1509 chains=3761 -> theta=2056 -> pixdrop=2003 -> claim=846 | chainTC=846 (T5c=825 T4c=21) | upgT5=0 delivT3=0 supp=678[678/0/0] dcaBlk=0 
+< evt 9 (run 1 lumi 88 event 8797): pixKept=1589 chains=3637 -> theta=1975 -> pixdrop=1922 -> claim=838 | chainTC=838 (T5c=819 T4c=19) | upgT5=0 delivT3=0 supp=680[680/0/0] dcaBlk=0 
+< evt 10 (run 1 lumi 88 event 8704): pixKept=1536 chains=3514 -> theta=1921 -> pixdrop=1876 -> claim=796 | chainTC=796 (T5c=777 T4c=19) | upgT5=0 delivT3=0 supp=657[657/0/0] dcaBlk=0 
+< evt 11 (run 1 lumi 49 event 4830): pixKept=1616 chains=3642 -> theta=2040 -> pixdrop=1994 -> claim=874 | chainTC=874 (T5c=849 T4c=25) | upgT5=0 delivT3=0 supp=696[696/0/0] dcaBlk=0 
+< evt 12 (run 1 lumi 49 event 4861): pixKept=1582 chains=3739 -> theta=2054 -> pixdrop=2018 -> claim=833 | chainTC=833 (T5c=814 T4c=19) | upgT5=0 delivT3=0 supp=668[668/0/0] dcaBlk=0 
+< evt 13 (run 1 lumi 75 event 7476): pixKept=1673 chains=3654 -> theta=2050 -> pixdrop=2017 -> claim=865 | chainTC=865 (T5c=848 T4c=17) | upgT5=0 delivT3=0 supp=713[713/0/0] dcaBlk=0 
+< evt 14 (run 1 lumi 88 event 8702): pixKept=1572 chains=3997 -> theta=2155 -> pixdrop=2118 -> claim=901 | chainTC=901 (T5c=875 T4c=26) | upgT5=0 delivT3=0 supp=716[716/0/0] dcaBlk=0 
+< evt 15 (run 1 lumi 88 event 8776): pixKept=1784 chains=4147 -> theta=2375 -> pixdrop=2334 -> claim=979 | chainTC=979 (T5c=956 T4c=23) | upgT5=0 delivT3=0 supp=799[799/0/0] dcaBlk=0 
+< evt 16 (run 1 lumi 49 event 4809): pixKept=1745 chains=4182 -> theta=2258 -> pixdrop=2189 -> claim=944 | chainTC=944 (T5c=915 T4c=29) | upgT5=0 delivT3=0 supp=766[766/0/0] dcaBlk=0 
+< evt 17 (run 1 lumi 88 event 8786): pixKept=1683 chains=4337 -> theta=2292 -> pixdrop=2245 -> claim=935 | chainTC=935 (T5c=917 T4c=18) | upgT5=0 delivT3=0 supp=754[754/0/0] dcaBlk=0 
+< evt 18 (run 1 lumi 49 event 4837): pixKept=1746 chains=4406 -> theta=2370 -> pixdrop=2319 -> claim=1007 | chainTC=1007 (T5c=979 T4c=28) | upgT5=0 delivT3=0 supp=800[800/0/0] dcaBlk=0 
+< evt 19 (run 1 lumi 49 event 4871): pixKept=1695 chains=4638 -> theta=2405 -> pixdrop=2349 -> claim=983 | chainTC=983 (T5c=964 T4c=19) | upgT5=0 delivT3=0 supp=786[786/0/0] dcaBlk=0 
+< evt 20 (run 1 lumi 75 event 7402): pixKept=1760 chains=4242 -> theta=2383 -> pixdrop=2330 -> claim=986 | chainTC=986 (T5c=961 T4c=25) | upgT5=0 delivT3=0 supp=788[788/0/0] dcaBlk=0 
+< evt 21 (run 1 lumi 49 event 4817): pixKept=1700 chains=4169 -> theta=2303 -> pixdrop=2264 -> claim=936 | chainTC=936 (T5c=912 T4c=24) | upgT5=0 delivT3=0 supp=756[756/0/0] dcaBlk=0 
+< evt 22 (run 1 lumi 49 event 4886): pixKept=1739 chains=4574 -> theta=2290 -> pixdrop=2223 -> claim=925 | chainTC=925 (T5c=900 T4c=25) | upgT5=0 delivT3=0 supp=752[752/0/0] dcaBlk=0 
+< evt 23 (run 1 lumi 49 event 4877): pixKept=1716 chains=4275 -> theta=2253 -> pixdrop=2212 -> claim=973 | chainTC=973 (T5c=942 T4c=31) | upgT5=0 delivT3=0 supp=791[791/0/0] dcaBlk=0 
+< evt 24 (run 1 lumi 88 event 8781): pixKept=1746 chains=3902 -> theta=2151 -> pixdrop=2105 -> claim=899 | chainTC=899 (T5c=880 T4c=19) | upgT5=0 delivT3=0 supp=724[724/0/0] dcaBlk=0 
+< evt 25 (run 1 lumi 75 event 7433): pixKept=1729 chains=4716 -> theta=2325 -> pixdrop=2276 -> claim=936 | chainTC=936 (T5c=918 T4c=18) | upgT5=0 delivT3=0 supp=748[748/0/0] dcaBlk=0 
+< evt 26 (run 1 lumi 88 event 8760): pixKept=1635 chains=5331 -> theta=2351 -> pixdrop=2272 -> claim=929 | chainTC=929 (T5c=898 T4c=31) | upgT5=0 delivT3=0 supp=742[742/0/0] dcaBlk=0 
+< evt 27 (run 1 lumi 75 event 7472): pixKept=1742 chains=4236 -> theta=2263 -> pixdrop=2218 -> claim=937 | chainTC=937 (T5c=912 T4c=25) | upgT5=0 delivT3=0 supp=770[770/0/0] dcaBlk=0 
+< evt 28 (run 1 lumi 88 event 8757): pixKept=1874 chains=4311 -> theta=2402 -> pixdrop=2321 -> claim=1017 | chainTC=1017 (T5c=991 T4c=26) | upgT5=0 delivT3=0 supp=813[813/0/0] dcaBlk=0 
+< evt 29 (run 1 lumi 49 event 4841): pixKept=1837 chains=4545 -> theta=2340 -> pixdrop=2278 -> claim=979 | chainTC=979 (T5c=953 T4c=26) | upgT5=0 delivT3=0 supp=771[771/0/0] dcaBlk=0 
+< evt 30 (run 1 lumi 88 event 8718): pixKept=1786 chains=4885 -> theta=2491 -> pixdrop=2416 -> claim=1014 | chainTC=1014 (T5c=985 T4c=29) | upgT5=0 delivT3=0 supp=829[829/0/0] dcaBlk=0 
+< evt 31 (run 1 lumi 75 event 7408): pixKept=1826 chains=4697 -> theta=2470 -> pixdrop=2417 -> claim=1025 | chainTC=1025 (T5c=998 T4c=27) | upgT5=0 delivT3=0 supp=810[810/0/0] dcaBlk=0 
+< evt 32 (run 1 lumi 75 event 7481): pixKept=1809 chains=4402 -> theta=2352 -> pixdrop=2303 -> claim=948 | chainTC=948 (T5c=930 T4c=18) | upgT5=0 delivT3=0 supp=756[756/0/0] dcaBlk=0 
+< evt 33 (run 1 lumi 88 event 8751): pixKept=1842 chains=5060 -> theta=2586 -> pixdrop=2529 -> claim=1047 | chainTC=1047 (T5c=1023 T4c=24) | upgT5=0 delivT3=0 supp=860[860/0/0] dcaBlk=0 
+< evt 34 (run 1 lumi 75 event 7496): pixKept=1867 chains=4751 -> theta=2408 -> pixdrop=2367 -> claim=998 | chainTC=998 (T5c=979 T4c=19) | upgT5=0 delivT3=0 supp=814[814/0/0] dcaBlk=0 
+< evt 35 (run 1 lumi 49 event 4870): pixKept=1763 chains=4364 -> theta=2300 -> pixdrop=2262 -> claim=973 | chainTC=973 (T5c=944 T4c=29) | upgT5=0 delivT3=0 supp=774[774/0/0] dcaBlk=0 
+< evt 36 (run 1 lumi 75 event 7456): pixKept=1901 chains=4590 -> theta=2422 -> pixdrop=2371 -> claim=994 | chainTC=994 (T5c=959 T4c=35) | upgT5=0 delivT3=0 supp=804[804/0/0] dcaBlk=0 
+< evt 37 (run 1 lumi 49 event 4893): pixKept=1885 chains=4466 -> theta=2387 -> pixdrop=2310 -> claim=992 | chainTC=992 (T5c=970 T4c=22) | upgT5=0 delivT3=0 supp=820[820/0/0] dcaBlk=0 
+< evt 38 (run 1 lumi 75 event 7409): pixKept=1900 chains=5224 -> theta=2476 -> pixdrop=2434 -> claim=1030 | chainTC=1030 (T5c=1004 T4c=26) | upgT5=0 delivT3=0 supp=812[812/0/0] dcaBlk=0 
+< evt 39 (run 1 lumi 75 event 7434): pixKept=1846 chains=4569 -> theta=2287 -> pixdrop=2237 -> claim=953 | chainTC=953 (T5c=936 T4c=17) | upgT5=0 delivT3=0 supp=758[758/0/0] dcaBlk=0 
+< evt 40 (run 1 lumi 88 event 8765): pixKept=1915 chains=5040 -> theta=2542 -> pixdrop=2502 -> claim=1046 | chainTC=1046 (T5c=1018 T4c=28) | upgT5=0 delivT3=0 supp=825[825/0/0] dcaBlk=0 
+< evt 41 (run 1 lumi 88 event 8724): pixKept=1849 chains=4576 -> theta=2398 -> pixdrop=2347 -> claim=1006 | chainTC=1006 (T5c=982 T4c=24) | upgT5=0 delivT3=0 supp=823[823/0/0] dcaBlk=0 
+< evt 42 (run 1 lumi 75 event 7442): pixKept=1883 chains=4487 -> theta=2474 -> pixdrop=2392 -> claim=1008 | chainTC=1008 (T5c=980 T4c=28) | upgT5=0 delivT3=0 supp=831[831/0/0] dcaBlk=0 
+< evt 43 (run 1 lumi 49 event 4802): pixKept=1853 chains=5147 -> theta=2567 -> pixdrop=2518 -> claim=1045 | chainTC=1045 (T5c=1015 T4c=30) | upgT5=0 delivT3=0 supp=820[820/0/0] dcaBlk=0 
+< evt 44 (run 1 lumi 88 event 8741): pixKept=1900 chains=5575 -> theta=2596 -> pixdrop=2543 -> claim=1059 | chainTC=1059 (T5c=1032 T4c=27) | upgT5=0 delivT3=0 supp=840[840/0/0] dcaBlk=0 
+< evt 45 (run 1 lumi 49 event 4882): pixKept=1952 chains=5006 -> theta=2499 -> pixdrop=2425 -> claim=1044 | chainTC=1044 (T5c=1019 T4c=25) | upgT5=0 delivT3=0 supp=841[841/0/0] dcaBlk=0 
+< evt 46 (run 1 lumi 49 event 4833): pixKept=1967 chains=4847 -> theta=2616 -> pixdrop=2543 -> claim=1056 | chainTC=1056 (T5c=1023 T4c=33) | upgT5=0 delivT3=0 supp=833[833/0/0] dcaBlk=0 
+< evt 47 (run 1 lumi 75 event 7445): pixKept=1968 chains=4966 -> theta=2537 -> pixdrop=2473 -> claim=1033 | chainTC=1033 (T5c=1006 T4c=27) | upgT5=0 delivT3=0 supp=830[830/0/0] dcaBlk=0 
+< evt 48 (run 1 lumi 49 event 4845): pixKept=1926 chains=5198 -> theta=2505 -> pixdrop=2447 -> claim=1072 | chainTC=1072 (T5c=1032 T4c=40) | upgT5=0 delivT3=0 supp=825[825/0/0] dcaBlk=0 
+< evt 49 (run 1 lumi 88 event 8790): pixKept=2036 chains=5058 -> theta=2614 -> pixdrop=2536 -> claim=1108 | chainTC=1108 (T5c=1071 T4c=37) | upgT5=0 delivT3=0 supp=868[868/0/0] dcaBlk=0 
+< evt 50 (run 1 lumi 49 event 4898): pixKept=1900 chains=5038 -> theta=2553 -> pixdrop=2505 -> claim=1022 | chainTC=1022 (T5c=993 T4c=29) | upgT5=0 delivT3=0 supp=813[813/0/0] dcaBlk=0 
+< evt 51 (run 1 lumi 49 event 4865): pixKept=2020 chains=5486 -> theta=2777 -> pixdrop=2717 -> claim=1129 | chainTC=1129 (T5c=1106 T4c=23) | upgT5=0 delivT3=0 supp=909[909/0/0] dcaBlk=0 
+< evt 52 (run 1 lumi 88 event 8730): pixKept=1922 chains=5438 -> theta=2560 -> pixdrop=2498 -> claim=1050 | chainTC=1050 (T5c=1011 T4c=39) | upgT5=0 delivT3=0 supp=821[821/0/0] dcaBlk=0 
+< evt 53 (run 1 lumi 75 event 7491): pixKept=2005 chains=5191 -> theta=2569 -> pixdrop=2494 -> claim=1055 | chainTC=1055 (T5c=1033 T4c=22) | upgT5=0 delivT3=0 supp=852[852/0/0] dcaBlk=0 
+< evt 54 (run 1 lumi 49 event 4827): pixKept=2032 chains=5341 -> theta=2594 -> pixdrop=2523 -> claim=1054 | chainTC=1054 (T5c=1031 T4c=23) | upgT5=0 delivT3=0 supp=863[863/0/0] dcaBlk=0 
+< evt 55 (run 1 lumi 88 event 8720): pixKept=2056 chains=5572 -> theta=2680 -> pixdrop=2624 -> claim=1108 | chainTC=1108 (T5c=1078 T4c=30) | upgT5=0 delivT3=0 supp=887[887/0/0] dcaBlk=0 
+< evt 56 (run 1 lumi 49 event 4812): pixKept=2115 chains=5670 -> theta=2866 -> pixdrop=2784 -> claim=1182 | chainTC=1182 (T5c=1138 T4c=44) | upgT5=0 delivT3=0 supp=953[953/0/0] dcaBlk=0 
+< evt 57 (run 1 lumi 75 event 7425): pixKept=1971 chains=5908 -> theta=2755 -> pixdrop=2686 -> claim=1124 | chainTC=1124 (T5c=1092 T4c=32) | upgT5=0 delivT3=0 supp=885[885/0/0] dcaBlk=0 
+< evt 58 (run 1 lumi 49 event 4853): pixKept=2049 chains=5690 -> theta=2607 -> pixdrop=2533 -> claim=1076 | chainTC=1076 (T5c=1048 T4c=28) | upgT5=0 delivT3=0 supp=840[840/0/0] dcaBlk=0 
+< evt 59 (run 1 lumi 75 event 7467): pixKept=2255 chains=6113 -> theta=3076 -> pixdrop=3001 -> claim=1230 | chainTC=1230 (T5c=1205 T4c=25) | upgT5=0 delivT3=0 supp=1012[1012/0/0] dcaBlk=0 
+< evt 60 (run 1 lumi 75 event 7412): pixKept=2222 chains=5893 -> theta=2842 -> pixdrop=2781 -> claim=1169 | chainTC=1169 (T5c=1138 T4c=31) | upgT5=0 delivT3=0 supp=952[952/0/0] dcaBlk=0 
+< evt 61 (run 1 lumi 88 event 8746): pixKept=2144 chains=5576 -> theta=2585 -> pixdrop=2510 -> claim=1093 | chainTC=1093 (T5c=1068 T4c=25) | upgT5=0 delivT3=0 supp=878[878/0/0] dcaBlk=0 
+< evt 62 (run 1 lumi 88 event 8723): pixKept=2224 chains=6128 -> theta=2942 -> pixdrop=2844 -> claim=1210 | chainTC=1210 (T5c=1182 T4c=28) | upgT5=0 delivT3=0 supp=964[964/0/0] dcaBlk=0 
+< evt 63 (run 1 lumi 75 event 7419): pixKept=2589 chains=7721 -> theta=3360 -> pixdrop=3306 -> claim=1396 | chainTC=1396 (T5c=1355 T4c=41) | upgT5=0 delivT3=0 supp=1096[1096/0/0] dcaBlk=0 
+< evt 64 (run 1 lumi 49 event 4889): pixKept=1768 chains=4229 -> theta=2264 -> pixdrop=2190 -> claim=937 | chainTC=937 (T5c=921 T4c=16) | upgT5=0 delivT3=0 supp=763[763/0/0] dcaBlk=0 
+< evt 65 (run 1 lumi 49 event 4850): pixKept=2486 chains=8173 -> theta=3646 -> pixdrop=3529 -> claim=1426 | chainTC=1426 (T5c=1381 T4c=45) | upgT5=0 delivT3=0 supp=1085[1085/0/0] dcaBlk=0 
+< evt 66 (run 1 lumi 49 event 4811): pixKept=2121 chains=5608 -> theta=2766 -> pixdrop=2694 -> claim=1130 | chainTC=1130 (T5c=1089 T4c=41) | upgT5=0 delivT3=0 supp=911[911/0/0] dcaBlk=0 
+< evt 67 (run 1 lumi 88 event 8773): pixKept=1475 chains=3046 -> theta=1807 -> pixdrop=1766 -> claim=771 | chainTC=771 (T5c=755 T4c=16) | upgT5=0 delivT3=0 supp=632[632/0/0] dcaBlk=0 
+< evt 68 (run 1 lumi 75 event 7461): pixKept=2073 chains=5807 -> theta=2984 -> pixdrop=2925 -> claim=1157 | chainTC=1157 (T5c=1124 T4c=33) | upgT5=0 delivT3=0 supp=957[957/0/0] dcaBlk=0 
+< evt 69 (run 1 lumi 75 event 7486): pixKept=1848 chains=4743 -> theta=2394 -> pixdrop=2331 -> claim=975 | chainTC=975 (T5c=947 T4c=28) | upgT5=0 delivT3=0 supp=786[786/0/0] dcaBlk=0 
+< evt 70 (run 1 lumi 49 event 4859): pixKept=1766 chains=4478 -> theta=2347 -> pixdrop=2288 -> claim=1000 | chainTC=1000 (T5c=981 T4c=19) | upgT5=0 delivT3=0 supp=801[801/0/0] dcaBlk=0 
+< evt 71 (run 1 lumi 75 event 7452): pixKept=2006 chains=4574 -> theta=2534 -> pixdrop=2480 -> claim=1033 | chainTC=1033 (T5c=994 T4c=39) | upgT5=0 delivT3=0 supp=836[836/0/0] dcaBlk=0 
+< evt 72 (run 1 lumi 88 event 8737): pixKept=1991 chains=5452 -> theta=2590 -> pixdrop=2524 -> claim=1069 | chainTC=1069 (T5c=1042 T4c=27) | upgT5=0 delivT3=0 supp=845[845/0/0] dcaBlk=0 
+< evt 73 (run 1 lumi 88 event 8796): pixKept=2089 chains=6063 -> theta=2810 -> pixdrop=2755 -> claim=1169 | chainTC=1169 (T5c=1132 T4c=37) | upgT5=0 delivT3=0 supp=935[935/0/0] dcaBlk=0 
+< evt 74 (run 1 lumi 88 event 8725): pixKept=1849 chains=4116 -> theta=2238 -> pixdrop=2197 -> claim=954 | chainTC=954 (T5c=928 T4c=26) | upgT5=0 delivT3=0 supp=785[785/0/0] dcaBlk=0 
+< evt 75 (run 1 lumi 49 event 4825): pixKept=1834 chains=4258 -> theta=2225 -> pixdrop=2170 -> claim=939 | chainTC=939 (T5c=914 T4c=25) | upgT5=0 delivT3=0 supp=773[773/0/0] dcaBlk=0 
+< evt 76 (run 1 lumi 49 event 4863): pixKept=1987 chains=5242 -> theta=2675 -> pixdrop=2622 -> claim=1090 | chainTC=1090 (T5c=1066 T4c=24) | upgT5=0 delivT3=0 supp=893[893/0/0] dcaBlk=0 
+< evt 77 (run 1 lumi 75 event 7477): pixKept=1664 chains=3877 -> theta=2125 -> pixdrop=2076 -> claim=886 | chainTC=886 (T5c=858 T4c=28) | upgT5=0 delivT3=0 supp=700[700/0/0] dcaBlk=0 
+< evt 78 (run 1 lumi 88 event 8714): pixKept=1653 chains=4568 -> theta=2360 -> pixdrop=2287 -> claim=981 | chainTC=981 (T5c=960 T4c=21) | upgT5=0 delivT3=0 supp=789[789/0/0] dcaBlk=0 
+< evt 79 (run 1 lumi 88 event 8778): pixKept=1664 chains=3776 -> theta=2090 -> pixdrop=2034 -> claim=879 | chainTC=879 (T5c=858 T4c=21) | upgT5=0 delivT3=0 supp=732[732/0/0] dcaBlk=0 
+< evt 80 (run 1 lumi 49 event 4808): pixKept=1696 chains=4559 -> theta=2241 -> pixdrop=2201 -> claim=903 | chainTC=903 (T5c=885 T4c=18) | upgT5=0 delivT3=0 supp=733[733/0/0] dcaBlk=0 
+< evt 81 (run 1 lumi 88 event 8787): pixKept=2200 chains=6877 -> theta=2980 -> pixdrop=2923 -> claim=1226 | chainTC=1226 (T5c=1192 T4c=34) | upgT5=0 delivT3=0 supp=970[970/0/0] dcaBlk=0 
+< evt 82 (run 1 lumi 49 event 4839): pixKept=1888 chains=4840 -> theta=2487 -> pixdrop=2439 -> claim=1033 | chainTC=1033 (T5c=999 T4c=34) | upgT5=0 delivT3=0 supp=816[816/0/0] dcaBlk=0 
+< evt 83 (run 1 lumi 49 event 4874): pixKept=1671 chains=3954 -> theta=2175 -> pixdrop=2134 -> claim=902 | chainTC=902 (T5c=877 T4c=25) | upgT5=0 delivT3=0 supp=717[717/0/0] dcaBlk=0 
+< evt 84 (run 1 lumi 75 event 7421): pixKept=1729 chains=4288 -> theta=2291 -> pixdrop=2226 -> claim=953 | chainTC=953 (T5c=926 T4c=27) | upgT5=0 delivT3=0 supp=763[763/0/0] dcaBlk=0 
+< evt 85 (run 1 lumi 49 event 4818): pixKept=1984 chains=5436 -> theta=2698 -> pixdrop=2635 -> claim=1096 | chainTC=1096 (T5c=1073 T4c=23) | upgT5=0 delivT3=0 supp=894[894/0/0] dcaBlk=0 
+< evt 86 (run 1 lumi 49 event 4885): pixKept=1745 chains=4236 -> theta=2244 -> pixdrop=2182 -> claim=925 | chainTC=925 (T5c=902 T4c=23) | upgT5=0 delivT3=0 supp=749[749/0/0] dcaBlk=0 
+< evt 87 (run 1 lumi 49 event 4878): pixKept=2273 chains=5732 -> theta=2761 -> pixdrop=2706 -> claim=1142 | chainTC=1142 (T5c=1108 T4c=34) | upgT5=0 delivT3=0 supp=924[924/0/0] dcaBlk=0 
+< evt 88 (run 1 lumi 88 event 8782): pixKept=2007 chains=5430 -> theta=2737 -> pixdrop=2675 -> claim=1131 | chainTC=1131 (T5c=1102 T4c=29) | upgT5=0 delivT3=0 supp=909[909/0/0] dcaBlk=0 
+< evt 89 (run 1 lumi 75 event 7405): pixKept=1652 chains=3772 -> theta=2230 -> pixdrop=2196 -> claim=927 | chainTC=927 (T5c=905 T4c=22) | upgT5=0 delivT3=0 supp=775[775/0/0] dcaBlk=0 
+< evt 90 (run 1 lumi 88 event 8762): pixKept=1986 chains=5303 -> theta=2781 -> pixdrop=2715 -> claim=1119 | chainTC=1119 (T5c=1083 T4c=36) | upgT5=0 delivT3=0 supp=876[876/0/0] dcaBlk=0 
+< evt 91 (run 1 lumi 75 event 7471): pixKept=2067 chains=5630 -> theta=2687 -> pixdrop=2639 -> claim=1091 | chainTC=1091 (T5c=1061 T4c=30) | upgT5=0 delivT3=0 supp=854[854/0/0] dcaBlk=0 
+< evt 92 (run 1 lumi 88 event 8755): pixKept=1999 chains=5245 -> theta=2553 -> pixdrop=2483 -> claim=1035 | chainTC=1035 (T5c=1010 T4c=25) | upgT5=0 delivT3=0 supp=819[819/0/0] dcaBlk=0 
+< evt 93 (run 1 lumi 49 event 4842): pixKept=1911 chains=5222 -> theta=2673 -> pixdrop=2606 -> claim=1098 | chainTC=1098 (T5c=1076 T4c=22) | upgT5=0 delivT3=0 supp=870[870/0/0] dcaBlk=0 
+< evt 94 (run 1 lumi 88 event 8712): pixKept=2017 chains=5587 -> theta=2639 -> pixdrop=2579 -> claim=1099 | chainTC=1099 (T5c=1081 T4c=18) | upgT5=0 delivT3=0 supp=899[899/0/0] dcaBlk=0 
+< evt 95 (run 1 lumi 75 event 7410): pixKept=1684 chains=4043 -> theta=2139 -> pixdrop=2064 -> claim=883 | chainTC=883 (T5c=873 T4c=10) | upgT5=0 delivT3=0 supp=734[734/0/0] dcaBlk=0 
+< evt 96 (run 1 lumi 75 event 7482): pixKept=1436 chains=3179 -> theta=1720 -> pixdrop=1666 -> claim=741 | chainTC=741 (T5c=721 T4c=20) | upgT5=0 delivT3=0 supp=606[606/0/0] dcaBlk=0 
+< evt 97 (run 1 lumi 88 event 8752): pixKept=1594 chains=3971 -> theta=2044 -> pixdrop=1991 -> claim=865 | chainTC=865 (T5c=838 T4c=27) | upgT5=0 delivT3=0 supp=704[704/0/0] dcaBlk=0 
+< evt 98 (run 1 lumi 75 event 7497): pixKept=1738 chains=4253 -> theta=2159 -> pixdrop=2081 -> claim=897 | chainTC=897 (T5c=875 T4c=22) | upgT5=0 delivT3=0 supp=700[700/0/0] dcaBlk=0 
+< evt 99 (run 1 lumi 49 event 4869): pixKept=2301 chains=5889 -> theta=2945 -> pixdrop=2869 -> claim=1211 | chainTC=1211 (T5c=1160 T4c=51) | upgT5=0 delivT3=0 supp=953[953/0/0] dcaBlk=0 
+< evt 100 (run 1 lumi 75 event 7457): pixKept=1751 chains=3972 -> theta=2130 -> pixdrop=2088 -> claim=925 | chainTC=925 (T5c=903 T4c=22) | upgT5=0 delivT3=0 supp=768[768/0/0] dcaBlk=0 
+< evt 101 (run 1 lumi 49 event 4894): pixKept=1609 chains=4040 -> theta=2185 -> pixdrop=2144 -> claim=911 | chainTC=911 (T5c=892 T4c=19) | upgT5=0 delivT3=0 supp=745[745/0/0] dcaBlk=0 
+< evt 102 (run 1 lumi 75 event 7413): pixKept=1890 chains=4735 -> theta=2369 -> pixdrop=2304 -> claim=988 | chainTC=988 (T5c=962 T4c=26) | upgT5=0 delivT3=0 supp=813[813/0/0] dcaBlk=0 
+< evt 103 (run 1 lumi 75 event 7436): pixKept=2079 chains=5922 -> theta=2932 -> pixdrop=2855 -> claim=1187 | chainTC=1187 (T5c=1159 T4c=28) | upgT5=0 delivT3=0 supp=928[928/0/0] dcaBlk=0 
+< evt 104 (run 1 lumi 88 event 8767): pixKept=1866 chains=4651 -> theta=2389 -> pixdrop=2335 -> claim=984 | chainTC=984 (T5c=961 T4c=23) | upgT5=0 delivT3=0 supp=782[782/0/0] dcaBlk=0 
+< evt 105 (run 1 lumi 88 event 8708): pixKept=1702 chains=4570 -> theta=2380 -> pixdrop=2331 -> claim=982 | chainTC=982 (T5c=962 T4c=20) | upgT5=0 delivT3=0 supp=794[794/0/0] dcaBlk=0 
+< evt 106 (run 1 lumi 75 event 7441): pixKept=1868 chains=4465 -> theta=2319 -> pixdrop=2276 -> claim=971 | chainTC=971 (T5c=952 T4c=19) | upgT5=0 delivT3=0 supp=800[800/0/0] dcaBlk=0 
+< evt 107 (run 1 lumi 49 event 4822): pixKept=1777 chains=4109 -> theta=2287 -> pixdrop=2207 -> claim=928 | chainTC=928 (T5c=903 T4c=25) | upgT5=0 delivT3=0 supp=734[734/0/0] dcaBlk=0 
+< evt 108 (run 1 lumi 88 event 8742): pixKept=2197 chains=5956 -> theta=2870 -> pixdrop=2790 -> claim=1201 | chainTC=1201 (T5c=1170 T4c=31) | upgT5=0 delivT3=0 supp=960[960/0/0] dcaBlk=0 
+< evt 109 (run 1 lumi 49 event 4881): pixKept=1982 chains=4972 -> theta=2465 -> pixdrop=2420 -> claim=1044 | chainTC=1044 (T5c=1015 T4c=29) | upgT5=0 delivT3=0 supp=829[829/0/0] dcaBlk=0 
+< evt 110 (run 1 lumi 49 event 4834): pixKept=1925 chains=4489 -> theta=2470 -> pixdrop=2400 -> claim=1019 | chainTC=1019 (T5c=997 T4c=22) | upgT5=0 delivT3=0 supp=813[813/0/0] dcaBlk=0 
+< evt 111 (run 1 lumi 75 event 7449): pixKept=1723 chains=3954 -> theta=2138 -> pixdrop=2086 -> claim=895 | chainTC=895 (T5c=873 T4c=22) | upgT5=0 delivT3=0 supp=720[720/0/0] dcaBlk=0 
+< evt 112 (run 1 lumi 49 event 4846): pixKept=1828 chains=4816 -> theta=2493 -> pixdrop=2436 -> claim=1054 | chainTC=1054 (T5c=1023 T4c=31) | upgT5=0 delivT3=0 supp=839[839/0/0] dcaBlk=0 
+< evt 113 (run 1 lumi 88 event 8792): pixKept=1794 chains=4181 -> theta=2256 -> pixdrop=2203 -> claim=923 | chainTC=923 (T5c=899 T4c=24) | upgT5=0 delivT3=0 supp=742[742/0/0] dcaBlk=0 
+< evt 114 (run 1 lumi 49 event 4897): pixKept=2172 chains=5248 -> theta=2577 -> pixdrop=2516 -> claim=1071 | chainTC=1071 (T5c=1039 T4c=32) | upgT5=0 delivT3=0 supp=871[871/0/0] dcaBlk=0 
+< evt 115 (run 1 lumi 49 event 4866): pixKept=1585 chains=3977 -> theta=2116 -> pixdrop=2089 -> claim=893 | chainTC=893 (T5c=869 T4c=24) | upgT5=0 delivT3=0 supp=734[734/0/0] dcaBlk=0 
+< evt 116 (run 1 lumi 88 event 8721): pixKept=2513 chains=7918 -> theta=3491 -> pixdrop=3429 -> claim=1416 | chainTC=1416 (T5c=1377 T4c=39) | upgT5=0 delivT3=0 supp=1113[1113/0/0] dcaBlk=0 
+< evt 117 (run 1 lumi 75 event 7493): pixKept=1931 chains=4912 -> theta=2389 -> pixdrop=2321 -> claim=972 | chainTC=972 (T5c=942 T4c=30) | upgT5=0 delivT3=0 supp=753[753/0/0] dcaBlk=0 
+< evt 118 (run 1 lumi 49 event 4824): pixKept=1896 chains=4784 -> theta=2472 -> pixdrop=2422 -> claim=1021 | chainTC=1021 (T5c=994 T4c=27) | upgT5=0 delivT3=0 supp=807[807/0/0] dcaBlk=0 
+< evt 119 (run 1 lumi 88 event 8727): pixKept=1804 chains=4373 -> theta=2341 -> pixdrop=2272 -> claim=967 | chainTC=967 (T5c=948 T4c=19) | upgT5=0 delivT3=0 supp=760[760/0/0] dcaBlk=0 
+< evt 120 (run 1 lumi 49 event 4816): pixKept=1909 chains=5229 -> theta=2537 -> pixdrop=2485 -> claim=1046 | chainTC=1046 (T5c=1022 T4c=24) | upgT5=0 delivT3=0 supp=859[859/0/0] dcaBlk=0 
+< evt 121 (run 1 lumi 75 event 7407): pixKept=1617 chains=3746 -> theta=2107 -> pixdrop=2061 -> claim=868 | chainTC=868 (T5c=843 T4c=25) | upgT5=0 delivT3=0 supp=708[708/0/0] dcaBlk=0 
+< evt 122 (run 1 lumi 49 event 4855): pixKept=1867 chains=4627 -> theta=2312 -> pixdrop=2236 -> claim=958 | chainTC=958 (T5c=929 T4c=29) | upgT5=0 delivT3=0 supp=770[770/0/0] dcaBlk=0 
+< evt 123 (run 1 lumi 75 event 7466): pixKept=1918 chains=5043 -> theta=2637 -> pixdrop=2579 -> claim=1107 | chainTC=1107 (T5c=1079 T4c=28) | upgT5=0 delivT3=0 supp=888[888/0/0] dcaBlk=0 
+< evt 124 (run 1 lumi 75 event 7415): pixKept=2010 chains=5442 -> theta=2629 -> pixdrop=2581 -> claim=1100 | chainTC=1100 (T5c=1065 T4c=35) | upgT5=0 delivT3=0 supp=887[887/0/0] dcaBlk=0 
+< evt 125 (run 1 lumi 88 event 8747): pixKept=2352 chains=7227 -> theta=3125 -> pixdrop=3060 -> claim=1273 | chainTC=1273 (T5c=1239 T4c=34) | upgT5=0 delivT3=0 supp=1008[1008/0/0] dcaBlk=0 
+< evt 126 (run 1 lumi 88 event 8716): pixKept=2146 chains=5860 -> theta=2844 -> pixdrop=2796 -> claim=1176 | chainTC=1176 (T5c=1147 T4c=29) | upgT5=0 delivT3=0 supp=944[944/0/0] dcaBlk=0 
+< evt 127 (run 1 lumi 75 event 7432): pixKept=1715 chains=4522 -> theta=2322 -> pixdrop=2255 -> claim=950 | chainTC=950 (T5c=923 T4c=27) | upgT5=0 delivT3=0 supp=775[775/0/0] dcaBlk=0 
+< evt 128 (run 1 lumi 49 event 4891): pixKept=1624 chains=4040 -> theta=2184 -> pixdrop=2124 -> claim=905 | chainTC=905 (T5c=880 T4c=25) | upgT5=0 delivT3=0 supp=743[743/0/0] dcaBlk=0 
+< evt 129 (run 1 lumi 49 event 4851): pixKept=1918 chains=4709 -> theta=2404 -> pixdrop=2337 -> claim=1001 | chainTC=1001 (T5c=962 T4c=39) | upgT5=0 delivT3=0 supp=799[799/0/0] dcaBlk=0 
+< evt 130 (run 1 lumi 49 event 4820): pixKept=2085 chains=5354 -> theta=2768 -> pixdrop=2719 -> claim=1139 | chainTC=1139 (T5c=1105 T4c=34) | upgT5=0 delivT3=0 supp=918[918/0/0] dcaBlk=0 
+< evt 131 (run 1 lumi 88 event 8772): pixKept=1862 chains=4373 -> theta=2351 -> pixdrop=2294 -> claim=961 | chainTC=961 (T5c=935 T4c=26) | upgT5=0 delivT3=0 supp=778[778/0/0] dcaBlk=0 
+< evt 132 (run 1 lumi 75 event 7463): pixKept=1866 chains=4805 -> theta=2368 -> pixdrop=2308 -> claim=983 | chainTC=983 (T5c=959 T4c=24) | upgT5=0 delivT3=0 supp=807[807/0/0] dcaBlk=0 
+< evt 133 (run 1 lumi 75 event 7488): pixKept=2499 chains=7652 -> theta=3461 -> pixdrop=3371 -> claim=1410 | chainTC=1410 (T5c=1369 T4c=41) | upgT5=0 delivT3=0 supp=1084[1084/0/0] dcaBlk=0 
+< evt 134 (run 1 lumi 49 event 4860): pixKept=1658 chains=3943 -> theta=2197 -> pixdrop=2147 -> claim=909 | chainTC=909 (T5c=889 T4c=20) | upgT5=0 delivT3=0 supp=738[738/0/0] dcaBlk=0 
+< evt 135 (run 1 lumi 75 event 7453): pixKept=2013 chains=5421 -> theta=2645 -> pixdrop=2568 -> claim=1077 | chainTC=1077 (T5c=1038 T4c=39) | upgT5=0 delivT3=0 supp=835[835/0/0] dcaBlk=0 
+< evt 136 (run 1 lumi 88 event 8738): pixKept=1801 chains=4442 -> theta=2390 -> pixdrop=2346 -> claim=962 | chainTC=962 (T5c=936 T4c=26) | upgT5=0 delivT3=0 supp=794[794/0/0] dcaBlk=0 
+< evt 137 (run 1 lumi 88 event 8799): pixKept=1460 chains=2985 -> theta=1799 -> pixdrop=1763 -> claim=760 | chainTC=760 (T5c=738 T4c=22) | upgT5=0 delivT3=0 supp=600[600/0/0] dcaBlk=0 
+< evt 138 (run 1 lumi 88 event 8707): pixKept=2024 chains=5375 -> theta=2828 -> pixdrop=2785 -> claim=1134 | chainTC=1134 (T5c=1099 T4c=35) | upgT5=0 delivT3=0 supp=892[892/0/0] dcaBlk=0 
+< evt 139 (run 1 lumi 49 event 4831): pixKept=2317 chains=6439 -> theta=3086 -> pixdrop=3025 -> claim=1248 | chainTC=1248 (T5c=1219 T4c=29) | upgT5=0 delivT3=0 supp=983[983/0/0] dcaBlk=0 
+< evt 140 (run 1 lumi 49 event 4864): pixKept=1724 chains=3914 -> theta=2119 -> pixdrop=2053 -> claim=882 | chainTC=882 (T5c=855 T4c=27) | upgT5=0 delivT3=0 supp=698[698/0/0] dcaBlk=0 
+< evt 141 (run 1 lumi 75 event 7478): pixKept=2320 chains=7290 -> theta=2998 -> pixdrop=2942 -> claim=1271 | chainTC=1271 (T5c=1232 T4c=39) | upgT5=0 delivT3=0 supp=989[989/0/0] dcaBlk=0 
+< evt 142 (run 1 lumi 88 event 8701): pixKept=1694 chains=4479 -> theta=2159 -> pixdrop=2110 -> claim=890 | chainTC=890 (T5c=871 T4c=19) | upgT5=0 delivT3=0 supp=713[713/0/0] dcaBlk=0 
+< evt 143 (run 1 lumi 88 event 8777): pixKept=1552 chains=3890 -> theta=2090 -> pixdrop=2062 -> claim=870 | chainTC=870 (T5c=845 T4c=25) | upgT5=0 delivT3=0 supp=713[713/0/0] dcaBlk=0 
+< evt 144 (run 1 lumi 49 event 4805): pixKept=2163 chains=5444 -> theta=2732 -> pixdrop=2626 -> claim=1137 | chainTC=1137 (T5c=1104 T4c=33) | upgT5=0 delivT3=0 supp=906[906/0/0] dcaBlk=0 
+< evt 145 (run 1 lumi 88 event 8788): pixKept=1522 chains=3193 -> theta=1968 -> pixdrop=1927 -> claim=846 | chainTC=846 (T5c=821 T4c=25) | upgT5=0 delivT3=0 supp=685[685/0/0] dcaBlk=0 
+< evt 146 (run 1 lumi 49 event 4840): pixKept=2058 chains=5673 -> theta=2763 -> pixdrop=2695 -> claim=1102 | chainTC=1102 (T5c=1074 T4c=28) | upgT5=0 delivT3=0 supp=885[885/0/0] dcaBlk=0 
+< evt 147 (run 1 lumi 49 event 4876): pixKept=1673 chains=4076 -> theta=2077 -> pixdrop=2017 -> claim=914 | chainTC=914 (T5c=896 T4c=18) | upgT5=0 delivT3=0 supp=735[735/0/0] dcaBlk=0 
+< evt 148 (run 1 lumi 75 event 7420): pixKept=1762 chains=4224 -> theta=2234 -> pixdrop=2187 -> claim=929 | chainTC=929 (T5c=903 T4c=26) | upgT5=0 delivT3=0 supp=752[752/0/0] dcaBlk=0 
+< evt 149 (run 1 lumi 49 event 4814): pixKept=2077 chains=5408 -> theta=2723 -> pixdrop=2672 -> claim=1116 | chainTC=1116 (T5c=1089 T4c=27) | upgT5=0 delivT3=0 supp=909[909/0/0] dcaBlk=0 
+< evt 150 (run 1 lumi 49 event 4887): pixKept=1955 chains=5120 -> theta=2543 -> pixdrop=2486 -> claim=1041 | chainTC=1041 (T5c=1013 T4c=28) | upgT5=0 delivT3=0 supp=811[811/0/0] dcaBlk=0 
+< evt 151 (run 1 lumi 49 event 4880): pixKept=1897 chains=5214 -> theta=2534 -> pixdrop=2478 -> claim=1036 | chainTC=1036 (T5c=1005 T4c=31) | upgT5=0 delivT3=0 supp=857[857/0/0] dcaBlk=0 
+< evt 152 (run 1 lumi 88 event 8783): pixKept=1849 chains=4312 -> theta=2310 -> pixdrop=2231 -> claim=971 | chainTC=971 (T5c=935 T4c=36) | upgT5=0 delivT3=0 supp=786[786/0/0] dcaBlk=0 
+< evt 153 (run 1 lumi 75 event 7406): pixKept=1905 chains=4887 -> theta=2536 -> pixdrop=2484 -> claim=1023 | chainTC=1023 (T5c=994 T4c=29) | upgT5=0 delivT3=0 supp=824[824/0/0] dcaBlk=0 
+< evt 154 (run 1 lumi 88 event 8764): pixKept=1523 chains=3416 -> theta=1936 -> pixdrop=1878 -> claim=807 | chainTC=807 (T5c=784 T4c=23) | upgT5=0 delivT3=0 supp=680[680/0/0] dcaBlk=0 
+< evt 155 (run 1 lumi 75 event 7473): pixKept=1755 chains=4203 -> theta=2165 -> pixdrop=2112 -> claim=899 | chainTC=899 (T5c=882 T4c=17) | upgT5=0 delivT3=0 supp=733[733/0/0] dcaBlk=0 
+< evt 156 (run 1 lumi 88 event 8758): pixKept=1951 chains=5137 -> theta=2578 -> pixdrop=2523 -> claim=1035 | chainTC=1035 (T5c=1009 T4c=26) | upgT5=0 delivT3=0 supp=845[845/0/0] dcaBlk=0 
+< evt 157 (run 1 lumi 49 event 4843): pixKept=1773 chains=4182 -> theta=2376 -> pixdrop=2320 -> claim=945 | chainTC=945 (T5c=926 T4c=19) | upgT5=0 delivT3=0 supp=759[759/0/0] dcaBlk=0 
+< evt 158 (run 1 lumi 88 event 8710): pixKept=1848 chains=4487 -> theta=2414 -> pixdrop=2372 -> claim=1004 | chainTC=1004 (T5c=975 T4c=29) | upgT5=0 delivT3=0 supp=809[809/0/0] dcaBlk=0 
+< evt 159 (run 1 lumi 75 event 7401): pixKept=2053 chains=5259 -> theta=2785 -> pixdrop=2725 -> claim=1143 | chainTC=1143 (T5c=1110 T4c=33) | upgT5=0 delivT3=0 supp=902[902/0/0] dcaBlk=0 
+< evt 160 (run 1 lumi 75 event 7483): pixKept=1569 chains=3502 -> theta=1957 -> pixdrop=1919 -> claim=829 | chainTC=829 (T5c=807 T4c=22) | upgT5=0 delivT3=0 supp=675[675/0/0] dcaBlk=0 
+< evt 161 (run 1 lumi 88 event 8753): pixKept=1316 chains=2796 -> theta=1685 -> pixdrop=1662 -> claim=693 | chainTC=693 (T5c=682 T4c=11) | upgT5=0 delivT3=0 supp=572[572/0/0] dcaBlk=0 
+< evt 162 (run 1 lumi 75 event 7498): pixKept=2217 chains=6465 -> theta=2979 -> pixdrop=2899 -> claim=1256 | chainTC=1256 (T5c=1233 T4c=23) | upgT5=0 delivT3=0 supp=986[986/0/0] dcaBlk=0 
+< evt 163 (run 1 lumi 49 event 4872): pixKept=2031 chains=5793 -> theta=2756 -> pixdrop=2700 -> claim=1117 | chainTC=1117 (T5c=1076 T4c=41) | upgT5=0 delivT3=0 supp=869[869/0/0] dcaBlk=0 
+< evt 164 (run 1 lumi 75 event 7458): pixKept=1874 chains=4104 -> theta=2192 -> pixdrop=2140 -> claim=917 | chainTC=917 (T5c=895 T4c=22) | upgT5=0 delivT3=0 supp=754[754/0/0] dcaBlk=0 
+< evt 165 (run 1 lumi 49 event 4895): pixKept=1731 chains=4572 -> theta=2224 -> pixdrop=2183 -> claim=929 | chainTC=929 (T5c=890 T4c=39) | upgT5=0 delivT3=0 supp=732[732/0/0] dcaBlk=0 
+< evt 166 (run 1 lumi 75 event 7430): pixKept=1541 chains=3398 -> theta=1816 -> pixdrop=1764 -> claim=757 | chainTC=757 (T5c=738 T4c=19) | upgT5=0 delivT3=0 supp=631[631/0/0] dcaBlk=0 
+< evt 167 (run 1 lumi 75 event 7438): pixKept=1896 chains=4902 -> theta=2516 -> pixdrop=2458 -> claim=1044 | chainTC=1044 (T5c=1016 T4c=28) | upgT5=0 delivT3=0 supp=836[836/0/0] dcaBlk=0 
+< evt 168 (run 1 lumi 88 event 8768): pixKept=1935 chains=5231 -> theta=2694 -> pixdrop=2650 -> claim=1108 | chainTC=1108 (T5c=1071 T4c=37) | upgT5=0 delivT3=0 supp=861[861/0/0] dcaBlk=0 
+< evt 169 (run 1 lumi 88 event 8728): pixKept=1891 chains=5311 -> theta=2654 -> pixdrop=2602 -> claim=1061 | chainTC=1061 (T5c=1031 T4c=30) | upgT5=0 delivT3=0 supp=835[835/0/0] dcaBlk=0 
+< evt 170 (run 1 lumi 75 event 7443): pixKept=2032 chains=5391 -> theta=2499 -> pixdrop=2452 -> claim=1063 | chainTC=1063 (T5c=1033 T4c=30) | upgT5=0 delivT3=0 supp=840[840/0/0] dcaBlk=0 
+< evt 171 (run 1 lumi 49 event 4828): pixKept=2061 chains=5505 -> theta=2708 -> pixdrop=2644 -> claim=1118 | chainTC=1118 (T5c=1086 T4c=32) | upgT5=0 delivT3=0 supp=892[892/0/0] dcaBlk=0 
+< evt 172 (run 1 lumi 88 event 8743): pixKept=1570 chains=3441 -> theta=1943 -> pixdrop=1884 -> claim=825 | chainTC=825 (T5c=805 T4c=20) | upgT5=0 delivT3=0 supp=659[659/0/0] dcaBlk=0 
+< evt 173 (run 1 lumi 49 event 4883): pixKept=1537 chains=3177 -> theta=1906 -> pixdrop=1874 -> claim=792 | chainTC=792 (T5c=778 T4c=14) | upgT5=0 delivT3=0 supp=657[657/0/0] dcaBlk=0 
+< evt 174 (run 1 lumi 49 event 4835): pixKept=1521 chains=3418 -> theta=1952 -> pixdrop=1915 -> claim=831 | chainTC=831 (T5c=818 T4c=13) | upgT5=0 delivT3=0 supp=684[684/0/0] dcaBlk=0 
+< evt 175 (run 1 lumi 75 event 7447): pixKept=1826 chains=4347 -> theta=2289 -> pixdrop=2221 -> claim=948 | chainTC=948 (T5c=924 T4c=24) | upgT5=0 delivT3=0 supp=765[765/0/0] dcaBlk=0 
+< evt 176 (run 1 lumi 49 event 4847): pixKept=1841 chains=4639 -> theta=2352 -> pixdrop=2293 -> claim=992 | chainTC=992 (T5c=969 T4c=23) | upgT5=0 delivT3=0 supp=815[815/0/0] dcaBlk=0 
+< evt 177 (run 1 lumi 88 event 8793): pixKept=1788 chains=4258 -> theta=2300 -> pixdrop=2250 -> claim=941 | chainTC=941 (T5c=924 T4c=17) | upgT5=0 delivT3=0 supp=771[771/0/0] dcaBlk=0 
+< evt 178 (run 1 lumi 49 event 4900): pixKept=1469 chains=3608 -> theta=2005 -> pixdrop=1967 -> claim=825 | chainTC=825 (T5c=813 T4c=12) | upgT5=0 delivT3=0 supp=672[672/0/0] dcaBlk=0 
+< evt 179 (run 1 lumi 49 event 4867): pixKept=1998 chains=5266 -> theta=2663 -> pixdrop=2596 -> claim=1098 | chainTC=1098 (T5c=1076 T4c=22) | upgT5=0 delivT3=0 supp=885[885/0/0] dcaBlk=0 
+< evt 180 (run 1 lumi 88 event 8734): pixKept=1406 chains=3107 -> theta=1828 -> pixdrop=1791 -> claim=761 | chainTC=761 (T5c=741 T4c=20) | upgT5=0 delivT3=0 supp=615[615/0/0] dcaBlk=0 
+< evt 181 (run 1 lumi 75 event 7492): pixKept=1879 chains=5200 -> theta=2562 -> pixdrop=2505 -> claim=1056 | chainTC=1056 (T5c=1029 T4c=27) | upgT5=0 delivT3=0 supp=844[844/0/0] dcaBlk=0 
+< evt 182 (run 1 lumi 49 event 4801): pixKept=1992 chains=5148 -> theta=2622 -> pixdrop=2563 -> claim=1062 | chainTC=1062 (T5c=1035 T4c=27) | upgT5=0 delivT3=0 supp=830[830/0/0] dcaBlk=0 
+< evt 183 (run 1 lumi 88 event 8711): pixKept=1963 chains=5052 -> theta=2666 -> pixdrop=2603 -> claim=1081 | chainTC=1081 (T5c=1063 T4c=18) | upgT5=0 delivT3=0 supp=880[880/0/0] dcaBlk=0 
+< evt 184 (run 1 lumi 49 event 4815): pixKept=2003 chains=4983 -> theta=2493 -> pixdrop=2425 -> claim=1014 | chainTC=1014 (T5c=989 T4c=25) | upgT5=0 delivT3=0 supp=807[807/0/0] dcaBlk=0 
+< evt 185 (run 1 lumi 75 event 7429): pixKept=1488 chains=3572 -> theta=2097 -> pixdrop=2056 -> claim=855 | chainTC=855 (T5c=832 T4c=23) | upgT5=0 delivT3=0 supp=682[682/0/0] dcaBlk=0 
+< evt 186 (run 1 lumi 49 event 4854): pixKept=1699 chains=4487 -> theta=2261 -> pixdrop=2211 -> claim=956 | chainTC=956 (T5c=922 T4c=34) | upgT5=0 delivT3=0 supp=735[735/0/0] dcaBlk=0 
+< evt 187 (run 1 lumi 75 event 7468): pixKept=1779 chains=4037 -> theta=2125 -> pixdrop=2083 -> claim=911 | chainTC=911 (T5c=891 T4c=20) | upgT5=0 delivT3=0 supp=731[731/0/0] dcaBlk=0 
+< evt 188 (run 1 lumi 75 event 7431): pixKept=1922 chains=5189 -> theta=2505 -> pixdrop=2459 -> claim=1034 | chainTC=1034 (T5c=1001 T4c=33) | upgT5=0 delivT3=0 supp=816[816/0/0] dcaBlk=0 
+< evt 189 (run 1 lumi 88 event 8748): pixKept=1869 chains=4854 -> theta=2527 -> pixdrop=2469 -> claim=1038 | chainTC=1038 (T5c=1017 T4c=21) | upgT5=0 delivT3=0 supp=848[848/0/0] dcaBlk=0 
+< evt 190 (run 1 lumi 88 event 8722): pixKept=2140 chains=6213 -> theta=2855 -> pixdrop=2782 -> claim=1176 | chainTC=1176 (T5c=1139 T4c=37) | upgT5=0 delivT3=0 supp=924[924/0/0] dcaBlk=0 
+< evt 191 (run 1 lumi 75 event 7414): pixKept=1800 chains=4140 -> theta=2327 -> pixdrop=2269 -> claim=981 | chainTC=981 (T5c=959 T4c=22) | upgT5=0 delivT3=0 supp=790[790/0/0] dcaBlk=0 
+< evt 192 (run 1 lumi 49 event 4892): pixKept=2146 chains=5404 -> theta=2877 -> pixdrop=2808 -> claim=1126 | chainTC=1126 (T5c=1095 T4c=31) | upgT5=0 delivT3=0 supp=890[890/0/0] dcaBlk=0 
+< evt 193 (run 1 lumi 49 event 4852): pixKept=1671 chains=3989 -> theta=2276 -> pixdrop=2210 -> claim=934 | chainTC=934 (T5c=910 T4c=24) | upgT5=0 delivT3=0 supp=748[748/0/0] dcaBlk=0 
+< evt 194 (run 1 lumi 49 event 4821): pixKept=1818 chains=5111 -> theta=2508 -> pixdrop=2452 -> claim=1018 | chainTC=1018 (T5c=990 T4c=28) | upgT5=0 delivT3=0 supp=822[822/0/0] dcaBlk=0 
+< evt 195 (run 1 lumi 88 event 8774): pixKept=1817 chains=5066 -> theta=2505 -> pixdrop=2442 -> claim=997 | chainTC=997 (T5c=975 T4c=22) | upgT5=0 delivT3=0 supp=807[807/0/0] dcaBlk=0 
+< evt 196 (run 1 lumi 75 event 7464): pixKept=1805 chains=4481 -> theta=2396 -> pixdrop=2356 -> claim=990 | chainTC=990 (T5c=957 T4c=33) | upgT5=0 delivT3=0 supp=777[777/0/0] dcaBlk=0 
+< evt 197 (run 1 lumi 75 event 7489): pixKept=2145 chains=5567 -> theta=2977 -> pixdrop=2911 -> claim=1184 | chainTC=1184 (T5c=1152 T4c=32) | upgT5=0 delivT3=0 supp=957[957/0/0] dcaBlk=0 
+< evt 198 (run 1 lumi 49 event 4856): pixKept=2038 chains=5275 -> theta=2574 -> pixdrop=2509 -> claim=1056 | chainTC=1056 (T5c=1015 T4c=41) | upgT5=0 delivT3=0 supp=832[832/0/0] dcaBlk=0 
+< evt 199 (run 1 lumi 75 event 7455): pixKept=1706 chains=4167 -> theta=2220 -> pixdrop=2170 -> claim=889 | chainTC=889 (T5c=866 T4c=23) | upgT5=0 delivT3=0 supp=715[715/0/0] dcaBlk=0 
+< evt 200 (run 1 lumi 88 event 8739): pixKept=1680 chains=4365 -> theta=2231 -> pixdrop=2181 -> claim=935 | chainTC=935 (T5c=919 T4c=16) | upgT5=0 delivT3=0 supp=738[738/0/0] dcaBlk=0 
+< evt 201 (run 1 lumi 88 event 8798): pixKept=2014 chains=5709 -> theta=2746 -> pixdrop=2691 -> claim=1117 | chainTC=1117 (T5c=1088 T4c=29) | upgT5=0 delivT3=0 supp=887[887/0/0] dcaBlk=0 
+< evt 202 (run 1 lumi 88 event 8705): pixKept=2112 chains=6662 -> theta=2853 -> pixdrop=2791 -> claim=1148 | chainTC=1148 (T5c=1108 T4c=40) | upgT5=0 delivT3=0 supp=889[889/0/0] dcaBlk=0 
+< evt 203 (run 1 lumi 49 event 4826): pixKept=1712 chains=3882 -> theta=2198 -> pixdrop=2155 -> claim=918 | chainTC=918 (T5c=895 T4c=23) | upgT5=0 delivT3=0 supp=735[735/0/0] dcaBlk=0 
+< evt 204 (run 1 lumi 49 event 4862): pixKept=2096 chains=5358 -> theta=2589 -> pixdrop=2530 -> claim=1096 | chainTC=1096 (T5c=1077 T4c=19) | upgT5=0 delivT3=0 supp=875[875/0/0] dcaBlk=0 
+< evt 205 (run 1 lumi 75 event 7479): pixKept=2094 chains=5917 -> theta=2774 -> pixdrop=2729 -> claim=1170 | chainTC=1170 (T5c=1124 T4c=46) | upgT5=0 delivT3=0 supp=908[908/0/0] dcaBlk=0 
+< evt 206 (run 1 lumi 88 event 8703): pixKept=2022 chains=5548 -> theta=2712 -> pixdrop=2650 -> claim=1106 | chainTC=1106 (T5c=1068 T4c=38) | upgT5=0 delivT3=0 supp=876[876/0/0] dcaBlk=0 
+< evt 207 (run 1 lumi 88 event 8779): pixKept=1537 chains=3366 -> theta=1983 -> pixdrop=1948 -> claim=846 | chainTC=846 (T5c=827 T4c=19) | upgT5=0 delivT3=0 supp=681[681/0/0] dcaBlk=0 
+< evt 208 (run 1 lumi 49 event 4807): pixKept=2053 chains=5528 -> theta=2755 -> pixdrop=2680 -> claim=1113 | chainTC=1113 (T5c=1093 T4c=20) | upgT5=0 delivT3=0 supp=900[900/0/0] dcaBlk=0 
+< evt 209 (run 1 lumi 88 event 8789): pixKept=1769 chains=4226 -> theta=2081 -> pixdrop=2029 -> claim=895 | chainTC=895 (T5c=878 T4c=17) | upgT5=0 delivT3=0 supp=743[743/0/0] dcaBlk=0 
+< evt 210 (run 1 lumi 49 event 4838): pixKept=2004 chains=4863 -> theta=2595 -> pixdrop=2531 -> claim=1067 | chainTC=1067 (T5c=1040 T4c=27) | upgT5=0 delivT3=0 supp=851[851/0/0] dcaBlk=0 
+< evt 211 (run 1 lumi 49 event 4875): pixKept=1832 chains=4105 -> theta=2171 -> pixdrop=2115 -> claim=941 | chainTC=941 (T5c=911 T4c=30) | upgT5=0 delivT3=0 supp=755[755/0/0] dcaBlk=0 
+< evt 212 (run 1 lumi 75 event 7422): pixKept=1889 chains=4740 -> theta=2466 -> pixdrop=2422 -> claim=1015 | chainTC=1015 (T5c=994 T4c=21) | upgT5=0 delivT3=0 supp=833[833/0/0] dcaBlk=0 
+< evt 213 (run 1 lumi 49 event 4823): pixKept=1998 chains=5352 -> theta=2673 -> pixdrop=2598 -> claim=1069 | chainTC=1069 (T5c=1049 T4c=20) | upgT5=0 delivT3=0 supp=885[885/0/0] dcaBlk=0 
+< evt 214 (run 1 lumi 49 event 4888): pixKept=1877 chains=4868 -> theta=2539 -> pixdrop=2502 -> claim=1043 | chainTC=1043 (T5c=1012 T4c=31) | upgT5=0 delivT3=0 supp=809[809/0/0] dcaBlk=0 
+< evt 215 (run 1 lumi 49 event 4879): pixKept=1891 chains=5349 -> theta=2528 -> pixdrop=2485 -> claim=1060 | chainTC=1060 (T5c=1025 T4c=35) | upgT5=0 delivT3=0 supp=849[849/0/0] dcaBlk=0 
+< evt 216 (run 1 lumi 88 event 8785): pixKept=2344 chains=6948 -> theta=3127 -> pixdrop=3070 -> claim=1260 | chainTC=1260 (T5c=1228 T4c=32) | upgT5=0 delivT3=0 supp=1006[1006/0/0] dcaBlk=0 
+< evt 217 (run 1 lumi 75 event 7404): pixKept=2078 chains=6141 -> theta=2897 -> pixdrop=2825 -> claim=1171 | chainTC=1171 (T5c=1137 T4c=34) | upgT5=0 delivT3=0 supp=918[918/0/0] dcaBlk=0 
+< evt 218 (run 1 lumi 88 event 8763): pixKept=1809 chains=5342 -> theta=2646 -> pixdrop=2582 -> claim=1068 | chainTC=1068 (T5c=1043 T4c=25) | upgT5=0 delivT3=0 supp=845[845/0/0] dcaBlk=0 
+< evt 219 (run 1 lumi 75 event 7474): pixKept=1581 chains=3732 -> theta=1958 -> pixdrop=1914 -> claim=815 | chainTC=815 (T5c=798 T4c=17) | upgT5=0 delivT3=0 supp=659[659/0/0] dcaBlk=0 
+< evt 220 (run 1 lumi 88 event 8759): pixKept=2067 chains=5629 -> theta=2811 -> pixdrop=2749 -> claim=1176 | chainTC=1176 (T5c=1149 T4c=27) | upgT5=0 delivT3=0 supp=940[940/0/0] dcaBlk=0 
+< evt 221 (run 1 lumi 49 event 4844): pixKept=2037 chains=5531 -> theta=2616 -> pixdrop=2534 -> claim=1091 | chainTC=1091 (T5c=1061 T4c=30) | upgT5=0 delivT3=0 supp=857[857/0/0] dcaBlk=0 
+< evt 222 (run 1 lumi 88 event 8726): pixKept=1740 chains=4283 -> theta=2286 -> pixdrop=2237 -> claim=946 | chainTC=946 (T5c=922 T4c=24) | upgT5=0 delivT3=0 supp=745[745/0/0] dcaBlk=0 
+< evt 223 (run 1 lumi 75 event 7423): pixKept=1968 chains=5381 -> theta=2725 -> pixdrop=2667 -> claim=1089 | chainTC=1089 (T5c=1056 T4c=33) | upgT5=0 delivT3=0 supp=905[905/0/0] dcaBlk=0 
+< evt 224 (run 1 lumi 75 event 7484): pixKept=1545 chains=3603 -> theta=1974 -> pixdrop=1942 -> claim=859 | chainTC=859 (T5c=838 T4c=21) | upgT5=0 delivT3=0 supp=693[693/0/0] dcaBlk=0 
+< evt 225 (run 1 lumi 88 event 8754): pixKept=1876 chains=4833 -> theta=2348 -> pixdrop=2289 -> claim=986 | chainTC=986 (T5c=963 T4c=23) | upgT5=0 delivT3=0 supp=800[800/0/0] dcaBlk=0 
+< evt 226 (run 1 lumi 75 event 7500): pixKept=1740 chains=4330 -> theta=2312 -> pixdrop=2264 -> claim=943 | chainTC=943 (T5c=913 T4c=30) | upgT5=0 delivT3=0 supp=746[746/0/0] dcaBlk=0 
+< evt 227 (run 1 lumi 49 event 4873): pixKept=1850 chains=4496 -> theta=2461 -> pixdrop=2394 -> claim=1011 | chainTC=1011 (T5c=990 T4c=21) | upgT5=0 delivT3=0 supp=827[827/0/0] dcaBlk=0 
+< evt 228 (run 1 lumi 75 event 7460): pixKept=2099 chains=5512 -> theta=2690 -> pixdrop=2622 -> claim=1119 | chainTC=1119 (T5c=1082 T4c=37) | upgT5=0 delivT3=0 supp=891[891/0/0] dcaBlk=0 
+< evt 229 (run 1 lumi 49 event 4896): pixKept=1648 chains=4189 -> theta=2060 -> pixdrop=2008 -> claim=845 | chainTC=845 (T5c=819 T4c=26) | upgT5=0 delivT3=0 supp=676[676/0/0] dcaBlk=0 
+< evt 230 (run 1 lumi 75 event 7418): pixKept=1863 chains=4750 -> theta=2405 -> pixdrop=2365 -> claim=1007 | chainTC=1007 (T5c=986 T4c=21) | upgT5=0 delivT3=0 supp=815[815/0/0] dcaBlk=0 
+< evt 231 (run 1 lumi 75 event 7439): pixKept=1852 chains=4496 -> theta=2364 -> pixdrop=2314 -> claim=997 | chainTC=997 (T5c=967 T4c=30) | upgT5=0 delivT3=0 supp=810[810/0/0] dcaBlk=0 
+< evt 232 (run 1 lumi 88 event 8769): pixKept=1612 chains=3568 -> theta=1973 -> pixdrop=1931 -> claim=803 | chainTC=803 (T5c=787 T4c=16) | upgT5=0 delivT3=0 supp=641[641/0/0] dcaBlk=0 
+< evt 233 (run 1 lumi 88 event 8731): pixKept=2008 chains=5509 -> theta=2591 -> pixdrop=2535 -> claim=1106 | chainTC=1106 (T5c=1068 T4c=38) | upgT5=0 delivT3=0 supp=886[886/0/0] dcaBlk=0 
+< evt 234 (run 1 lumi 75 event 7444): pixKept=1892 chains=4597 -> theta=2406 -> pixdrop=2351 -> claim=994 | chainTC=994 (T5c=965 T4c=29) | upgT5=0 delivT3=0 supp=800[800/0/0] dcaBlk=0 
+< evt 235 (run 1 lumi 49 event 4832): pixKept=1613 chains=3663 -> theta=2055 -> pixdrop=2017 -> claim=891 | chainTC=891 (T5c=863 T4c=28) | upgT5=0 delivT3=0 supp=700[700/0/0] dcaBlk=0 
+< evt 236 (run 1 lumi 88 event 8745): pixKept=1981 chains=4957 -> theta=2638 -> pixdrop=2581 -> claim=1090 | chainTC=1090 (T5c=1065 T4c=25) | upgT5=0 delivT3=0 supp=884[884/0/0] dcaBlk=0 
+< evt 237 (run 1 lumi 49 event 4884): pixKept=1586 chains=3570 -> theta=2038 -> pixdrop=1982 -> claim=853 | chainTC=853 (T5c=830 T4c=23) | upgT5=0 delivT3=0 supp=715[715/0/0] dcaBlk=0 
+< evt 238 (run 1 lumi 49 event 4836): pixKept=1899 chains=4812 -> theta=2594 -> pixdrop=2532 -> claim=1052 | chainTC=1052 (T5c=1030 T4c=22) | upgT5=0 delivT3=0 supp=863[863/0/0] dcaBlk=0 
+< evt 239 (run 1 lumi 75 event 7450): pixKept=1820 chains=4569 -> theta=2356 -> pixdrop=2294 -> claim=992 | chainTC=992 (T5c=967 T4c=25) | upgT5=0 delivT3=0 supp=801[801/0/0] dcaBlk=0 
+< evt 240 (run 1 lumi 49 event 4848): pixKept=1718 chains=4391 -> theta=2360 -> pixdrop=2307 -> claim=964 | chainTC=964 (T5c=934 T4c=30) | upgT5=0 delivT3=0 supp=798[798/0/0] dcaBlk=0 
+< evt 241 (run 1 lumi 88 event 8795): pixKept=2200 chains=6669 -> theta=3068 -> pixdrop=2996 -> claim=1247 | chainTC=1247 (T5c=1204 T4c=43) | upgT5=0 delivT3=0 supp=956[956/0/0] dcaBlk=0 
+< evt 242 (run 1 lumi 49 event 4899): pixKept=2267 chains=6832 -> theta=3034 -> pixdrop=2986 -> claim=1244 | chainTC=1244 (T5c=1207 T4c=37) | upgT5=0 delivT3=0 supp=981[981/0/0] dcaBlk=0 
+< evt 243 (run 1 lumi 49 event 4868): pixKept=1724 chains=4362 -> theta=2354 -> pixdrop=2328 -> claim=984 | chainTC=984 (T5c=939 T4c=45) | upgT5=0 delivT3=0 supp=768[768/0/0] dcaBlk=0 
+< evt 244 (run 1 lumi 88 event 8733): pixKept=2037 chains=5226 -> theta=2685 -> pixdrop=2627 -> claim=1116 | chainTC=1116 (T5c=1081 T4c=35) | upgT5=0 delivT3=0 supp=893[893/0/0] dcaBlk=0 
+< evt 245 (run 1 lumi 75 event 7494): pixKept=1446 chains=3194 -> theta=1799 -> pixdrop=1764 -> claim=791 | chainTC=791 (T5c=772 T4c=19) | upgT5=0 delivT3=0 supp=621[621/0/0] dcaBlk=0 
+< evt 246 (run 1 lumi 49 event 4806): pixKept=1744 chains=3828 -> theta=2112 -> pixdrop=2056 -> claim=885 | chainTC=885 (T5c=862 T4c=23) | upgT5=0 delivT3=0 supp=735[735/0/0] dcaBlk=0 
+< evt 247 (run 1 lumi 88 event 8732): pixKept=1594 chains=3623 -> theta=2068 -> pixdrop=2009 -> claim=871 | chainTC=871 (T5c=854 T4c=17) | upgT5=0 delivT3=0 supp=723[723/0/0] dcaBlk=0 
+< evt 248 (run 1 lumi 49 event 4819): pixKept=1983 chains=5275 -> theta=2622 -> pixdrop=2558 -> claim=1070 | chainTC=1070 (T5c=1044 T4c=26) | upgT5=0 delivT3=0 supp=831[831/0/0] dcaBlk=0 
+< evt 249 (run 1 lumi 75 event 7428): pixKept=1890 chains=4750 -> theta=2499 -> pixdrop=2459 -> claim=1032 | chainTC=1032 (T5c=1010 T4c=22) | upgT5=0 delivT3=0 supp=832[832/0/0] dcaBlk=0 
+< evt 250 (run 1 lumi 49 event 4857): pixKept=2070 chains=5738 -> theta=2769 -> pixdrop=2708 -> claim=1130 | chainTC=1130 (T5c=1097 T4c=33) | upgT5=0 delivT3=0 supp=911[911/0/0] dcaBlk=0 
+< evt 251 (run 1 lumi 75 event 7469): pixKept=1804 chains=5921 -> theta=2492 -> pixdrop=2433 -> claim=957 | chainTC=957 (T5c=930 T4c=27) | upgT5=0 delivT3=0 supp=762[762/0/0] dcaBlk=0 
+< evt 252 (run 1 lumi 75 event 7435): pixKept=1782 chains=4314 -> theta=2285 -> pixdrop=2242 -> claim=955 | chainTC=955 (T5c=934 T4c=21) | upgT5=0 delivT3=0 supp=781[781/0/0] dcaBlk=0 
+< evt 253 (run 1 lumi 88 event 8749): pixKept=1924 chains=4400 -> theta=2305 -> pixdrop=2265 -> claim=989 | chainTC=989 (T5c=960 T4c=29) | upgT5=0 delivT3=0 supp=811[811/0/0] dcaBlk=0 
+< evt 254 (run 1 lumi 88 event 8715): pixKept=1749 chains=3928 -> theta=2032 -> pixdrop=1987 -> claim=877 | chainTC=877 (T5c=852 T4c=25) | upgT5=0 delivT3=0 supp=697[697/0/0] dcaBlk=0 
+< evt 255 (run 1 lumi 75 event 7416): pixKept=1918 chains=4571 -> theta=2414 -> pixdrop=2348 -> claim=1018 | chainTC=1018 (T5c=988 T4c=30) | upgT5=0 delivT3=0 supp=830[830/0/0] dcaBlk=0 
+< evt 256 (run 1 lumi 88 event 8775): pixKept=1996 chains=5144 -> theta=2768 -> pixdrop=2702 -> claim=1116 | chainTC=1116 (T5c=1089 T4c=27) | upgT5=0 delivT3=0 supp=908[908/0/0] dcaBlk=0 
+< evt 257 (run 1 lumi 75 event 7465): pixKept=2105 chains=5059 -> theta=2560 -> pixdrop=2496 -> claim=1077 | chainTC=1077 (T5c=1045 T4c=32) | upgT5=0 delivT3=0 supp=871[871/0/0] dcaBlk=0 
+< evt 258 (run 1 lumi 75 event 7490): pixKept=1645 chains=3951 -> theta=2119 -> pixdrop=2060 -> claim=888 | chainTC=888 (T5c=858 T4c=30) | upgT5=0 delivT3=0 supp=712[712/0/0] dcaBlk=0 
+< evt 259 (run 1 lumi 75 event 7454): pixKept=1774 chains=4558 -> theta=2323 -> pixdrop=2240 -> claim=935 | chainTC=935 (T5c=910 T4c=25) | upgT5=0 delivT3=0 supp=764[764/0/0] dcaBlk=0 
+< evt 260 (run 1 lumi 88 event 8740): pixKept=1954 chains=4899 -> theta=2567 -> pixdrop=2541 -> claim=1074 | chainTC=1074 (T5c=1035 T4c=39) | upgT5=0 delivT3=0 supp=846[846/0/0] dcaBlk=0 
+< evt 261 (run 1 lumi 88 event 8800): pixKept=2004 chains=5371 -> theta=2668 -> pixdrop=2592 -> claim=1110 | chainTC=1110 (T5c=1081 T4c=29) | upgT5=0 delivT3=0 supp=882[882/0/0] dcaBlk=0 
+< evt 262 (run 1 lumi 88 event 8729): pixKept=1754 chains=4178 -> theta=2303 -> pixdrop=2266 -> claim=974 | chainTC=974 (T5c=947 T4c=27) | upgT5=0 delivT3=0 supp=762[762/0/0] dcaBlk=0 
+< evt 263 (run 1 lumi 49 event 4804): pixKept=1808 chains=4121 -> theta=2343 -> pixdrop=2288 -> claim=963 | chainTC=963 (T5c=936 T4c=27) | upgT5=0 delivT3=0 supp=790[790/0/0] dcaBlk=0 
+< evt 264 (run 1 lumi 75 event 7480): pixKept=2342 chains=6631 -> theta=3233 -> pixdrop=3137 -> claim=1288 | chainTC=1288 (T5c=1246 T4c=42) | upgT5=0 delivT3=0 supp=1035[1035/0/0] dcaBlk=0 
+< evt 265 (run 1 lumi 88 event 8706): pixKept=2110 chains=5928 -> theta=2795 -> pixdrop=2734 -> claim=1150 | chainTC=1150 (T5c=1112 T4c=38) | upgT5=0 delivT3=0 supp=918[918/0/0] dcaBlk=0 
+< evt 266 (run 1 lumi 88 event 8780): pixKept=1843 chains=4732 -> theta=2488 -> pixdrop=2418 -> claim=1013 | chainTC=1013 (T5c=985 T4c=28) | upgT5=0 delivT3=0 supp=814[814/0/0] dcaBlk=0 
+< evt 267 (run 1 lumi 49 event 4810): pixKept=1721 chains=4128 -> theta=2169 -> pixdrop=2131 -> claim=918 | chainTC=918 (T5c=889 T4c=29) | upgT5=0 delivT3=0 supp=739[739/0/0] dcaBlk=0 
+< evt 268 (run 1 lumi 88 event 8791): pixKept=1976 chains=4896 -> theta=2597 -> pixdrop=2531 -> claim=1061 | chainTC=1061 (T5c=1023 T4c=38) | upgT5=0 delivT3=0 supp=855[855/0/0] dcaBlk=0 
+< evt 269 (run 1 lumi 75 event 7403): pixKept=1582 chains=3320 -> theta=2055 -> pixdrop=2014 -> claim=837 | chainTC=837 (T5c=824 T4c=13) | upgT5=0 delivT3=0 supp=710[710/0/0] dcaBlk=0 
+< evt 270 (run 1 lumi 88 event 8784): pixKept=2109 chains=5622 -> theta=2702 -> pixdrop=2634 -> claim=1121 | chainTC=1121 (T5c=1092 T4c=29) | upgT5=0 delivT3=0 supp=888[888/0/0] dcaBlk=0 
+< evt 271 (run 1 lumi 75 event 7427): pixKept=1700 chains=4416 -> theta=2301 -> pixdrop=2250 -> claim=938 | chainTC=938 (T5c=915 T4c=23) | upgT5=0 delivT3=0 supp=753[753/0/0] dcaBlk=0 
+< evt 272 (run 1 lumi 88 event 8766): pixKept=1760 chains=4181 -> theta=2300 -> pixdrop=2242 -> claim=961 | chainTC=961 (T5c=935 T4c=26) | upgT5=0 delivT3=0 supp=765[765/0/0] dcaBlk=0 
+< evt 273 (run 1 lumi 75 event 7475): pixKept=2038 chains=5340 -> theta=2640 -> pixdrop=2570 -> claim=1092 | chainTC=1092 (T5c=1063 T4c=29) | upgT5=0 delivT3=0 supp=880[880/0/0] dcaBlk=0 
+< evt 274 (run 1 lumi 88 event 8761): pixKept=1721 chains=4080 -> theta=2188 -> pixdrop=2139 -> claim=919 | chainTC=919 (T5c=893 T4c=26) | upgT5=0 delivT3=0 supp=762[762/0/0] dcaBlk=0 
+< evt 275 (run 1 lumi 88 event 8719): pixKept=1801 chains=4319 -> theta=2308 -> pixdrop=2252 -> claim=958 | chainTC=958 (T5c=937 T4c=21) | upgT5=0 delivT3=0 supp=782[782/0/0] dcaBlk=0 
+< evt 276 (run 1 lumi 75 event 7424): pixKept=1873 chains=4582 -> theta=2452 -> pixdrop=2393 -> claim=978 | chainTC=978 (T5c=943 T4c=35) | upgT5=0 delivT3=0 supp=768[768/0/0] dcaBlk=0 
+< evt 277 (run 1 lumi 75 event 7485): pixKept=1357 chains=3196 -> theta=1686 -> pixdrop=1643 -> claim=734 | chainTC=734 (T5c=710 T4c=24) | upgT5=0 delivT3=0 supp=593[593/0/0] dcaBlk=0 
+< evt 278 (run 1 lumi 88 event 8756): pixKept=1903 chains=4707 -> theta=2546 -> pixdrop=2484 -> claim=1044 | chainTC=1044 (T5c=1017 T4c=27) | upgT5=0 delivT3=0 supp=842[842/0/0] dcaBlk=0 
+< evt 279 (run 1 lumi 75 event 7499): pixKept=2283 chains=6478 -> theta=3002 -> pixdrop=2919 -> claim=1189 | chainTC=1189 (T5c=1153 T4c=36) | upgT5=0 delivT3=0 supp=955[955/0/0] dcaBlk=0 
+< evt 280 (run 1 lumi 75 event 7459): pixKept=1915 chains=4966 -> theta=2490 -> pixdrop=2422 -> claim=1018 | chainTC=1018 (T5c=990 T4c=28) | upgT5=0 delivT3=0 supp=841[841/0/0] dcaBlk=0 
+< evt 281 (run 1 lumi 75 event 7426): pixKept=1759 chains=4620 -> theta=2349 -> pixdrop=2307 -> claim=946 | chainTC=946 (T5c=918 T4c=28) | upgT5=0 delivT3=0 supp=738[738/0/0] dcaBlk=0 
+< evt 282 (run 1 lumi 75 event 7440): pixKept=2097 chains=5542 -> theta=2760 -> pixdrop=2719 -> claim=1111 | chainTC=1111 (T5c=1082 T4c=29) | upgT5=0 delivT3=0 supp=891[891/0/0] dcaBlk=0 
+< evt 283 (run 1 lumi 88 event 8771): pixKept=1959 chains=5192 -> theta=2653 -> pixdrop=2563 -> claim=1088 | chainTC=1088 (T5c=1063 T4c=25) | upgT5=0 delivT3=0 supp=881[881/0/0] dcaBlk=0 
+< evt 284 (run 1 lumi 88 event 8717): pixKept=2072 chains=5265 -> theta=2595 -> pixdrop=2532 -> claim=1082 | chainTC=1082 (T5c=1063 T4c=19) | upgT5=0 delivT3=0 supp=890[890/0/0] dcaBlk=0 
+< evt 285 (run 1 lumi 75 event 7446): pixKept=1323 chains=3347 -> theta=1729 -> pixdrop=1694 -> claim=744 | chainTC=744 (T5c=728 T4c=16) | upgT5=0 delivT3=0 supp=606[606/0/0] dcaBlk=0 
+< evt 286 (run 1 lumi 49 event 4829): pixKept=1950 chains=5046 -> theta=2523 -> pixdrop=2464 -> claim=1042 | chainTC=1042 (T5c=1016 T4c=26) | upgT5=0 delivT3=0 supp=847[847/0/0] dcaBlk=0 
+< evt 287 (run 1 lumi 88 event 8744): pixKept=2333 chains=7085 -> theta=3108 -> pixdrop=3055 -> claim=1275 | chainTC=1275 (T5c=1241 T4c=34) | upgT5=0 delivT3=0 supp=1009[1009/0/0] dcaBlk=0 
+< evt 288 (run 1 lumi 75 event 7448): pixKept=2145 chains=6465 -> theta=2967 -> pixdrop=2896 -> claim=1192 | chainTC=1192 (T5c=1155 T4c=37) | upgT5=0 delivT3=0 supp=925[925/0/0] dcaBlk=0 
+< evt 289 (run 1 lumi 88 event 8794): pixKept=1965 chains=5074 -> theta=2571 -> pixdrop=2518 -> claim=1062 | chainTC=1062 (T5c=1032 T4c=30) | upgT5=0 delivT3=0 supp=878[878/0/0] dcaBlk=0 
+< evt 290 (run 1 lumi 88 event 8735): pixKept=1960 chains=4546 -> theta=2321 -> pixdrop=2278 -> claim=1003 | chainTC=1003 (T5c=981 T4c=22) | upgT5=0 delivT3=0 supp=811[811/0/0] dcaBlk=0 
+< evt 291 (run 1 lumi 75 event 7495): pixKept=1659 chains=4031 -> theta=2202 -> pixdrop=2123 -> claim=904 | chainTC=904 (T5c=877 T4c=27) | upgT5=0 delivT3=0 supp=720[720/0/0] dcaBlk=0 
+< evt 292 (run 1 lumi 49 event 4803): pixKept=1688 chains=4116 -> theta=2179 -> pixdrop=2141 -> claim=914 | chainTC=914 (T5c=886 T4c=28) | upgT5=0 delivT3=0 supp=722[722/0/0] dcaBlk=0 
+< evt 293 (run 1 lumi 88 event 8709): pixKept=1793 chains=4777 -> theta=2451 -> pixdrop=2393 -> claim=1010 | chainTC=1010 (T5c=985 T4c=25) | upgT5=0 delivT3=0 supp=823[823/0/0] dcaBlk=0 
+< evt 294 (run 1 lumi 75 event 7411): pixKept=1916 chains=4812 -> theta=2531 -> pixdrop=2472 -> claim=1025 | chainTC=1025 (T5c=990 T4c=35) | upgT5=0 delivT3=0 supp=799[799/0/0] dcaBlk=0 
+< evt 295 (run 1 lumi 75 event 7470): pixKept=2125 chains=5417 -> theta=2777 -> pixdrop=2708 -> claim=1152 | chainTC=1152 (T5c=1121 T4c=31) | upgT5=0 delivT3=0 supp=936[936/0/0] dcaBlk=0 
+< evt 296 (run 1 lumi 75 event 7437): pixKept=1604 chains=3488 -> theta=2067 -> pixdrop=2017 -> claim=833 | chainTC=833 (T5c=807 T4c=26) | upgT5=0 delivT3=0 supp=667[667/0/0] dcaBlk=0 
+< evt 297 (run 1 lumi 88 event 8750): pixKept=1482 chains=3402 -> theta=1914 -> pixdrop=1865 -> claim=807 | chainTC=807 (T5c=785 T4c=22) | upgT5=0 delivT3=0 supp=647[647/0/0] dcaBlk=0 
+< evt 298 (run 1 lumi 88 event 8713): pixKept=1619 chains=4207 -> theta=2235 -> pixdrop=2186 -> claim=897 | chainTC=897 (T5c=877 T4c=20) | upgT5=0 delivT3=0 supp=707[707/0/0] dcaBlk=0 
+< evt 299 (run 1 lumi 75 event 7417): pixKept=1539 chains=3305 -> theta=1816 -> pixdrop=1761 -> claim=762 | chainTC=762 (T5c=747 T4c=15) | upgT5=0 delivT3=0 supp=629[629/0/0] dcaBlk=0 
+---
+> evt 0 (run 1 lumi 49 event 4890): pixKept=1163 chains=2284 -> theta=1482 -> pixdrop=1442 -> claim=592 | chainTC=592 (T5c=573 T4c=19) | upgT5=0 delivT3=0 supp=461[461/0/0] dcaBlk=7 
+> evt 1 (run 1 lumi 49 event 4849): pixKept=1360 chains=2840 -> theta=1688 -> pixdrop=1648 -> claim=731 | chainTC=731 (T5c=716 T4c=15) | upgT5=0 delivT3=0 supp=613[613/0/0] dcaBlk=8 
+> evt 2 (run 1 lumi 49 event 4813): pixKept=1389 chains=3536 -> theta=1881 -> pixdrop=1853 -> claim=770 | chainTC=770 (T5c=745 T4c=25) | upgT5=0 delivT3=0 supp=613[613/0/0] dcaBlk=15 
+> evt 3 (run 1 lumi 88 event 8770): pixKept=1448 chains=3688 -> theta=2003 -> pixdrop=1942 -> claim=773 | chainTC=773 (T5c=755 T4c=18) | upgT5=0 delivT3=0 supp=629[629/0/0] dcaBlk=5 
+> evt 4 (run 1 lumi 75 event 7462): pixKept=1588 chains=3842 -> theta=2155 -> pixdrop=2111 -> claim=889 | chainTC=889 (T5c=867 T4c=22) | upgT5=0 delivT3=0 supp=725[725/0/0] dcaBlk=12 
+> evt 5 (run 1 lumi 75 event 7487): pixKept=1471 chains=3665 -> theta=1962 -> pixdrop=1928 -> claim=825 | chainTC=825 (T5c=803 T4c=22) | upgT5=0 delivT3=0 supp=685[685/0/0] dcaBlk=11 
+> evt 6 (run 1 lumi 49 event 4858): pixKept=1583 chains=3662 -> theta=2070 -> pixdrop=2017 -> claim=866 | chainTC=866 (T5c=842 T4c=24) | upgT5=0 delivT3=0 supp=713[713/0/0] dcaBlk=5 
+> evt 7 (run 1 lumi 75 event 7451): pixKept=1538 chains=3444 -> theta=1931 -> pixdrop=1888 -> claim=811 | chainTC=811 (T5c=795 T4c=16) | upgT5=0 delivT3=0 supp=658[658/0/0] dcaBlk=4 
+> evt 8 (run 1 lumi 88 event 8736): pixKept=1509 chains=3761 -> theta=2056 -> pixdrop=2003 -> claim=846 | chainTC=846 (T5c=825 T4c=21) | upgT5=0 delivT3=0 supp=678[678/0/0] dcaBlk=12 
+> evt 9 (run 1 lumi 88 event 8797): pixKept=1589 chains=3637 -> theta=1975 -> pixdrop=1922 -> claim=838 | chainTC=838 (T5c=819 T4c=19) | upgT5=0 delivT3=0 supp=680[680/0/0] dcaBlk=19 
+> evt 10 (run 1 lumi 88 event 8704): pixKept=1536 chains=3514 -> theta=1921 -> pixdrop=1876 -> claim=796 | chainTC=796 (T5c=777 T4c=19) | upgT5=0 delivT3=0 supp=657[657/0/0] dcaBlk=10 
+> evt 11 (run 1 lumi 49 event 4830): pixKept=1616 chains=3642 -> theta=2040 -> pixdrop=1994 -> claim=874 | chainTC=874 (T5c=849 T4c=25) | upgT5=0 delivT3=0 supp=696[696/0/0] dcaBlk=10 
+> evt 12 (run 1 lumi 49 event 4861): pixKept=1582 chains=3739 -> theta=2054 -> pixdrop=2018 -> claim=833 | chainTC=833 (T5c=814 T4c=19) | upgT5=0 delivT3=0 supp=668[668/0/0] dcaBlk=11 
+> evt 13 (run 1 lumi 75 event 7476): pixKept=1673 chains=3654 -> theta=2050 -> pixdrop=2017 -> claim=865 | chainTC=865 (T5c=848 T4c=17) | upgT5=0 delivT3=0 supp=713[713/0/0] dcaBlk=8 
+> evt 14 (run 1 lumi 88 event 8702): pixKept=1572 chains=3997 -> theta=2155 -> pixdrop=2118 -> claim=901 | chainTC=901 (T5c=875 T4c=26) | upgT5=0 delivT3=0 supp=716[716/0/0] dcaBlk=7 
+> evt 15 (run 1 lumi 88 event 8776): pixKept=1784 chains=4147 -> theta=2375 -> pixdrop=2334 -> claim=979 | chainTC=979 (T5c=956 T4c=23) | upgT5=0 delivT3=0 supp=799[799/0/0] dcaBlk=8 
+> evt 16 (run 1 lumi 49 event 4809): pixKept=1745 chains=4182 -> theta=2258 -> pixdrop=2189 -> claim=944 | chainTC=944 (T5c=915 T4c=29) | upgT5=0 delivT3=0 supp=766[766/0/0] dcaBlk=11 
+> evt 17 (run 1 lumi 88 event 8786): pixKept=1683 chains=4337 -> theta=2292 -> pixdrop=2245 -> claim=935 | chainTC=935 (T5c=917 T4c=18) | upgT5=0 delivT3=0 supp=754[754/0/0] dcaBlk=10 
+> evt 18 (run 1 lumi 49 event 4837): pixKept=1746 chains=4406 -> theta=2370 -> pixdrop=2319 -> claim=1007 | chainTC=1007 (T5c=979 T4c=28) | upgT5=0 delivT3=0 supp=800[800/0/0] dcaBlk=15 
+> evt 19 (run 1 lumi 49 event 4871): pixKept=1695 chains=4638 -> theta=2405 -> pixdrop=2349 -> claim=983 | chainTC=983 (T5c=964 T4c=19) | upgT5=0 delivT3=0 supp=786[786/0/0] dcaBlk=17 
+> evt 20 (run 1 lumi 75 event 7402): pixKept=1760 chains=4242 -> theta=2383 -> pixdrop=2330 -> claim=986 | chainTC=986 (T5c=961 T4c=25) | upgT5=0 delivT3=0 supp=788[788/0/0] dcaBlk=13 
+> evt 21 (run 1 lumi 49 event 4817): pixKept=1700 chains=4169 -> theta=2303 -> pixdrop=2264 -> claim=936 | chainTC=936 (T5c=912 T4c=24) | upgT5=0 delivT3=0 supp=756[756/0/0] dcaBlk=13 
+> evt 22 (run 1 lumi 49 event 4886): pixKept=1739 chains=4574 -> theta=2290 -> pixdrop=2223 -> claim=925 | chainTC=925 (T5c=900 T4c=25) | upgT5=0 delivT3=0 supp=752[752/0/0] dcaBlk=17 
+> evt 23 (run 1 lumi 49 event 4877): pixKept=1716 chains=4275 -> theta=2253 -> pixdrop=2212 -> claim=973 | chainTC=973 (T5c=942 T4c=31) | upgT5=0 delivT3=0 supp=791[791/0/0] dcaBlk=8 
+> evt 24 (run 1 lumi 88 event 8781): pixKept=1746 chains=3902 -> theta=2151 -> pixdrop=2105 -> claim=899 | chainTC=899 (T5c=880 T4c=19) | upgT5=0 delivT3=0 supp=724[724/0/0] dcaBlk=12 
+> evt 25 (run 1 lumi 75 event 7433): pixKept=1729 chains=4716 -> theta=2325 -> pixdrop=2276 -> claim=936 | chainTC=936 (T5c=918 T4c=18) | upgT5=0 delivT3=0 supp=748[748/0/0] dcaBlk=17 
+> evt 26 (run 1 lumi 88 event 8760): pixKept=1635 chains=5331 -> theta=2351 -> pixdrop=2272 -> claim=929 | chainTC=929 (T5c=898 T4c=31) | upgT5=0 delivT3=0 supp=742[742/0/0] dcaBlk=13 
+> evt 27 (run 1 lumi 75 event 7472): pixKept=1742 chains=4236 -> theta=2263 -> pixdrop=2218 -> claim=937 | chainTC=937 (T5c=912 T4c=25) | upgT5=0 delivT3=0 supp=770[770/0/0] dcaBlk=14 
+> evt 28 (run 1 lumi 88 event 8757): pixKept=1874 chains=4311 -> theta=2402 -> pixdrop=2321 -> claim=1017 | chainTC=1017 (T5c=991 T4c=26) | upgT5=0 delivT3=0 supp=813[813/0/0] dcaBlk=14 
+> evt 29 (run 1 lumi 49 event 4841): pixKept=1837 chains=4545 -> theta=2340 -> pixdrop=2278 -> claim=979 | chainTC=979 (T5c=953 T4c=26) | upgT5=0 delivT3=0 supp=771[771/0/0] dcaBlk=14 
+> evt 30 (run 1 lumi 88 event 8718): pixKept=1786 chains=4885 -> theta=2491 -> pixdrop=2416 -> claim=1014 | chainTC=1014 (T5c=985 T4c=29) | upgT5=0 delivT3=0 supp=829[829/0/0] dcaBlk=18 
+> evt 31 (run 1 lumi 75 event 7408): pixKept=1826 chains=4697 -> theta=2470 -> pixdrop=2417 -> claim=1025 | chainTC=1025 (T5c=998 T4c=27) | upgT5=0 delivT3=0 supp=810[810/0/0] dcaBlk=10 
+> evt 32 (run 1 lumi 75 event 7481): pixKept=1809 chains=4402 -> theta=2352 -> pixdrop=2303 -> claim=948 | chainTC=948 (T5c=930 T4c=18) | upgT5=0 delivT3=0 supp=756[756/0/0] dcaBlk=13 
+> evt 33 (run 1 lumi 88 event 8751): pixKept=1842 chains=5060 -> theta=2586 -> pixdrop=2529 -> claim=1047 | chainTC=1047 (T5c=1023 T4c=24) | upgT5=0 delivT3=0 supp=860[860/0/0] dcaBlk=15 
+> evt 34 (run 1 lumi 75 event 7496): pixKept=1867 chains=4751 -> theta=2408 -> pixdrop=2367 -> claim=998 | chainTC=998 (T5c=979 T4c=19) | upgT5=0 delivT3=0 supp=814[814/0/0] dcaBlk=15 
+> evt 35 (run 1 lumi 49 event 4870): pixKept=1763 chains=4364 -> theta=2300 -> pixdrop=2262 -> claim=973 | chainTC=973 (T5c=944 T4c=29) | upgT5=0 delivT3=0 supp=774[774/0/0] dcaBlk=17 
+> evt 36 (run 1 lumi 75 event 7456): pixKept=1901 chains=4590 -> theta=2422 -> pixdrop=2371 -> claim=994 | chainTC=994 (T5c=959 T4c=35) | upgT5=0 delivT3=0 supp=804[804/0/0] dcaBlk=11 
+> evt 37 (run 1 lumi 49 event 4893): pixKept=1885 chains=4466 -> theta=2387 -> pixdrop=2310 -> claim=992 | chainTC=992 (T5c=970 T4c=22) | upgT5=0 delivT3=0 supp=820[820/0/0] dcaBlk=8 
+> evt 38 (run 1 lumi 75 event 7409): pixKept=1900 chains=5224 -> theta=2476 -> pixdrop=2434 -> claim=1030 | chainTC=1030 (T5c=1004 T4c=26) | upgT5=0 delivT3=0 supp=812[812/0/0] dcaBlk=14 
+> evt 39 (run 1 lumi 75 event 7434): pixKept=1846 chains=4569 -> theta=2287 -> pixdrop=2237 -> claim=953 | chainTC=953 (T5c=936 T4c=17) | upgT5=0 delivT3=0 supp=758[758/0/0] dcaBlk=17 
+> evt 40 (run 1 lumi 88 event 8765): pixKept=1915 chains=5040 -> theta=2542 -> pixdrop=2502 -> claim=1046 | chainTC=1046 (T5c=1018 T4c=28) | upgT5=0 delivT3=0 supp=825[825/0/0] dcaBlk=15 
+> evt 41 (run 1 lumi 88 event 8724): pixKept=1849 chains=4576 -> theta=2398 -> pixdrop=2347 -> claim=1006 | chainTC=1006 (T5c=982 T4c=24) | upgT5=0 delivT3=0 supp=823[823/0/0] dcaBlk=18 
+> evt 42 (run 1 lumi 75 event 7442): pixKept=1883 chains=4487 -> theta=2474 -> pixdrop=2392 -> claim=1008 | chainTC=1008 (T5c=980 T4c=28) | upgT5=0 delivT3=0 supp=831[831/0/0] dcaBlk=10 
+> evt 43 (run 1 lumi 49 event 4802): pixKept=1853 chains=5147 -> theta=2567 -> pixdrop=2518 -> claim=1045 | chainTC=1045 (T5c=1015 T4c=30) | upgT5=0 delivT3=0 supp=820[820/0/0] dcaBlk=13 
+> evt 44 (run 1 lumi 88 event 8741): pixKept=1900 chains=5575 -> theta=2596 -> pixdrop=2543 -> claim=1059 | chainTC=1059 (T5c=1032 T4c=27) | upgT5=0 delivT3=0 supp=840[840/0/0] dcaBlk=15 
+> evt 45 (run 1 lumi 49 event 4882): pixKept=1952 chains=5006 -> theta=2499 -> pixdrop=2425 -> claim=1044 | chainTC=1044 (T5c=1019 T4c=25) | upgT5=0 delivT3=0 supp=841[841/0/0] dcaBlk=17 
+> evt 46 (run 1 lumi 49 event 4833): pixKept=1967 chains=4847 -> theta=2616 -> pixdrop=2543 -> claim=1056 | chainTC=1056 (T5c=1023 T4c=33) | upgT5=0 delivT3=0 supp=833[833/0/0] dcaBlk=13 
+> evt 47 (run 1 lumi 75 event 7445): pixKept=1968 chains=4966 -> theta=2537 -> pixdrop=2473 -> claim=1033 | chainTC=1033 (T5c=1006 T4c=27) | upgT5=0 delivT3=0 supp=830[830/0/0] dcaBlk=20 
+> evt 48 (run 1 lumi 49 event 4845): pixKept=1926 chains=5198 -> theta=2505 -> pixdrop=2447 -> claim=1072 | chainTC=1072 (T5c=1032 T4c=40) | upgT5=0 delivT3=0 supp=825[825/0/0] dcaBlk=22 
+> evt 49 (run 1 lumi 88 event 8790): pixKept=2036 chains=5058 -> theta=2614 -> pixdrop=2536 -> claim=1108 | chainTC=1108 (T5c=1071 T4c=37) | upgT5=0 delivT3=0 supp=868[868/0/0] dcaBlk=21 
+> evt 50 (run 1 lumi 49 event 4898): pixKept=1900 chains=5038 -> theta=2553 -> pixdrop=2505 -> claim=1022 | chainTC=1022 (T5c=993 T4c=29) | upgT5=0 delivT3=0 supp=813[813/0/0] dcaBlk=24 
+> evt 51 (run 1 lumi 49 event 4865): pixKept=2020 chains=5486 -> theta=2777 -> pixdrop=2717 -> claim=1129 | chainTC=1129 (T5c=1106 T4c=23) | upgT5=0 delivT3=0 supp=909[909/0/0] dcaBlk=20 
+> evt 52 (run 1 lumi 88 event 8730): pixKept=1922 chains=5438 -> theta=2560 -> pixdrop=2498 -> claim=1050 | chainTC=1050 (T5c=1011 T4c=39) | upgT5=0 delivT3=0 supp=821[821/0/0] dcaBlk=17 
+> evt 53 (run 1 lumi 75 event 7491): pixKept=2005 chains=5191 -> theta=2569 -> pixdrop=2494 -> claim=1055 | chainTC=1055 (T5c=1033 T4c=22) | upgT5=0 delivT3=0 supp=852[852/0/0] dcaBlk=12 
+> evt 54 (run 1 lumi 49 event 4827): pixKept=2032 chains=5341 -> theta=2594 -> pixdrop=2523 -> claim=1054 | chainTC=1054 (T5c=1031 T4c=23) | upgT5=0 delivT3=0 supp=863[863/0/0] dcaBlk=14 
+> evt 55 (run 1 lumi 88 event 8720): pixKept=2056 chains=5572 -> theta=2680 -> pixdrop=2624 -> claim=1108 | chainTC=1108 (T5c=1078 T4c=30) | upgT5=0 delivT3=0 supp=887[887/0/0] dcaBlk=22 
+> evt 56 (run 1 lumi 49 event 4812): pixKept=2115 chains=5670 -> theta=2866 -> pixdrop=2784 -> claim=1182 | chainTC=1182 (T5c=1138 T4c=44) | upgT5=0 delivT3=0 supp=953[953/0/0] dcaBlk=14 
+> evt 57 (run 1 lumi 75 event 7425): pixKept=1971 chains=5908 -> theta=2755 -> pixdrop=2686 -> claim=1124 | chainTC=1124 (T5c=1092 T4c=32) | upgT5=0 delivT3=0 supp=885[885/0/0] dcaBlk=13 
+> evt 58 (run 1 lumi 49 event 4853): pixKept=2049 chains=5690 -> theta=2607 -> pixdrop=2533 -> claim=1076 | chainTC=1076 (T5c=1048 T4c=28) | upgT5=0 delivT3=0 supp=840[840/0/0] dcaBlk=22 
+> evt 59 (run 1 lumi 75 event 7467): pixKept=2255 chains=6113 -> theta=3076 -> pixdrop=3001 -> claim=1230 | chainTC=1230 (T5c=1205 T4c=25) | upgT5=0 delivT3=0 supp=1012[1012/0/0] dcaBlk=16 
+> evt 60 (run 1 lumi 75 event 7412): pixKept=2222 chains=5893 -> theta=2842 -> pixdrop=2781 -> claim=1169 | chainTC=1169 (T5c=1138 T4c=31) | upgT5=0 delivT3=0 supp=952[952/0/0] dcaBlk=25 
+> evt 61 (run 1 lumi 88 event 8746): pixKept=2144 chains=5576 -> theta=2585 -> pixdrop=2510 -> claim=1093 | chainTC=1093 (T5c=1068 T4c=25) | upgT5=0 delivT3=0 supp=878[878/0/0] dcaBlk=16 
+> evt 62 (run 1 lumi 88 event 8723): pixKept=2224 chains=6128 -> theta=2942 -> pixdrop=2844 -> claim=1210 | chainTC=1210 (T5c=1182 T4c=28) | upgT5=0 delivT3=0 supp=964[964/0/0] dcaBlk=21 
+> evt 63 (run 1 lumi 75 event 7419): pixKept=2589 chains=7721 -> theta=3360 -> pixdrop=3306 -> claim=1396 | chainTC=1396 (T5c=1355 T4c=41) | upgT5=0 delivT3=0 supp=1096[1096/0/0] dcaBlk=24 
+> evt 64 (run 1 lumi 49 event 4889): pixKept=1768 chains=4229 -> theta=2264 -> pixdrop=2190 -> claim=937 | chainTC=937 (T5c=921 T4c=16) | upgT5=0 delivT3=0 supp=763[763/0/0] dcaBlk=13 
+> evt 65 (run 1 lumi 49 event 4850): pixKept=2486 chains=8173 -> theta=3646 -> pixdrop=3529 -> claim=1426 | chainTC=1426 (T5c=1381 T4c=45) | upgT5=0 delivT3=0 supp=1085[1085/0/0] dcaBlk=30 
+> evt 66 (run 1 lumi 49 event 4811): pixKept=2121 chains=5608 -> theta=2766 -> pixdrop=2694 -> claim=1130 | chainTC=1130 (T5c=1089 T4c=41) | upgT5=0 delivT3=0 supp=911[911/0/0] dcaBlk=19 
+> evt 67 (run 1 lumi 88 event 8773): pixKept=1475 chains=3046 -> theta=1807 -> pixdrop=1766 -> claim=771 | chainTC=771 (T5c=755 T4c=16) | upgT5=0 delivT3=0 supp=632[632/0/0] dcaBlk=13 
+> evt 68 (run 1 lumi 75 event 7461): pixKept=2073 chains=5807 -> theta=2984 -> pixdrop=2925 -> claim=1157 | chainTC=1157 (T5c=1124 T4c=33) | upgT5=0 delivT3=0 supp=957[957/0/0] dcaBlk=17 
+> evt 69 (run 1 lumi 75 event 7486): pixKept=1848 chains=4743 -> theta=2394 -> pixdrop=2331 -> claim=975 | chainTC=975 (T5c=947 T4c=28) | upgT5=0 delivT3=0 supp=786[786/0/0] dcaBlk=15 
+> evt 70 (run 1 lumi 49 event 4859): pixKept=1766 chains=4478 -> theta=2347 -> pixdrop=2288 -> claim=1000 | chainTC=1000 (T5c=981 T4c=19) | upgT5=0 delivT3=0 supp=801[801/0/0] dcaBlk=14 
+> evt 71 (run 1 lumi 75 event 7452): pixKept=2006 chains=4574 -> theta=2534 -> pixdrop=2480 -> claim=1033 | chainTC=1033 (T5c=994 T4c=39) | upgT5=0 delivT3=0 supp=836[836/0/0] dcaBlk=14 
+> evt 72 (run 1 lumi 88 event 8737): pixKept=1991 chains=5452 -> theta=2590 -> pixdrop=2524 -> claim=1069 | chainTC=1069 (T5c=1042 T4c=27) | upgT5=0 delivT3=0 supp=845[845/0/0] dcaBlk=18 
+> evt 73 (run 1 lumi 88 event 8796): pixKept=2089 chains=6063 -> theta=2810 -> pixdrop=2755 -> claim=1169 | chainTC=1169 (T5c=1132 T4c=37) | upgT5=0 delivT3=0 supp=935[935/0/0] dcaBlk=20 
+> evt 74 (run 1 lumi 88 event 8725): pixKept=1849 chains=4116 -> theta=2238 -> pixdrop=2197 -> claim=954 | chainTC=954 (T5c=928 T4c=26) | upgT5=0 delivT3=0 supp=785[785/0/0] dcaBlk=15 
+> evt 75 (run 1 lumi 49 event 4825): pixKept=1834 chains=4258 -> theta=2225 -> pixdrop=2170 -> claim=939 | chainTC=939 (T5c=914 T4c=25) | upgT5=0 delivT3=0 supp=773[773/0/0] dcaBlk=13 
+> evt 76 (run 1 lumi 49 event 4863): pixKept=1987 chains=5242 -> theta=2675 -> pixdrop=2622 -> claim=1090 | chainTC=1090 (T5c=1066 T4c=24) | upgT5=0 delivT3=0 supp=893[893/0/0] dcaBlk=16 
+> evt 77 (run 1 lumi 75 event 7477): pixKept=1664 chains=3877 -> theta=2125 -> pixdrop=2076 -> claim=886 | chainTC=886 (T5c=858 T4c=28) | upgT5=0 delivT3=0 supp=700[700/0/0] dcaBlk=14 
+> evt 78 (run 1 lumi 88 event 8714): pixKept=1653 chains=4568 -> theta=2360 -> pixdrop=2287 -> claim=981 | chainTC=981 (T5c=960 T4c=21) | upgT5=0 delivT3=0 supp=789[789/0/0] dcaBlk=13 
+> evt 79 (run 1 lumi 88 event 8778): pixKept=1664 chains=3776 -> theta=2090 -> pixdrop=2034 -> claim=879 | chainTC=879 (T5c=858 T4c=21) | upgT5=0 delivT3=0 supp=732[732/0/0] dcaBlk=9 
+> evt 80 (run 1 lumi 49 event 4808): pixKept=1696 chains=4559 -> theta=2241 -> pixdrop=2201 -> claim=903 | chainTC=903 (T5c=885 T4c=18) | upgT5=0 delivT3=0 supp=733[733/0/0] dcaBlk=13 
+> evt 81 (run 1 lumi 88 event 8787): pixKept=2200 chains=6877 -> theta=2980 -> pixdrop=2923 -> claim=1226 | chainTC=1226 (T5c=1192 T4c=34) | upgT5=0 delivT3=0 supp=970[970/0/0] dcaBlk=17 
+> evt 82 (run 1 lumi 49 event 4839): pixKept=1888 chains=4840 -> theta=2487 -> pixdrop=2439 -> claim=1033 | chainTC=1033 (T5c=999 T4c=34) | upgT5=0 delivT3=0 supp=816[816/0/0] dcaBlk=13 
+> evt 83 (run 1 lumi 49 event 4874): pixKept=1671 chains=3954 -> theta=2175 -> pixdrop=2134 -> claim=902 | chainTC=902 (T5c=877 T4c=25) | upgT5=0 delivT3=0 supp=717[717/0/0] dcaBlk=14 
+> evt 84 (run 1 lumi 75 event 7421): pixKept=1729 chains=4288 -> theta=2291 -> pixdrop=2226 -> claim=953 | chainTC=953 (T5c=926 T4c=27) | upgT5=0 delivT3=0 supp=763[763/0/0] dcaBlk=17 
+> evt 85 (run 1 lumi 49 event 4818): pixKept=1984 chains=5436 -> theta=2698 -> pixdrop=2635 -> claim=1096 | chainTC=1096 (T5c=1073 T4c=23) | upgT5=0 delivT3=0 supp=894[894/0/0] dcaBlk=11 
+> evt 86 (run 1 lumi 49 event 4885): pixKept=1745 chains=4236 -> theta=2244 -> pixdrop=2182 -> claim=925 | chainTC=925 (T5c=902 T4c=23) | upgT5=0 delivT3=0 supp=749[749/0/0] dcaBlk=15 
+> evt 87 (run 1 lumi 49 event 4878): pixKept=2273 chains=5732 -> theta=2761 -> pixdrop=2706 -> claim=1142 | chainTC=1142 (T5c=1108 T4c=34) | upgT5=0 delivT3=0 supp=924[924/0/0] dcaBlk=16 
+> evt 88 (run 1 lumi 88 event 8782): pixKept=2007 chains=5430 -> theta=2737 -> pixdrop=2675 -> claim=1131 | chainTC=1131 (T5c=1102 T4c=29) | upgT5=0 delivT3=0 supp=909[909/0/0] dcaBlk=14 
+> evt 89 (run 1 lumi 75 event 7405): pixKept=1652 chains=3772 -> theta=2230 -> pixdrop=2196 -> claim=927 | chainTC=927 (T5c=905 T4c=22) | upgT5=0 delivT3=0 supp=775[775/0/0] dcaBlk=14 
+> evt 90 (run 1 lumi 88 event 8762): pixKept=1986 chains=5303 -> theta=2781 -> pixdrop=2715 -> claim=1119 | chainTC=1119 (T5c=1083 T4c=36) | upgT5=0 delivT3=0 supp=876[876/0/0] dcaBlk=16 
+> evt 91 (run 1 lumi 75 event 7471): pixKept=2067 chains=5630 -> theta=2687 -> pixdrop=2639 -> claim=1091 | chainTC=1091 (T5c=1061 T4c=30) | upgT5=0 delivT3=0 supp=854[854/0/0] dcaBlk=24 
+> evt 92 (run 1 lumi 88 event 8755): pixKept=1999 chains=5245 -> theta=2553 -> pixdrop=2483 -> claim=1035 | chainTC=1035 (T5c=1010 T4c=25) | upgT5=0 delivT3=0 supp=819[819/0/0] dcaBlk=15 
+> evt 93 (run 1 lumi 49 event 4842): pixKept=1911 chains=5222 -> theta=2673 -> pixdrop=2606 -> claim=1098 | chainTC=1098 (T5c=1076 T4c=22) | upgT5=0 delivT3=0 supp=870[870/0/0] dcaBlk=20 
+> evt 94 (run 1 lumi 88 event 8712): pixKept=2017 chains=5587 -> theta=2639 -> pixdrop=2579 -> claim=1099 | chainTC=1099 (T5c=1081 T4c=18) | upgT5=0 delivT3=0 supp=899[899/0/0] dcaBlk=16 
+> evt 95 (run 1 lumi 75 event 7410): pixKept=1684 chains=4043 -> theta=2139 -> pixdrop=2064 -> claim=883 | chainTC=883 (T5c=873 T4c=10) | upgT5=0 delivT3=0 supp=734[734/0/0] dcaBlk=11 
+> evt 96 (run 1 lumi 75 event 7482): pixKept=1436 chains=3179 -> theta=1720 -> pixdrop=1666 -> claim=741 | chainTC=741 (T5c=721 T4c=20) | upgT5=0 delivT3=0 supp=606[606/0/0] dcaBlk=9 
+> evt 97 (run 1 lumi 88 event 8752): pixKept=1594 chains=3971 -> theta=2044 -> pixdrop=1991 -> claim=865 | chainTC=865 (T5c=838 T4c=27) | upgT5=0 delivT3=0 supp=704[704/0/0] dcaBlk=12 
+> evt 98 (run 1 lumi 75 event 7497): pixKept=1738 chains=4253 -> theta=2159 -> pixdrop=2081 -> claim=897 | chainTC=897 (T5c=875 T4c=22) | upgT5=0 delivT3=0 supp=700[700/0/0] dcaBlk=16 
+> evt 99 (run 1 lumi 49 event 4869): pixKept=2301 chains=5889 -> theta=2945 -> pixdrop=2869 -> claim=1211 | chainTC=1211 (T5c=1160 T4c=51) | upgT5=0 delivT3=0 supp=953[953/0/0] dcaBlk=15 
+> evt 100 (run 1 lumi 75 event 7457): pixKept=1751 chains=3972 -> theta=2130 -> pixdrop=2088 -> claim=925 | chainTC=925 (T5c=903 T4c=22) | upgT5=0 delivT3=0 supp=768[768/0/0] dcaBlk=8 
+> evt 101 (run 1 lumi 49 event 4894): pixKept=1609 chains=4040 -> theta=2185 -> pixdrop=2144 -> claim=911 | chainTC=911 (T5c=892 T4c=19) | upgT5=0 delivT3=0 supp=745[745/0/0] dcaBlk=15 
+> evt 102 (run 1 lumi 75 event 7413): pixKept=1890 chains=4735 -> theta=2369 -> pixdrop=2304 -> claim=988 | chainTC=988 (T5c=962 T4c=26) | upgT5=0 delivT3=0 supp=813[813/0/0] dcaBlk=20 
+> evt 103 (run 1 lumi 75 event 7436): pixKept=2079 chains=5922 -> theta=2932 -> pixdrop=2855 -> claim=1187 | chainTC=1187 (T5c=1159 T4c=28) | upgT5=0 delivT3=0 supp=928[928/0/0] dcaBlk=19 
+> evt 104 (run 1 lumi 88 event 8767): pixKept=1866 chains=4651 -> theta=2389 -> pixdrop=2335 -> claim=984 | chainTC=984 (T5c=961 T4c=23) | upgT5=0 delivT3=0 supp=782[782/0/0] dcaBlk=13 
+> evt 105 (run 1 lumi 88 event 8708): pixKept=1702 chains=4570 -> theta=2380 -> pixdrop=2331 -> claim=982 | chainTC=982 (T5c=962 T4c=20) | upgT5=0 delivT3=0 supp=794[794/0/0] dcaBlk=15 
+> evt 106 (run 1 lumi 75 event 7441): pixKept=1868 chains=4465 -> theta=2319 -> pixdrop=2276 -> claim=971 | chainTC=971 (T5c=952 T4c=19) | upgT5=0 delivT3=0 supp=800[800/0/0] dcaBlk=12 
+> evt 107 (run 1 lumi 49 event 4822): pixKept=1777 chains=4109 -> theta=2287 -> pixdrop=2207 -> claim=928 | chainTC=928 (T5c=903 T4c=25) | upgT5=0 delivT3=0 supp=734[734/0/0] dcaBlk=11 
+> evt 108 (run 1 lumi 88 event 8742): pixKept=2197 chains=5956 -> theta=2870 -> pixdrop=2790 -> claim=1201 | chainTC=1201 (T5c=1170 T4c=31) | upgT5=0 delivT3=0 supp=960[960/0/0] dcaBlk=19 
+> evt 109 (run 1 lumi 49 event 4881): pixKept=1982 chains=4972 -> theta=2465 -> pixdrop=2420 -> claim=1044 | chainTC=1044 (T5c=1015 T4c=29) | upgT5=0 delivT3=0 supp=829[829/0/0] dcaBlk=16 
+> evt 110 (run 1 lumi 49 event 4834): pixKept=1925 chains=4489 -> theta=2470 -> pixdrop=2400 -> claim=1019 | chainTC=1019 (T5c=997 T4c=22) | upgT5=0 delivT3=0 supp=813[813/0/0] dcaBlk=15 
+> evt 111 (run 1 lumi 75 event 7449): pixKept=1723 chains=3954 -> theta=2138 -> pixdrop=2086 -> claim=895 | chainTC=895 (T5c=873 T4c=22) | upgT5=0 delivT3=0 supp=720[720/0/0] dcaBlk=11 
+> evt 112 (run 1 lumi 49 event 4846): pixKept=1828 chains=4816 -> theta=2493 -> pixdrop=2436 -> claim=1054 | chainTC=1054 (T5c=1023 T4c=31) | upgT5=0 delivT3=0 supp=839[839/0/0] dcaBlk=17 
+> evt 113 (run 1 lumi 88 event 8792): pixKept=1794 chains=4181 -> theta=2256 -> pixdrop=2203 -> claim=923 | chainTC=923 (T5c=899 T4c=24) | upgT5=0 delivT3=0 supp=742[742/0/0] dcaBlk=12 
+> evt 114 (run 1 lumi 49 event 4897): pixKept=2172 chains=5248 -> theta=2577 -> pixdrop=2516 -> claim=1071 | chainTC=1071 (T5c=1039 T4c=32) | upgT5=0 delivT3=0 supp=871[871/0/0] dcaBlk=15 
+> evt 115 (run 1 lumi 49 event 4866): pixKept=1585 chains=3977 -> theta=2116 -> pixdrop=2089 -> claim=893 | chainTC=893 (T5c=869 T4c=24) | upgT5=0 delivT3=0 supp=734[734/0/0] dcaBlk=8 
+> evt 116 (run 1 lumi 88 event 8721): pixKept=2513 chains=7918 -> theta=3491 -> pixdrop=3429 -> claim=1416 | chainTC=1416 (T5c=1377 T4c=39) | upgT5=0 delivT3=0 supp=1113[1113/0/0] dcaBlk=25 
+> evt 117 (run 1 lumi 75 event 7493): pixKept=1931 chains=4912 -> theta=2389 -> pixdrop=2321 -> claim=972 | chainTC=972 (T5c=942 T4c=30) | upgT5=0 delivT3=0 supp=753[753/0/0] dcaBlk=15 
+> evt 118 (run 1 lumi 49 event 4824): pixKept=1896 chains=4784 -> theta=2472 -> pixdrop=2422 -> claim=1021 | chainTC=1021 (T5c=994 T4c=27) | upgT5=0 delivT3=0 supp=807[807/0/0] dcaBlk=16 
+> evt 119 (run 1 lumi 88 event 8727): pixKept=1804 chains=4373 -> theta=2341 -> pixdrop=2272 -> claim=967 | chainTC=967 (T5c=948 T4c=19) | upgT5=0 delivT3=0 supp=760[760/0/0] dcaBlk=18 
+> evt 120 (run 1 lumi 49 event 4816): pixKept=1909 chains=5229 -> theta=2537 -> pixdrop=2485 -> claim=1046 | chainTC=1046 (T5c=1022 T4c=24) | upgT5=0 delivT3=0 supp=859[859/0/0] dcaBlk=16 
+> evt 121 (run 1 lumi 75 event 7407): pixKept=1617 chains=3746 -> theta=2107 -> pixdrop=2061 -> claim=868 | chainTC=868 (T5c=843 T4c=25) | upgT5=0 delivT3=0 supp=708[708/0/0] dcaBlk=10 
+> evt 122 (run 1 lumi 49 event 4855): pixKept=1867 chains=4627 -> theta=2312 -> pixdrop=2236 -> claim=958 | chainTC=958 (T5c=929 T4c=29) | upgT5=0 delivT3=0 supp=770[770/0/0] dcaBlk=15 
+> evt 123 (run 1 lumi 75 event 7466): pixKept=1918 chains=5043 -> theta=2637 -> pixdrop=2579 -> claim=1107 | chainTC=1107 (T5c=1079 T4c=28) | upgT5=0 delivT3=0 supp=888[888/0/0] dcaBlk=29 
+> evt 124 (run 1 lumi 75 event 7415): pixKept=2010 chains=5442 -> theta=2629 -> pixdrop=2581 -> claim=1100 | chainTC=1100 (T5c=1065 T4c=35) | upgT5=0 delivT3=0 supp=887[887/0/0] dcaBlk=10 
+> evt 125 (run 1 lumi 88 event 8747): pixKept=2352 chains=7227 -> theta=3125 -> pixdrop=3060 -> claim=1273 | chainTC=1273 (T5c=1239 T4c=34) | upgT5=0 delivT3=0 supp=1008[1008/0/0] dcaBlk=19 
+> evt 126 (run 1 lumi 88 event 8716): pixKept=2146 chains=5860 -> theta=2844 -> pixdrop=2796 -> claim=1176 | chainTC=1176 (T5c=1147 T4c=29) | upgT5=0 delivT3=0 supp=944[944/0/0] dcaBlk=13 
+> evt 127 (run 1 lumi 75 event 7432): pixKept=1715 chains=4522 -> theta=2322 -> pixdrop=2255 -> claim=950 | chainTC=950 (T5c=923 T4c=27) | upgT5=0 delivT3=0 supp=775[775/0/0] dcaBlk=17 
+> evt 128 (run 1 lumi 49 event 4891): pixKept=1624 chains=4040 -> theta=2184 -> pixdrop=2124 -> claim=905 | chainTC=905 (T5c=880 T4c=25) | upgT5=0 delivT3=0 supp=743[743/0/0] dcaBlk=7 
+> evt 129 (run 1 lumi 49 event 4851): pixKept=1918 chains=4709 -> theta=2404 -> pixdrop=2337 -> claim=1001 | chainTC=1001 (T5c=962 T4c=39) | upgT5=0 delivT3=0 supp=799[799/0/0] dcaBlk=13 
+> evt 130 (run 1 lumi 49 event 4820): pixKept=2085 chains=5354 -> theta=2768 -> pixdrop=2719 -> claim=1139 | chainTC=1139 (T5c=1105 T4c=34) | upgT5=0 delivT3=0 supp=918[918/0/0] dcaBlk=14 
+> evt 131 (run 1 lumi 88 event 8772): pixKept=1862 chains=4373 -> theta=2351 -> pixdrop=2294 -> claim=961 | chainTC=961 (T5c=935 T4c=26) | upgT5=0 delivT3=0 supp=778[778/0/0] dcaBlk=19 
+> evt 132 (run 1 lumi 75 event 7463): pixKept=1866 chains=4805 -> theta=2368 -> pixdrop=2308 -> claim=983 | chainTC=983 (T5c=959 T4c=24) | upgT5=0 delivT3=0 supp=807[807/0/0] dcaBlk=16 
+> evt 133 (run 1 lumi 75 event 7488): pixKept=2499 chains=7652 -> theta=3461 -> pixdrop=3371 -> claim=1410 | chainTC=1410 (T5c=1369 T4c=41) | upgT5=0 delivT3=0 supp=1084[1084/0/0] dcaBlk=23 
+> evt 134 (run 1 lumi 49 event 4860): pixKept=1658 chains=3943 -> theta=2197 -> pixdrop=2147 -> claim=909 | chainTC=909 (T5c=889 T4c=20) | upgT5=0 delivT3=0 supp=738[738/0/0] dcaBlk=13 
+> evt 135 (run 1 lumi 75 event 7453): pixKept=2013 chains=5421 -> theta=2645 -> pixdrop=2568 -> claim=1077 | chainTC=1077 (T5c=1038 T4c=39) | upgT5=0 delivT3=0 supp=835[835/0/0] dcaBlk=23 
+> evt 136 (run 1 lumi 88 event 8738): pixKept=1801 chains=4442 -> theta=2390 -> pixdrop=2346 -> claim=962 | chainTC=962 (T5c=936 T4c=26) | upgT5=0 delivT3=0 supp=794[794/0/0] dcaBlk=12 
+> evt 137 (run 1 lumi 88 event 8799): pixKept=1460 chains=2985 -> theta=1799 -> pixdrop=1763 -> claim=760 | chainTC=760 (T5c=738 T4c=22) | upgT5=0 delivT3=0 supp=600[600/0/0] dcaBlk=6 
+> evt 138 (run 1 lumi 88 event 8707): pixKept=2024 chains=5375 -> theta=2828 -> pixdrop=2785 -> claim=1134 | chainTC=1134 (T5c=1099 T4c=35) | upgT5=0 delivT3=0 supp=892[892/0/0] dcaBlk=15 
+> evt 139 (run 1 lumi 49 event 4831): pixKept=2317 chains=6439 -> theta=3086 -> pixdrop=3025 -> claim=1248 | chainTC=1248 (T5c=1219 T4c=29) | upgT5=0 delivT3=0 supp=983[983/0/0] dcaBlk=26 
+> evt 140 (run 1 lumi 49 event 4864): pixKept=1724 chains=3914 -> theta=2119 -> pixdrop=2053 -> claim=882 | chainTC=882 (T5c=855 T4c=27) | upgT5=0 delivT3=0 supp=698[698/0/0] dcaBlk=17 
+> evt 141 (run 1 lumi 75 event 7478): pixKept=2320 chains=7290 -> theta=2998 -> pixdrop=2942 -> claim=1271 | chainTC=1271 (T5c=1232 T4c=39) | upgT5=0 delivT3=0 supp=989[989/0/0] dcaBlk=24 
+> evt 142 (run 1 lumi 88 event 8701): pixKept=1694 chains=4479 -> theta=2159 -> pixdrop=2110 -> claim=890 | chainTC=890 (T5c=871 T4c=19) | upgT5=0 delivT3=0 supp=713[713/0/0] dcaBlk=15 
+> evt 143 (run 1 lumi 88 event 8777): pixKept=1552 chains=3890 -> theta=2090 -> pixdrop=2062 -> claim=870 | chainTC=870 (T5c=845 T4c=25) | upgT5=0 delivT3=0 supp=713[713/0/0] dcaBlk=14 
+> evt 144 (run 1 lumi 49 event 4805): pixKept=2163 chains=5444 -> theta=2732 -> pixdrop=2626 -> claim=1137 | chainTC=1137 (T5c=1104 T4c=33) | upgT5=0 delivT3=0 supp=906[906/0/0] dcaBlk=22 
+> evt 145 (run 1 lumi 88 event 8788): pixKept=1522 chains=3193 -> theta=1968 -> pixdrop=1927 -> claim=846 | chainTC=846 (T5c=821 T4c=25) | upgT5=0 delivT3=0 supp=685[685/0/0] dcaBlk=6 
+> evt 146 (run 1 lumi 49 event 4840): pixKept=2058 chains=5673 -> theta=2763 -> pixdrop=2695 -> claim=1102 | chainTC=1102 (T5c=1074 T4c=28) | upgT5=0 delivT3=0 supp=885[885/0/0] dcaBlk=17 
+> evt 147 (run 1 lumi 49 event 4876): pixKept=1673 chains=4076 -> theta=2077 -> pixdrop=2017 -> claim=914 | chainTC=914 (T5c=896 T4c=18) | upgT5=0 delivT3=0 supp=735[735/0/0] dcaBlk=12 
+> evt 148 (run 1 lumi 75 event 7420): pixKept=1762 chains=4224 -> theta=2234 -> pixdrop=2187 -> claim=929 | chainTC=929 (T5c=903 T4c=26) | upgT5=0 delivT3=0 supp=752[752/0/0] dcaBlk=9 
+> evt 149 (run 1 lumi 49 event 4814): pixKept=2077 chains=5408 -> theta=2723 -> pixdrop=2672 -> claim=1116 | chainTC=1116 (T5c=1089 T4c=27) | upgT5=0 delivT3=0 supp=909[909/0/0] dcaBlk=14 
+> evt 150 (run 1 lumi 49 event 4887): pixKept=1955 chains=5120 -> theta=2543 -> pixdrop=2486 -> claim=1041 | chainTC=1041 (T5c=1013 T4c=28) | upgT5=0 delivT3=0 supp=811[811/0/0] dcaBlk=15 
+> evt 151 (run 1 lumi 49 event 4880): pixKept=1897 chains=5214 -> theta=2534 -> pixdrop=2478 -> claim=1036 | chainTC=1036 (T5c=1005 T4c=31) | upgT5=0 delivT3=0 supp=857[857/0/0] dcaBlk=6 
+> evt 152 (run 1 lumi 88 event 8783): pixKept=1849 chains=4312 -> theta=2310 -> pixdrop=2231 -> claim=971 | chainTC=971 (T5c=935 T4c=36) | upgT5=0 delivT3=0 supp=786[786/0/0] dcaBlk=12 
+> evt 153 (run 1 lumi 75 event 7406): pixKept=1905 chains=4887 -> theta=2536 -> pixdrop=2484 -> claim=1023 | chainTC=1023 (T5c=994 T4c=29) | upgT5=0 delivT3=0 supp=824[824/0/0] dcaBlk=19 
+> evt 154 (run 1 lumi 88 event 8764): pixKept=1523 chains=3416 -> theta=1936 -> pixdrop=1878 -> claim=807 | chainTC=807 (T5c=784 T4c=23) | upgT5=0 delivT3=0 supp=680[680/0/0] dcaBlk=11 
+> evt 155 (run 1 lumi 75 event 7473): pixKept=1755 chains=4203 -> theta=2165 -> pixdrop=2112 -> claim=899 | chainTC=899 (T5c=882 T4c=17) | upgT5=0 delivT3=0 supp=733[733/0/0] dcaBlk=12 
+> evt 156 (run 1 lumi 88 event 8758): pixKept=1951 chains=5137 -> theta=2578 -> pixdrop=2523 -> claim=1035 | chainTC=1035 (T5c=1009 T4c=26) | upgT5=0 delivT3=0 supp=845[845/0/0] dcaBlk=12 
+> evt 157 (run 1 lumi 49 event 4843): pixKept=1773 chains=4182 -> theta=2376 -> pixdrop=2320 -> claim=945 | chainTC=945 (T5c=926 T4c=19) | upgT5=0 delivT3=0 supp=759[759/0/0] dcaBlk=14 
+> evt 158 (run 1 lumi 88 event 8710): pixKept=1848 chains=4487 -> theta=2414 -> pixdrop=2372 -> claim=1004 | chainTC=1004 (T5c=975 T4c=29) | upgT5=0 delivT3=0 supp=809[809/0/0] dcaBlk=20 
+> evt 159 (run 1 lumi 75 event 7401): pixKept=2053 chains=5259 -> theta=2785 -> pixdrop=2725 -> claim=1143 | chainTC=1143 (T5c=1110 T4c=33) | upgT5=0 delivT3=0 supp=902[902/0/0] dcaBlk=16 
+> evt 160 (run 1 lumi 75 event 7483): pixKept=1569 chains=3502 -> theta=1957 -> pixdrop=1919 -> claim=829 | chainTC=829 (T5c=807 T4c=22) | upgT5=0 delivT3=0 supp=675[675/0/0] dcaBlk=5 
+> evt 161 (run 1 lumi 88 event 8753): pixKept=1316 chains=2796 -> theta=1685 -> pixdrop=1662 -> claim=693 | chainTC=693 (T5c=682 T4c=11) | upgT5=0 delivT3=0 supp=572[572/0/0] dcaBlk=8 
+> evt 162 (run 1 lumi 75 event 7498): pixKept=2217 chains=6465 -> theta=2979 -> pixdrop=2899 -> claim=1256 | chainTC=1256 (T5c=1233 T4c=23) | upgT5=0 delivT3=0 supp=986[986/0/0] dcaBlk=28 
+> evt 163 (run 1 lumi 49 event 4872): pixKept=2031 chains=5793 -> theta=2756 -> pixdrop=2700 -> claim=1117 | chainTC=1117 (T5c=1076 T4c=41) | upgT5=0 delivT3=0 supp=869[869/0/0] dcaBlk=21 
+> evt 164 (run 1 lumi 75 event 7458): pixKept=1874 chains=4104 -> theta=2192 -> pixdrop=2140 -> claim=917 | chainTC=917 (T5c=895 T4c=22) | upgT5=0 delivT3=0 supp=754[754/0/0] dcaBlk=18 
+> evt 165 (run 1 lumi 49 event 4895): pixKept=1731 chains=4572 -> theta=2224 -> pixdrop=2183 -> claim=929 | chainTC=929 (T5c=890 T4c=39) | upgT5=0 delivT3=0 supp=732[732/0/0] dcaBlk=13 
+> evt 166 (run 1 lumi 75 event 7430): pixKept=1541 chains=3398 -> theta=1816 -> pixdrop=1764 -> claim=757 | chainTC=757 (T5c=738 T4c=19) | upgT5=0 delivT3=0 supp=631[631/0/0] dcaBlk=8 
+> evt 167 (run 1 lumi 75 event 7438): pixKept=1896 chains=4902 -> theta=2516 -> pixdrop=2458 -> claim=1044 | chainTC=1044 (T5c=1016 T4c=28) | upgT5=0 delivT3=0 supp=836[836/0/0] dcaBlk=18 
+> evt 168 (run 1 lumi 88 event 8768): pixKept=1935 chains=5231 -> theta=2694 -> pixdrop=2650 -> claim=1108 | chainTC=1108 (T5c=1071 T4c=37) | upgT5=0 delivT3=0 supp=861[861/0/0] dcaBlk=20 
+> evt 169 (run 1 lumi 88 event 8728): pixKept=1891 chains=5311 -> theta=2654 -> pixdrop=2602 -> claim=1061 | chainTC=1061 (T5c=1031 T4c=30) | upgT5=0 delivT3=0 supp=835[835/0/0] dcaBlk=18 
+> evt 170 (run 1 lumi 75 event 7443): pixKept=2032 chains=5391 -> theta=2499 -> pixdrop=2452 -> claim=1063 | chainTC=1063 (T5c=1033 T4c=30) | upgT5=0 delivT3=0 supp=840[840/0/0] dcaBlk=16 
+> evt 171 (run 1 lumi 49 event 4828): pixKept=2061 chains=5505 -> theta=2708 -> pixdrop=2644 -> claim=1118 | chainTC=1118 (T5c=1086 T4c=32) | upgT5=0 delivT3=0 supp=892[892/0/0] dcaBlk=16 
+> evt 172 (run 1 lumi 88 event 8743): pixKept=1570 chains=3441 -> theta=1943 -> pixdrop=1884 -> claim=825 | chainTC=825 (T5c=805 T4c=20) | upgT5=0 delivT3=0 supp=659[659/0/0] dcaBlk=11 
+> evt 173 (run 1 lumi 49 event 4883): pixKept=1537 chains=3177 -> theta=1906 -> pixdrop=1874 -> claim=792 | chainTC=792 (T5c=778 T4c=14) | upgT5=0 delivT3=0 supp=657[657/0/0] dcaBlk=7 
+> evt 174 (run 1 lumi 49 event 4835): pixKept=1521 chains=3418 -> theta=1952 -> pixdrop=1915 -> claim=831 | chainTC=831 (T5c=818 T4c=13) | upgT5=0 delivT3=0 supp=684[684/0/0] dcaBlk=10 
+> evt 175 (run 1 lumi 75 event 7447): pixKept=1826 chains=4347 -> theta=2289 -> pixdrop=2221 -> claim=948 | chainTC=948 (T5c=924 T4c=24) | upgT5=0 delivT3=0 supp=765[765/0/0] dcaBlk=12 
+> evt 176 (run 1 lumi 49 event 4847): pixKept=1841 chains=4639 -> theta=2352 -> pixdrop=2293 -> claim=992 | chainTC=992 (T5c=969 T4c=23) | upgT5=0 delivT3=0 supp=815[815/0/0] dcaBlk=11 
+> evt 177 (run 1 lumi 88 event 8793): pixKept=1788 chains=4258 -> theta=2300 -> pixdrop=2250 -> claim=941 | chainTC=941 (T5c=924 T4c=17) | upgT5=0 delivT3=0 supp=771[771/0/0] dcaBlk=7 
+> evt 178 (run 1 lumi 49 event 4900): pixKept=1469 chains=3608 -> theta=2005 -> pixdrop=1967 -> claim=825 | chainTC=825 (T5c=813 T4c=12) | upgT5=0 delivT3=0 supp=672[672/0/0] dcaBlk=15 
+> evt 179 (run 1 lumi 49 event 4867): pixKept=1998 chains=5266 -> theta=2663 -> pixdrop=2596 -> claim=1098 | chainTC=1098 (T5c=1076 T4c=22) | upgT5=0 delivT3=0 supp=885[885/0/0] dcaBlk=17 
+> evt 180 (run 1 lumi 88 event 8734): pixKept=1406 chains=3107 -> theta=1828 -> pixdrop=1791 -> claim=761 | chainTC=761 (T5c=741 T4c=20) | upgT5=0 delivT3=0 supp=615[615/0/0] dcaBlk=9 
+> evt 181 (run 1 lumi 75 event 7492): pixKept=1879 chains=5200 -> theta=2562 -> pixdrop=2505 -> claim=1056 | chainTC=1056 (T5c=1029 T4c=27) | upgT5=0 delivT3=0 supp=844[844/0/0] dcaBlk=18 
+> evt 182 (run 1 lumi 49 event 4801): pixKept=1992 chains=5148 -> theta=2622 -> pixdrop=2563 -> claim=1062 | chainTC=1062 (T5c=1035 T4c=27) | upgT5=0 delivT3=0 supp=830[830/0/0] dcaBlk=20 
+> evt 183 (run 1 lumi 88 event 8711): pixKept=1963 chains=5052 -> theta=2666 -> pixdrop=2603 -> claim=1081 | chainTC=1081 (T5c=1063 T4c=18) | upgT5=0 delivT3=0 supp=880[880/0/0] dcaBlk=14 
+> evt 184 (run 1 lumi 49 event 4815): pixKept=2003 chains=4983 -> theta=2493 -> pixdrop=2425 -> claim=1014 | chainTC=1014 (T5c=989 T4c=25) | upgT5=0 delivT3=0 supp=807[807/0/0] dcaBlk=10 
+> evt 185 (run 1 lumi 75 event 7429): pixKept=1488 chains=3572 -> theta=2097 -> pixdrop=2056 -> claim=855 | chainTC=855 (T5c=832 T4c=23) | upgT5=0 delivT3=0 supp=682[682/0/0] dcaBlk=5 
+> evt 186 (run 1 lumi 49 event 4854): pixKept=1699 chains=4487 -> theta=2261 -> pixdrop=2211 -> claim=956 | chainTC=956 (T5c=922 T4c=34) | upgT5=0 delivT3=0 supp=735[735/0/0] dcaBlk=14 
+> evt 187 (run 1 lumi 75 event 7468): pixKept=1779 chains=4037 -> theta=2125 -> pixdrop=2083 -> claim=911 | chainTC=911 (T5c=891 T4c=20) | upgT5=0 delivT3=0 supp=731[731/0/0] dcaBlk=10 
+> evt 188 (run 1 lumi 75 event 7431): pixKept=1922 chains=5189 -> theta=2505 -> pixdrop=2459 -> claim=1034 | chainTC=1034 (T5c=1001 T4c=33) | upgT5=0 delivT3=0 supp=816[816/0/0] dcaBlk=9 
+> evt 189 (run 1 lumi 88 event 8748): pixKept=1869 chains=4854 -> theta=2527 -> pixdrop=2469 -> claim=1038 | chainTC=1038 (T5c=1017 T4c=21) | upgT5=0 delivT3=0 supp=848[848/0/0] dcaBlk=11 
+> evt 190 (run 1 lumi 88 event 8722): pixKept=2140 chains=6213 -> theta=2855 -> pixdrop=2782 -> claim=1176 | chainTC=1176 (T5c=1139 T4c=37) | upgT5=0 delivT3=0 supp=924[924/0/0] dcaBlk=20 
+> evt 191 (run 1 lumi 75 event 7414): pixKept=1800 chains=4140 -> theta=2327 -> pixdrop=2269 -> claim=981 | chainTC=981 (T5c=959 T4c=22) | upgT5=0 delivT3=0 supp=790[790/0/0] dcaBlk=16 
+> evt 192 (run 1 lumi 49 event 4892): pixKept=2146 chains=5404 -> theta=2877 -> pixdrop=2808 -> claim=1126 | chainTC=1126 (T5c=1095 T4c=31) | upgT5=0 delivT3=0 supp=890[890/0/0] dcaBlk=21 
+> evt 193 (run 1 lumi 49 event 4852): pixKept=1671 chains=3989 -> theta=2276 -> pixdrop=2210 -> claim=934 | chainTC=934 (T5c=910 T4c=24) | upgT5=0 delivT3=0 supp=748[748/0/0] dcaBlk=12 
+> evt 194 (run 1 lumi 49 event 4821): pixKept=1818 chains=5111 -> theta=2508 -> pixdrop=2452 -> claim=1018 | chainTC=1018 (T5c=990 T4c=28) | upgT5=0 delivT3=0 supp=822[822/0/0] dcaBlk=18 
+> evt 195 (run 1 lumi 88 event 8774): pixKept=1817 chains=5066 -> theta=2505 -> pixdrop=2442 -> claim=997 | chainTC=997 (T5c=975 T4c=22) | upgT5=0 delivT3=0 supp=807[807/0/0] dcaBlk=12 
+> evt 196 (run 1 lumi 75 event 7464): pixKept=1805 chains=4481 -> theta=2396 -> pixdrop=2356 -> claim=990 | chainTC=990 (T5c=957 T4c=33) | upgT5=0 delivT3=0 supp=777[777/0/0] dcaBlk=5 
+> evt 197 (run 1 lumi 75 event 7489): pixKept=2145 chains=5567 -> theta=2977 -> pixdrop=2911 -> claim=1184 | chainTC=1184 (T5c=1152 T4c=32) | upgT5=0 delivT3=0 supp=957[957/0/0] dcaBlk=16 
+> evt 198 (run 1 lumi 49 event 4856): pixKept=2038 chains=5275 -> theta=2574 -> pixdrop=2509 -> claim=1056 | chainTC=1056 (T5c=1015 T4c=41) | upgT5=0 delivT3=0 supp=832[832/0/0] dcaBlk=16 
+> evt 199 (run 1 lumi 75 event 7455): pixKept=1706 chains=4167 -> theta=2220 -> pixdrop=2170 -> claim=889 | chainTC=889 (T5c=866 T4c=23) | upgT5=0 delivT3=0 supp=715[715/0/0] dcaBlk=14 
+> evt 200 (run 1 lumi 88 event 8739): pixKept=1680 chains=4365 -> theta=2231 -> pixdrop=2181 -> claim=935 | chainTC=935 (T5c=919 T4c=16) | upgT5=0 delivT3=0 supp=738[738/0/0] dcaBlk=24 
+> evt 201 (run 1 lumi 88 event 8798): pixKept=2014 chains=5709 -> theta=2746 -> pixdrop=2691 -> claim=1117 | chainTC=1117 (T5c=1088 T4c=29) | upgT5=0 delivT3=0 supp=887[887/0/0] dcaBlk=20 
+> evt 202 (run 1 lumi 88 event 8705): pixKept=2112 chains=6662 -> theta=2853 -> pixdrop=2791 -> claim=1148 | chainTC=1148 (T5c=1108 T4c=40) | upgT5=0 delivT3=0 supp=889[889/0/0] dcaBlk=24 
+> evt 203 (run 1 lumi 49 event 4826): pixKept=1712 chains=3882 -> theta=2198 -> pixdrop=2155 -> claim=918 | chainTC=918 (T5c=895 T4c=23) | upgT5=0 delivT3=0 supp=735[735/0/0] dcaBlk=15 
+> evt 204 (run 1 lumi 49 event 4862): pixKept=2096 chains=5358 -> theta=2589 -> pixdrop=2530 -> claim=1096 | chainTC=1096 (T5c=1077 T4c=19) | upgT5=0 delivT3=0 supp=875[875/0/0] dcaBlk=14 
+> evt 205 (run 1 lumi 75 event 7479): pixKept=2094 chains=5917 -> theta=2774 -> pixdrop=2729 -> claim=1170 | chainTC=1170 (T5c=1124 T4c=46) | upgT5=0 delivT3=0 supp=908[908/0/0] dcaBlk=15 
+> evt 206 (run 1 lumi 88 event 8703): pixKept=2022 chains=5548 -> theta=2712 -> pixdrop=2650 -> claim=1106 | chainTC=1106 (T5c=1068 T4c=38) | upgT5=0 delivT3=0 supp=876[876/0/0] dcaBlk=18 
+> evt 207 (run 1 lumi 88 event 8779): pixKept=1537 chains=3366 -> theta=1983 -> pixdrop=1948 -> claim=846 | chainTC=846 (T5c=827 T4c=19) | upgT5=0 delivT3=0 supp=681[681/0/0] dcaBlk=17 
+> evt 208 (run 1 lumi 49 event 4807): pixKept=2053 chains=5528 -> theta=2755 -> pixdrop=2680 -> claim=1113 | chainTC=1113 (T5c=1093 T4c=20) | upgT5=0 delivT3=0 supp=900[900/0/0] dcaBlk=21 
+> evt 209 (run 1 lumi 88 event 8789): pixKept=1769 chains=4226 -> theta=2081 -> pixdrop=2029 -> claim=895 | chainTC=895 (T5c=878 T4c=17) | upgT5=0 delivT3=0 supp=743[743/0/0] dcaBlk=8 
+> evt 210 (run 1 lumi 49 event 4838): pixKept=2004 chains=4863 -> theta=2595 -> pixdrop=2531 -> claim=1067 | chainTC=1067 (T5c=1040 T4c=27) | upgT5=0 delivT3=0 supp=851[851/0/0] dcaBlk=21 
+> evt 211 (run 1 lumi 49 event 4875): pixKept=1832 chains=4105 -> theta=2171 -> pixdrop=2115 -> claim=941 | chainTC=941 (T5c=911 T4c=30) | upgT5=0 delivT3=0 supp=755[755/0/0] dcaBlk=18 
+> evt 212 (run 1 lumi 75 event 7422): pixKept=1889 chains=4740 -> theta=2466 -> pixdrop=2422 -> claim=1015 | chainTC=1015 (T5c=994 T4c=21) | upgT5=0 delivT3=0 supp=833[833/0/0] dcaBlk=14 
+> evt 213 (run 1 lumi 49 event 4823): pixKept=1998 chains=5352 -> theta=2673 -> pixdrop=2598 -> claim=1069 | chainTC=1069 (T5c=1049 T4c=20) | upgT5=0 delivT3=0 supp=885[885/0/0] dcaBlk=12 
+> evt 214 (run 1 lumi 49 event 4888): pixKept=1877 chains=4868 -> theta=2539 -> pixdrop=2502 -> claim=1043 | chainTC=1043 (T5c=1012 T4c=31) | upgT5=0 delivT3=0 supp=809[809/0/0] dcaBlk=16 
+> evt 215 (run 1 lumi 49 event 4879): pixKept=1891 chains=5349 -> theta=2528 -> pixdrop=2485 -> claim=1060 | chainTC=1060 (T5c=1025 T4c=35) | upgT5=0 delivT3=0 supp=849[849/0/0] dcaBlk=11 
+> evt 216 (run 1 lumi 88 event 8785): pixKept=2344 chains=6948 -> theta=3127 -> pixdrop=3070 -> claim=1260 | chainTC=1260 (T5c=1228 T4c=32) | upgT5=0 delivT3=0 supp=1006[1006/0/0] dcaBlk=20 
+> evt 217 (run 1 lumi 75 event 7404): pixKept=2078 chains=6141 -> theta=2897 -> pixdrop=2825 -> claim=1171 | chainTC=1171 (T5c=1137 T4c=34) | upgT5=0 delivT3=0 supp=918[918/0/0] dcaBlk=14 
+> evt 218 (run 1 lumi 88 event 8763): pixKept=1809 chains=5342 -> theta=2646 -> pixdrop=2582 -> claim=1068 | chainTC=1068 (T5c=1043 T4c=25) | upgT5=0 delivT3=0 supp=845[845/0/0] dcaBlk=19 
+> evt 219 (run 1 lumi 75 event 7474): pixKept=1581 chains=3732 -> theta=1958 -> pixdrop=1914 -> claim=815 | chainTC=815 (T5c=798 T4c=17) | upgT5=0 delivT3=0 supp=659[659/0/0] dcaBlk=11 
+> evt 220 (run 1 lumi 88 event 8759): pixKept=2067 chains=5629 -> theta=2811 -> pixdrop=2749 -> claim=1176 | chainTC=1176 (T5c=1149 T4c=27) | upgT5=0 delivT3=0 supp=940[940/0/0] dcaBlk=25 
+> evt 221 (run 1 lumi 49 event 4844): pixKept=2037 chains=5531 -> theta=2616 -> pixdrop=2534 -> claim=1091 | chainTC=1091 (T5c=1061 T4c=30) | upgT5=0 delivT3=0 supp=857[857/0/0] dcaBlk=20 
+> evt 222 (run 1 lumi 88 event 8726): pixKept=1740 chains=4283 -> theta=2286 -> pixdrop=2237 -> claim=946 | chainTC=946 (T5c=922 T4c=24) | upgT5=0 delivT3=0 supp=745[745/0/0] dcaBlk=15 
+> evt 223 (run 1 lumi 75 event 7423): pixKept=1968 chains=5381 -> theta=2725 -> pixdrop=2667 -> claim=1089 | chainTC=1089 (T5c=1056 T4c=33) | upgT5=0 delivT3=0 supp=905[905/0/0] dcaBlk=16 
+> evt 224 (run 1 lumi 75 event 7484): pixKept=1545 chains=3603 -> theta=1974 -> pixdrop=1942 -> claim=859 | chainTC=859 (T5c=838 T4c=21) | upgT5=0 delivT3=0 supp=693[693/0/0] dcaBlk=10 
+> evt 225 (run 1 lumi 88 event 8754): pixKept=1876 chains=4833 -> theta=2348 -> pixdrop=2289 -> claim=986 | chainTC=986 (T5c=963 T4c=23) | upgT5=0 delivT3=0 supp=800[800/0/0] dcaBlk=13 
+> evt 226 (run 1 lumi 75 event 7500): pixKept=1740 chains=4330 -> theta=2312 -> pixdrop=2264 -> claim=943 | chainTC=943 (T5c=913 T4c=30) | upgT5=0 delivT3=0 supp=746[746/0/0] dcaBlk=11 
+> evt 227 (run 1 lumi 49 event 4873): pixKept=1850 chains=4496 -> theta=2461 -> pixdrop=2394 -> claim=1011 | chainTC=1011 (T5c=990 T4c=21) | upgT5=0 delivT3=0 supp=827[827/0/0] dcaBlk=17 
+> evt 228 (run 1 lumi 75 event 7460): pixKept=2099 chains=5512 -> theta=2690 -> pixdrop=2622 -> claim=1119 | chainTC=1119 (T5c=1082 T4c=37) | upgT5=0 delivT3=0 supp=891[891/0/0] dcaBlk=19 
+> evt 229 (run 1 lumi 49 event 4896): pixKept=1648 chains=4189 -> theta=2060 -> pixdrop=2008 -> claim=845 | chainTC=845 (T5c=819 T4c=26) | upgT5=0 delivT3=0 supp=676[676/0/0] dcaBlk=15 
+> evt 230 (run 1 lumi 75 event 7418): pixKept=1863 chains=4750 -> theta=2405 -> pixdrop=2365 -> claim=1007 | chainTC=1007 (T5c=986 T4c=21) | upgT5=0 delivT3=0 supp=815[815/0/0] dcaBlk=16 
+> evt 231 (run 1 lumi 75 event 7439): pixKept=1852 chains=4496 -> theta=2364 -> pixdrop=2314 -> claim=997 | chainTC=997 (T5c=967 T4c=30) | upgT5=0 delivT3=0 supp=810[810/0/0] dcaBlk=13 
+> evt 232 (run 1 lumi 88 event 8769): pixKept=1612 chains=3568 -> theta=1973 -> pixdrop=1931 -> claim=803 | chainTC=803 (T5c=787 T4c=16) | upgT5=0 delivT3=0 supp=641[641/0/0] dcaBlk=11 
+> evt 233 (run 1 lumi 88 event 8731): pixKept=2008 chains=5509 -> theta=2591 -> pixdrop=2535 -> claim=1106 | chainTC=1106 (T5c=1068 T4c=38) | upgT5=0 delivT3=0 supp=886[886/0/0] dcaBlk=20 
+> evt 234 (run 1 lumi 75 event 7444): pixKept=1892 chains=4597 -> theta=2406 -> pixdrop=2351 -> claim=994 | chainTC=994 (T5c=965 T4c=29) | upgT5=0 delivT3=0 supp=800[800/0/0] dcaBlk=16 
+> evt 235 (run 1 lumi 49 event 4832): pixKept=1613 chains=3663 -> theta=2055 -> pixdrop=2017 -> claim=891 | chainTC=891 (T5c=863 T4c=28) | upgT5=0 delivT3=0 supp=700[700/0/0] dcaBlk=16 
+> evt 236 (run 1 lumi 88 event 8745): pixKept=1981 chains=4957 -> theta=2638 -> pixdrop=2581 -> claim=1090 | chainTC=1090 (T5c=1065 T4c=25) | upgT5=0 delivT3=0 supp=884[884/0/0] dcaBlk=11 
+> evt 237 (run 1 lumi 49 event 4884): pixKept=1586 chains=3570 -> theta=2038 -> pixdrop=1982 -> claim=853 | chainTC=853 (T5c=830 T4c=23) | upgT5=0 delivT3=0 supp=715[715/0/0] dcaBlk=12 
+> evt 238 (run 1 lumi 49 event 4836): pixKept=1899 chains=4812 -> theta=2594 -> pixdrop=2532 -> claim=1052 | chainTC=1052 (T5c=1030 T4c=22) | upgT5=0 delivT3=0 supp=863[863/0/0] dcaBlk=11 
+> evt 239 (run 1 lumi 75 event 7450): pixKept=1820 chains=4569 -> theta=2356 -> pixdrop=2294 -> claim=992 | chainTC=992 (T5c=967 T4c=25) | upgT5=0 delivT3=0 supp=801[801/0/0] dcaBlk=15 
+> evt 240 (run 1 lumi 49 event 4848): pixKept=1718 chains=4391 -> theta=2360 -> pixdrop=2307 -> claim=964 | chainTC=964 (T5c=934 T4c=30) | upgT5=0 delivT3=0 supp=798[798/0/0] dcaBlk=7 
+> evt 241 (run 1 lumi 88 event 8795): pixKept=2200 chains=6669 -> theta=3068 -> pixdrop=2996 -> claim=1247 | chainTC=1247 (T5c=1204 T4c=43) | upgT5=0 delivT3=0 supp=956[956/0/0] dcaBlk=25 
+> evt 242 (run 1 lumi 49 event 4899): pixKept=2267 chains=6832 -> theta=3034 -> pixdrop=2986 -> claim=1244 | chainTC=1244 (T5c=1207 T4c=37) | upgT5=0 delivT3=0 supp=981[981/0/0] dcaBlk=13 
+> evt 243 (run 1 lumi 49 event 4868): pixKept=1724 chains=4362 -> theta=2354 -> pixdrop=2328 -> claim=984 | chainTC=984 (T5c=939 T4c=45) | upgT5=0 delivT3=0 supp=768[768/0/0] dcaBlk=4 
+> evt 244 (run 1 lumi 88 event 8733): pixKept=2037 chains=5226 -> theta=2685 -> pixdrop=2627 -> claim=1116 | chainTC=1116 (T5c=1081 T4c=35) | upgT5=0 delivT3=0 supp=893[893/0/0] dcaBlk=22 
+> evt 245 (run 1 lumi 75 event 7494): pixKept=1446 chains=3194 -> theta=1799 -> pixdrop=1764 -> claim=791 | chainTC=791 (T5c=772 T4c=19) | upgT5=0 delivT3=0 supp=621[621/0/0] dcaBlk=8 
+> evt 246 (run 1 lumi 49 event 4806): pixKept=1744 chains=3828 -> theta=2112 -> pixdrop=2056 -> claim=885 | chainTC=885 (T5c=862 T4c=23) | upgT5=0 delivT3=0 supp=735[735/0/0] dcaBlk=8 
+> evt 247 (run 1 lumi 88 event 8732): pixKept=1594 chains=3623 -> theta=2068 -> pixdrop=2009 -> claim=871 | chainTC=871 (T5c=854 T4c=17) | upgT5=0 delivT3=0 supp=723[723/0/0] dcaBlk=12 
+> evt 248 (run 1 lumi 49 event 4819): pixKept=1983 chains=5275 -> theta=2622 -> pixdrop=2558 -> claim=1070 | chainTC=1070 (T5c=1044 T4c=26) | upgT5=0 delivT3=0 supp=831[831/0/0] dcaBlk=18 
+> evt 249 (run 1 lumi 75 event 7428): pixKept=1890 chains=4750 -> theta=2499 -> pixdrop=2459 -> claim=1032 | chainTC=1032 (T5c=1010 T4c=22) | upgT5=0 delivT3=0 supp=832[832/0/0] dcaBlk=18 
+> evt 250 (run 1 lumi 49 event 4857): pixKept=2070 chains=5738 -> theta=2769 -> pixdrop=2708 -> claim=1130 | chainTC=1130 (T5c=1097 T4c=33) | upgT5=0 delivT3=0 supp=911[911/0/0] dcaBlk=18 
+> evt 251 (run 1 lumi 75 event 7469): pixKept=1804 chains=5921 -> theta=2492 -> pixdrop=2433 -> claim=957 | chainTC=957 (T5c=930 T4c=27) | upgT5=0 delivT3=0 supp=762[762/0/0] dcaBlk=13 
+> evt 252 (run 1 lumi 75 event 7435): pixKept=1782 chains=4314 -> theta=2285 -> pixdrop=2242 -> claim=955 | chainTC=955 (T5c=934 T4c=21) | upgT5=0 delivT3=0 supp=781[781/0/0] dcaBlk=11 
+> evt 253 (run 1 lumi 88 event 8749): pixKept=1924 chains=4400 -> theta=2305 -> pixdrop=2265 -> claim=989 | chainTC=989 (T5c=960 T4c=29) | upgT5=0 delivT3=0 supp=811[811/0/0] dcaBlk=13 
+> evt 254 (run 1 lumi 88 event 8715): pixKept=1749 chains=3928 -> theta=2032 -> pixdrop=1987 -> claim=877 | chainTC=877 (T5c=852 T4c=25) | upgT5=0 delivT3=0 supp=697[697/0/0] dcaBlk=20 
+> evt 255 (run 1 lumi 75 event 7416): pixKept=1918 chains=4571 -> theta=2414 -> pixdrop=2348 -> claim=1018 | chainTC=1018 (T5c=988 T4c=30) | upgT5=0 delivT3=0 supp=830[830/0/0] dcaBlk=14 
+> evt 256 (run 1 lumi 88 event 8775): pixKept=1996 chains=5144 -> theta=2768 -> pixdrop=2702 -> claim=1116 | chainTC=1116 (T5c=1089 T4c=27) | upgT5=0 delivT3=0 supp=908[908/0/0] dcaBlk=12 
+> evt 257 (run 1 lumi 75 event 7465): pixKept=2105 chains=5059 -> theta=2560 -> pixdrop=2496 -> claim=1077 | chainTC=1077 (T5c=1045 T4c=32) | upgT5=0 delivT3=0 supp=871[871/0/0] dcaBlk=15 
+> evt 258 (run 1 lumi 75 event 7490): pixKept=1645 chains=3951 -> theta=2119 -> pixdrop=2060 -> claim=888 | chainTC=888 (T5c=858 T4c=30) | upgT5=0 delivT3=0 supp=712[712/0/0] dcaBlk=8 
+> evt 259 (run 1 lumi 75 event 7454): pixKept=1774 chains=4558 -> theta=2323 -> pixdrop=2240 -> claim=935 | chainTC=935 (T5c=910 T4c=25) | upgT5=0 delivT3=0 supp=764[764/0/0] dcaBlk=7 
+> evt 260 (run 1 lumi 88 event 8740): pixKept=1954 chains=4899 -> theta=2567 -> pixdrop=2541 -> claim=1074 | chainTC=1074 (T5c=1035 T4c=39) | upgT5=0 delivT3=0 supp=846[846/0/0] dcaBlk=15 
+> evt 261 (run 1 lumi 88 event 8800): pixKept=2004 chains=5371 -> theta=2668 -> pixdrop=2592 -> claim=1110 | chainTC=1110 (T5c=1081 T4c=29) | upgT5=0 delivT3=0 supp=882[882/0/0] dcaBlk=9 
+> evt 262 (run 1 lumi 88 event 8729): pixKept=1754 chains=4178 -> theta=2303 -> pixdrop=2266 -> claim=974 | chainTC=974 (T5c=947 T4c=27) | upgT5=0 delivT3=0 supp=762[762/0/0] dcaBlk=13 
+> evt 263 (run 1 lumi 49 event 4804): pixKept=1808 chains=4121 -> theta=2343 -> pixdrop=2288 -> claim=963 | chainTC=963 (T5c=936 T4c=27) | upgT5=0 delivT3=0 supp=790[790/0/0] dcaBlk=16 
+> evt 264 (run 1 lumi 75 event 7480): pixKept=2342 chains=6631 -> theta=3233 -> pixdrop=3137 -> claim=1288 | chainTC=1288 (T5c=1246 T4c=42) | upgT5=0 delivT3=0 supp=1035[1035/0/0] dcaBlk=18 
+> evt 265 (run 1 lumi 88 event 8706): pixKept=2110 chains=5928 -> theta=2795 -> pixdrop=2734 -> claim=1150 | chainTC=1150 (T5c=1112 T4c=38) | upgT5=0 delivT3=0 supp=918[918/0/0] dcaBlk=14 
+> evt 266 (run 1 lumi 88 event 8780): pixKept=1843 chains=4732 -> theta=2488 -> pixdrop=2418 -> claim=1013 | chainTC=1013 (T5c=985 T4c=28) | upgT5=0 delivT3=0 supp=814[814/0/0] dcaBlk=15 
+> evt 267 (run 1 lumi 49 event 4810): pixKept=1721 chains=4128 -> theta=2169 -> pixdrop=2131 -> claim=918 | chainTC=918 (T5c=889 T4c=29) | upgT5=0 delivT3=0 supp=739[739/0/0] dcaBlk=13 
+> evt 268 (run 1 lumi 88 event 8791): pixKept=1976 chains=4896 -> theta=2597 -> pixdrop=2531 -> claim=1061 | chainTC=1061 (T5c=1023 T4c=38) | upgT5=0 delivT3=0 supp=855[855/0/0] dcaBlk=20 
+> evt 269 (run 1 lumi 75 event 7403): pixKept=1582 chains=3320 -> theta=2055 -> pixdrop=2014 -> claim=837 | chainTC=837 (T5c=824 T4c=13) | upgT5=0 delivT3=0 supp=710[710/0/0] dcaBlk=10 
+> evt 270 (run 1 lumi 88 event 8784): pixKept=2109 chains=5622 -> theta=2702 -> pixdrop=2634 -> claim=1121 | chainTC=1121 (T5c=1092 T4c=29) | upgT5=0 delivT3=0 supp=888[888/0/0] dcaBlk=20 
+> evt 271 (run 1 lumi 75 event 7427): pixKept=1700 chains=4416 -> theta=2301 -> pixdrop=2250 -> claim=938 | chainTC=938 (T5c=915 T4c=23) | upgT5=0 delivT3=0 supp=753[753/0/0] dcaBlk=8 
+> evt 272 (run 1 lumi 88 event 8766): pixKept=1760 chains=4181 -> theta=2300 -> pixdrop=2242 -> claim=961 | chainTC=961 (T5c=935 T4c=26) | upgT5=0 delivT3=0 supp=765[765/0/0] dcaBlk=16 
+> evt 273 (run 1 lumi 75 event 7475): pixKept=2038 chains=5340 -> theta=2640 -> pixdrop=2570 -> claim=1092 | chainTC=1092 (T5c=1063 T4c=29) | upgT5=0 delivT3=0 supp=880[880/0/0] dcaBlk=18 
+> evt 274 (run 1 lumi 88 event 8761): pixKept=1721 chains=4080 -> theta=2188 -> pixdrop=2139 -> claim=919 | chainTC=919 (T5c=893 T4c=26) | upgT5=0 delivT3=0 supp=762[762/0/0] dcaBlk=13 
+> evt 275 (run 1 lumi 88 event 8719): pixKept=1801 chains=4319 -> theta=2308 -> pixdrop=2252 -> claim=958 | chainTC=958 (T5c=937 T4c=21) | upgT5=0 delivT3=0 supp=782[782/0/0] dcaBlk=12 
+> evt 276 (run 1 lumi 75 event 7424): pixKept=1873 chains=4582 -> theta=2452 -> pixdrop=2393 -> claim=978 | chainTC=978 (T5c=943 T4c=35) | upgT5=0 delivT3=0 supp=768[768/0/0] dcaBlk=19 
+> evt 277 (run 1 lumi 75 event 7485): pixKept=1357 chains=3196 -> theta=1686 -> pixdrop=1643 -> claim=734 | chainTC=734 (T5c=710 T4c=24) | upgT5=0 delivT3=0 supp=593[593/0/0] dcaBlk=8 
+> evt 278 (run 1 lumi 88 event 8756): pixKept=1903 chains=4707 -> theta=2546 -> pixdrop=2484 -> claim=1044 | chainTC=1044 (T5c=1017 T4c=27) | upgT5=0 delivT3=0 supp=842[842/0/0] dcaBlk=18 
+> evt 279 (run 1 lumi 75 event 7499): pixKept=2283 chains=6478 -> theta=3002 -> pixdrop=2919 -> claim=1189 | chainTC=1189 (T5c=1153 T4c=36) | upgT5=0 delivT3=0 supp=955[955/0/0] dcaBlk=17 
+> evt 280 (run 1 lumi 75 event 7459): pixKept=1915 chains=4966 -> theta=2490 -> pixdrop=2422 -> claim=1018 | chainTC=1018 (T5c=990 T4c=28) | upgT5=0 delivT3=0 supp=841[841/0/0] dcaBlk=16 
+> evt 281 (run 1 lumi 75 event 7426): pixKept=1759 chains=4620 -> theta=2349 -> pixdrop=2307 -> claim=946 | chainTC=946 (T5c=918 T4c=28) | upgT5=0 delivT3=0 supp=738[738/0/0] dcaBlk=16 
+> evt 282 (run 1 lumi 75 event 7440): pixKept=2097 chains=5542 -> theta=2760 -> pixdrop=2719 -> claim=1111 | chainTC=1111 (T5c=1082 T4c=29) | upgT5=0 delivT3=0 supp=891[891/0/0] dcaBlk=15 
+> evt 283 (run 1 lumi 88 event 8771): pixKept=1959 chains=5192 -> theta=2653 -> pixdrop=2563 -> claim=1088 | chainTC=1088 (T5c=1063 T4c=25) | upgT5=0 delivT3=0 supp=881[881/0/0] dcaBlk=17 
+> evt 284 (run 1 lumi 88 event 8717): pixKept=2072 chains=5265 -> theta=2595 -> pixdrop=2532 -> claim=1082 | chainTC=1082 (T5c=1063 T4c=19) | upgT5=0 delivT3=0 supp=890[890/0/0] dcaBlk=15 
+> evt 285 (run 1 lumi 75 event 7446): pixKept=1323 chains=3347 -> theta=1729 -> pixdrop=1694 -> claim=744 | chainTC=744 (T5c=728 T4c=16) | upgT5=0 delivT3=0 supp=606[606/0/0] dcaBlk=9 
+> evt 286 (run 1 lumi 49 event 4829): pixKept=1950 chains=5046 -> theta=2523 -> pixdrop=2464 -> claim=1042 | chainTC=1042 (T5c=1016 T4c=26) | upgT5=0 delivT3=0 supp=847[847/0/0] dcaBlk=12 
+> evt 287 (run 1 lumi 88 event 8744): pixKept=2333 chains=7085 -> theta=3108 -> pixdrop=3055 -> claim=1275 | chainTC=1275 (T5c=1241 T4c=34) | upgT5=0 delivT3=0 supp=1009[1009/0/0] dcaBlk=14 
+> evt 288 (run 1 lumi 75 event 7448): pixKept=2145 chains=6465 -> theta=2967 -> pixdrop=2896 -> claim=1192 | chainTC=1192 (T5c=1155 T4c=37) | upgT5=0 delivT3=0 supp=925[925/0/0] dcaBlk=29 
+> evt 289 (run 1 lumi 88 event 8794): pixKept=1965 chains=5074 -> theta=2571 -> pixdrop=2518 -> claim=1062 | chainTC=1062 (T5c=1032 T4c=30) | upgT5=0 delivT3=0 supp=878[878/0/0] dcaBlk=16 
+> evt 290 (run 1 lumi 88 event 8735): pixKept=1960 chains=4546 -> theta=2321 -> pixdrop=2278 -> claim=1003 | chainTC=1003 (T5c=981 T4c=22) | upgT5=0 delivT3=0 supp=811[811/0/0] dcaBlk=17 
+> evt 291 (run 1 lumi 75 event 7495): pixKept=1659 chains=4031 -> theta=2202 -> pixdrop=2123 -> claim=904 | chainTC=904 (T5c=877 T4c=27) | upgT5=0 delivT3=0 supp=720[720/0/0] dcaBlk=12 
+> evt 292 (run 1 lumi 49 event 4803): pixKept=1688 chains=4116 -> theta=2179 -> pixdrop=2141 -> claim=914 | chainTC=914 (T5c=886 T4c=28) | upgT5=0 delivT3=0 supp=722[722/0/0] dcaBlk=17 
+> evt 293 (run 1 lumi 88 event 8709): pixKept=1793 chains=4777 -> theta=2451 -> pixdrop=2393 -> claim=1010 | chainTC=1010 (T5c=985 T4c=25) | upgT5=0 delivT3=0 supp=823[823/0/0] dcaBlk=12 
+> evt 294 (run 1 lumi 75 event 7411): pixKept=1916 chains=4812 -> theta=2531 -> pixdrop=2472 -> claim=1025 | chainTC=1025 (T5c=990 T4c=35) | upgT5=0 delivT3=0 supp=799[799/0/0] dcaBlk=21 
+> evt 295 (run 1 lumi 75 event 7470): pixKept=2125 chains=5417 -> theta=2777 -> pixdrop=2708 -> claim=1152 | chainTC=1152 (T5c=1121 T4c=31) | upgT5=0 delivT3=0 supp=936[936/0/0] dcaBlk=20 
+> evt 296 (run 1 lumi 75 event 7437): pixKept=1604 chains=3488 -> theta=2067 -> pixdrop=2017 -> claim=833 | chainTC=833 (T5c=807 T4c=26) | upgT5=0 delivT3=0 supp=667[667/0/0] dcaBlk=11 
+> evt 297 (run 1 lumi 88 event 8750): pixKept=1482 chains=3402 -> theta=1914 -> pixdrop=1865 -> claim=807 | chainTC=807 (T5c=785 T4c=22) | upgT5=0 delivT3=0 supp=647[647/0/0] dcaBlk=9 
+> evt 298 (run 1 lumi 88 event 8713): pixKept=1619 chains=4207 -> theta=2235 -> pixdrop=2186 -> claim=897 | chainTC=897 (T5c=877 T4c=20) | upgT5=0 delivT3=0 supp=707[707/0/0] dcaBlk=12 
+> evt 299 (run 1 lumi 75 event 7417): pixKept=1539 chains=3305 -> theta=1816 -> pixdrop=1761 -> claim=762 | chainTC=762 (T5c=747 T4c=15) | upgT5=0 delivT3=0 supp=629[629/0/0] dcaBlk=8 
+317c317
+<   M16 attach      pairs=39209432 mean=130698 scored=39209432 | chain-attached=0 mean=0.0 | T3-attached=0 mean=0.0 | dca-blocked=0 (-D4 1e+09) | seed-family dedup revoked=0 mean=0.0 (-RD 0)
+---
+>   M16 attach      pairs=38626238 mean=128754 scored=38626238 | chain-attached=0 mean=0.0 | T3-attached=0 mean=0.0 | dca-blocked=4395 (-D4 5) | seed-family dedup revoked=0 mean=0.0 (-RD 1)
+321,322c321,377
+<   time mean/evt   infer=37.209 weld=7.003 attach=202.764 arb+asm=1.153 fill=10.135 ms
+<   wrote /mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/fanout4/verify_okredesign/v_rep_ctl.root
+---
+>   time mean/evt   infer=38.958 weld=7.295 attach=197.770 arb+asm=1.144 fill=10.035 ms
+>   wrote /mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/fanout3/m16/ab_ctl_noatt.root
+> =========================================================
+>  Setting of the analysis job based on provided arguments 
+> ---------------------------------------------------------
+>  ana.input_file_list_tstring: /mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/fanout3/m16/ab_ctl_noatt.root
+>  ana.output_tfile: /mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/fanout3/m16/ab_ctl_noatt_hists.root
+>  ana.n_events: -1
+>  ana.pt_cut: 0.9
+>  ana.eta_cut: 4.5
+>  ana.nsplit_jobs: -1
+>  ana.job_index: -1
+> =========================================================
+> >>> Hostname is lnx4555.classe.cornell.edu
+> inputs : /mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/fanout3/m16/ab_ctl_noatt.root
+>                                                                                                     RooUtil:: Adding /mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/fanout3/m16/ab_ctl_noatt.root
+>                                                                                                     RooUtil:: Start EventLooping
+>                                                                                                     RooUtil:: System info:
+> lnx4555.classe.cornell.edu
+> Linux lnx4555.classe.cornell.edu 5.14.0-687.23.2.el9_8.x86_64 #1 SMP PREEMPT_DYNAMIC Wed Jul 8 19:22:59 EDT 2026 x86_64 x86_64 x86_64 GNU/Linux
+> Sun Aug  2 08:13:05 EDT 2026
+> gsn27
+> /mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone
+>                                                                                                     RooUtil::  _
+>                                                                                                     RooUtil:: /\\
+>                                                                                                     RooUtil:: \ \\  \__/ \__/
+>                                                                                                     RooUtil::  \ \\ (oo) (oo)  Here we come!
+>                                                                                                     RooUtil::   \_\\/~~\_/~~\_
+>                                                                                                     RooUtil::  _.-~===========~-._
+>                                                                                                     RooUtil:: (___________________)
+>                                                                                                     RooUtil::       \_______/
+>                                                                                                     RooUtil:: 
+>                                                                                                     RooUtil::  Your friendly aliens
+>                                                                                                     RooUtil::      Surf & Turf
+>                                                                                                     RooUtil:: 
+>                                                                                                     RooUtil:: Total Events in this Chain to process = 300
+>  gitdiff.Length(): 0
+>  githash: chainp
+>  input: PU200
+>                                                                                                     RooUtil:: TTreeCache enabled
+>                                                                                                     RooUtil:: Looping /mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/fanout3/m16/ab_ctl_noatt.root/TTree:tree
+> RooUtil::+|====================| 100.0 % (300/300) with  [avg. 8 Hz]   Total Time: 00:00:36         
+>                                                                                                     RooUtil:: Wrote output to /mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/fanout3/m16/ab_ctl_noatt_hists.root
+>                                                                                                     RooUtil:: 
+>                                                                                                     RooUtil::    \__/    \__/
+>                                                                                                     RooUtil::  S (oo)    (oo)
+>                                                                                                     RooUtil:: (\//~~\\  //~~\\
+>                                                                                                     RooUtil::  \/\__//  \\__//\T
+>                                                                                                     RooUtil::    ||||    ||\\ Who cares!
+>                                                                                                     RooUtil:: __ |||| __ |||| ___
+>                                                                                                     RooUtil::   (_)(_)  (_)(_)
+>                                                                                                     RooUtil:: 
+> 
+> ------------------------------
+> CPU  Time:	36.9
+> Real Time:	37.0
+> 

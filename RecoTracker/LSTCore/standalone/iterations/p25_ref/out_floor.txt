@@ -1,0 +1,47 @@
+**** Following environment variables are going to be unset.
+      X86_64_V3_PATH
+      X86_64_V3_PYTHON3PATH
+      INTEL_LICENSE_FILE
+
+[floor] gpu flag-OFF leg A
+[floor] gpu flag-ON  leg A
+[floor] gpu flag-OFF leg B
+[floor] gpu flag-ON  leg B
+
+########## GPU run-to-run, chain tracking OFF (the pre-existing LST floor) ##########
+ evt       A       B  common  onlyA  onlyB   ident%
+   0    1940    1940    1940      0      0  100.00%
+   1    1906    1906    1905      1      1   99.95%
+   2    1928    1929    1926      2      3   99.90%
+   3    2065    2065    2064      1      1   99.95%
+   4    1703    1702    1701      2      1   99.88%
+   5    2005    2005    2003      2      2   99.90%
+   6    1828    1828    1826      2      2   99.89%
+   7    2265    2264    2260      5      4   99.78%
+   8    2160    2161    2159      1      2   99.95%
+   9    2058    2058    2055      3      3   99.85%
+
+TC(ntuple) TOTAL A=19858 B=19858 common=19839
+TC(ntuple) IDENTITY = 99.9043%
+differing rows by tc_type (7=pT5 5=pT3 4=T5 8=pLS 9=T4):
+  onlyA type=4: 1
+  onlyA type=7: 18
+  onlyB type=7: 19
+
+########## GPU run-to-run, chain tracking ON ##########
+ evt       A       B  common  onlyA  onlyB   ident%
+   0    1941    1942    1941      0      1  100.00%
+   1    1916    1916    1916      0      0  100.00%
+   2    1933    1933    1933      0      0  100.00%
+   3    2059    2059    2059      0      0  100.00%
+   4    1704    1704    1704      0      0  100.00%
+   5    2023    2023    2023      0      0  100.00%
+   6    1828    1828    1828      0      0  100.00%
+   7    2282    2282    2282      0      0  100.00%
+   8    2141    2141    2141      0      0  100.00%
+   9    2071    2071    2071      0      0  100.00%
+
+TC(ntuple) TOTAL A=19898 B=19899 common=19898
+TC(ntuple) IDENTITY = 100.0000%
+differing rows by tc_type (7=pT5 5=pT3 4=T5 8=pLS 9=T4):
+  onlyB type=4: 1

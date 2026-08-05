@@ -1,0 +1,17 @@
+DOES -M4D -2.5 DAMAGE DISPLACED DUP OR DISPLACED LENGTH? (300 evts, vxy bands)
+tag        band          matchedTC    dupRate    meanLen          -
+A08GATE    vxy[0,1)          19123    0.14585      7.585
+A08GATE    vxy[1,5)           1200    0.18833      8.735
+A08GATE    vxy[5,10)           437    0.00915     10.888
+A08GATE    vxy[10,30)          927    0.00216     10.738
+A08GATE    vxy[30,60)          127    0.00000      9.465
+P_M4D25    vxy[0,1)          19131    0.14735      7.581
+P_M4D25    vxy[1,5)           1206    0.18905      8.726
+P_M4D25    vxy[5,10)           442    0.00905     10.855
+P_M4D25    vxy[10,30)          944    0.00212     10.689
+P_M4D25    vxy[30,60)          137    0.00000      9.358
+LST        vxy[0,1)          18137    0.04472      8.114
+LST        vxy[1,5)           1084    0.04982      9.526
+LST        vxy[5,10)           391    0.01535     11.238
+LST        vxy[10,30)          854    0.05621     11.283
+LST        vxy[30,60)          105    0.07619      9.810

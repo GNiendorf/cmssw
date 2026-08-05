@@ -1,0 +1,24 @@
+[9] DRILL-DOWN on cell chT5+zPLS
+  pairs=3556 (11.85/evt);  dR quantiles 10/50/90 = 0.0160 / 0.0699 / 0.1769; dR^2<0.02 (LST window): 66.2%
+  |eta| quantiles 10/50/90 = 0.11 / 0.60 / 1.86
+  nhitOT of chT5  : 10:1766 12:1740 14:50
+  nhitOT of zPLS  : 0:3556
+  shared OT hits  : 0:3556
+[9] DRILL-DOWN on cell cPLS+chT4
+  pairs=861 (2.87/evt);  dR quantiles 10/50/90 = 0.0191 / 0.0583 / 0.1177; dR^2<0.02 (LST window): 94.8%
+  |eta| quantiles 10/50/90 = 1.98 / 2.38 / 2.43
+  nhitOT of cPLS  : 0:861
+  nhitOT of chT4  : 8:861
+  shared OT hits  : 0:861
+[9] DRILL-DOWN on cell chT4+zPLS
+  pairs=857 (2.86/evt);  dR quantiles 10/50/90 = 0.0149 / 0.0424 / 0.0879; dR^2<0.02 (LST window): 98.6%
+  |eta| quantiles 10/50/90 = 1.48 / 2.25 / 2.42
+  nhitOT of chT4  : 8:857
+  nhitOT of zPLS  : 0:857
+  shared OT hits  : 0:857
+[9] DRILL-DOWN on cell aPT5+chT5
+  pairs=648 (2.16/evt);  dR quantiles 10/50/90 = 0.0024 / 0.0156 / 0.0657; dR^2<0.02 (LST window): 100.0%
+  |eta| quantiles 10/50/90 = 0.61 / 1.35 / 2.11
+  nhitOT of aPT5  : 10:408 12:211 14:29
+  nhitOT of chT5  : 10:500 12:133 14:15
+  shared OT hits  : 0:67 1:67 2:514

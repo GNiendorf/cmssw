@@ -1,0 +1,214 @@
+{
+ "model": "/mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/fanout4/okretrain/chain_mlp_vg.pt",
+ "n_input": 25,
+ "hidden": 32,
+ "best_epoch": 72,
+ "best_sel": 0.9141583417812311,
+ "best_val_meta": {
+  "val_auc": 0.958322800753387,
+  "val_auc_surv": 0.9141583417812311
+ },
+ "test": {
+  "all": {
+   "auc": 0.9582709900045276,
+   "n_true": 171858,
+   "n_fake": 106005
+  },
+  "nLayers=4": {
+   "auc": 0.95395787499831,
+   "n_true": 39156,
+   "n_fake": 68131
+  },
+  "nLayers=5": {
+   "auc": 0.94316721209274,
+   "n_true": 79067,
+   "n_fake": 30533
+  },
+  "nLayers>=6": {
+   "auc": 0.9225005561170803,
+   "n_true": 53635,
+   "n_fake": 7341
+  },
+  "prompt vxy<1": {
+   "auc": 0.9587879047096362,
+   "n_true": 169942,
+   "n_fake": 106005
+  },
+  "displaced vxy>=1": {
+   "auc": 0.9124225981383672,
+   "n_true": 1916,
+   "n_fake": 106005
+  },
+  "displaced vxy>=5": {
+   "auc": 0.9004121133100191,
+   "n_true": 1400,
+   "n_fake": 106005
+  },
+  "surv all": {
+   "auc": 0.9123847435985929,
+   "n_true": 127628,
+   "n_fake": 13214
+  },
+  "surv nLayers=4": {
+   "auc": 0.8926337196661026,
+   "n_true": 6695,
+   "n_fake": 1264
+  },
+  "surv nLayers=5": {
+   "auc": 0.9216610149504165,
+   "n_true": 69037,
+   "n_fake": 7407
+  },
+  "surv nLayers>=6": {
+   "auc": 0.8979609348227943,
+   "n_true": 51896,
+   "n_fake": 4543
+  },
+  "surv prompt vxy<1": {
+   "auc": 0.9137708768851929,
+   "n_true": 126179,
+   "n_fake": 13214
+  },
+  "surv displaced vxy>=1": {
+   "auc": 0.7916801804723704,
+   "n_true": 1449,
+   "n_fake": 13214
+  },
+  "surv displaced vxy>=5": {
+   "auc": 0.7707817316538152,
+   "n_true": 1061,
+   "n_fake": 13214
+  },
+  "surv negative-logit tail": {
+   "auc": 0.6165014839481302,
+   "n_true": 2884,
+   "n_fake": 5041
+  },
+  "branch": {
+   "IP dca<0.5|L4|all": {
+    "auc": 0.921652070923902,
+    "n_true": 25674,
+    "n_fake": 10357
+   },
+   "IP dca<0.5|L4|prompt": {
+    "auc": 0.9218472427091151,
+    "n_true": 25545,
+    "n_fake": 10357
+   },
+   "IP dca<0.5|L4|disp1": {
+    "auc": 0.8830035185729908,
+    "n_true": 129,
+    "n_fake": 10357
+   },
+   "IP dca<0.5|L4|disp5": {
+    "auc": 0.8638165678064194,
+    "n_true": 83,
+    "n_fake": 10357
+   },
+   "IP dca<0.5|L5+|all": {
+    "auc": 0.9406782161817706,
+    "n_true": 82779,
+    "n_fake": 6805
+   },
+   "IP dca<0.5|L5+|prompt": {
+    "auc": 0.9408962683564486,
+    "n_true": 82230,
+    "n_fake": 6805
+   },
+   "IP dca<0.5|L5+|disp1": {
+    "auc": 0.9080180516576128,
+    "n_true": 549,
+    "n_fake": 6805
+   },
+   "IP dca<0.5|L5+|disp5": {
+    "auc": 0.9075419975272139,
+    "n_true": 249,
+    "n_fake": 6805
+   },
+   "IP dca<0.5|Lall|all": {
+    "auc": 0.9441623501981617,
+    "n_true": 108453,
+    "n_fake": 17162
+   },
+   "IP dca<0.5|Lall|prompt": {
+    "auc": 0.9443176485863112,
+    "n_true": 107775,
+    "n_fake": 17162
+   },
+   "IP dca<0.5|Lall|disp1": {
+    "auc": 0.9194760909314982,
+    "n_true": 678,
+    "n_fake": 17162
+   },
+   "IP dca<0.5|Lall|disp5": {
+    "auc": 0.906266102751526,
+    "n_true": 332,
+    "n_fake": 17162
+   },
+   "EXEMPT dca>=0.5|L4|all": {
+    "auc": 0.9351618101844976,
+    "n_true": 13482,
+    "n_fake": 57774
+   },
+   "EXEMPT dca>=0.5|L4|prompt": {
+    "auc": 0.9358655025357087,
+    "n_true": 13196,
+    "n_fake": 57774
+   },
+   "EXEMPT dca>=0.5|L4|disp1": {
+    "auc": 0.9026935435181358,
+    "n_true": 286,
+    "n_fake": 57774
+   },
+   "EXEMPT dca>=0.5|L4|disp5": {
+    "auc": 0.8994261313480112,
+    "n_true": 256,
+    "n_fake": 57774
+   },
+   "EXEMPT dca>=0.5|L5+|all": {
+    "auc": 0.9120552832152657,
+    "n_true": 49923,
+    "n_fake": 31069
+   },
+   "EXEMPT dca>=0.5|L5+|prompt": {
+    "auc": 0.9131261494815088,
+    "n_true": 48971,
+    "n_fake": 31069
+   },
+   "EXEMPT dca>=0.5|L5+|disp1": {
+    "auc": 0.8569697874965752,
+    "n_true": 952,
+    "n_fake": 31069
+   },
+   "EXEMPT dca>=0.5|L5+|disp5": {
+    "auc": 0.862017316613094,
+    "n_true": 812,
+    "n_fake": 31069
+   },
+   "EXEMPT dca>=0.5|Lall|all": {
+    "auc": 0.9408013707516534,
+    "n_true": 63405,
+    "n_fake": 88843
+   },
+   "EXEMPT dca>=0.5|Lall|prompt": {
+    "auc": 0.9415670345461927,
+    "n_true": 62167,
+    "n_fake": 88843
+   },
+   "EXEMPT dca>=0.5|Lall|disp1": {
+    "auc": 0.902353049980146,
+    "n_true": 1238,
+    "n_fake": 88843
+   },
+   "EXEMPT dca>=0.5|Lall|disp5": {
+    "auc": 0.9013654247038743,
+    "n_true": 1068,
+    "n_fake": 88843
+   }
+  }
+ },
+ "inputs": [
+  "/mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/fanout4/okretrain/chains_m18.root"
+ ],
+ "dca_split": 0.5
+}

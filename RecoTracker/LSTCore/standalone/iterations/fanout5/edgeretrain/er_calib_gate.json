@@ -1,0 +1,65 @@
+{
+ "rules": {
+  "-M4": {
+   "cell": "IP_T4",
+   "margin": "mX",
+   "ref_thr": 4.0,
+   "ref_kill_rate": 0.9592038720882714,
+   "new_thr": 4.24293327331543,
+   "ref_killed_true_pct": 68.2144069658299,
+   "new_killed_true_pct": 68.22064080630022
+  },
+  "-M4D": {
+   "cell": "EX_T4",
+   "margin": "mD",
+   "ref_thr": -1.2,
+   "ref_kill_rate": 0.9087465946688814,
+   "new_thr": -1.230106594971842,
+   "ref_killed_true_pct": 13.919204548837486,
+   "new_killed_true_pct": 12.529546604745319
+  },
+  "-MRI": {
+   "cell": "IP_5p",
+   "margin": "mX",
+   "ref_thr": -0.5,
+   "ref_kill_rate": 0.0390326343207607,
+   "new_thr": -0.5939345679951448,
+   "ref_killed_true_pct": 26.721556886227546,
+   "new_killed_true_pct": 24.976969138645785
+  },
+  "-MR": {
+   "cell": "EX_5p",
+   "margin": "mX",
+   "ref_thr": -1.8,
+   "ref_kill_rate": 0.17537261112348337,
+   "new_thr": -1.9465642584649525,
+   "ref_killed_true_pct": 7.137929953281284,
+   "new_killed_true_pct": 6.628413758505001
+  },
+  "-C25/-C25D": {
+   "cell": "CELL25 survivors",
+   "ref_thr": [
+    0.0,
+    -2.0
+   ],
+   "ref_kill_rate": 0.07457907863756656,
+   "new_thr": [
+    -0.0831968247428603,
+    -1.96478856355776
+   ],
+   "new_kill_rate": 0.07457875783577113
+  }
+ },
+ "mapping": {
+  "-M4": 4.2429,
+  "-M4D": -1.2301,
+  "-MRI": -0.5939,
+  "-MR": -1.9466,
+  "-C25": -0.0832,
+  "-C25D": -1.9648
+ },
+ "total_kills": {
+  "ref": 590786,
+  "new": 590766
+ }
+}

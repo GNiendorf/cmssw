@@ -1,0 +1,14 @@
+bk1_t5_w020 -BK 1 -BT 5 -W 0.20
+bk1_t5_w028 -BK 1 -BT 5 -W 0.28
+bk1_t5_w030 -BK 1 -BT 5 -W 0.30
+bk1_t5_w032 -BK 1 -BT 5 -W 0.32
+bk1_t3_w025 -BK 1 -BT 3 -W 0.25
+bk1_t3_w030 -BK 1 -BT 3 -W 0.30
+bk1_t2_w025 -BK 1 -BT 2 -W 0.25
+bk11_b1 -BK 11 -BT 1
+bk11_b2 -BK 11 -BT 2
+bk11_b3 -BK 11 -BT 3
+bk11_b2_w030 -BK 11 -BT 2 -W 0.30
+bk10_t5_w030 -BK 10 -BT 5 -W 0.30
+bk8_w025 -BK 8 -W 0.25
+bk9_t5_w025 -BK 9 -BT 5 -W 0.25

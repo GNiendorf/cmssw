@@ -1,0 +1,24 @@
+
+selection pt>0.9 |eta|<4.5 + band -> nSim=1990
+  LST matched   1282  (0.64422)
+  A   matched   1436  (0.72161)   net vs LST +154
+
+--- A vs LST ---   LOST=44  GAINED=198  net=+154
+  LOST  (LST found, A did not) -- LST's matched TC: N=44
+    TC type   : T5=28 (64%)  pT3=8 (18%)  T4=5 (11%)  pT5=2 (5%)  pLS=1 (2%)
+    nhitOT    : 0:1  6:8  8:5  10:19  12:11
+    pt        : min=0.92 q25=1.29 med=2.35 q75=5.69 max=12.93
+    |eta|     : min=0.01 q25=0.45 med=1.23 q75=1.57 max=2.41
+    vxy       : min=5.00 q25=5.91 med=6.35 q75=7.26 max=9.89
+    |dxy|     : min=0.02 q25=0.08 med=0.15 q75=0.61 max=6.45
+    |pdgId|   : 11:25  211:13  2212:3  321:2  13:1
+    eta region: barrel<1.1=21 (48%)  trans1.1-1.7=15 (34%)  endcap>1.7=8 (18%)
+  GAINED(A found, LST did not) -- A's matched TC: N=198
+    TC type   : T5=168 (85%)  T4=25 (13%)  pT5=3 (2%)  pLS=1 (1%)  pT3=1 (1%)
+    nhitOT    : 0:1  6:1  8:25  10:92  12:74  14:5
+    pt        : min=0.90 q25=1.24 med=1.79 q75=3.79 max=60.98
+    |eta|     : min=0.03 q25=0.68 med=1.20 q75=1.64 max=2.47
+    vxy       : min=5.09 q25=5.95 med=6.42 q75=7.79 max=9.98
+    |dxy|     : min=0.00 q25=0.09 med=0.21 q75=0.45 max=3.18
+    |pdgId|   : 211:79  11:77  2212:33  321:7  13:2
+    eta region: barrel<1.1=94 (47%)  trans1.1-1.7=62 (31%)  endcap>1.7=42 (21%)

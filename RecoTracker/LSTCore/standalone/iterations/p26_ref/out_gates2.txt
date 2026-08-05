@@ -1,0 +1,16 @@
+**** Following environment variables are going to be unset.
+      X86_64_V3_PATH
+      X86_64_V3_PYTHON3PATH
+      INTEL_LICENSE_FILE
+
+=== 1 timing FINAL, cuda ===
+=== 2 timing FINAL, cpu ===
+=== 3 bit-identity, cpu ===
+=== 4 bit-identity, cuda ===
+=== 5 CPU ls_* defect baseline: BEFORE binary against itself ===
+=== 5b GPU nondeterminism FLOOR: BEFORE binary twice ===
+=== 6 repro harness on the FINAL build ===
+=== 7 streams -s1 vs -s4 ===
+=== 8 scoreboard 300 events, cuda ===
+=== 9 scoreboard 300 events, cpu ===
+GATES2_DONE

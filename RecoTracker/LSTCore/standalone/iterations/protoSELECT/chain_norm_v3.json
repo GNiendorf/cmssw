@@ -1,0 +1,107 @@
+{
+ "feature_names": [
+  "cf_nNodes",
+  "cf_nLayers",
+  "cf_sumEdgeLogit",
+  "cf_minEdgeLogit",
+  "cf_meanEdgeLogit",
+  "cf_fullFitChi2PerHit",
+  "cf_rzLineChi2PerHit",
+  "cf_fitKappa",
+  "cf_dKappaFitVsMedianT3",
+  "cf_ptEst",
+  "cf_innermostLayer",
+  "cf_layerSpan",
+  "cf_nPS",
+  "cf_nBarrel",
+  "cf_maxJunctionDegProduct",
+  "cf_chargeConsistency"
+ ],
+ "conditioning": [
+  {
+   "feature": "cf_fullFitChi2PerHit",
+   "op": "log10_1p"
+  },
+  {
+   "feature": "cf_rzLineChi2PerHit",
+   "op": "log10_1p"
+  },
+  {
+   "feature": "cf_maxJunctionDegProduct",
+   "op": "log10_1p"
+  },
+  {
+   "feature": "cf_fitKappa",
+   "op": "clip",
+   "lo": -1.0,
+   "hi": 1.0
+  },
+  {
+   "feature": "cf_dKappaFitVsMedianT3",
+   "op": "clip",
+   "lo": -2.0,
+   "hi": 2.0
+  }
+ ],
+ "mean": [
+  2.407827854156494,
+  4.834224224090576,
+  5.23725700378418,
+  3.192840814590454,
+  3.409457206726074,
+  0.014520891942083836,
+  0.2568928003311157,
+  -0.00036436275695450604,
+  0.0009587290114723146,
+  1.5507471561431885,
+  2.008831262588501,
+  5.31910514831543,
+  2.86384916305542,
+  3.1944172382354736,
+  0.8524048924446106,
+  0.9513702988624573
+ ],
+ "std": [
+  0.6214279532432556,
+  0.7963793873786926,
+  4.232656955718994,
+  1.931351900100708,
+  1.965528130531311,
+  0.07792410254478455,
+  0.2599906623363495,
+  0.009481673128902912,
+  0.0033539258874952793,
+  4.310811519622803,
+  1.8670939207077026,
+  2.1805591583251953,
+  1.1103582382202148,
+  1.817398190498352,
+  0.43374139070510864,
+  0.20647381246089935
+ ],
+ "seed": 42,
+ "degenerate_columns": [],
+ "displaced_weighting": {
+  "rule": "tiered: true chains with 1<=simVxy<5 get weight x mid, simVxy>=5 get x hi; fakes and prompt true 1",
+  "displaced_weight_mid": 8.0,
+  "displaced_weight_hi": 16.0,
+  "n_weighted_mid_train": 5435,
+  "n_weighted_hi_train": 16684
+ },
+ "train_args": {
+  "epochs": 200,
+  "patience": 15,
+  "batch_size": 16384,
+  "lr": 0.001,
+  "feature_clip": true,
+  "displaced_weight": 4.0,
+  "displaced_weight_mid": 8.0,
+  "displaced_weight_hi": 16.0,
+  "select_metric": "min_prompt_disp",
+  "inputs": [
+   "chains_300evt_simidx.root",
+   "chains_498evt.root"
+  ],
+  "pool_train_frac": 0.75
+ }
+}

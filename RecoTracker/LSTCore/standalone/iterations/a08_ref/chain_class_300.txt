@@ -1,0 +1,27 @@
+
+FINBASE  bare OT objects (type 4/9) fakes by region x nhitOT, per event over 300 evts
+   barrel   nhitOT=10   nTC/evt=   96.5  fakes/evt=  15.8  fakeRate=0.1633
+   trans    nhitOT=10   nTC/evt=   86.5  fakes/evt=  11.0  fakeRate=0.1276
+   barrel   nhitOT=8    nTC/evt=   12.1  fakes/evt=   7.7  fakeRate=0.6421
+   barrel   nhitOT=12   nTC/evt=  108.9  fakes/evt=   3.6  fakeRate=0.0331
+   endcap   nhitOT=10   nTC/evt=   50.3  fakes/evt=   3.1  fakeRate=0.0619
+   trans    nhitOT=12   nTC/evt=   50.6  fakes/evt=   2.5  fakeRate=0.0500
+   endcap   nhitOT=8    nTC/evt=   18.3  fakes/evt=   1.8  fakeRate=0.0955
+   endcap   nhitOT=12   nTC/evt=   25.7  fakes/evt=   1.1  fakeRate=0.0435
+   trans    nhitOT=8    nTC/evt=    3.8  fakes/evt=   0.5  fakeRate=0.1376
+   endcap   nhitOT=14   nTC/evt=    6.2  fakes/evt=   0.1  fakeRate=0.0189
+   trans    nhitOT=14   nTC/evt=    2.3  fakes/evt=   0.1  fakeRate=0.0213
+   barrel   nhitOT=14   nTC/evt=    0.0  fakes/evt=   0.0  fakeRate=0.0000
+
+LST  bare OT objects (type 4/9) fakes by region x nhitOT, per event over 300 evts
+   barrel   nhitOT=8    nTC/evt=   16.3  fakes/evt=  13.1  fakeRate=0.8075
+   endcap   nhitOT=8    nTC/evt=   15.6  fakes/evt=   5.5  fakeRate=0.3517
+   barrel   nhitOT=10   nTC/evt=   23.5  fakes/evt=   4.6  fakeRate=0.1961
+   trans    nhitOT=8    nTC/evt=    6.5  fakes/evt=   4.4  fakeRate=0.6740
+   trans    nhitOT=10   nTC/evt=   24.1  fakes/evt=   2.5  fakeRate=0.1022
+   barrel   nhitOT=12   nTC/evt=   34.5  fakes/evt=   0.6  fakeRate=0.0179
+   trans    nhitOT=12   nTC/evt=   19.9  fakes/evt=   0.5  fakeRate=0.0245
+   endcap   nhitOT=10   nTC/evt=   14.3  fakes/evt=   0.4  fakeRate=0.0274
+   endcap   nhitOT=12   nTC/evt=   20.1  fakes/evt=   0.3  fakeRate=0.0139
+   endcap   nhitOT=14   nTC/evt=    3.0  fakes/evt=   0.0  fakeRate=0.0067
+   trans    nhitOT=14   nTC/evt=    0.0  fakes/evt=   0.0  fakeRate=0.0000

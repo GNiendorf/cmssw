@@ -1,0 +1,3 @@
+af7762b0af0e52334f4845dbb0ea20e6  p24b_ref/bin_repl_cuda/liblst_cuda.so
+d0837256fc7a7b33d976a423b7c8994b  p24b_ref/bin_repl_cuda/librooutil.so
+17ed836c63ac33be1b37ac8775d6a1b2  p24b_ref/bin_repl_cuda/lst_cuda

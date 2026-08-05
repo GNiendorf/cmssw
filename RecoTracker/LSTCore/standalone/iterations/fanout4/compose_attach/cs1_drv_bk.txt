@@ -1,0 +1,6 @@
+[cs1] bk : -BK 1 -BT 5
+[cs1] DONE bk
+
+real	2m40.257s
+user	2m33.454s
+sys	0m4.477s

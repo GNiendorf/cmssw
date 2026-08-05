@@ -1,0 +1,43 @@
+== transition 5+exempt: dca distribution, fake vs true ==
+  FAKE n=  3879 dca p10/25/50/75/90/99 =   0.69   0.99   1.73   2.93   4.74  11.28
+  TRUE n= 27445 dca p10/25/50/75/90/99 =   0.56   0.66   0.88   1.29   2.15   5.75
+
+== transition 5+exempt population in dca windows ==
+  dca [ 0.50,  0.75) n= 10527 fake=0.0474 | mX<0 : n=  209 fakefrac=0.603 (F= 126 T=  83)
+  dca [ 0.75,  1.00) n=  6861 fake=0.0697 | mX<0 : n=  262 fakefrac=0.626 (F= 164 T=  98)
+  dca [ 1.00,  1.50) n=  6507 fake=0.1079 | mX<0 : n=  454 fakefrac=0.604 (F= 274 T= 180)
+  dca [ 1.50,  2.00) n=  2575 fake=0.2066 | mX<0 : n=  409 fakefrac=0.597 (F= 244 T= 165)
+  dca [ 2.00,  3.00) n=  2578 fake=0.2882 | mX<0 : n=  685 fakefrac=0.571 (F= 391 T= 294)
+  dca [ 3.00,  5.00) n=  1525 fake=0.3790 | mX<0 : n=  618 fakefrac=0.655 (F= 405 T= 213)
+  dca [ 5.00,999.00) n=   751 fake=0.4621 | mX<0 : n=  433 fakefrac=0.658 (F= 285 T= 148)
+
+== SHADOW: band exempt mX floor restricted to dca < dcaMax ==
+   dcaMax  floor   killF   killT  ratio | band fake
+      1.0   0.00     290     181   1.60 | 0.0732
+      1.0   0.25     344     277   1.24 | 0.0726
+      1.0   0.50     390     417   0.94 | 0.0722
+      1.0   0.75     457     626   0.73 | 0.0715
+      1.5   0.00     564     361   1.56 | 0.0700
+      1.5   0.25     679     542   1.25 | 0.0687
+      1.5   0.50     774     824   0.94 | 0.0678
+      1.5   0.75     877    1234   0.71 | 0.0669
+      2.0   0.00     808     526   1.54 | 0.0671
+      2.0   0.25     973     793   1.23 | 0.0653
+      2.0   0.50    1102    1195   0.92 | 0.0640
+      2.0   0.75    1246    1761   0.71 | 0.0626
+      3.0   0.00    1199     820   1.46 | 0.0624
+      3.0   0.25    1438    1192   1.21 | 0.0597
+      3.0   0.50    1628    1755   0.93 | 0.0577
+      3.0   0.75    1832    2480   0.74 | 0.0556
+  1000000000.0   0.00    1889    1181   1.60 | 0.0539
+  1000000000.0   0.25    2183    1665   1.31 | 0.0504
+  1000000000.0   0.50    2413    2337   1.03 | 0.0478
+  1000000000.0   0.75    2660    3186   0.83 | 0.0450
+
+== SHADOW: nLayers split of the exempt floor (nL=5 only vs all) ==
+  nL=5   floor=0.00 killF= 1532 killT=  745 ratio=2.06 | band fake=0.0581
+  nL=5   floor=0.50 killF= 1869 killT= 1389 ratio=1.35 | band fake=0.0543
+  nL>=6  floor=0.00 killF=  357 killT=  436 ratio=0.82 | band fake=0.0726
+  nL>=6  floor=0.50 killF=  544 killT=  948 ratio=0.57 | band fake=0.0708
+  all    floor=0.00 killF= 1889 killT= 1181 ratio=1.60 | band fake=0.0539
+  all    floor=0.50 killF= 2413 killT= 2337 ratio=1.03 | band fake=0.0478

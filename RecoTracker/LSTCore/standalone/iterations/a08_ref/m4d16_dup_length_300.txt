@@ -1,0 +1,26 @@
+DISPLACED DUP RATE AND MATCHED-TRACK LENGTH, 300 evts (dup among TCs matched to a sim in the band)
+tag       band              nTC     nDup   dupRate   meanLen
+FINBASE   vxy[0,1)    19123     2789   0.14585     7.585
+FINBASE   vxy[1,5)     1200      226   0.18833     8.735
+FINBASE   vxy[5,10)      437        4   0.00915    10.888
+FINBASE   vxy[10,30)      927        2   0.00216    10.738
+FINBASE   vxy[30,inf)      127        0   0.00000     9.465
+
+M4D16     vxy[0,1)    19122     2795   0.14617     7.584
+M4D16     vxy[1,5)     1204      228   0.18937     8.729
+M4D16     vxy[5,10)      440        4   0.00909    10.868
+M4D16     vxy[10,30)      932        2   0.00215    10.723
+M4D16     vxy[30,inf)      133        0   0.00000     9.398
+
+M4D25     vxy[0,1)    19131     2819   0.14735     7.581
+M4D25     vxy[1,5)     1206      228   0.18905     8.726
+M4D25     vxy[5,10)      442        4   0.00905    10.855
+M4D25     vxy[10,30)      944        2   0.00212    10.689
+M4D25     vxy[30,inf)      137        0   0.00000     9.358
+
+LST       vxy[0,1)    18137      811   0.04472     8.114
+LST       vxy[1,5)     1084       54   0.04982     9.526
+LST       vxy[5,10)      391        6   0.01535    11.238
+LST       vxy[10,30)      854       48   0.05621    11.283
+LST       vxy[30,inf)      105        8   0.07619     9.810
+

@@ -1,0 +1,34 @@
+A/B compare (Root__TC set): proto=/mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/fanout5/skeptic3/s3_t_win_hists.root base=/mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/prototype/base300_hists.root
+metric                            proto         base        delta
+-----------------------------------------------------------------
+eff overall (pt sums)               n/a       0.3264          n/a
+eff overall (pt>0.9)                n/a       0.8136          n/a
+eff vxy [0,1)                       n/a       0.8473          n/a
+eff vxy [1,5)                       n/a       0.7731          n/a
+eff vxy [5,10)                      n/a       0.6530          n/a
+eff vxy [10,30)                     n/a       0.6291          n/a
+eff dxy [0,1)                       n/a       0.8342          n/a
+eff dxy [1,5)                       n/a       0.4989          n/a
+eff dxy [5,10)                      n/a       0.2281          n/a
+eff dxy [10,30)                     n/a       0.0470          n/a
+eff barrel |eta|<1.1                n/a       0.9242          n/a
+eff transition 1.1-1.7              n/a       0.8826          n/a
+eff endcap >1.7                     n/a       0.7556          n/a
+dup rate (pt sums)                  n/a       0.0499          n/a
+dup rate (pt>0.9)                   n/a       0.0513          n/a
+dup rate barrel                     n/a       0.0097          n/a
+dup rate transition                 n/a       0.0130          n/a
+dup rate endcap                     n/a       0.0846          n/a
+fake rate (pt sums)                 n/a       0.0451          n/a
+fake rate (pt>0.9)                  n/a       0.0455          n/a
+fake rate barrel                    n/a       0.0437          n/a
+fake rate transition                n/a       0.0459          n/a
+fake rate endcap                    n/a       0.0463          n/a
+mean nhitOT                         n/a        6.514          n/a
+mean nhitOT barrel                  n/a       10.151          n/a
+mean nhitOT transition              n/a       10.010          n/a
+mean nhitOT endcap                  n/a        3.559          n/a
+n TC (fr denom)                     n/a       610581          n/a
+n sim (ef denom)                    n/a        63603          n/a
+wrote /mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/fanout5/skeptic3/s3_t_win.json
+(19 warning(s) -- see stderr)

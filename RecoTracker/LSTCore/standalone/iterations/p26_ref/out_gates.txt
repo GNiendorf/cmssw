@@ -1,0 +1,12 @@
+**** Following environment variables are going to be unset.
+      X86_64_V3_PATH
+      X86_64_V3_PYTHON3PATH
+      INTEL_LICENSE_FILE
+
+=== 1 timing AFTER, cuda ===
+=== 2 timing AFTER, cpu ===
+=== 3 bit-identity, cpu ===
+=== 4 bit-identity, cuda ===
+=== 5 GPU nondeterminism FLOOR: before-binary twice ===
+=== 6 repro harness on the AFTER build ===
+=== 7 streams -s1 vs -s4 ===

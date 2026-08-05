@@ -1,0 +1,33 @@
+A/B compare (Root__TC set): proto=/mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/fanout5/final/oos_freeze_349_hists.root base=/mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/fanout4/compose_attach/base_oos349_hists.root
+metric                            proto         base        delta
+-----------------------------------------------------------------
+eff overall (pt sums)            0.3253       0.3260      -0.0007
+eff overall (pt>0.9)             0.8078       0.8098      -0.0020
+eff vxy [0,1)                    0.8404       0.8424      -0.0020
+eff vxy [1,5)                    0.8039       0.7957      +0.0083
+eff vxy [5,10)                   0.7068       0.6271      +0.0797
+eff vxy [10,30)                  0.7209       0.6392      +0.0817
+eff dxy [0,1)                    0.8342       0.8306      +0.0036
+eff dxy [1,5)                    0.6009       0.5206      +0.0804
+eff dxy [5,10)                   0.2789       0.2611      +0.0178
+eff dxy [10,30)                  0.0388       0.0620      -0.0233
+eff barrel |eta|<1.1             0.9250       0.9273      -0.0024
+eff transition 1.1-1.7           0.8720       0.8759      -0.0039
+eff endcap >1.7                  0.7462       0.7473      -0.0010
+dup rate (pt sums)               0.0504       0.0497      +0.0008
+dup rate (pt>0.9)                0.0516       0.0515      +0.0001
+dup rate barrel                  0.0137       0.0096      +0.0041
+dup rate transition              0.0187       0.0136      +0.0051
+dup rate endcap                  0.0817       0.0850      -0.0033
+fake rate (pt sums)              0.0456       0.0450      +0.0006
+fake rate (pt>0.9)               0.0458       0.0451      +0.0007
+fake rate barrel                 0.0503       0.0431      +0.0072
+fake rate transition             0.0539       0.0452      +0.0087
+fake rate endcap                 0.0410       0.0461      -0.0051
+mean nhitOT                       6.383        6.524       -0.141
+mean nhitOT barrel                9.897       10.151       -0.253
+mean nhitOT transition            9.883       10.010       -0.127
+mean nhitOT endcap                3.459        3.560       -0.102
+n TC (fr denom)                  720337       716495        +3842
+n sim (ef denom)                  73270        73270           +0
+wrote /mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/fanout5/final/oos_freeze_349.json

@@ -1,0 +1,42 @@
+[
+ {
+  "frac": 0.125,
+  "n_events": 55,
+  "n_rows": 255718,
+  "n_disp_true_train": 2296,
+  "auc_all_trueaxis": 0.9087949323906718,
+  "auc_disp_trueaxis": 0.8177911254213095,
+  "auc_disp_dispaxis": 0.819033386608008,
+  "auc_disp_dispaxis_nL5p": 0.8375139995676111
+ },
+ {
+  "frac": 0.25,
+  "n_events": 110,
+  "n_rows": 522688,
+  "n_disp_true_train": 5311,
+  "auc_all_trueaxis": 0.9073432609666795,
+  "auc_disp_trueaxis": 0.8243784857642182,
+  "auc_disp_dispaxis": 0.8320851669235293,
+  "auc_disp_dispaxis_nL5p": 0.845547855883631
+ },
+ {
+  "frac": 0.5,
+  "n_events": 221,
+  "n_rows": 1024704,
+  "n_disp_true_train": 10946,
+  "auc_all_trueaxis": 0.9069523163444222,
+  "auc_disp_trueaxis": 0.8403480306470797,
+  "auc_disp_dispaxis": 0.8489762710536477,
+  "auc_disp_dispaxis_nL5p": 0.858747059820017
+ },
+ {
+  "frac": 1.0,
+  "n_events": 442,
+  "n_rows": 2079100,
+  "n_disp_true_train": 22119,
+  "auc_all_trueaxis": 0.9067672841992032,
+  "auc_disp_trueaxis": 0.8466734191162097,
+  "auc_disp_dispaxis": 0.8552775742323688,
+  "auc_disp_dispaxis_nL5p": 0.8664940468531137
+ }
+]

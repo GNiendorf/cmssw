@@ -1,0 +1,29 @@
+WHERE -M4D SPENDS ITS FAKES (300 evts). Bare OT objects only (type 4/9).
+
+A08GATE    T4cls   34.2 TC/evt  10.0 fake/evt (rate 0.2930) | T5cls  426.9 TC/evt  37.3 fake/evt | ALL fakes/evt  111.2
+     barrel  nhitOT=8   TC/evt=   12.1 fakes/evt=   7.7 rate=0.6421
+     trans   nhitOT=8   TC/evt=    3.8 fakes/evt=   0.5 rate=0.1376
+     endcap  nhitOT=8   TC/evt=   18.3 fakes/evt=   1.8 rate=0.0955
+     barrel  nhitOT=10  TC/evt=   96.5 fakes/evt=  15.8 rate=0.1633
+     trans   nhitOT=10  TC/evt=   86.5 fakes/evt=  11.0 rate=0.1276
+
+P_M4D25    T4cls   61.6 TC/evt  28.3 fake/evt (rate 0.4593) | T5cls  426.6 TC/evt  37.1 fake/evt | ALL fakes/evt  128.5
+     barrel  nhitOT=8   TC/evt=   27.2 fakes/evt=  20.3 rate=0.7461
+     trans   nhitOT=8   TC/evt=    9.1 fakes/evt=   3.0 rate=0.3316
+     endcap  nhitOT=8   TC/evt=   25.2 fakes/evt=   4.9 rate=0.1961
+     barrel  nhitOT=10  TC/evt=   96.5 fakes/evt=  15.8 rate=0.1632
+     trans   nhitOT=10  TC/evt=   86.2 fakes/evt=  10.9 rate=0.1263
+
+P_M4DOFF   T4cls  279.1 TC/evt 230.5 fake/evt (rate 0.8259) | T5cls  426.6 TC/evt  37.3 fake/evt | ALL fakes/evt  327.0
+     barrel  nhitOT=8   TC/evt=  154.2 fakes/evt= 144.8 rate=0.9389
+     trans   nhitOT=8   TC/evt=   81.7 fakes/evt=  64.1 rate=0.7847
+     endcap  nhitOT=8   TC/evt=   43.2 fakes/evt=  21.6 rate=0.5004
+     barrel  nhitOT=10  TC/evt=   97.1 fakes/evt=  16.0 rate=0.1651
+     trans   nhitOT=10  TC/evt=   86.1 fakes/evt=  10.8 rate=0.1257
+
+LST        T4cls   38.4 TC/evt  23.0 fake/evt (rate 0.5994) | T5cls  139.4 TC/evt   8.9 fake/evt | ALL fakes/evt   90.6
+     barrel  nhitOT=8   TC/evt=   16.3 fakes/evt=  13.1 rate=0.8075
+     trans   nhitOT=8   TC/evt=    6.5 fakes/evt=   4.4 rate=0.6740
+     endcap  nhitOT=8   TC/evt=   15.6 fakes/evt=   5.5 rate=0.3517
+     barrel  nhitOT=10  TC/evt=   23.5 fakes/evt=   4.6 rate=0.1961
+     trans   nhitOT=10  TC/evt=   24.1 fakes/evt=   2.5 rate=0.1022

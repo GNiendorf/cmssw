@@ -1,0 +1,14 @@
+TC POPULATION AND FAKE COUNT BY TYPE (300 evts). 'fake' = tc_isFake (matches no sim).
+tag        type            nTC      nFake   fakeRate  fakes/evt
+FINBASE    pLS          267058      12140    0.04546       40.5
+FINBASE    pT5          172779       1369    0.00792        4.6
+FINBASE    T5cls        128072      11197    0.08743       37.3
+FINBASE    pT3cls        40623       5633    0.13867       18.8
+FINBASE    T4cls         10261       3006    0.29295       10.0
+FINBASE    ALL          618793      33345    0.05389      111.2
+LST        pLS          268362      12308    0.04586       41.0
+LST        pT5          241043       3741    0.01552       12.5
+LST        pT3cls        45445       1581    0.03479        5.3
+LST        T5cls         41826       2661    0.06362        8.9
+LST        T4cls         11514       6902    0.59944       23.0
+LST        ALL          608190      27193    0.04471       90.6

@@ -1,0 +1,1 @@
+ABANDONED at evt 22: the 977 run for -a 5.5 was killed to free disk/CPU for W_A5 (the -a 5.0 twin). The 300-evt result for -a 5.5 stands; -a 5.0 and -a 5.5 differ by 0.0009 of duplicate rate.

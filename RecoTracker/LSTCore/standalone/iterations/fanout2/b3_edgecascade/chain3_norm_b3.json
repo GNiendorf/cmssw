@@ -1,0 +1,153 @@
+{
+ "feature_names": [
+  "cf_nNodes",
+  "cf_nLayers",
+  "cf_sumEdgeLogit",
+  "cf_minEdgeLogit",
+  "cf_meanEdgeLogit",
+  "cf_fullFitChi2PerHit",
+  "cf_rzLineChi2PerHit",
+  "cf_fitKappa",
+  "cf_dKappaFitVsMedianT3",
+  "cf_ptEst",
+  "cf_innermostLayer",
+  "cf_layerSpan",
+  "cf_nPS",
+  "cf_nBarrel",
+  "cf_maxJunctionDegProduct",
+  "cf_chargeConsistency",
+  "cf_maxXyResid",
+  "cf_maxRzResid",
+  "cf_stdEdgeLogit",
+  "cf_minT3FakeScore",
+  "cf_maxT3FakeScore",
+  "cf_meanT3PromptScore",
+  "cf_minT3DisplacedScore",
+  "cf_meanT3DisplacedScore",
+  "cf_dcaXY"
+ ],
+ "conditioning": [
+  {
+   "feature": "cf_fullFitChi2PerHit",
+   "op": "log10_1p"
+  },
+  {
+   "feature": "cf_rzLineChi2PerHit",
+   "op": "log10_1p"
+  },
+  {
+   "feature": "cf_maxJunctionDegProduct",
+   "op": "log10_1p"
+  },
+  {
+   "feature": "cf_fitKappa",
+   "op": "clip",
+   "lo": -1.0,
+   "hi": 1.0
+  },
+  {
+   "feature": "cf_dKappaFitVsMedianT3",
+   "op": "clip",
+   "lo": -2.0,
+   "hi": 2.0
+  },
+  {
+   "feature": "cf_maxXyResid",
+   "op": "log10_1p"
+  },
+  {
+   "feature": "cf_maxRzResid",
+   "op": "log10_1p"
+  },
+  {
+   "feature": "cf_dcaXY",
+   "op": "log10_1p"
+  },
+  {
+   "feature": "cf_dcaXY",
+   "op": "clip",
+   "lo": 0.0,
+   "hi": 1.4913617
+  }
+ ],
+ "mean": [
+  2.3857345581054688,
+  4.827545166015625,
+  5.304496765136719,
+  3.280261516571045,
+  3.5224602222442627,
+  0.014180243015289307,
+  0.2530893385410309,
+  -0.00026046676794067025,
+  0.0009497420978732407,
+  1.6189148426055908,
+  1.982199788093567,
+  5.313788414001465,
+  2.8474936485290527,
+  3.2175467014312744,
+  0.8707643747329712,
+  0.9507086277008057,
+  0.05845644325017929,
+  0.3353782296180725,
+  0.2316211462020874,
+  0.06657838076353073,
+  0.24529436230659485,
+  0.45672765374183655,
+  0.28574034571647644,
+  0.3931506872177124,
+  0.31404533982276917
+ ],
+ "std": [
+  0.5951517224311829,
+  0.7874892354011536,
+  4.266841888427734,
+  2.040034294128418,
+  2.085693120956421,
+  0.07537197321653366,
+  0.2557508945465088,
+  0.009442099370062351,
+  0.003220058511942625,
+  5.790828704833984,
+  1.821805477142334,
+  2.175791025161743,
+  1.1150329113006592,
+  1.804644227027893,
+  0.4572034180164337,
+  0.20817306637763977,
+  0.08151138573884964,
+  0.18827807903289795,
+  0.4554327428340912,
+  0.1367839127779007,
+  0.3023087978363037,
+  0.2684265971183777,
+  0.180174320936203,
+  0.1827956587076187,
+  0.3022611439228058
+ ],
+ "seed": 42,
+ "class_spec": {
+  "0": "fake",
+  "1": "prompt-true (simVxy<1)",
+  "2": "displaced-true (simVxy>=1)"
+ },
+ "displaced_weighting": {
+  "rule": "w=1 fakes; w=pos_weight prompt-true; w=pos_weight*mid for true vxy in [1,5); w=pos_weight*hi for true vxy>=5",
+  "pos_weight": 0.6416518526102213,
+  "displaced_weight_mid": 8.0,
+  "displaced_weight_hi": 16.0,
+  "n_mid_train": 4473,
+  "n_hi_train": 11572
+ },
+ "train_args": {
+  "epochs": 90,
+  "patience": 10,
+  "batch_size": 16384,
+  "lr": 0.001,
+  "hidden": 32,
+  "inputs": [
+   "chains_b3_300evt.root",
+   "chains_b3_498evt.root"
+  ],
+  "pool_train_frac": 0.75
+ }
+}

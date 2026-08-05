@@ -1,0 +1,13 @@
+COVERAGE BY *EVERYTHING EXCEPT THE pT3 CLASS*  (in-cut sims/evt) -- why `uniq` is not
+directly comparable across the two pipelines.
+region       den/ev  LST other  OUR other
+barrel         29.6      24.67      24.05
+trans          13.3      10.91      10.54
+endcap         33.0      21.98      19.64
+TOTAL          75.9      57.56      54.24
+
+So OUR non-pT3 machinery already covers 54.24 in-cut sims/evt against LST's 57.56:
+every sim in that -3.32 gap is a sim LST STILL NEEDS its pT3 class for and we do not.
+
+APPLES-TO-APPLES "EVERYTHING EXCEPT THE pT3 CLASS" COVERAGE (in-cut sims/evt):
+OUR pipeline, pT3 class OFF  barrel 25.34 trans 11.21 endcap 22.26  total 58.81 / 75.9

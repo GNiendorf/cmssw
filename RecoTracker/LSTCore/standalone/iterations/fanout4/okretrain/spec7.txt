@@ -1,0 +1,6 @@
+a2_b10_w050|chainproto_a2|-B 10
+a2_b40_w050|chainproto_a2|-B 40
+a2_b160_w050|chainproto_a2|-B 160
+a2_b40_f025|chainproto_a2|-B 40 -F 0.25
+a2_b160_f025|chainproto_a2|-B 160 -F 0.25
+a2_b10_f025|chainproto_a2|-B 10 -F 0.25

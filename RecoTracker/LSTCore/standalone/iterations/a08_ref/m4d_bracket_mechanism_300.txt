@@ -1,0 +1,10 @@
+T4-class (type 9) and T5-class (type 4) populations, 300 evts, per event
+tag          T4/evt  T4fk/evt  T4fkRate |    T5/evt  T5fk/evt
+A08GATE        34.2      10.0    0.2930 |     426.9      37.3
+P_M4D16        41.6      14.5    0.3491 |     426.8      37.2
+           marginal step from A08GATE: +7.4 T4/evt of which 4.5 fake (61% fake)
+P_M4D20        49.7      19.9    0.4001 |     426.7      37.2
+           marginal step from P_M4D16: +8.1 T4/evt of which 5.4 fake (66% fake)
+P_M4D25        61.6      28.3    0.4593 |     426.6      37.1
+           marginal step from P_M4D20: +11.9 T4/evt of which 8.4 fake (71% fake)
+LST            38.4      23.0    0.5994 |     139.4       8.9

@@ -1,0 +1,33 @@
+########## vxy:10:30
+--- B vs A ---   LOST=7  GAINED=0  net=-7
+  B LOST (A found, B did not) -- A's TC: N=7
+    TC type   : T5=7 (100%)
+    pt        : min=0.93 q25=0.98 med=1.29 q75=2.01 max=5.74
+    |eta|     : min=0.07 q25=0.25 med=0.67 q75=1.02 max=1.06
+    vxy       : min=10.17 q25=14.89 med=16.33 q75=21.25 max=22.06
+    |dxy|     : min=0.22 q25=0.43 med=1.26 q75=5.15 max=11.40
+    |pdgId|   : 11:4  211:2  2212:1
+    eta region: barrel<1.1=7 (100%)
+  B GAINED (B found, A did not) -- B's TC: none
+########## vxy:5:10
+--- B vs A ---   LOST=2  GAINED=0  net=-2
+  B LOST (A found, B did not) -- A's TC: N=2
+    TC type   : T5=2 (100%)
+    pt        : min=1.27 q25=1.27 med=1.44 q75=1.44 max=1.44
+    |eta|     : min=1.21 q25=1.21 med=1.37 q75=1.37 max=1.37
+    vxy       : min=7.19 q25=7.19 med=7.32 q75=7.32 max=7.32
+    |dxy|     : min=0.26 q25=0.26 med=0.63 q75=0.63 max=0.63
+    |pdgId|   : 211:1  2212:1
+    eta region: trans1.1-1.7=2 (100%)
+  B GAINED (B found, A did not) -- B's TC: none
+########## dxy:1:30
+--- B vs A ---   LOST=5  GAINED=0  net=-5
+  B LOST (A found, B did not) -- A's TC: N=5
+    TC type   : T5=5 (100%)
+    pt        : min=0.93 q25=0.98 med=1.29 q75=1.36 max=2.01
+    |eta|     : min=0.05 q25=0.07 med=0.67 q75=0.81 max=1.02
+    vxy       : min=14.89 q25=16.33 med=21.25 q75=22.06 max=37.78
+    |dxy|     : min=1.26 q25=2.13 med=4.97 q75=5.15 max=11.40
+    |pdgId|   : 11:2  211:2  2212:1
+    eta region: barrel<1.1=5 (100%)
+  B GAINED (B found, A did not) -- B's TC: none

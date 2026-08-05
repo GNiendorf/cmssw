@@ -1,0 +1,96 @@
+==============================================================================
+PROTO  dc_diag.root: TCs(pt>0.9)=477805  dup-flagged=30712  dup rate=0.0643  dup groups=18975
+-- per-class TC counts (pt>0.9) and dup-flagged fraction
+   CH      nTC=  258322  dup=   9829  (0.0380 of class, 0.0206 of all TCs)
+   cpLS    nTC=  188230  dup=  20233  (0.1075 of class, 0.0423 of all TCs)
+   cpT3    nTC=   31253  dup=    650  (0.0208 of class, 0.0014 of all TCs)
+-- dup GROUP signature -> excess TCs (n_in_group - 1), pt>0.9 members only
+   signature                      groups   excess    frac   excess by band (B/T/E)
+   cpLS+cpLS                        6927     6927  0.486   0/0/6927
+   CH+cpLS                          4373     4373  0.307   535/374/3464
+   CH+CH                            2127     2127  0.149   381/553/1193
+   CH+cpT3                           291      291  0.020   101/51/139
+   CH+cpLS+cpLS                       94      188  0.013   0/0/188
+   cpLS+cpT3                         151      151  0.011   0/0/151
+   CH+CH+cpLS                         56      112  0.008   6/4/102
+   cpT3+cpT3                          71       71  0.005   14/20/37
+   cpLS+cpLS+cpLS                      5       10  0.001   0/0/10
+   CH+CH+CH                            3        6  0.000   0/0/6
+   CH+CH+cpLS+cpLS                     1        3  0.000   0/0/3
+   cpT3+cpT3+cpT3                      1        2  0.000   0/0/2
+   CH+cpT3+cpT3                        1        2  0.000   0/0/2
+   TOTAL                           14101    14263
+-- pair shared-OT-hit structure (pairs within dup groups, pt>0.9 both)
+   pair               share0      1-3      4-7      >=8    total
+   cpLS+cpLS            7037        0        0        0     7037
+   CH+cpLS              4677        0        0        0     4677
+   CH+CH                  57     2115       21        0     2193
+   CH+cpT3                27      266        0        0      293
+   cpLS+cpT3             151        0        0        0      151
+   cpT3+cpT3              18       14       43        0       75
+-- nLayers (nhitOT/2) profile of pt>0.9 dup-group members, by signature
+   cpLS+cpLS                    0:13854
+   CH+cpLS                      0:4373 4:1192 5:1212 6:1776 7:193
+   CH+CH                        4:458 5:2284 6:1358 7:154
+   CH+cpT3                      3:291 4:64 5:185 6:38 7:4
+   CH+cpLS+cpLS                 0:188 4:74 5:7 6:12 7:1
+   cpLS+cpT3                    0:151 3:151
+==============================================================================
+LST    LSTNtuple_PU200RelVal_300evt.root: TCs(pt>0.9)=475212  dup-flagged=24379  dup rate=0.0513  dup groups=15194
+-- per-class TC counts (pt>0.9) and dup-flagged fraction
+   pT5     nTC=  212553  dup=   2031  (0.0096 of class, 0.0043 of all TCs)
+   pLS     nTC=  188230  dup=  18720  (0.0995 of class, 0.0394 of all TCs)
+   T5      nTC=   33541  dup=   1579  (0.0471 of class, 0.0033 of all TCs)
+   pT3     nTC=   31253  dup=    880  (0.0282 of class, 0.0019 of all TCs)
+   T4      nTC=    9635  dup=   1169  (0.1213 of class, 0.0025 of all TCs)
+-- dup GROUP signature -> excess TCs (n_in_group - 1), pt>0.9 members only
+   signature                      groups   excess    frac   excess by band (B/T/E)
+   pLS+pLS                          6968     6968  0.618   0/0/6968
+   pLS+pT5                          1392     1392  0.123   23/73/1296
+   T5+pLS                            984      984  0.087   359/191/434
+   T4+pLS                            668      668  0.059   8/7/653
+   pT3+pT5                           309      309  0.027   69/52/188
+   T4+pT3                            193      193  0.017   17/33/143
+   T5+T5                             190      190  0.017   123/41/26
+   pLS+pT3                           151      151  0.013   0/0/151
+   T4+pLS+pLS                         47       94  0.008   0/0/94
+   pT3+pT3                            71       71  0.006   14/20/37
+   pT5+pT5                            67       67  0.006   7/20/40
+   T4+pT5                             63       63  0.006   0/11/52
+   T4+T5                              39       39  0.003   0/5/34
+   T5+pT3                             24       24  0.002   15/1/8
+   T4+T5+pLS                           8       16  0.001   0/6/10
+   T5+T5+pLS                           6       12  0.001   12/0/0
+   T5+pLS+pLS                          6       12  0.001   0/0/12
+   pLS+pLS+pLS                         5       10  0.001   0/0/10
+   T4+T5+T5                            2        4  0.000   0/4/0
+   T4+pLS+pT5                          1        2  0.000   0/2/0
+   pT3+pT3+pT3                         1        2  0.000   0/0/2
+   pT3+pT3+pT5                         1        2  0.000   0/0/2
+   TOTAL                           11198    11277
+-- pair shared-OT-hit structure (pairs within dup groups, pt>0.9 both)
+   pair               share0      1-3      4-7      >=8    total
+   pLS+pLS              7037        0        0        0     7037
+   pLS+pT5              1395        0        0        0     1395
+   T5+pLS               1016        0        0        0     1016
+   T4+pLS                771        0        0        0      771
+   pT3+pT5                 0       38      273        0      311
+   T5+T5                   0        2       19      180      201
+   T4+pT3                193        0        0        0      193
+   pLS+pT3               151        0        0        0      151
+   pT3+pT3                18       14       43        0       75
+   pT5+pT5                 3       47       17        0       67
+   T4+pT5                 64        0        0        0       64
+   T4+T5                  51        0        0        0       51
+   T5+pT3                  5       18        1        0       24
+-- nLayers (nhitOT/2) profile of pt>0.9 dup-group members, by signature
+   pLS+pLS                      0:13936
+   pLS+pT5                      0:1392 5:289 6:1053 7:50
+   T5+pLS                       0:984 5:376 6:553 7:55
+   T4+pLS                       0:668 4:668
+   pT3+pT5                      3:309 5:94 6:207 7:8
+   T4+pT3                       3:193 4:193
+==============================================================================
+SIDE BY SIDE excess-TC budget (pt>0.9)
+  proto TCs=477805 dup=30712 (0.0643) | LST TCs=475212 dup=24379 (0.0513)
+  proto excess=14263  LST excess=11277  delta=+2986

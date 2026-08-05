@@ -1,0 +1,12 @@
+P_BASE :: -XCD 2
+P_DC1_6 :: -XCD 2 -DC 1 -DCT 6
+P_DC1_5 :: -XCD 2 -DC 1 -DCT 5
+P_DC1_4 :: -XCD 2 -DC 1 -DCT 4
+P_DC1_3 :: -XCD 2 -DC 1 -DCT 3
+P_DC1_2 :: -XCD 2 -DC 1 -DCT 2
+P_DC2_6 :: -XCD 2 -DC 2 -DCT 6
+P_DC2_5 :: -XCD 2 -DC 2 -DCT 5
+P_DC2_4 :: -XCD 2 -DC 2 -DCT 4
+P_XC1 :: -XCD 2 -XC 1
+P_XC1_DC2_4 :: -XCD 2 -XC 1 -DC 2 -DCT 4
+P_XC1_DC3_4 :: -XCD 2 -XC 1 -DC 3 -DCT 4

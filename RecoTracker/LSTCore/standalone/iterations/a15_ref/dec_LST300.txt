@@ -1,0 +1,107 @@
+========================================================================================================
+A15 DUPLICATE DECOMPOSITION  [LST 300evt]  kind=lst  events=300  OT-hit axis=ON  metric pt>0.90
+========================================================================================================
+
+[1] TOTALS
+    all TCs        nTC=  608190  nDup=  30606  dup=0.05032
+    METRIC pt>0.9  nTC=  473752  nDup=  24535  dup=0.05179   <== headline
+    per event: 1579.2 TC, 81.8 dup (metric universe)
+
+[2] PER-CLASS (metric universe)
+  class        nTC     %TC      nDup    %dup   dupRate | dupRate  B / T / E      | nDup B/T/E
+  PT5       211973   44.7%      2104    8.6%   0.00993 | 0.0012 / 0.0040 / 0.0276 | 119 / 208 / 1777
+  PLS       187399   39.6%     18692   76.2%   0.09974 | 0.0573 / 0.0633 / 0.1024 | 418 / 282 / 17992
+  T5         33577    7.1%      1620    6.6%   0.04825 | 0.0451 / 0.0263 / 0.0810 | 653 / 279 / 688
+  PT3        31344    6.6%       898    3.7%   0.02865 | 0.0079 / 0.0197 / 0.0902 | 143 / 125 / 630
+  T4          9459    2.0%      1221    5.0%   0.12908 | 0.0106 / 0.0341 / 0.2822 | 40 / 58 / 1123
+
+[3] PER REGION (metric universe)
+    B : nTC=  138867  nDup=   1373  dupRate=0.00989  (5.6% of all dups)
+    T : nTC=   75310  nDup=    952  dupRate=0.01264  (3.9% of all dups)
+    E : nTC=  259575  nDup=  22210  dupRate=0.08556  (90.5% of all dups)
+
+[4] DUP PAIRS with >=1 member in the metric universe: 13372 (44.6/evt). [pairs by #members in-universe: 2=11404 1=1968 0=2072]
+  class pair            B        T        E     total   %pairs
+  PLS+PLS               0        0     8284      8284    62.0%
+  PLS+PT5              24       72     1482      1578    11.8%
+  PLS+T5              418      211      597      1226     9.2%
+  PLS+T4               12       14      917       943     7.1%
+  PT3+PT5              78       63      224       365     2.7%
+  PT3+T4               28       32      172       232     1.7%
+  T5+T5               148       37       46       231     1.7%
+  PLS+PT3               0        2      171       173     1.3%
+  PT5+PT5              11       31       52        94     0.7%
+  PT3+PT3              15       17       56        88     0.7%
+  PT5+T4                0       14       57        71     0.5%
+  T4+T5                 0       14       55        69     0.5%
+  PT3+T5                9        2        7        18     0.1%
+  ALL                 743      509    12120     13372
+
+[5] SHARED STRUCTURE (OT hit sets of the two members)
+  class pair      identical   subset  partial  disjoint  one-noOT  both-noOT     total
+  PLS+PLS                 0        0        0         0         0       8284      8284
+  PLS+PT5                 0        0        0         0      1578          0      1578
+  PLS+T5                  0        0        0         0      1226          0      1226
+  PLS+T4                  0        0        0         0       943          0       943
+  PT3+PT5                 0       75      289         1         0          0       365
+  PT3+T4                  0       21      182        29         0          0       232
+  T5+T5                 121        0      110         0         0          0       231
+  PLS+PT3                 0        0        0         0       173          0       173
+  PT5+PT5                 0        0       86         8         0          0        94
+  PT3+PT3                 0        0       63        25         0          0        88
+  PT5+T4                  0        0       71         0         0          0        71
+  T4+T5                   0        0       69         0         0          0        69
+  PT3+T5                  0        0       16         2         0          0        18
+  ALL                   121       96      886        65      3920       8284     13372
+
+[6] GROUP SIZES (sims matched by k TCs; all TCs)
+    k=2 :   15162 groups (50.54/evt)
+    k=3 :      94 groups (0.31/evt)
+
+[7] PER-DUP-TC PARTNER COMPOSITION (metric universe, top 22)
+  PLS    reg E  partners PLS                    :   15148 ( 61.7% of dups)
+  PT5    reg E  partners PLS                    :    1416 (  5.8% of dups)
+  PLS    reg E  partners PT5                    :    1362 (  5.6% of dups)
+  T4     reg E  partners PLS                    :     843 (  3.4% of dups)
+  PLS    reg E  partners T4                     :     726 (  3.0% of dups)
+  T5     reg E  partners PLS                    :     557 (  2.3% of dups)
+  PLS    reg E  partners T5                     :     505 (  2.1% of dups)
+  PLS    reg B  partners T5                     :     383 (  1.6% of dups)
+  T5     reg B  partners PLS                    :     364 (  1.5% of dups)
+  T5     reg B  partners T5                     :     260 (  1.1% of dups)
+  PT3    reg E  partners PT5                    :     215 (  0.9% of dups)
+  PT5    reg E  partners PT3                    :     214 (  0.9% of dups)
+  PLS    reg T  partners T5                     :     204 (  0.8% of dups)
+  T5     reg T  partners PLS                    :     195 (  0.8% of dups)
+  T4     reg E  partners PT3                    :     166 (  0.7% of dups)
+  PT3    reg E  partners PLS                    :     164 (  0.7% of dups)
+  PLS    reg E  partners PT3                    :     152 (  0.6% of dups)
+  PT3    reg E  partners T4                     :     145 (  0.6% of dups)
+  PT5    reg E  partners PT5                    :      95 (  0.4% of dups)
+  PT3    reg E  partners PT3                    :      90 (  0.4% of dups)
+  PT3    reg B  partners PT5                    :      78 (  0.3% of dups)
+  PT5    reg T  partners PLS                    :      76 (  0.3% of dups)
+
+[8] ORACLE YIELDS -- headline dup rate if that cell were solved perfectly
+  cell                                     dup after     delta TCdropped  simsLost    pairs
+  EVERYTHING (all dup pairs)                 0.00000  -0.05179     12129         0    13372
+  classpair PLS+PLS                          0.02003  -0.03176      7518         0     8284
+  classpair PLS+PT5                          0.04566  -0.00613      1456         0     1578
+  classpair PLS+T5                           0.04716  -0.00463      1121         0     1226
+  classpair PLS+T4                           0.04830  -0.00349       832         0      943
+  classpair PT3+PT5                          0.05033  -0.00146       362         0      365
+  classpair PT3+T4                           0.05091  -0.00088       223         0      232
+  classpair T5+T5                            0.05093  -0.00086       216         0      231
+  classpair PLS+PT3                          0.05113  -0.00066       156         0      173
+  classpair PT5+PT5                          0.05143  -0.00036        89         0       94
+  classpair PT3+PT3                          0.05147  -0.00032        81         0       88
+  classpair PT5+T4                           0.05152  -0.00027        70         0       71
+  classpair T4+T5                            0.05154  -0.00025        67         0       69
+  structure identical                        0.05133  -0.00046       118         0      121
+  structure subset                           0.05141  -0.00038        93         0       96
+  structure partial                          0.04841  -0.00338       845         0      886
+  structure disjoint                         0.05154  -0.00024        62         0       65
+  structure one-noOT                         0.03677  -0.01502      3567         0     3920
+  structure both-noOT                        0.02003  -0.03176      7518         0     8284
+
+wrote a15_ref/dec_LST300.json

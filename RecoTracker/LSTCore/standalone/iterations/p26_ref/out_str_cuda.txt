@@ -1,0 +1,8 @@
+[streams] cuda -s 1
+[streams] cuda -s 4
+
+################ cuda  -s 1  vs  -s 4 ################
+CHAIN(mds) POOLED A=44773 B=44773 common=44773 onlyA=0 onlyB=0
+CHAIN(mds) POOLED IDENTITY = 100.0000%
+TC POOLED A=19899 B=19899 common=19846 onlyA=53 onlyB=53
+TC POOLED IDENTITY = 99.7337%

@@ -1,0 +1,17 @@
+================================================================================
+/mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/fin_ref/r_FINBASE.root   events 300   eff denominator 22633 (75.4/evt)
+  attachT5/pT5             7214     24.05/evt   0.3187 of denominator
+  chain/T5                 5263     17.54/evt   0.2325 of denominator
+  carried/pLS              4443     14.81/evt   0.1963 of denominator
+  NOT RECO                 4302     14.34/evt   0.1901 of denominator
+  attachT3/pT3              858      2.86/evt   0.0379 of denominator
+  zp8pLS/pLS                479      1.60/evt   0.0212 of denominator
+  chain/T4                   74      0.25/evt   0.0033 of denominator
+================================================================================
+/mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/rebase_ref/rb_base300.root   events 300   eff denominator 22633 (75.4/evt)
+  carried/pT5             11841     39.47/evt   0.5232 of denominator
+  carried/pLS              4584     15.28/evt   0.2025 of denominator
+  NOT RECO                 4303     14.34/evt   0.1901 of denominator
+  carried/pT3              1252      4.17/evt   0.0553 of denominator
+  carried/T5                609      2.03/evt   0.0269 of denominator
+  carried/T4                 44      0.15/evt   0.0019 of denominator

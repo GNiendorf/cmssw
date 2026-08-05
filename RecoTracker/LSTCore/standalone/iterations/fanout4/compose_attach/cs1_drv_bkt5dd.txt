@@ -1,0 +1,2 @@
+[cs1] bkt5dd : -BK 1 -BT 5 -TR 1 -TT 0.8 -TA 1.0 -F 0.20 -MRI -0.5 -M4 4.0 -M4D -1.2 -PU 1 -C25 0.0 -DD 4
+[cs1] DONE bkt5dd

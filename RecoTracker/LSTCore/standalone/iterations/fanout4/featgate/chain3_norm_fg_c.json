@@ -1,0 +1,183 @@
+{
+ "feature_names": [
+  "cf_nNodes",
+  "cf_nLayers",
+  "cf_sumEdgeLogit",
+  "cf_minEdgeLogit",
+  "cf_meanEdgeLogit",
+  "cf_fullFitChi2PerHit",
+  "cf_rzLineChi2PerHit",
+  "cf_fitKappa",
+  "cf_dKappaFitVsMedianT3",
+  "cf_ptEst",
+  "cf_innermostLayer",
+  "cf_layerSpan",
+  "cf_nPS",
+  "cf_nBarrel",
+  "cf_maxJunctionDegProduct",
+  "cf_chargeConsistency",
+  "cf_maxXyResid",
+  "cf_maxRzResid",
+  "cf_stdEdgeLogit",
+  "cf_minT3FakeScore",
+  "cf_maxT3FakeScore",
+  "cf_meanT3PromptScore",
+  "cf_minT3DisplacedScore",
+  "cf_meanT3DisplacedScore",
+  "cf_dcaSig",
+  "cf_absChainEta",
+  "cf_chainTanLambda",
+  "cf_barrelMDFrac"
+ ],
+ "conditioning": [
+  {
+   "feature": "cf_fullFitChi2PerHit",
+   "op": "log10_1p"
+  },
+  {
+   "feature": "cf_rzLineChi2PerHit",
+   "op": "log10_1p"
+  },
+  {
+   "feature": "cf_maxJunctionDegProduct",
+   "op": "log10_1p"
+  },
+  {
+   "feature": "cf_fitKappa",
+   "op": "clip",
+   "lo": -1.0,
+   "hi": 1.0
+  },
+  {
+   "feature": "cf_dKappaFitVsMedianT3",
+   "op": "clip",
+   "lo": -2.0,
+   "hi": 2.0
+  },
+  {
+   "feature": "cf_maxXyResid",
+   "op": "log10_1p"
+  },
+  {
+   "feature": "cf_maxRzResid",
+   "op": "log10_1p"
+  },
+  {
+   "feature": "cf_dcaSig",
+   "op": "log10_1p"
+  },
+  {
+   "feature": "cf_dcaSig",
+   "op": "clip",
+   "lo": 0.0,
+   "hi": 4.0
+  },
+  {
+   "feature": "cf_absChainEta",
+   "op": "clip",
+   "lo": 0.0,
+   "hi": 3.0
+  },
+  {
+   "feature": "cf_chainTanLambda",
+   "op": "clip",
+   "lo": -8.2,
+   "hi": 8.2
+  }
+ ],
+ "mean": [
+  2.3956828117370605,
+  4.837653160095215,
+  5.349447727203369,
+  3.296312093734741,
+  3.51698899269104,
+  0.01478107925504446,
+  0.25637489557266235,
+  -0.0003034141263924539,
+  0.0009889148641377687,
+  1.5673277378082275,
+  1.9813019037246704,
+  5.322985649108887,
+  2.8541178703308105,
+  3.2200753688812256,
+  0.8657228350639343,
+  0.9521215558052063,
+  0.0600639283657074,
+  0.3374204635620117,
+  0.20960849523544312,
+  0.06647445261478424,
+  0.24820925295352936,
+  0.45509397983551025,
+  0.28394025564193726,
+  0.39341452717781067,
+  1.123894214630127,
+  1.1283189058303833,
+  -0.013420641422271729,
+  0.669440746307373
+ ],
+ "std": [
+  0.6093674302101135,
+  0.7873640656471252,
+  4.3209991455078125,
+  2.022850513458252,
+  2.0576882362365723,
+  0.07795990258455276,
+  0.2589142620563507,
+  0.009453337639570236,
+  0.0033570483792573214,
+  4.66210412979126,
+  1.8280001878738403,
+  2.175814628601074,
+  1.1094220876693726,
+  1.8098571300506592,
+  0.44589927792549133,
+  0.20509064197540283,
+  0.08306919038295746,
+  0.18924584984779358,
+  0.42409688234329224,
+  0.13532163202762604,
+  0.30584266781806946,
+  0.2692390978336334,
+  0.17980323731899261,
+  0.18219129741191864,
+  0.5363228917121887,
+  0.6832964420318604,
+  2.213735818862915,
+  0.36512112617492676
+ ],
+ "seed": 42,
+ "class_spec": {
+  "0": "fake",
+  "1": "prompt-true (simVxy<1)",
+  "2": "displaced-true (simVxy>=1)"
+ },
+ "displaced_weighting": {
+  "rule": "w=1 fakes; w=pos_weight prompt-true; w=pos_weight*mid for true vxy in [1,5); w=pos_weight*hi for true vxy>=5",
+  "pos_weight": 0.6375140860592251,
+  "displaced_weight_mid": 8.0,
+  "displaced_weight_hi": 16.0,
+  "n_mid_train": 4324,
+  "n_hi_train": 11531
+ },
+ "train_args": {
+  "epochs": 120,
+  "patience": 15,
+  "batch_size": 16384,
+  "lr": 0.001,
+  "hidden": 32,
+  "inputs": [
+   "chains_fg_300evt.root",
+   "chains_fg_498evt.root"
+  ],
+  "stage_mode": "all",
+  "pool_train_frac": 0.75,
+  "extra_features": [
+   "absChainEta",
+   "chainTanLambda",
+   "barrelMDFrac"
+  ],
+  "dca_form": "sig",
+  "sigma0_cm": 0.01
+ },
+ "dca_sig_doc": "\ncf_dcaSig = dcaXY / sqrt(cf_fullFitChi2PerHit + SIGMA0^2),  SIGMA0 = 0.01 cm\n\nWHY: dcaXY is |dist(origin, fitted circle centre) - R| from the Kasa fit over the chain's\nMD anchor hits. Its ~10x growth across |eta| 1.1-1.7 for TRUE PROMPT chains is not a\nchange in the underlying tracks -- it is a RESOLUTION effect: when a chain's anchor hits\nstraddle barrel and endcap the circle fit is worse, so the extrapolation to r = 0 is\nworse, so a genuinely prompt track acquires a large fitted DCA. The chain ALREADY measures\nthat degradation itself: cf_fullFitChi2PerHit is the mean squared xy residual (cm^2) of\nthe very same fit that produced dcaXY, so sqrt(cf_fullFitChi2PerHit) is a per-chain\nresidual RMS in cm. Dividing turns dcaXY into an approximate PULL: \"how many of this\nchain's own fit sigmas is the origin off the circle\". A single threshold on a pull means\nthe same thing at every eta, which is exactly what the per-band threshold patches were\nhand-compensating for.\n\nNo eta binning, no fitted constants, no truth -- the scale comes from the chain itself,\nso the quantity is train/serve identical and computable in the kernel from values the\nprototype already has.\n\nSIGMA0 floor: chain MD counts start at 4 (an E2 weld of two T3s), so the circle fit has\n1-2 dof and its residual is a noisy sigma estimate that can land near 0. The 0.01 cm floor\n(well below the ~50-100 um anchor-hit scale) keeps the ratio finite without biasing the\npopulation that has real residuals.\n\nCONDITIONING: log10(1 + dcaSig) then clip [0, 4] (sig up to 1e4), the same log-compress\n+ clip shape the resident applies to raw dcaXY.\n"
+}

@@ -1,0 +1,33 @@
+A/B compare (Root__TC set): proto=/mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/fanout5/recon_eff/re_g0n_hists.root base=/mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/prototype/base300_hists.root
+metric                            proto         base        delta
+-----------------------------------------------------------------
+eff overall (pt sums)            0.3279       0.3264      +0.0014
+eff overall (pt>0.9)             0.8152       0.8136      +0.0017
+eff vxy [0,1)                    0.8480       0.8473      +0.0007
+eff vxy [1,5)                    0.8170       0.7731      +0.0438
+eff vxy [5,10)                   0.7697       0.6530      +0.1167
+eff vxy [10,30)                  0.7549       0.6291      +0.1258
+eff dxy [0,1)                    0.8446       0.8342      +0.0104
+eff dxy [1,5)                    0.6094       0.4989      +0.1105
+eff dxy [5,10)                   0.2877       0.2281      +0.0596
+eff dxy [10,30)                  0.0321       0.0470      -0.0150
+eff barrel |eta|<1.1             0.9273       0.9242      +0.0031
+eff transition 1.1-1.7           0.8856       0.8826      +0.0030
+eff endcap >1.7                  0.7554       0.7556      -0.0002
+dup rate (pt sums)               0.0691       0.0499      +0.0192
+dup rate (pt>0.9)                0.0709       0.0513      +0.0196
+dup rate barrel                  0.0242       0.0097      +0.0144
+dup rate transition              0.0460       0.0130      +0.0329
+dup rate endcap                  0.1109       0.0846      +0.0264
+fake rate (pt sums)              0.1629       0.0451      +0.1178
+fake rate (pt>0.9)               0.1582       0.0455      +0.1127
+fake rate barrel                 0.2623       0.0437      +0.2186
+fake rate transition             0.2248       0.0459      +0.1790
+fake rate endcap                 0.0652       0.0463      +0.0188
+mean nhitOT                       6.539        6.514       +0.025
+mean nhitOT barrel                9.473       10.151       -0.678
+mean nhitOT transition            9.373       10.010       -0.636
+mean nhitOT endcap                3.588        3.559       +0.028
+n TC (fr denom)                  720062       610581      +109481
+n sim (ef denom)                  63603        63603           +0
+wrote /mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/fanout5/recon_eff/re_g0n.json

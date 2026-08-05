@@ -1,0 +1,20 @@
+accepted-chain pairs that share >= 1 OT hit (pt>0.9 both)
+nMDsh  geometry  nhit          DUP     COLLAT   purity
+0      none      1              52       4105    0.013
+0      none      2              44         50    0.468
+0      none      3               4         12    0.250
+1      interior  2             614       2475    0.199
+1      interior  3             489        556    0.468
+1      one-end   2             414       1231    0.252
+1      one-end   3             200        116    0.633
+1      seam      2             185       4111    0.043
+1      seam      3             113        127    0.471
+2      interior  4              10          8    0.556
+2      one-end   4               4          4    0.500
+2      seam      4               7          7    0.500
+
+geometry                        DUP     COLLAT   purity
+(False, 'none')                 100       4167    0.023
+(True, 'interior')             1113       3040    0.268
+(True, 'one-end')               618       1351    0.314
+(True, 'seam')                  305       4245    0.067

@@ -1,0 +1,5 @@
+LST                      LSTT4      rows/evt    38.38  fake 0.5994  dup 0.1171  uniqSim/evt    0.61  covSim/evt    0.77
+LST                      LSTT5      rows/evt   139.42  fake 0.0636  dup 0.0456  uniqSim/evt    9.52  covSim/evt    9.73
+LST                      LSTpLS     rows/evt   894.54  fake 0.0459  dup 0.0890  uniqSim/evt   20.01  covSim/evt   20.61
+LST                      LSTpT3     rows/evt   151.48  fake 0.0348  dup 0.0238  uniqSim/evt    5.36  covSim/evt    5.45
+LST                      LSTpT5     rows/evt   803.48  fake 0.0155  dup 0.0099  uniqSim/evt   41.85  covSim/evt   42.12

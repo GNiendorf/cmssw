@@ -1,0 +1,12 @@
+977 evts -- cover multiplicity per displacement band (cover = TC with >0.75 match)
+tag       band         matchedSim meanCovers  fracWithPix
+W_X4      vxy[0,1)          57705      1.075       0.7607
+W_X4      vxy[1,5)           3653      1.099       0.4281
+W_X4      vxy[5,10)          1436      1.005       0.0522
+W_X4      vxy[10,30)         2929      1.004       0.0014
+W_X4      vxy[30,60)          494      1.000       0.0000
+LST       vxy[0,1)          57802      1.022       0.9735
+LST       vxy[1,5)           3544      1.023       0.7255
+LST       vxy[5,10)          1282      1.009       0.1685
+LST       vxy[10,30)         2564      1.026       0.0039
+LST       vxy[30,60)          392      1.015       0.0000

@@ -1,0 +1,34 @@
+====================================================================================================
+FILE /mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/fin_ref/fin_base977.root (977 evts)
+  barrel      pT5cls  n/evt  320.75 mean 11.622 | 10: 18.9%  12: 81.1%
+  barrel      T5      n/evt   49.05 mean 11.242 | 10: 37.9%  12: 62.1%
+  barrel      T4      n/evt   13.08 mean  8.000 | 8:100.0%
+  barrel      pT3cls  n/evt   60.16 mean  6.000 | 6:100.0%
+  barrel      pLS     n/evt   24.43 mean  0.000 | 0:100.0%
+  transition  pT5cls  n/evt  175.91 mean 11.219 | 10: 39.1%  12: 60.8%
+  transition  T5      n/evt   35.41 mean 10.993 | 10: 50.4%  12: 49.6%
+  transition  T4      n/evt    5.77 mean  8.000 | 8:100.0%
+  transition  pT3cls  n/evt   21.69 mean  6.000 | 6:100.0%
+  transition  pLS     n/evt   14.89 mean  0.000 | 0:100.0%
+  endcap      pT5cls  n/evt  216.66 mean 11.681 | 10: 21.1%  12: 73.8%  14:  5.1%
+  endcap      T5      n/evt   28.34 mean 11.535 | 10: 32.1%  12: 59.1%  14:  8.8%
+  endcap      T4      n/evt   13.21 mean  8.000 | 8:100.0%
+  endcap      pT3cls  n/evt   23.04 mean  6.000 | 6:100.0%
+  endcap      pLS     n/evt  590.79 mean  0.000 | 0:100.0%
+====================================================================================================
+FILE /mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/fin_ref/r_W_X4.root (977 evts)
+  barrel      pT5cls  n/evt  229.39 mean 11.259 | 10: 37.1%  12: 62.9%
+  barrel      T5      n/evt  157.24 mean 11.098 | 10: 45.1%  12: 54.9%
+  barrel      T4      n/evt   10.32 mean  8.000 | 8:100.0%
+  barrel      pT3cls  n/evt   54.08 mean  6.000 | 6:100.0%
+  barrel      pLS     n/evt   32.08 mean  0.000 | 0:100.0%
+  transition  pT5cls  n/evt  114.07 mean 11.044 | 10: 51.6%  12: 44.5%  14:  3.8%
+  transition  T5      n/evt  109.16 mean 10.838 | 10: 59.9%  12: 38.4%  14:  1.8%
+  transition  T4      n/evt    2.64 mean  8.000 | 8:100.0%
+  transition  pT3cls  n/evt   17.74 mean  6.000 | 6:100.0%
+  transition  pLS     n/evt   16.45 mean  0.000 | 0:100.0%
+  endcap      pT5cls  n/evt  193.57 mean 11.136 | 10: 49.5%  12: 44.2%  14:  6.3%
+  endcap      T5      n/evt   64.60 mean 10.986 | 10: 58.7%  12: 33.4%  14:  7.9%
+  endcap      T4      n/evt   13.17 mean  8.000 | 8:100.0%
+  endcap      pT3cls  n/evt   22.16 mean  6.000 | 6:100.0%
+  endcap      pLS     n/evt  578.96 mean  0.000 | 0:100.0%

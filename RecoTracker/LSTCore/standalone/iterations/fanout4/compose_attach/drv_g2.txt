@@ -1,0 +1,7 @@
+[cp] g2 : -ZR 1.55 -ZM4 -1.0 -ZM4D 99 -ZBA 20
+  chain TCs       total=298134 mean=993.8 (T5-class=290214 T4-class=7920; 0 accepted chains below 4 layers dropped by K10)
+  M16 delivery    type-7 in-place upgrades of accepted chains=0 mean=0.0 (of 298134 accepted chain TCs) | extra type-5 TCs=0 mean=0.0
+g2             eff 0.8018 | vxy 0.8345/0.7823/0.7098/0.6879 | dxy 0.8280/0.5365/0.2386/0.0235 | fake 0.0499 dup 0.0647 | TC/evt 2045.1
+   fake_barrel      0.0553
+   fake_transition  0.0529
+   fake_endcap      0.0462

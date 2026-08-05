@@ -1,0 +1,2 @@
+OVERRIDES: -DD 2 -DDK 1 -TT 0.5 -TA 0.5
+FULL: -e 0 -L 0.5 -F 0.3 -G 6 -X 0.5 -M4 3.5 -M5 1e9 -M6 1e9 -M4D -0.75 -MD 1e9 -MR -1.800 -MRI 0.5 -U4 0 -U5 0 -U6 0 -B 10 -H 1 -W 0.50 -FC 1 -PU 2 -C25 2.0 -C25D -2.0 -A 4 -a 999 -D 5 -RT5 1 -BK 1 -BT 5 -TR 1 -TT 0.8 -TA 1.0 -F 0.20 -MRI -0.5 -M4 4.0 -M4D -1.2 -PU 1 -C25 0.0 -ZM4D 1.2 -ZM4 -0.5 -DD 2 -DDK 1 -TT 0.5 -TA 0.5

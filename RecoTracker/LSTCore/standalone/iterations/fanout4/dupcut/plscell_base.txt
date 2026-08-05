@@ -1,0 +1,4 @@
+proto CH+cpLS duplicate GROUPS (pt>0.9 members): 4524
+origin                                             groups    frac   B/T/E
+INHERITED (LST had OT+pLS dup too)                   2807   0.620   363/241/2203
+NEW: LST had pLS only -> chain is a new 2nd TC       1717   0.380   175/126/1416

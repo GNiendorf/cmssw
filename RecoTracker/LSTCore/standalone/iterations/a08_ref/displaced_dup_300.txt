@@ -1,0 +1,13 @@
+DUPLICATE RATE AMONG TCs MATCHED TO A SIM IN EACH DISPLACEMENT BAND (300 evts)
+(denominator = matched TCs in that band, not all TCs; a TC is counted in the band
+ of its first matched sim. Fakes are excluded by construction -- they match no sim.)
+band                 pTC      pDup  pDupRate         lTC      lDup  lDupRate       dRate
+vxy[0,1)           19123      2789   0.14585       18137       811   0.04472    +0.10113
+vxy[1,5)            1200       226   0.18833        1084        54   0.04982    +0.13852
+vxy[5,10)            437         4   0.00915         391         6   0.01535    -0.00619
+vxy[10,30)           927         2   0.00216         854        48   0.05621    -0.05405
+vxy[30,60)           127         0   0.00000         105         8   0.07619    -0.07619
+dxy[0,1)           21198      3021   0.14251       19982       895   0.04479    +0.09772
+dxy[1,5)             553         0   0.00000         511        28   0.05479    -0.05479
+dxy[5,10)             50         0   0.00000          54         4   0.07407    -0.07407
+dxy[10,30)            13         0   0.00000          24         0   0.00000    +0.00000

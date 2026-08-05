@@ -1,0 +1,28 @@
+==============================================================================
+PROTO  dc_t3_fcx1e.root: TCs(pt>0.9)=477267  dup-flagged=29927  dup rate=0.0627  dup groups=18543
+-- per-class TC counts (pt>0.9) and dup-flagged fraction
+   CH      nTC=  257784  dup=   9046  (0.0351 of class, 0.0190 of all TCs)
+   cpLS    nTC=  188230  dup=  20232  (0.1075 of class, 0.0424 of all TCs)
+   cpT3    nTC=   31253  dup=    649  (0.0208 of class, 0.0014 of all TCs)
+-- dup GROUP signature -> excess TCs (n_in_group - 1), pt>0.9 members only
+   signature                      groups   excess    frac   excess by band (B/T/E)
+   cpLS+cpLS                        6927     6927  0.499   0/0/6927
+   CH+cpLS                          4373     4373  0.315   535/374/3464
+   CH+CH                            1750     1750  0.126   267/484/999
+   CH+cpT3                           290      290  0.021   100/51/139
+   CH+cpLS+cpLS                       94      188  0.014   0/0/188
+   cpLS+cpT3                         151      151  0.011   0/0/151
+   CH+CH+cpLS                         54      108  0.008   6/4/98
+   cpT3+cpT3                          71       71  0.005   14/20/37
+   cpLS+cpLS+cpLS                      5       10  0.001   0/0/10
+   CH+CH+cpLS+cpLS                     1        3  0.000   0/0/3
+   cpT3+cpT3+cpT3                      1        2  0.000   0/0/2
+   CH+cpT3+cpT3                        1        2  0.000   0/0/2
+   TOTAL                           13718    13875
+-- nLayers (nhitOT/2) profile of pt>0.9 dup-group members, by signature
+   cpLS+cpLS                    0:13854
+   CH+cpLS                      0:4373 4:1192 5:1211 6:1777 7:193
+   CH+CH                        4:475 5:1795 6:1103 7:127
+   CH+cpT3                      3:290 4:64 5:184 6:38 7:4
+   CH+cpLS+cpLS                 0:188 4:74 5:7 6:12 7:1
+   cpLS+cpT3                    0:151 3:151

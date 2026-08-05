@@ -1,0 +1,10 @@
+F10                      attachT3   rows/evt   121.24  fake 0.0525  dup 0.0151  uniqSim/evt    3.66  covSim/evt    3.71
+F10                      attachT5   rows/evt   575.93  fake 0.0079  dup 0.0064  uniqSim/evt   25.08  covSim/evt   25.22
+F10                      c4         rows/evt    31.05  fake 0.0510  dup 0.5883  uniqSim/evt    0.74  covSim/evt    4.61
+F10                      carried8   rows/evt   863.06  fake 0.0454  dup 0.0837  uniqSim/evt   19.33  covSim/evt   19.62
+F10                      chain      rows/evt   461.11  fake 0.1027  dup 0.0682  uniqSim/evt   26.05  covSim/evt   30.33
+F30                      attachT3   rows/evt   126.76  fake 0.0811  dup 0.0150  uniqSim/evt    3.75  covSim/evt    3.82
+F30                      attachT5   rows/evt   575.93  fake 0.0079  dup 0.0065  uniqSim/evt   25.07  covSim/evt   25.22
+F30                      c4         rows/evt    29.89  fake 0.0516  dup 0.6069  uniqSim/evt    0.68  covSim/evt    4.52
+F30                      carried8   rows/evt   862.03  fake 0.0453  dup 0.0837  uniqSim/evt   19.30  covSim/evt   19.59
+F30                      chain      rows/evt   461.11  fake 0.1027  dup 0.0679  uniqSim/evt   26.08  covSim/evt   30.33

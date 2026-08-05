@@ -1,0 +1,31 @@
+[gate a] leg B: production flag-OFF, 10 events
+[gate a] leg P: prototype (frozen minus attach) on leg B
+  chain TCs       total=9808 mean=980.8 (T5-class=9583 T4-class=225; 0 accepted chains below 4 layers dropped by K10)
+  EX_DUPCC band |eta| >= 1.50 and nNodes <= 1e+09 : braid -WE 0.2 (outside: -W 0.5), claim -FB 0 -FBC 0 (outside: -F / -FC)
+  C1 cell (2n,5L) seen=14206 mean=1420.6 | already killed by branch=2613 (18.4%) | killed by -C25 0 / -C25D -2 = 997 (7.0% of cell, 8.6% of branch survivors)
+  B2 terminal trim examined=15166 (1516.6/evt) trimmed inner=283 outer=2110 total=2393 (239.3/evt, 0.1578 of examined) | -TT 1.2 -TL 5 -TP 1 -TA 1 | 0.461 ms/evt
+  EX chain extend chains=9808 (980.8/evt, noFit=0) cand=22947 | extended chains=601 (60.1/evt, 0.0613 of examined) outer=601 inner=0 | chi2-rejected=78 uniq-rejected=0 fit-rejected=0 | -EX 1 -EXW 0.25 -EXR 2 -EXF 2 -EXU 0 -EXD 60 -EXJ 1 -EXN 1 -EXL 4 -EXS 1 -EXC 0 | 1.693 ms/evt
+  K8 attach       attached=0 mean=0.0 | baseline pixel rows suppressed=7965 mean=796.5 | pairs prefiltered=0 scored=0 (thetaAttach=999.000 head=trained)
+  M16 attach      pairs=1209435 mean=120944 scored=1209435 | chain-attached=0 mean=0.0 | T3-attached=0 mean=0.0 | dca-blocked=0 (-D4 1e+09) | seed-family dedup revoked=0 mean=0.0 (-RD 1)
+  M16 delivery    type-7 in-place upgrades of accepted chains=0 mean=0.0 (of 9808 accepted chain TCs) | extra type-5 TCs=0 mean=0.0
+  M16 suppression carried rows retired: pT5=7965 pT3=0 pLS=0 (total=7965 mean=796.5) | -RT5=1 -RT3=0 -RPS=1 -a=999.000 -AT3=6.000
+  output TCs/evt  mean=1996.9 (pixel kept 1812.6 - suppressed 796.5 + chain 980.8 - k7 0.0 + attach deliveries 0.0)
+  time mean/evt   infer=30.765 weld=6.908 attach=194.690 arb+asm=2.819 fill=8.939 ms
+  wrote /mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/p23_ref/ga_proto.root
+[gate a] leg A: production flag-ON, 10 events
+[gate a] compare
+ evt   proto    prod  common  onlyP  onlyR  per-type only(proto/prod)
+   0    1951    1951    1951      0      0  
+   1    1920    1920    1920      0      0  
+   2    1935    1935    1935      0      0  
+   3    2071    2071    2071      0      0  
+   4    1708    1708    1708      0      0  
+   5    2032    2032    2032      0      0  
+   6    1837    1837    1837      0      0  
+   7    2294    2294    2294      0      0  
+   8    2148    2148    2148      0      0  
+   9    2073    2073    2073      0      0  
+
+TOTAL common=19969 onlyProto=0 onlyProd=0
+GATE (a): PASS - exact TC multiset match on every event
+SCRIPT_EXIT=0

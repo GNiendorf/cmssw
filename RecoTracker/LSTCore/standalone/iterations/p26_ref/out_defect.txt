@@ -1,0 +1,18 @@
+ref : /mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/p26_ref/dfl_A.root  entries=10  branches=473
+new : /mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/p26_ref/dfl_B.root  entries=10  branches=473
+branches compared : 473
+values compared   : 146236685
+mismatches        : 12
+  MISMATCH ls_dAlphaInnerOuters: 25268/1472910 values differ (first at 659007: 0.0 vs 3.2110265e-17)
+  MISMATCH ls_dAlphaInners: 19334/1472910 values differ (first at 659007: 0.0 vs -5.3515866e-19)
+  MISMATCH ls_dAlphaOuters: 37797/1472910 values differ (first at 659007: 0.0 vs 7.525788e+33)
+  MISMATCH ls_dPhiChangeMaxs: 38077/1472910 values differ (first at 659007: 0.0 vs nan)
+  MISMATCH ls_dPhiChangeMins: 38077/1472910 values differ (first at 659007: 0.0 vs 2.66296e-40)
+  MISMATCH ls_dPhiMaxs: 21596/1472910 values differ (first at 659026: 0.0 vs 8e-45)
+  MISMATCH ls_dPhiMins: 38077/1472910 values differ (first at 659007: 0.0 vs nan)
+  MISMATCH ls_dPhis: 38077/1472910 values differ (first at 659007: 0.0 vs nan)
+  MISMATCH ls_rtHis: 38077/1472910 values differ (first at 659007: 0.0 vs 205636960.0)
+  MISMATCH ls_rtLos: 38077/1472910 values differ (first at 659007: 0.0 vs -0.9106394)
+  MISMATCH ls_zHis: 38077/1472910 values differ (first at 659007: 0.0 vs 2.4601928e-07)
+  MISMATCH ls_zLos: 38077/1472910 values differ (first at 659007: 0.0 vs 1.5260679e+34)
+RESULT: FAIL

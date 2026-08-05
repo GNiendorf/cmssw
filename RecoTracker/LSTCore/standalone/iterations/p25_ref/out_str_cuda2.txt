@@ -1,0 +1,13 @@
+**** Following environment variables are going to be unset.
+      X86_64_V3_PATH
+      X86_64_V3_PYTHON3PATH
+      INTEL_LICENSE_FILE
+
+[streams] cuda -s 1
+[streams] cuda -s 4
+
+################ cuda  -s 1  vs  -s 4 ################
+CHAIN(mds) POOLED A=44773 B=44773 common=44773 onlyA=0 onlyB=0
+CHAIN(mds) POOLED IDENTITY = 100.0000%
+TC POOLED A=19898 B=19898 common=19840 onlyA=58 onlyB=58
+TC POOLED IDENTITY = 99.7085%

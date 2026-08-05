@@ -1,0 +1,1402 @@
+120,127c120,134
+< //   pairdump (M7): h4b-shaped pipeline (same knobs as hybrid; the night-winner shape is
+< //                  -G 2 -T4 2 -T5 0 -T6 0 -L 0.5 -F 0.3) through K9 arbitration, then
+< //                  for every ACCEPTED chain with nLayers >= 5 the K8 analytic PREFILTER
+< //                  ONLY runs over all pLS and every surviving pair is written to a flat
+< //                  TTree "pairs" (af_00..af_17 PixelAttach features + label/simVxy/
+< //                  simPt/chainNLayers/evt) -- the attach pair-head training factory.
+< //                  Also reports the prefilter's true-pair efficiency proxy per event
+< //                  and total (binding window attributed for failures).
+---
+> //   pairdump (M7, GENERALIZED at M16): anchor-shaped pipeline (same knobs as hybrid)
+> //                  through K9 arbitration, then the K8 analytic PREFILTER runs over all
+> //                  pLS for EVERY target of the GENERAL pLS->OT attach and every surviving
+> //                  pair is written to a flat TTree "pairs" (af_00..af_18 PixelAttach
+> //                  features + ttype/label/wgt/simVxy/simPt/chainNLayers/evt) -- the
+> //                  attach pair-head training factory. Target kinds (-PDT):
+> //                    ttype 0 = ACCEPTED CHAIN with nLayers >= 5 (the M7 universe),
+> //                    ttype 1 = BARE T3, i.e. a T3 in NO K9-accepted chain (mask built
+> //                              AFTER arbitration) -- the pT3-class delivery universe.
+> //                  ONE prefilter and ONE feature builder serve both (target-side slots
+> //                  7-11 mapped for T3s, new feature 18 = targetType). Reports pair
+> //                  counts, true fractions, DISPLACED STRATA and the prefilter true-pair
+> //                  efficiency proxy PER TARGET KIND (binding window attributed for
+> //                  failures). -PDC/-PDS downsample FAKE writes per kind (wgt records the
+> //                  stride); reported statistics always use the full enumeration.
+139a147
+> #include "AttachDelivery.h"
+309a318,358
+>                "  -A 4        M16 GENERAL pLS->OT ATTACH AS THE DELIVERY PATH (plan 11).\n"
+>                "              One target-agnostic attach over {5+-layer chains, bare T3s};\n"
+>                "              ONE contention rule (one pLS, one owner across target types);\n"
+>                "              attached chains are PIXEL-BACKED deliveries -- they pre-claim\n"
+>                "              their OT hits next to the surviving carried pixel rows and are\n"
+>                "              emitted unconditionally as type-7 TCs (pixel hits + OT hits,\n"
+>                "              pt = pLS ptIn), so they never walk the K9 greedy claim.\n"
+>                "              ORDER (the M16 mandate): attach decisions -> suppression set ->\n"
+>                "              pre-claim owner list -> K9 -> bare-T3 attach -> delivery.\n"
+>                "              Composes with -PU (which is what makes the order matter: a\n"
+>                "              carried row that attach replaced must NOT pre-claim).\n"
+>                "  -RT5 <0|1>  (-A 4) REPLACEMENT A/B, pT5 class: 1 = drop EVERY carried type-7\n"
+>                "              row; the attached chains are the whole pT5-class delivery. Also\n"
+>                "              disables the partOfPT5 half of the K9 pixel-consumed drop (the\n"
+>                "              rows it protects no longer exist). 0 = additive (only the\n"
+>                "              attached pLS's own carried rows are suppressed).\n"
+>                "  -RT3 <0|1>  (-A 4) REPLACEMENT A/B, pT3 class: 1 = drop EVERY carried type-5\n"
+>                "              row; (pLS, bare-T3) pairs deliver type-5 TCs instead (pixel hits\n"
+>                "              + the T3's 6 OT hits, pt = pLS ptIn). Also disables the\n"
+>                "              partOfPT3 half of the pixel-consumed drop.\n"
+>                "  -AT3 <v>    (-A 4) PER-CLASS attach margin for bare-T3 targets on the SAME\n"
+>                "              attach-logit scale as -a (default 6.0 = tight). The per-length\n"
+>                "              principle: a 3-layer target carries the least independent\n"
+>                "              evidence, so it must be the most certain pair to deliver.\n"
+>                "  -RPS <0|1>  (-A 4) bare-pLS contention: 1 = drop carried type-8 rows whose\n"
+>                "              pLS attached anywhere OR lost a contention above -a / -AT3\n"
+>                "              (i.e. had real OT evidence but is not the owner). The\n"
+>                "              contention rule replacing CrossCleanpLS / plsembdnn.\n"
+>                "  -RD <0|1>   (-A 4) SEED-FAMILY dedup of the attach owners (default 0 = off):\n"
+>                "              among attached pLS, one sharing >= 2 pixel hit rows with a\n"
+>                "              higher-logit attached pLS loses its attachment (its target\n"
+>                "              returns to the K9 walk and its carried rows survive). This is\n"
+>                "              plan 11's 'retain only the upstream pLS seed dup-clean', moved\n"
+>                "              inside the contention rule; sim-blind, mirroring production\n"
+>                "              pixelHitsOverlapAny. Without it a track with N duplicate pixel\n"
+>                "              seeds gets N attach deliveries.\n"
+>                "  -D4 <cm>    (-A 4) attach-eligibility dcaXY gate, default 1e9 = OFF.\n"
+>                "              Deliberately NOT the -A 2 default of 1.0: the M7c gate blocks\n"
+>                "              displaced chains from attaching, and the plan-11 mandate is that\n"
+>                "              the low-vxy displaced-with-pixel-seed population is upside to\n"
+>                "              CLAIM. Set it only to A/B the M7c dilution guard back on.\n"
+467a517,552
+>   // ============ FANOUT4 "transition" BAND-AWARE LEVERS (all default = bit-exact no-op) ==
+>   // Motivation: |eta| in [1.1, 1.7) is the worst band on BOTH axes at once (fake .0765 vs
+>   // LST .0459, eff .8603 vs .8826). Production LST already ships eta-binned WP tables, so
+>   // an eta-conditioned threshold is an accepted design pattern here. Every lever below is
+>   // an ADDITIVE delta applied to an EXISTING -G 6 / K9 threshold, and ONLY for chains whose
+>   // eta falls in the band. The chain's eta is the K10 TC eta by construction --
+>   // ev.t3_eta of the innermost member T3 (K9K10.cc: tc.eta = ev.t3_eta[t3Inner]) -- so the
+>   // band a chain is tightened in is exactly the band its TC is counted in.
+>   //   -ZE1 / -ZE2 : band edges (defaults 1.1 / 1.7). -ZE2 <= -ZE1 disables every lever.
+>   //   -ZRI  : added to -MRI, the IP-5+ OR-rescue mX floor  (the anchor's live IP-5+ cut,
+>   //           since -M5/-M6 are 1e9: an IP 5+ chain survives iff mX >= -MRI).
+>   //   -ZR   : added to -MR, the exempt-5+ OR-rescue mX floor (same reasoning, -MD = 1e9).
+>   //   -ZM4  : added to -M4,  the T4-class IP mX kill.
+>   //   -ZM4D : added to -M4D, the exempt T4-class mD kill.
+>   //   -ZCP / -ZCD : added to -C25 / -C25D, the (nNodes=2, nLayers=5) cell margins.
+>   //   -ZBA  : EXTRA -B order-key alpha in the band (ordering only; thresholds untouched,
+>   //           so this can never kill a chain -- it only makes fake-suspect band chains
+>   //           claim later, which frees their hits for real band chains).
+>   // POSITIVE values TIGHTEN (kill more); negative values LOOSEN (keep more).
+>   //   -ZR5 / -ZR6 : PER-LENGTH refinements of -ZR, added on top of it for exempt 5+ chains
+>   //           with nLayers == 5 / nLayers >= 6 respectively. The two lengths behave very
+>   //           differently in the band: at an mX floor of 0 the nL=5 exempt slice kills
+>   //           1532 fakes for 745 trues (2.06:1) while the nL>=6 slice kills 357 fakes for
+>   //           436 trues (0.82:1) -- the long exempt chains are where the genuinely
+>   //           displaced tracks live, so the tightening must not reach them.
+>   float zEta1 = 1.1f, zEta2 = 1.7f;
+>   float zdRI = 0.f, zdR = 0.f, zdM4 = 0.f, zdM4D = 0.f, zdCP = 0.f, zdCD = 0.f, zdAlpha = 0.f;
+>   //   -ZIL 1 : restrict EVERY band kill lever to chains whose INNERMOST chain MD sits in
+>   //           layer 1. Rationale (measured): a band chain that starts at layer >= 2 is
+>   //           6.0% of the band population but 21.9% of the band fakes AND is where the
+>   //           genuinely large-dxy tracks live -- a real dxy>5 track physically cannot
+>   //           leave a layer-1 MD. Tightening the layer-1 slice at an mX floor of 0.5
+>   //           puts 2 dxy>=5 sims at risk; the same floor without the restriction puts 21
+>   //           at risk, for a comparable fake gain. So the restriction buys the displaced
+>   //           floors back almost for free. 0 = no restriction (bit-exact).
+>   float zdR5 = 0.f, zdR6 = 0.f, zInLay1 = 0.f;
+517a603,636
+>   // M16 GENERAL ATTACH DELIVERY (-A 4). All default to the legacy value, so -A 0..3 and
+>   // every pre-M16 command line are bit-exact.
+>   float replT5 = 0.f;              // -RT5: drop all carried type-7 rows (full pT5 replacement)
+>   float replT3 = 0.f;              // -RT3: drop all carried type-5 rows (full pT3 replacement)
+>   float replPls = 0.f;             // -RPS: drop contested carried type-8 rows
+>   float thetaAttachT3 = 6.0f;      // -AT3: per-class bare-T3 attach margin (tight by default)
+>   float dcaAttach4 = 1e9f;         // -D4: -A 4 attach-eligibility dca gate (default OFF)
+>   float seedDupClean = 0.f;        // -RD: seed-family dedup of the attach owners. Plan 11
+>                                    // keeps exactly ONE piece of the old crossclean stack --
+>                                    // "retain only the upstream pLS seed dup-clean" -- and
+>                                    // this is it, expressed inside the contention rule.
+>                                    // Sim-blind (>= 2 shared pixel hit rows, the production
+>                                    // pixelHitsOverlapAny criterion; pLS_isDuplicate is
+>                                    // TRUTH-derived in the ntuple and must never be read).
+> 
+>   // M16 pairdump scope / volume knobs (read ONLY by pairdump mode; inert everywhere else,
+>   // so no other mode's bit-exactness can be touched by them).
+>   //   -PDT 0 = chain targets only (the M7 dump), 1 = bare T3 targets only, 2 = BOTH
+>   //        (default: the general attach's full target universe).
+>   //   -PDC / -PDS = keep 1 in N FAKE pairs of the chain / bare-T3 target kind when
+>   //        WRITING (TRUE pairs are never downsampled; every reported statistic is
+>   //        computed on the FULL enumeration). The bare-T3 universe is ~35x the chain
+>   //        universe, so an undownsampled joint dump is tens of GB with no training value
+>   //        beyond the fake variety it already has; the kept fakes carry wgt = N.
+>   //   -PDN <first> = FIRST LST entry to process (default 0). The bare-T3 universe is
+>   //        ~200x the chain universe per event, so a full 300-event general dump runs
+>   //        ~16 min; -PDN lets it be produced in equal chunks (-PDN 0/100/200 with
+>   //        -n 100) whose "pairs" trees concatenate into one training set. Chunking
+>   //        cannot change any result: every event is processed independently.
+>   float pdTargetMode = 2.f;
+>   float pdFakeStrideChain = 1.f;
+>   float pdFakeStrideT3 = 1.f;
+>   float pdFirstEvt = 0.f;
+> 
+599a719,765
+>     // FANOUT4 transition band-aware levers (see the block next to kGateKill).
+>     else if (s == "-ZE1")
+>       dst = &zEta1;
+>     else if (s == "-ZE2")
+>       dst = &zEta2;
+>     else if (s == "-ZRI")
+>       dst = &zdRI;
+>     else if (s == "-ZIL")
+>       dst = &zInLay1;
+>     else if (s == "-ZR5")
+>       dst = &zdR5;
+>     else if (s == "-ZR6")
+>       dst = &zdR6;
+>     else if (s == "-ZR")
+>       dst = &zdR;
+>     else if (s == "-ZM4D")
+>       dst = &zdM4D;
+>     else if (s == "-ZM4")
+>       dst = &zdM4;
+>     else if (s == "-ZCP")
+>       dst = &zdCP;
+>     else if (s == "-ZCD")
+>       dst = &zdCD;
+>     else if (s == "-ZBA")
+>       dst = &zdAlpha;
+>     // M16 general-attach delivery flags. They MUST be consumed here: getopt's "-R"/"-A"
+>     // would otherwise swallow "-RT5"/"-AT3" as a value.
+>     else if (s == "-RT5")
+>       dst = &replT5;
+>     else if (s == "-RT3")
+>       dst = &replT3;
+>     else if (s == "-RPS")
+>       dst = &replPls;
+>     else if (s == "-AT3")
+>       dst = &thetaAttachT3;
+>     else if (s == "-D4")
+>       dst = &dcaAttach4;
+>     else if (s == "-RD")
+>       dst = &seedDupClean;
+>     else if (s == "-PDT")  // M16 pairdump: target-kind scope
+>       dst = &pdTargetMode;
+>     else if (s == "-PDC")  // M16 pairdump: fake downsample stride, chain targets
+>       dst = &pdFakeStrideChain;
+>     else if (s == "-PDS")  // M16 pairdump: fake downsample stride, bare-T3 targets
+>       dst = &pdFakeStrideT3;
+>     else if (s == "-PDN")  // M16 pairdump: first LST entry (chunked dumps)
+>       dst = &pdFirstEvt;
+673,674c839,840
+<         if (attachMode < 0 || attachMode > 3) {
+<           std::fprintf(stderr, "Error: -A expects 0, 1, 2, or 3.\n");
+---
+>         if (attachMode < 0 || attachMode > 4) {
+>           std::fprintf(stderr, "Error: -A expects 0, 1, 2, 3, or 4.\n");
+746a913,923
+>   // M16: the replacement modes only mean anything inside the general attach (-A 4). Fail
+>   // loudly rather than silently ignore -- an A/B run with a mistyped -A is a wasted run.
+>   const bool wantRepl = replT5 >= 0.5f || replT3 >= 0.5f || replPls >= 0.5f;
+>   if (wantRepl && attachMode != 4) {
+>     std::fprintf(stderr, "Error: -RT5/-RT3/-RPS require -A 4 (M16 general attach delivery).\n");
+>     return 1;
+>   }
+>   if (attachMode == 4 && mode != "hybrid") {
+>     std::fprintf(stderr, "Error: -A 4 is a hybrid-mode delivery path.\n");
+>     return 1;
+>   }
+823a1001
+>     long long totPixPT5 = 0, totPixPT3 = 0, totStagePass = 0;
+862a1041,1062
+>       // M17: staging census (the two K9 pixel-consumed predicates). The dump carries them
+>       // per chain; these counters make the per-event funnel visible in the log too.
+>       {
+>         const int nT3d = static_cast<int>(ev.t3_lsIdx0.size());
+>         const bool havePixFlagsD = static_cast<int>(ev.t3_partOfPT5.size()) == nT3d &&
+>                                    static_cast<int>(ev.t3_partOfPT3.size()) == nT3d;
+>         long long nP5 = 0, nP3 = 0, nStage = 0;
+>         for (long long c = 0; c < nChains && havePixFlagsD; ++c) {
+>           bool p5 = false, p3 = false;
+>           for (int k = chains.offsets[c]; k < chains.offsets[c + 1]; ++k) {
+>             const int t3n = chains.items[k];
+>             p5 = p5 || ev.t3_partOfPT5[t3n];
+>             p3 = p3 || ev.t3_partOfPT3[t3n];
+>           }
+>           nP5 += p5 ? 1 : 0;
+>           nP3 += p3 ? 1 : 0;
+>           nStage += (!p3) ? 1 : 0;  // ctl_noatt staging: -RT5 1 (no PT5 drop) / -RT3 0 (PT3 drops)
+>         }
+>         totPixPT5 += nP5;
+>         totPixPT3 += nP3;
+>         totStagePass += nStage;
+>       }
+892a1093,1098
+>     std::printf("  M17 staging census: partOfPT5=%lld (%.4f) partOfPT3=%lld (%.4f) | ctl_noatt stage-pass"
+>                 " (-RT5 1 -RT3 0 => !partOfPT3) = %lld (%.4f)\n",
+>                 totPixPT5, totChains > 0 ? static_cast<double>(totPixPT5) / static_cast<double>(totChains) : 0.0,
+>                 totPixPT3, totChains > 0 ? static_cast<double>(totPixPT3) / static_cast<double>(totChains) : 0.0,
+>                 totStagePass,
+>                 totChains > 0 ? static_cast<double>(totStagePass) / static_cast<double>(totChains) : 0.0);
+984,985c1190,1191
+<     // M7: K8 attach-head training dump (mode contract in the header comment). The
+<     // pipeline through K9 mirrors hybrid mode EXACTLY (same knobs, same -G semantics);
+---
+>     // M7 / M16: K8 attach pair dump (mode contract in the header comment). The pipeline
+>     // through K9 mirrors hybrid mode EXACTLY (same knobs, same -G semantics);
+987a1194,1200
+>     //
+>     // M16 GENERALIZATION: the dump now enumerates BOTH target kinds of the general
+>     // pLS->OT attach -- accepted chains (ttype 0) and BARE T3s (ttype 1, T3s in no
+>     // K9-accepted chain, mask computed AFTER arbitration) -- through ONE prefilter and
+>     // ONE feature builder. Everything is reported PER TARGET KIND, including the
+>     // displaced strata of the true-pair population, because the pT5-class and pT3-class
+>     // deliveries are judged separately (plan 11).
+988a1202,1214
+>     const int pdMode = static_cast<int>(pdTargetMode);
+>     const long long strideChain = std::max(1LL, static_cast<long long>(pdFakeStrideChain));
+>     const long long strideT3 = std::max(1LL, static_cast<long long>(pdFakeStrideT3));
+>     if (pdMode < 0 || pdMode > 2) {
+>       std::fprintf(stderr, "Error: -PDT expects 0 (chains only), 1 (bare T3 only) or 2 (both).\n");
+>       return 1;
+>     }
+>     const bool doChainTargets = (pdMode == 0 || pdMode == 2);
+>     const bool doT3Targets = (pdMode == 1 || pdMode == 2);
+>     if (q3Floor5 > -1e9f || q3Floor4 > -1e9f)
+>       std::fprintf(stderr,
+>                    "WARNING: pairdump does not apply the -Q4/-Q5 POST-claim mX floors;"
+>                    " the accepted set (and hence the bare-T3 universe) will differ from hybrid.\n");
+992c1218,1220
+<         " | prefDTanL=%.3f prefDPhi=%.3f attachHead=%s\n",
+---
+>         " | prefDTanL=%.3f prefDPhi=%.3f attachHead=%s\n"
+>         "  M16 targets: chains=%s bareT3=%s (-PDT %d) | fake write stride chain=%lld T3=%lld"
+>         " | kAttachFeat=%d\n",
+995c1223,1224
+<         attachHeadAvailable() ? "trained" : "sentinel");
+---
+>         attachHeadAvailable() ? "trained" : "sentinel", doChainTargets ? "on" : "off",
+>         doT3Targets ? "on" : "off", pdMode, strideChain, strideT3, kAttachFeat);
+998,1003c1227,1257
+<     long long totChains5 = 0, totPairs = 0, totTruePairs = 0;
+<     long long totProxyDen = 0, totProxyNum = 0;
+<     long long totBindDTanL = 0, totBindDPhi = 0, totBindBoth = 0;
+<     double totEnumMs = 0.0;
+< 
+<     for (long long i = 0; i < nRun; ++i) {
+---
+>     // Per-target-kind accounting (index 0 = chain targets, 1 = bare T3 targets).
+>     long long totTargets[2] = {0, 0};
+>     long long totPairsT[2] = {0, 0};
+>     long long totTrueT[2] = {0, 0};
+>     long long totWrittenT[2] = {0, 0};
+>     long long totProxyDenT[2] = {0, 0}, totProxyNumT[2] = {0, 0};
+>     long long totBindDTanLT[2] = {0, 0}, totBindDPhiT[2] = {0, 0}, totBindBothT[2] = {0, 0};
+>     // Displaced strata of the sim vertex radius, shared by the pair-level and the
+>     // target-level (proxy) tables. Band 5 = "pileup-only shared sim" (no accepted row =>
+>     // no kinematics); it is counted, never silently dropped.
+>     constexpr int kNVxy = 6;
+>     const float kVxyEdge[kNVxy] = {1.f, 5.f, 10.f, 30.f, 1e9f, -1.f};
+>     const char* const kVxyName[kNVxy] = {"[0,1)", "[1,5)", "[5,10)", "[10,30)", ">=30", "PU-only"};
+>     auto vxyBand = [&](float vxy) -> int {
+>       if (vxy < 0.f)
+>         return 5;  // -999 sentinel: shared sim is pileup-only
+>       for (int b = 0; b < 4; ++b)
+>         if (vxy < kVxyEdge[b])
+>           return b;
+>       return 4;
+>     };
+>     long long truePairVxy[2][kNVxy] = {{0}, {0}};
+>     long long proxyDenVxy[2][kNVxy] = {{0}, {0}};
+>     long long proxyNumVxy[2][kNVxy] = {{0}, {0}};
+>     double totEnumMs = 0.0, totLabelMs = 0.0;
+> 
+>     const long long pdFirst = static_cast<long long>(pdFirstEvt);
+>     if (pdFirst != 0)
+>       std::printf("  chunked dump: first LST entry = %lld (-PDN)\n", pdFirst);
+>     for (long long k = 0; k < nRun; ++k) {
+>       const long long i = pdFirst + k;
+1024c1278,1293
+<       std::vector<char> exemptMask;  // M9 -G 3/4: dca-exempt chains use the -U thresholds
+---
+>       // M16: the K9 configuration below MIRRORS hybrid mode through the M15 anchor
+>       // (-G 6 3-class gate + C1 cell kill, -OK/-B ordering, -W braid, -H hit-level
+>       // claim, -FC absolute claim budget, -PU claim-universe unification). The M7 dump
+>       // predates all of it and only knew -G 1..5 + -F, so the accepted set it produced
+>       // was NOT the anchor's -- and the accepted set is exactly what defines both target
+>       // universes here (chains directly, bare T3s by complement). ATTACH IS NEVER RUN in
+>       // this mode (-A is ignored): the dump is the pre-head training factory.
+>       std::vector<char> exemptMask;  // dca-exempt chains use the -U thresholds
+>       std::vector<float> dcaCache;
+>       auto chainDca = [&](int c) -> float {
+>         if (dcaCache.empty())
+>           dcaCache.assign(chains.score.size(), -1.f);
+>         if (dcaCache[c] < 0.f)
+>           dcaCache[c] = k8ChainDcaXY(ev, chains, c);
+>         return dcaCache[c];
+>       };
+1026,1040c1295,1308
+<         // Same -G semantics as hybrid mode (incl. the M9 -G 3/4 DCA split; memoized dca).
+<         std::vector<float> dcaCache;
+<         auto chainDca = [&](int c) -> float {
+<           if (dcaCache.empty())
+<             dcaCache.assign(chains.score.size(), -1.f);
+<           if (dcaCache[c] < 0.f)
+<             dcaCache[c] = k8ChainDcaXY(ev, chains, c);
+<           return dcaCache[c];
+<         };
+<         if (chainGateMode >= 3)
+<           exemptMask.assign(gateLogit.size(), 0);
+<         for (std::size_t c = 0; c < gateLogit.size(); ++c) {
+<           if (chainGateMode == 5) {
+<             // Same -G 5 semantics as hybrid: legacy ordering kept, gate as a kill,
+<             // -Z exempt-T4 dca floor.
+---
+>         if (chainGateMode == 6) {
+>           // ANGLE-1 -G 6 (the anchor's gate), verbatim from hybrid mode.
+>           const std::size_t nC = gateLogit.size();
+>           std::vector<float> dcaAll(nC);
+>           for (std::size_t c = 0; c < nC; ++c)
+>             dcaAll[c] = chainDca(static_cast<int>(c));
+>           std::vector<float> z3;
+>           runChainInference3(cf, dcaAll, z3);
+>           exemptMask.assign(nC, 0);
+>           for (std::size_t c = 0; c < nC; ++c) {
+>             const float* z = &z3[3 * c];
+>             const float mP = z[1] - z[0];
+>             const float mD = z[2] - z[0];
+>             const float mX = std::max(z[1], z[2]) - z[0];
+1042,1045c1310,1320
+<             const float exemptFloor = nL <= 4 ? std::max(dcaSplit, t4ExemptDcaMin) : dcaSplit;
+<             if (chainDca(static_cast<int>(c)) < exemptFloor) {
+<               const float thr = nL >= 6 ? thetaChain6 : (nL == 5 ? thetaChain5 : thetaChain4);
+<               if (gateLogit[c] < thr)
+---
+>             if (nL <= 4) {
+>               if (dcaAll[c] >= std::max(dcaSplit, t4ExemptDcaMin)) {
+>                 if (mD < m3Theta4D)
+>                   chains.score[c] -= kGateKill;
+>                 exemptMask[c] = 1;
+>               } else if (mX < m3Theta4) {
+>                 chains.score[c] -= kGateKill;
+>               }
+>             } else if (dcaAll[c] < dcaSplit) {
+>               const float thr = nL >= 6 ? m3Theta6 : m3Theta5;
+>               if (mP < thr && mX < m3ThetaRI)
+1047a1323,1324
+>               if (mD < m3ThetaD && mX < m3ThetaR)
+>                 chains.score[c] -= kGateKill;
+1050c1327,1357
+<             continue;
+---
+>             if (c25Theta > -1e9f && nL == 5 && (chains.offsets[c + 1] - chains.offsets[c]) == 2) {
+>               if (chains.score[c] > -0.5f * kGateKill && mP < c25Theta && mD < c25ThetaD)
+>                 chains.score[c] -= kGateKill;
+>             }
+>           }
+>         } else {
+>           if (chainGateMode >= 3)
+>             exemptMask.assign(gateLogit.size(), 0);
+>           for (std::size_t c = 0; c < gateLogit.size(); ++c) {
+>             if (chainGateMode == 5) {
+>               // Same -G 5 semantics as hybrid: legacy ordering kept, gate as a kill,
+>               // -Z exempt-T4 dca floor.
+>               const int nL = chains.nLayers[c];
+>               const float exemptFloor = nL <= 4 ? std::max(dcaSplit, t4ExemptDcaMin) : dcaSplit;
+>               if (chainDca(static_cast<int>(c)) < exemptFloor) {
+>                 const float thr = nL >= 6 ? thetaChain6 : (nL == 5 ? thetaChain5 : thetaChain4);
+>                 if (gateLogit[c] < thr)
+>                   chains.score[c] -= kGateKill;
+>               } else {
+>                 exemptMask[c] = 1;
+>               }
+>               continue;
+>             }
+>             const bool useGate = chainGateMode == 1 || (chainGateMode == 2 && chains.nLayers[c] <= 4) ||
+>                                  (chainGateMode == 3 && chainDca(static_cast<int>(c)) < dcaSplit) ||
+>                                  (chainGateMode == 4 &&
+>                                   (chains.nLayers[c] <= 4 || chainDca(static_cast<int>(c)) < dcaSplit));
+>             if (useGate)
+>               chains.score[c] = gateLogit[c];
+>             else if (chainGateMode >= 3)
+>               exemptMask[c] = 1;
+1052,1059d1358
+<           const bool useGate = chainGateMode == 1 || (chainGateMode == 2 && chains.nLayers[c] <= 4) ||
+<                                (chainGateMode == 3 && chainDca(static_cast<int>(c)) < dcaSplit) ||
+<                                (chainGateMode == 4 &&
+<                                 (chains.nLayers[c] <= 4 || chainDca(static_cast<int>(c)) < dcaSplit));
+<           if (useGate)
+<             chains.score[c] = gateLogit[c];
+<           else if (chainGateMode >= 3)
+<             exemptMask[c] = 1;
+1064,1066c1363,1365
+<       ap.thetaChain4 = chainGateMode == 5 ? kNoCutTheta : thetaChain4;
+<       ap.thetaChain5 = chainGateMode == 5 ? kNoCutTheta : thetaChain5;
+<       ap.thetaChain6 = chainGateMode == 5 ? kNoCutTheta : thetaChain6;
+---
+>       ap.thetaChain4 = chainGateMode >= 5 ? kNoCutTheta : thetaChain4;
+>       ap.thetaChain5 = chainGateMode >= 5 ? kNoCutTheta : thetaChain5;
+>       ap.thetaChain6 = chainGateMode >= 5 ? kNoCutTheta : thetaChain6;
+1072a1372,1376
+>       if (claimCountMD >= 0.f) {  // B4 -FC/-FCX (MD units; -H 1 doubles the budget)
+>         const int nMDbudget = static_cast<int>(std::floor(claimCountMD));
+>         ap.maxClaimedItems = hitLevelClaim ? 2 * nMDbudget : nMDbudget;
+>         ap.claimCountExclusive = claimCountExcl >= 0.5f;
+>       }
+1073a1378,1426
+>       // B4 -OK / A8 -B: ordering key reshape (thresholds stay on chains.score).
+>       const int okMode = static_cast<int>(std::lround(orderKeyMode));
+>       std::vector<float> orderKeyVec;
+>       const bool haveGateKey = gateLogit.size() == chains.score.size();
+>       const bool wantPenalty = fakeOrderAlpha > 0.f && haveGateKey;
+>       if (wantPenalty || okMode != 0) {
+>         orderKeyVec.resize(chains.score.size());
+>         for (std::size_t c = 0; c < orderKeyVec.size(); ++c) {
+>           float base = chains.score[c];
+>           const float nL = static_cast<float>(std::max(1, chains.nLayers[c]));
+>           if (okMode == 1) {
+>             base -= lambdaLen * nL;
+>           } else if (okMode == 2) {
+>             base /= nL;
+>           } else if (okMode == 3) {
+>             const int nEdges = std::max(1, chains.offsets[c + 1] - chains.offsets[c] - 1);
+>             base = (base - lambdaLen * nL) / static_cast<float>(nEdges);
+>           }
+>           orderKeyVec[c] = base - (wantPenalty ? fakeOrderAlpha * std::max(0.f, -gateLogit[c]) : 0.f);
+>         }
+>         ap.orderKey = &orderKeyVec;
+>       }
+>       ap.braidFrac = braidFrac;                 // A8 -W
+>       ap.hitLevelClaim = hitLevelClaim != 0;    // A8 -H
+>       // B1 -PU: pre-claim the kept baseline pixel TCs' outer-tracker hits.
+>       std::vector<std::vector<int>> pixOwnerHits;
+>       if (preClaimMode > 0) {
+>         const std::size_t nTCb = ev.tc_type.size();
+>         pixOwnerHits.reserve(nTCb);
+>         for (std::size_t it = 0; it < nTCb; ++it) {
+>           const int ty = ev.tc_type[it];
+>           if (ty == 7) {
+>             const int p5 = (it < ev.tc_pt5Idx.size()) ? ev.tc_pt5Idx[it] : -999;
+>             if (p5 < 0 || p5 >= static_cast<int>(ev.pT5_t5Idx.size()))
+>               continue;
+>             const int t5 = ev.pT5_t5Idx[p5];
+>             if (t5 < 0 || t5 >= static_cast<int>(ev.t5_hitIndices.size()))
+>               continue;
+>             pixOwnerHits.push_back(ev.t5_hitIndices[t5]);
+>           } else if (ty == 5) {
+>             const int p3 = (it < ev.tc_pt3Idx.size()) ? ev.tc_pt3Idx[it] : -999;
+>             if (p3 < 0 || p3 >= static_cast<int>(ev.pT3_otHitIndices.size()))
+>               continue;
+>             pixOwnerHits.push_back(ev.pT3_otHitIndices[p3]);
+>           }
+>         }
+>         ap.preClaimOwners = &pixOwnerHits;
+>         ap.preClaimMode = preClaimMode;
+>       }
+1077,1079c1430,1447
+<       // --- truth: chain-side sim intersection sets (accepted 5+-layer chains only) and
+<       // pLS-side sim sets (pLS_simIdxAll = FULL tracking-ntuple sim rows, the
+<       // EventData.h M7 rule -- SAME space as T3SimSets, direct intersection).
+---
+>       // --- M16 target universe (b): BARE T3s = T3s in no K9-ACCEPTED chain. The mask is
+>       // built AFTER arbitration, so a T3 welded into a REJECTED chain is still bare and
+>       // still attachable -- exactly the pT3-class population.
+>       std::vector<char> bareMask;
+>       k8BuildBareT3Mask(ev, chains, accepted, bareMask);
+>       long long evBareT3 = 0;
+>       for (char m : bareMask)
+>         evBareT3 += (m != 0);
+>       if (!doT3Targets)
+>         bareMask.assign(bareMask.size(), 0);
+> 
+>       // --- truth: target-side sim sets and pLS-side sim sets (pLS_simIdxAll = FULL
+>       // tracking-ntuple sim rows, the EventData.h M7 rule -- SAME space as T3SimSets,
+>       // direct intersection).
+>       //   chain target -> intersection of ALL member T3 sim sets (M7 rule, unchanged)
+>       //   bare T3      -> that T3's own >=2/3-MD sim set (T3SimSets entry): the degenerate
+>       //                   case of the same rule for a one-node target, so the two kinds
+>       //                   are labelled by ONE definition.
+1084c1452,1460
+<       std::vector<std::vector<int>> chainSims(nAcc);
+---
+>       const int nT3 = static_cast<int>(ev.t3_lsIdx0.size());
+>       // Unified target list, in the EXACT order k8EnumeratePrefilteredPairsGeneral emits:
+>       // accepted chains with nLayers >= 5 (acceptedChains order), then bare T3s ascending.
+>       std::vector<int8_t> tgtType;
+>       std::vector<int> tgtRow;      // chainPos for ttype 0, t3 row for ttype 1
+>       std::vector<int> tgtNLayers;  // 3 for every bare T3
+>       std::vector<const std::vector<int>*> tgtSims;
+>       std::vector<std::vector<int>> chainSimsStore;
+>       chainSimsStore.reserve(nAcc);
+1090a1467,1468
+>           if (!doChainTargets)
+>             continue;
+1099c1477,1491
+<           chainSims[pos] = std::move(common);
+---
+>           chainSimsStore.push_back(std::move(common));
+>           tgtType.push_back(0);
+>           tgtRow.push_back(pos);
+>           tgtNLayers.push_back(chains.nLayers[c]);
+>           tgtSims.push_back(nullptr);  // patched below (chainSimsStore may reallocate)
+>         }
+>         for (std::size_t i = 0, k = 0; i < tgtType.size(); ++i)
+>           tgtSims[i] = &chainSimsStore[k++];
+>         for (int t = 0; t < nT3; ++t) {
+>           if (!bareMask[t])
+>             continue;
+>           tgtType.push_back(1);
+>           tgtRow.push_back(t);
+>           tgtNLayers.push_back(3);
+>           tgtSims.push_back(&t3sims.sims[t]);
+1101a1494,1498
+>       const int nTgt = static_cast<int>(tgtType.size());
+>       long long evTargets[2] = {0, 0};
+>       for (int i = 0; i < nTgt; ++i)
+>         ++evTargets[tgtType[i]];
+> 
+1114c1511
+<       // --- prefilter-only pair enumeration (the shared K8 code path) ------------------
+---
+>       // --- prefilter-only pair enumeration over BOTH target kinds (shared K8 path) -----
+1117c1514
+<       k8EnumeratePrefilteredPairs(ev, chains, accepted, cf, gateLogit, apre, pairs);
+---
+>       k8EnumeratePrefilteredPairsGeneral(ev, chains, accepted, cf, gateLogit, bareMask, apre, pairs);
+1121,1123c1518,1520
+<       // Per-chainPos spans (k8EnumeratePrefilteredPairs emits chainPos-ascending,
+<       // plsRow-ascending within a chain).
+<       std::vector<int> pairBegin(nAcc + 1, 0);
+---
+>       // Per-target spans (the enumeration emits targetOrd-ascending, plsRow-ascending
+>       // within a target -- the same CSR trick as M7, now over the unified target list).
+>       std::vector<int> pairBegin(nTgt + 1, 0);
+1125,1127c1522,1524
+<         ++pairBegin[pr.chainPos + 1];
+<       for (int pos = 0; pos < nAcc; ++pos)
+<         pairBegin[pos + 1] += pairBegin[pos];
+---
+>         ++pairBegin[pr.targetOrd + 1];
+>       for (int i = 0; i < nTgt; ++i)
+>         pairBegin[i + 1] += pairBegin[i];
+1130c1527,1531
+<       long long nTruePairs = 0;
+---
+>       // Statistics below are over the FULL enumeration; the write is downsampled on FAKE
+>       // pairs only (per target kind), with wgt = stride recorded on the survivors.
+>       long long evPairs[2] = {0, 0}, evTrue[2] = {0, 0}, evWritten[2] = {0, 0};
+>       long long fakeSeen[2] = {0, 0};
+>       const auto t2 = std::chrono::steady_clock::now();
+1134c1535,1536
+<           const auto& cs = chainSims[pr.chainPos];
+---
+>           const int tt = pr.ttype;
+>           const auto& cs = *tgtSims[pr.targetOrd];
+1138a1541
+>           ++evPairs[tt];
+1141c1544
+<             ++nTruePairs;
+---
+>             ++evTrue[tt];
+1153a1557,1569
+>             ++truePairVxy[tt][vxyBand(simVxy)];
+>           }
+>           // Deterministic fake downsampling: every stride-th fake of this kind, in
+>           // enumeration order (no RNG -> the dump is reproducible from the flags alone).
+>           float wgt = 1.f;
+>           if (label == 0) {
+>             const long long stride = (tt == 0) ? strideChain : strideT3;
+>             const long long seen = fakeSeen[tt]++;
+>             if (stride > 1) {
+>               if (seen % stride != 0)
+>                 continue;
+>               wgt = static_cast<float>(stride);
+>             }
+1155c1571,1572
+<           pairWriter.fillPair(ev.evt, pr.f, label, chains.nLayers[accepted[pr.chainPos]], simVxy, simPt);
+---
+>           ++evWritten[tt];
+>           pairWriter.fillPair(ev.evt, pr.f, label, tgtNLayers[pr.targetOrd], simVxy, simPt, tt, wgt);
+1157a1575
+>       const double labelMs = msBetween(t2, std::chrono::steady_clock::now());
+1159,1163c1577,1584
+<       // --- prefilter true-pair efficiency proxy ---------------------------------------
+<       // Denominator: accepted 5+-layer chains with a non-empty sim set whose sim(s) have
+<       // a matching pLS ANYWHERE in the event. Numerator: one of those pLS survived the
+<       // prefilter FOR THIS CHAIN. Failures are window-attributed per candidate pLS.
+<       long long evChains5 = 0, evDen = 0, evNum = 0;
+---
+>       // --- prefilter true-pair efficiency proxy, PER TARGET KIND ----------------------
+>       // Denominator: targets with a non-empty sim set whose sim(s) have a matching pLS
+>       // ANYWHERE in the event. Numerator: one of those pLS survived the prefilter FOR
+>       // THIS TARGET. Failures are window-attributed per candidate pLS. Both are also
+>       // stratified by the target's sim vertex radius -- the displaced-strata judging the
+>       // maintainer requires: a candidate finder that loses displaced true pairs would
+>       // cap the pT3-class displaced upside before any head ever sees them.
+>       long long evDen[2] = {0, 0}, evNum[2] = {0, 0};
+1165,1170c1586,1588
+<       for (int pos = 0; pos < nAcc; ++pos) {
+<         const int c = accepted[pos];
+<         if (chains.nLayers[c] < 5)
+<           continue;
+<         ++evChains5;
+<         const auto& cs = chainSims[pos];
+---
+>       for (int ord = 0; ord < nTgt; ++ord) {
+>         const int tt = tgtType[ord];
+>         const auto& cs = *tgtSims[ord];
+1172c1590
+<           continue;  // fake chain: no truth to measure
+---
+>           continue;  // fake target: no truth to measure
+1180c1598
+<           continue;  // the chain's sim has no matched pLS anywhere
+---
+>           continue;  // the target's sim has no matched pLS anywhere
+1183c1601,1617
+<         ++evDen;
+---
+>         // Stratum from the target's own best ACCEPTED sim (highest pt), same convention
+>         // as the pair labels.
+>         float tVxy = -999.f;
+>         {
+>           int best = -1;
+>           float bestPt = -1.f;
+>           for (int s : cs)
+>             if (s < nAccSim && ev.sim_pt[s] > bestPt) {
+>               best = s;
+>               bestPt = ev.sim_pt[s];
+>             }
+>           if (best >= 0)
+>             tVxy = std::sqrt(ev.sim_vx[best] * ev.sim_vx[best] + ev.sim_vy[best] * ev.sim_vy[best]);
+>         }
+>         const int band = vxyBand(tVxy);
+>         ++evDen[tt];
+>         ++proxyDenVxy[tt][band];
+1185,1186c1619,1620
+<         const auto spanB = pairs.begin() + pairBegin[pos];
+<         const auto spanE = pairs.begin() + pairBegin[pos + 1];
+---
+>         const auto spanB = pairs.begin() + pairBegin[ord];
+>         const auto spanE = pairs.begin() + pairBegin[ord + 1];
+1196c1630,1631
+<           ++evNum;
+---
+>           ++evNum[tt];
+>           ++proxyNumVxy[tt][band];
+1201c1636,1639
+<           k8ProbePairWindows(ev, chains, c, apre, p, aDT, aDP);
+---
+>           if (tt == 0)
+>             k8ProbePairWindows(ev, chains, accepted[tgtRow[ord]], apre, p, aDT, aDP);
+>           else
+>             k8ProbePairWindowsT3(ev, tgtRow[ord], apre, p, aDT, aDP);
+1205c1643
+<             ++totBindBoth;
+---
+>             ++totBindBothT[tt];
+1207c1645
+<             ++totBindDTanL;
+---
+>             ++totBindDTanLT[tt];
+1209c1647
+<             ++totBindDPhi;
+---
+>             ++totBindDPhiT[tt];
+1214,1224c1652,1671
+<           "evt %lld (run %u lumi %u event %llu): accepted=%d chains5p=%lld nPls=%d pairs=%zu true=%lld (%.4f)"
+<           " | proxy pLS-matched=%lld survived=%lld (%.3f) | enum=%.1f ms\n",
+<           i, ev.run, ev.lumi, ev.evt, nAcc, evChains5, nPls, pairs.size(), nTruePairs,
+<           pairs.empty() ? 0.0 : static_cast<double>(nTruePairs) / static_cast<double>(pairs.size()), evDen, evNum,
+<           evDen > 0 ? static_cast<double>(evNum) / static_cast<double>(evDen) : 0.0, enumMs);
+< 
+<       totChains5 += evChains5;
+<       totPairs += static_cast<long long>(pairs.size());
+<       totTruePairs += nTruePairs;
+<       totProxyDen += evDen;
+<       totProxyNum += evNum;
+---
+>           "evt %lld (run %u lumi %u event %llu): accepted=%d nPls=%d nT3=%d bareT3=%lld"
+>           " | CHAIN tgt=%lld pairs=%lld true=%lld (%.4f) proxy=%lld/%lld (%.3f)"
+>           " | T3 tgt=%lld pairs=%lld true=%lld (%.4f) proxy=%lld/%lld (%.3f)"
+>           " | enum=%.1f ms label=%.1f ms\n",
+>           i, ev.run, ev.lumi, ev.evt, nAcc, nPls, nT3, evBareT3, evTargets[0], evPairs[0], evTrue[0],
+>           evPairs[0] > 0 ? static_cast<double>(evTrue[0]) / static_cast<double>(evPairs[0]) : 0.0, evNum[0],
+>           evDen[0], evDen[0] > 0 ? static_cast<double>(evNum[0]) / static_cast<double>(evDen[0]) : 0.0,
+>           evTargets[1], evPairs[1], evTrue[1],
+>           evPairs[1] > 0 ? static_cast<double>(evTrue[1]) / static_cast<double>(evPairs[1]) : 0.0, evNum[1],
+>           evDen[1], evDen[1] > 0 ? static_cast<double>(evNum[1]) / static_cast<double>(evDen[1]) : 0.0, enumMs,
+>           labelMs);
+> 
+>       for (int tt = 0; tt < 2; ++tt) {
+>         totTargets[tt] += evTargets[tt];
+>         totPairsT[tt] += evPairs[tt];
+>         totTrueT[tt] += evTrue[tt];
+>         totWrittenT[tt] += evWritten[tt];
+>         totProxyDenT[tt] += evDen[tt];
+>         totProxyNumT[tt] += evNum[tt];
+>       }
+1225a1673
+>       totLabelMs += labelMs;
+1230,1243c1678,1717
+<     const double proxyEff = totProxyDen > 0 ? static_cast<double>(totProxyNum) / static_cast<double>(totProxyDen) : 0.0;
+<     std::printf("pairdump summary: %lld events (prefDTanL=%.3f prefDPhi=%.3f)\n", nRun, apre.prefDTanL, apre.prefDPhi);
+<     std::printf("  chains5p total=%lld mean=%.1f | pairs total=%lld mean=%.1f | true=%lld fraction=%.4f\n", totChains5,
+<                 totChains5 / nEvD, totPairs, totPairs / nEvD, totTruePairs,
+<                 totPairs > 0 ? static_cast<double>(totTruePairs) / static_cast<double>(totPairs) : 0.0);
+<     std::printf("  PREFILTER TRUE-PAIR EFFICIENCY (chains w/ matched pLS anywhere): %lld / %lld = %.4f\n", totProxyNum,
+<                 totProxyDen, proxyEff);
+<     std::printf("  failed true-pair window attribution (per candidate pLS): dTanL-only=%lld dPhi-only=%lld both=%lld\n",
+<                 totBindDTanL, totBindDPhi, totBindBoth);
+<     if (proxyEff < 0.97 && totProxyDen > 0) {
+<       const char* binding = (totBindDTanL >= totBindDPhi && totBindDTanL >= totBindBoth) ? "prefDTanL"
+<                             : (totBindDPhi >= totBindBoth)                               ? "prefDPhi"
+<                                                                                          : "both windows";
+<       std::printf("  NOTE: efficiency < 0.97 -- binding window by failure count: %s\n", binding);
+---
+>     const char* const kKindName[2] = {"CHAIN (ttype 0, pT5-class)", "BARE T3 (ttype 1, pT3-class)"};
+>     std::printf("pairdump summary: %lld events (prefDTanL=%.3f prefDPhi=%.3f, kAttachFeat=%d, -PDT %d)\n", nRun,
+>                 apre.prefDTanL, apre.prefDPhi, kAttachFeat, pdMode);
+>     for (int tt = 0; tt < 2; ++tt) {
+>       if (totTargets[tt] == 0 && totPairsT[tt] == 0)
+>         continue;
+>       const double proxyEff =
+>           totProxyDenT[tt] > 0 ? static_cast<double>(totProxyNumT[tt]) / static_cast<double>(totProxyDenT[tt]) : 0.0;
+>       std::printf("  --- %s ---\n", kKindName[tt]);
+>       std::printf("    targets total=%lld mean=%.1f | pairs total=%lld mean=%.1f | true=%lld fraction=%.6f\n",
+>                   totTargets[tt], totTargets[tt] / nEvD, totPairsT[tt], totPairsT[tt] / nEvD, totTrueT[tt],
+>                   totPairsT[tt] > 0 ? static_cast<double>(totTrueT[tt]) / static_cast<double>(totPairsT[tt]) : 0.0);
+>       std::printf("    pairs/target=%.1f | written=%lld (fake stride %lld)\n",
+>                   totTargets[tt] > 0 ? static_cast<double>(totPairsT[tt]) / static_cast<double>(totTargets[tt]) : 0.0,
+>                   totWrittenT[tt], (tt == 0) ? strideChain : strideT3);
+>       std::printf("    PREFILTER TRUE-PAIR EFFICIENCY (targets w/ matched pLS anywhere): %lld / %lld = %.4f\n",
+>                   totProxyNumT[tt], totProxyDenT[tt], proxyEff);
+>       std::printf("    failed true-pair window attribution (per candidate pLS): dTanL-only=%lld dPhi-only=%lld"
+>                   " both=%lld\n",
+>                   totBindDTanLT[tt], totBindDPhiT[tt], totBindBothT[tt]);
+>       if (proxyEff < 0.97 && totProxyDenT[tt] > 0) {
+>         const char* binding =
+>             (totBindDTanLT[tt] >= totBindDPhiT[tt] && totBindDTanLT[tt] >= totBindBothT[tt]) ? "prefDTanL"
+>             : (totBindDPhiT[tt] >= totBindBothT[tt])                                         ? "prefDPhi"
+>                                                                                              : "both windows";
+>         std::printf("    NOTE: efficiency < 0.97 -- binding window by failure count: %s\n", binding);
+>       }
+>       // Displaced strata, the plan-11 judging requirement: the true-pair POPULATION the
+>       // head will train on, and the candidate-finder efficiency, both by sim vxy.
+>       std::printf("    displaced strata (sim vxy, cm):\n");
+>       std::printf("      %-9s %12s %8s | %10s %10s %8s\n", "band", "truePairs", "frac", "proxyNum", "proxyDen", "eff");
+>       for (int b = 0; b < kNVxy; ++b) {
+>         const double frac =
+>             totTrueT[tt] > 0 ? static_cast<double>(truePairVxy[tt][b]) / static_cast<double>(totTrueT[tt]) : 0.0;
+>         const double eff = proxyDenVxy[tt][b] > 0
+>                                ? static_cast<double>(proxyNumVxy[tt][b]) / static_cast<double>(proxyDenVxy[tt][b])
+>                                : 0.0;
+>         std::printf("      %-9s %12lld %8.4f | %10lld %10lld %8.4f\n", kVxyName[b], truePairVxy[tt][b], frac,
+>                     proxyNumVxy[tt][b], proxyDenVxy[tt][b], eff);
+>       }
+1245c1719,1720
+<     std::printf("  enum time total=%.1f ms mean=%.1f ms\n", totEnumMs, totEnumMs / nEvD);
+---
+>     std::printf("  enum time total=%.1f ms mean=%.1f ms | label+write mean=%.1f ms\n", totEnumMs, totEnumMs / nEvD,
+>                 totLabelMs / nEvD);
+1375a1851,1869
+>     } else if (attachMode == 4) {
+>       AttachParams apDefaults;
+>       std::printf(
+>           "attach (-A 4, M16 GENERAL DELIVERY): thetaAttach=%.3f (chain class) thetaAttachT3=%.3f"
+>           " (bare-T3 class) attachHead=%s prefDTanL=%.3f prefDPhi=%.3f dcaEligibility=%.4g cm\n"
+>           "  ORDER (M16b): wholesale suppression set -> pre-claim owner list -> K9 over ALL"
+>           " chains (no exclusions) -> stage-A chain attach OVER THE ACCEPTED SET ->"
+>           " stage-B bare-T3 attach (vs the same ACCEPTED set) -> delivery\n"
+>           "  replacement: -RT5=%d (drop ALL carried type-7 rows) -RT3=%d (drop ALL carried"
+>           " type-5 rows) -RPS=%d (drop contested carried type-8 rows)\n"
+>           "  attached chains are K9 CLAIM WINNERS upgraded IN PLACE to type-7 TCs (pixel hits"
+>           " + OT hits, pt = pLS ptIn): mutual hit contention is inherited from the claim, so"
+>           " a chain that lost the claim can never attach and never delivers\n",
+>           thetaAttach, thetaAttachT3, attachHeadAvailable() ? "trained" : "sentinel", apDefaults.prefDTanL,
+>           apDefaults.prefDPhi, dcaAttach4, replT5 >= 0.5f ? 1 : 0, replT3 >= 0.5f ? 1 : 0, replPls >= 0.5f ? 1 : 0);
+>       if (preClaimMode == 0)
+>         std::printf("  NOTE: -PU 0 -- the pre-claim is OFF, so the suppression/owner-list ordering"
+>                     " has no effect on K9 (the accepted set, and hence the attach universe,"
+>                     " is unchanged by the suppression).\n");
+1406a1901,1908
+>     if (zdRI != 0.f || zdR != 0.f || zdR5 != 0.f || zdR6 != 0.f || zdM4 != 0.f || zdM4D != 0.f ||
+>         zdCP != 0.f || zdCD != 0.f || zdAlpha != 0.f)
+>       std::printf("FANOUT4 transition band |eta| in [%.2f, %.2f): dRI=%+.3f dR=%+.3f (dR5=%+.3f"
+>                   " dR6=%+.3f) dM4=%+.3f dM4D=%+.3f dCP=%+.3f dCD=%+.3f dAlpha=%+.3f (additive to"
+>                   " -MRI/-MR/-M4/-M4D/-C25/-C25D/-B; chain eta = innermost T3 eta = the K10 TC eta;"
+>                   " inLay1-only=%s)\n",
+>                   zEta1, zEta2, zdRI, zdR, zdR5, zdR6, zdM4, zdM4D, zdCP, zdCD, zdAlpha,
+>                   zInLay1 >= 0.5f ? "yes" : "no");
+1439a1942,1946
+>     // M16 (-A 4 general attach delivery)
+>     long long totDelivT5 = 0, totDelivT3 = 0, totGaDcaBlocked = 0, totM16ChainOwners = 0;
+>     long long totGaPairs = 0, totGaScored = 0, totGaChainAtt = 0, totGaT3Att = 0;
+>     long long totSeedDedup = 0;
+>     long long totM16Supp[3] = {0, 0, 0};  // {type 7, type 5, type 8} rows retired by attach
+1521a2029,2033
+>       // FANOUT4 transition diagnostics: per-chain prompt/displaced margins and the -G 6
+>       // branch code (0 = T4 IP, 1 = T4 exempt, 2 = 5+ IP, 3 = 5+ exempt); -1 elsewhere.
+>       std::vector<float> dbgMP, dbgMD;
+>       std::vector<signed char> dbgBr;
+>       std::vector<char> zBandChain;  // 1 = chain eta inside [-ZE1, -ZE2)
+1549a2062,2064
+>           dbgMP.assign(nC, 0.f);
+>           dbgMD.assign(nC, 0.f);
+>           dbgBr.assign(nC, -1);
+1550a2066,2072
+>           // FANOUT4 transition band levers. inBand uses the chain's K10 eta (innermost
+>           // member T3), so a chain is tightened in exactly the eta band its TC is counted
+>           // in. All deltas default to 0 => the whole block is a no-op.
+>           const bool zOn = zEta2 > zEta1 &&
+>                            (zdRI != 0.f || zdR != 0.f || zdR5 != 0.f || zdR6 != 0.f || zdM4 != 0.f ||
+>                             zdM4D != 0.f || zdCP != 0.f || zdCD != 0.f);
+>           zBandChain.assign(nC, 0);
+1556a2079,2080
+>             dbgMP[c] = mP;
+>             dbgMD[c] = mD;
+1557a2082,2110
+>             dbgBr[c] = nL <= 4 ? (dcaAll[c] >= std::max(dcaSplit, t4ExemptDcaMin) ? 1 : 0)
+>                                : (dcaAll[c] < dcaSplit ? 2 : 3);
+>             // Band membership (also needed by the -ZBA ordering lever, which is live even
+>             // when zOn is false because it changes no threshold).
+>             bool inZ = false;
+>             if (zEta2 > zEta1 && chains.offsets[c + 1] > chains.offsets[c]) {
+>               const int t3In = chains.items[chains.offsets[c]];
+>               if (t3In >= 0 && t3In < static_cast<int>(ev.t3_eta.size())) {
+>                 const float ae = std::fabs(ev.t3_eta[t3In]);
+>                 inZ = ae >= zEta1 && ae < zEta2;
+>               }
+>             }
+>             zBandChain[c] = inZ ? 1 : 0;
+>             // -ZIL 1: the kill levers only reach chains starting in layer 1.
+>             bool ilOk = true;
+>             if (zInLay1 >= 0.5f) {
+>               ilOk = false;
+>               if (chains.mdOffsets[c + 1] > chains.mdOffsets[c]) {
+>                 const int m0 = chains.mdItems[chains.mdOffsets[c]];
+>                 ilOk = m0 >= 0 && m0 < static_cast<int>(ev.md_layer.size()) && ev.md_layer[m0] == 1;
+>               }
+>             }
+>             const bool zz = zOn && inZ && ilOk;
+>             const float dRI = zz ? zdRI : 0.f;
+>             const float dR = zz ? (zdR + (nL == 5 ? zdR5 : zdR6)) : 0.f;
+>             const float d4 = zz ? zdM4 : 0.f;
+>             const float d4D = zz ? zdM4D : 0.f;
+>             const float dCP = zz ? zdCP : 0.f;
+>             const float dCD = zz ? zdCD : 0.f;
+1561c2114
+<                 if (mD < m3Theta4D)
+---
+>                 if (mD < m3Theta4D + d4D)
+1564c2117
+<               } else if (mX < m3Theta4) {
+---
+>               } else if (mX < m3Theta4 + d4) {
+1572c2125
+<               if (mP < thr && mX < m3ThetaRI)
+---
+>               if (mP < thr && mX < m3ThetaRI + dRI)
+1578c2131
+<               if (mD < m3ThetaD && mX < m3ThetaR)
+---
+>               if (mD < m3ThetaD && mX < m3ThetaR + dR)
+1590c2143
+<                 if (mP < c25Theta && mD < c25ThetaD) {
+---
+>                 if (mP < c25Theta + dCP && mD < c25ThetaD + dCD) {
+1684a2238,2289
+>       // -A 4 (M16 GENERAL ATTACH DELIVERY, plan 11 "PIXEL-REPLACEMENT VALIDATION"):
+>       // the attach stops being a classifier and becomes the DELIVERY path for the pixel
+>       // classes.
+>       //
+>       // ---- M16b STAGING FIX (judge option B, 2026-08-02) ------------------------------
+>       // The ORIGINAL M16 order ran stage A BEFORE K9 over every theta-passing chain and
+>       // then EXCLUDED the attached chains from the claim (ArbitrationParams::excludeChain),
+>       // emitting them unconditionally. That made attach a SECOND, UNARBITRATED delivery
+>       // channel with no mutual hit contention among its own deliveries. Measured cost:
+>       // 565 attach/evt where K9 would have accepted 130, attach-vs-attach braid dups
+>       // 487 -> 12,807 pairs (every sibling chain of one track delivered side by side), and
+>       // a starved bare-chain slice (-0.24 displaced eff at vxy[5,10) / [10,30)) because
+>       // the chains that DID walk the claim were the leftovers. The aggregate failed on
+>       // eff, dup and fake simultaneously; the judge located all of it to this one defect.
+>       //
+>       // M16b resolves attach ON THE K9-ACCEPTED CHAIN SET instead:
+>       //   (1) SUPPRESSION SET -- the WHOLESALE half only (-RT5 / -RT3), which is
+>       //       attach-independent by definition. The contention half (a carried row whose
+>       //       pLS now has an outer-tracker owner) and the -RPS predicate are refreshed
+>       //       after each attach stage, since attach has not run yet.
+>       //   (2) PRE-CLAIM OWNER LIST (-PU) -- built from the SURVIVING carried rows. No
+>       //       attached chains are appended any more: an attached chain is a K9 winner, so
+>       //       it claims its own hits inside the walk. The pre-claimed volume is conserved
+>       //       the same way, one stage later.
+>       //   (3) K9 over ALL chains, NO exclusions. This is the fix: mutual hit contention
+>       //       among the would-be pixel deliveries is decided exactly once, by the claim
+>       //       that already exists. Siblings of one track cannot all deliver, because all
+>       //       but one lost the claim; and no chain skips the walk, so the bare-chain
+>       //       slice sees the same universe it sees at -A 0.
+>       //   (4) STAGE A -- chain-target attach OFFERED to the accepted nLayers >= 5 chains
+>       //       (subject to the -D4 dca gate). A granted pLS turns that chain's TC from
+>       //       type 4 into type 7 IN PLACE (an upgrade of a claim winner, never an extra
+>       //       TC); an accepted chain that is not granted one delivers bare, as at -A 0.
+>       //   (5) STAGE B -- bare-T3 attach, against the same ACCEPTED set
+>       //       (k8BuildBareT3Mask contract). Bids only for pLS stage A left free: ONE pLS,
+>       //       ONE owner, across target types.
+>       //   (6) DELIVERY -- upgraded type-7 chain TCs, type-5 TCs from stage B, bare chain
+>       //       TCs from K9, carried rows minus the suppression set.
+>       //
+>       // Residual approximations, stated rather than hidden: (i) both attach stages are
+>       // decided after K9, so the deliveries' pixel hits do not participate in the claim
+>       // and the contention-suppressed carried rows DID pre-claim (the chains faced a
+>       // slightly stricter claim than the final output implies) -- at real integration all
+>       // universes resolve before the single claim; (ii) chain targets get first refusal on
+>       // a contested pLS instead of a single global logit sort (the per-length ordering,
+>       // see AttachDelivery.h).
+>       GeneralAttachParams gap;
+>       gap.pref.thetaAttach = thetaAttach;
+>       gap.thetaAttachT3 = thetaAttachT3;
+>       GeneralAttach ga;
+>       long long nGaDcaBlocked = 0;
+> 
+1691c2296,2309
+<       if (attachMode) {
+---
+>       if (attachMode == 4) {
+>         // M16b: nothing attach-dependent may run before K9 any more. Only the decision
+>         // state is sized here; stage A runs on `accepted`, further down.
+>         const int nChainsAll = static_cast<int>(chains.score.size());
+>         gaInit(ev, chains, ga);
+>         chainAttachPls.assign(nChainsAll, -1);
+>         // The pixel-consumed drop exists only because a kept baseline pixel row already
+>         // delivers that track. Wholesale replacement removes those rows, so the
+>         // corresponding half of the crossclean must go with them.
+>         if (replT5 >= 0.5f)
+>           ap.dropPartOfPT5 = false;
+>         if (replT3 >= 0.5f)
+>           ap.dropPartOfPT3 = false;
+>       } else if (attachMode) {
+1765c2383
+<       const bool wantPenalty = fakeOrderAlpha > 0.f && haveGateKey;
+---
+>       const bool wantPenalty = (fakeOrderAlpha > 0.f || zdAlpha != 0.f) && haveGateKey;
+1779c2397,2401
+<           orderKeyVec[c] = base - (wantPenalty ? fakeOrderAlpha * std::max(0.f, -gateLogit[c]) : 0.f);
+---
+>           // -ZBA: extra fake-order alpha for band chains (ORDERING ONLY -- thresholds
+>           // still cut on chains.score, so this can never kill a chain).
+>           const float alphaC =
+>               fakeOrderAlpha + ((zdAlpha != 0.f && c < zBandChain.size() && zBandChain[c]) ? zdAlpha : 0.f);
+>           orderKeyVec[c] = base - (wantPenalty ? alphaC * std::max(0.f, -gateLogit[c]) : 0.f);
+1800c2422,2542
+<       // Attach modes rewrite which pixel rows survive; -PU is defined for -A 0 only.
+---
+>       // Attach modes rewrite which pixel rows survive. -A 0..3: -PU sees every carried
+>       // row (the M15 behavior, unchanged). -A 4: the owner list is built from the
+>       // POST-SUPPRESSION rows -- see the M16 suppression block immediately below.
+> 
+>       // Helper (hoisted from the TC-assembly block below so the M16 delivery path can use
+>       // it too): pixel hit rows of a pLS (seedIdx -> trk see_hitIdx, Pixel-type entries).
+>       auto plsPixelHits = [&](int p, std::vector<int>& hits) {
+>         hits.clear();
+>         const int seed = ev.pLS_seedIdx[p];
+>         if (seed < 0 || seed >= static_cast<int>(trk.see_hitIdx.size()))
+>           return;
+>         const auto& hIdx = trk.see_hitIdx[seed];
+>         const auto& hTyp = trk.see_hitType[seed];
+>         for (std::size_t h = 0; h < hIdx.size() && h < hTyp.size(); ++h)
+>           if (hTyp[h] == static_cast<int>(proto::HitType::Pixel))
+>             hits.push_back(hIdx[h]);
+>       };
+> 
+>       // The pLS a carried baseline pixel row was built from (-1 if none/unavailable).
+>       auto rowPls = [&](std::size_t it, int ty) -> int {
+>         if (ty == 7 && it < ev.tc_pt5Idx.size()) {
+>           const int i5 = ev.tc_pt5Idx[it];
+>           if (i5 >= 0 && i5 < static_cast<int>(ev.pT5_plsIdx.size()))
+>             return ev.pT5_plsIdx[i5];
+>         } else if (ty == 5 && it < ev.tc_pt3Idx.size()) {
+>           const int i3 = ev.tc_pt3Idx[it];
+>           if (i3 >= 0 && i3 < static_cast<int>(ev.pT3_plsIdx.size()))
+>             return ev.pT3_plsIdx[i3];
+>         } else if (ty == 8 && it < ev.tc_plsIdx.size()) {
+>           return ev.tc_plsIdx[it];
+>         }
+>         return -1;
+>       };
+> 
+>       // ---- (1b) SEED-FAMILY DEDUP OF THE ATTACH OWNERS (-RD) -------------------------
+>       // The contention rule is ONE pLS, ONE owner -- but a track reconstructed with N
+>       // duplicate pixel seeds offers N distinct pLS, so N chains attach and N pT5-class
+>       // TCs are delivered for one track. Plan 11 keeps exactly one piece of the retired
+>       // crossclean stack for this ("retain only the upstream pLS seed dup-clean"); here
+>       // it lives inside the contention rule. Sim-blind: two pLS are the same seed when
+>       // they share >= 2 pixel hit rows (production pixelHitsOverlapAny). Highest attach
+>       // logit keeps the family; the losers' targets go back to the K9 walk and their
+>       // carried rows survive untouched.
+>       // The kept-seed family map persists across BOTH attach stages: a track whose pT5
+>       // delivery already used one of its duplicate seeds must not also get a pT3
+>       // delivery from a sibling seed. seedFamilyDup(p) reports whether pLS p shares
+>       // >= 2 pixel hit rows with an already-kept owner; seedFamilyKeep(p) registers it.
+>       long long nSeedDedup = 0, nSeedDedupT3 = 0;
+>       std::unordered_map<int, std::vector<int>> hit2keptPls;  // pixel hit row -> kept pLS
+>       std::vector<int> seedPixHits;
+>       auto seedFamilyDup = [&](int p) {
+>         plsPixelHits(p, seedPixHits);
+>         std::unordered_map<int, int> shareCnt;
+>         for (int h : seedPixHits) {
+>           const auto it = hit2keptPls.find(h);
+>           if (it == hit2keptPls.end())
+>             continue;
+>           for (int q : it->second)
+>             if (++shareCnt[q] >= 2)
+>               return true;
+>         }
+>         return false;
+>       };
+>       auto seedFamilyKeep = [&](int p) {
+>         plsPixelHits(p, seedPixHits);
+>         for (int h : seedPixHits)
+>           hit2keptPls[h].push_back(p);
+>       };
+>       // (M16b: the stage-A application of this rule moved BELOW K9, next to stage A.)
+> 
+>       // ---- (2) M16 SUPPRESSION SET (-A 4) -------------------------------------------
+>       // Which carried baseline pixel rows has the attach REPLACED? Two independent
+>       // reasons, both sim-blind:
+>       //   CONTENTION BOOKKEEPING: the row's own pLS now has an outer-tracker owner, so
+>       //     the row is a second delivery of the same seed. This single rule replaces
+>       //     CrossCleanpT5 + CrossCleanpT3 + CrossCleanpLS (plan 11).
+>       //   WHOLESALE REPLACEMENT (-RT5 / -RT3): the A/B that actually answers the
+>       //     maintainer's question -- can our machinery deliver the class at all?
+>       // M16b: only the WHOLESALE half can be computed here -- it is attach-independent by
+>       // definition -- because attach no longer runs before K9. The contention half and the
+>       // -RPS predicate are applied by m16RefreshSupp() after each attach stage. The
+>       // wholesale half is what the pre-claim owner list needs, and it is the half that
+>       // matters for it: a class being replaced wholesale must not pre-claim.
+>       std::vector<char> m16RowSuppressed;
+>       long long nM16SuppT7 = 0, nM16SuppT5 = 0, nM16SuppT8 = 0;
+>       if (attachMode == 4) {
+>         m16RowSuppressed.assign(ev.tc_type.size(), 0);
+>         for (std::size_t it = 0; it < ev.tc_type.size(); ++it) {
+>           const int ty = ev.tc_type[it];
+>           if ((ty == 7 && replT5 >= 0.5f) || (ty == 5 && replT3 >= 0.5f)) {
+>             m16RowSuppressed[it] = 1;
+>             (ty == 7 ? nM16SuppT7 : nM16SuppT5) += 1;
+>           }
+>         }
+>       }
+>       // CONTENTION + -RPS refresh. Idempotent (already-suppressed rows are skipped), so it
+>       // can be called after every attach stage; each call only ever adds rows.
+>       auto m16RefreshSupp = [&]() {
+>         for (std::size_t it = 0; it < ev.tc_type.size(); ++it) {
+>           if (m16RowSuppressed[it])
+>             continue;
+>           const int ty = ev.tc_type[it];
+>           if (ty != 7 && ty != 5 && ty != 8)
+>             continue;
+>           const int pls = rowPls(it, ty);
+>           if (pls < 0 || pls >= static_cast<int>(ga.plsOwned.size()))
+>             continue;
+>           bool drop = ga.plsOwned[pls] != 0;
+>           if (ty == 8 && replPls >= 0.5f)
+>             // "attached anywhere OR lost a contention above the class margin": the pLS had
+>             // a scored pair above its margin but is not the owner. A bare-pLS TC of a seed
+>             // the outer tracker can explain is precisely what plsembdnn is for.
+>             drop = drop || ga.plsBestChainLogit[pls] >= thetaAttach || ga.plsBestT3Logit[pls] >= thetaAttachT3;
+>           if (drop) {
+>             m16RowSuppressed[it] = 1;
+>             (ty == 7 ? nM16SuppT7 : (ty == 5 ? nM16SuppT5 : nM16SuppT8)) += 1;
+>           }
+>         }
+>       };
+> 
+>       // ---- (3) PRE-CLAIM OWNER LIST --------------------------------------------------
+1801a2544
+>       long long nM16ChainOwners = 0;
+1806a2550,2553
+>           // M16: a row attach has replaced owns nothing any more -- skip it, or the
+>           // chains would pay a claim cost for hits that no delivery holds.
+>           if (!m16RowSuppressed.empty() && m16RowSuppressed[it])
+>             continue;
+1821a2569,2573
+>         // M16b: NO attached chains are appended here any more. Under the fixed staging an
+>         // attached chain is a K9 CLAIM WINNER, so it claims its own outer-tracker hits
+>         // inside the greedy walk -- the pre-claimed volume the suppressed carried rows gave
+>         // up is conserved one stage later, by the claim itself. Appending them here would
+>         // now double-count (and could not be done at all: attach has not run yet).
+1860a2613,2667
+> 
+>       // ---- M16b (4) STAGE A: attach OFFERED TO THE K9 CLAIM WINNERS ------------------
+>       // The claim has already decided mutual hit contention among the chains, so the
+>       // targets here are exactly the chains that will emit a TC anyway. A granted pLS
+>       // upgrades that TC in place (type 4 -> 7, pixel hits prepended) in the assembly loop
+>       // below; a chain with no grant delivers bare. Nothing is added, nothing is skipped:
+>       // the chain slice is the -A 0 slice, re-labelled where the pixel evidence exists.
+>       // Eligibility: nLayers >= 5 (k8 bids only 5+-layer targets) and dcaXY < -D4. -D4
+>       // defaults to 1e9 = OFF, because plan 11 makes the low-vxy displaced-with-pixel-seed
+>       // population a structural upside to CLAIM, not a dilution to guard against; it stays
+>       // available as an A/B lever.
+>       if (attachMode == 4) {
+>         for (int c : accepted) {
+>           if (chains.nLayers[c] < 5)
+>             continue;
+>           if (chainDca(c) >= dcaAttach4) {
+>             ++nGaDcaBlocked;
+>             continue;
+>           }
+>           thetaPass.push_back(c);
+>         }
+>         const auto ta0 = std::chrono::steady_clock::now();
+>         gaStageChains(ev, chains, thetaPass, cfHyb, gateLogit, gap, ga);
+>         attachMs = msBetween(ta0, std::chrono::steady_clock::now());
+>         // (1b) SEED-FAMILY DEDUP OF THE ATTACH OWNERS (-RD), stage A. One track
+>         // reconstructed with N duplicate pixel seeds offers N distinct pLS; without this
+>         // N accepted chains would each be upgraded and the track delivered N times as a
+>         // pT5-class TC. A revoked chain is NOT removed -- it is an accepted claim winner
+>         // either way -- it simply delivers bare.
+>         if (seedDupClean >= 0.5f) {
+>           std::vector<int> owners;
+>           for (int c = 0; c < static_cast<int>(ga.chainPls.size()); ++c)
+>             if (ga.chainPls[c] >= 0)
+>               owners.push_back(c);
+>           std::sort(owners.begin(), owners.end(), [&ga](int a, int b) {
+>             if (ga.chainLogit[a] != ga.chainLogit[b])
+>               return ga.chainLogit[a] > ga.chainLogit[b];
+>             return a < b;
+>           });
+>           for (int c : owners) {
+>             const int p = ga.chainPls[c];
+>             if (seedFamilyDup(p)) {
+>               ga.chainPls[c] = -1;
+>               ga.plsOwned[p] = 0;
+>               ++nSeedDedup;
+>               continue;
+>             }
+>             seedFamilyKeep(p);
+>           }
+>           ga.nChainAttached -= nSeedDedup;
+>         }
+>         chainAttachPls = ga.chainPls;
+>         m16RefreshSupp();
+>       }
+> 
+1886a2694,2697
+>         // Mirror of any claim exclusion (M16b leaves this unused at -A 4: every chain
+>         // walks the claim now, so the funnel counts them all).
+>         if (ap.excludeChain != nullptr && (*ap.excludeChain)[c] != 0)
+>           continue;
+1900,1901c2711,2714
+<         const bool bypassPT5 = attachMode == 1 && attachBypass[c] != 0;
+<         if (!((hasPT5 && !bypassPT5) || hasPT3))
+---
+>         // M16: -RT5/-RT3 switch the corresponding half off entirely (ap.dropPartOf*).
+>         const bool bypassPT5 = (attachMode == 1 && attachBypass[c] != 0) || !ap.dropPartOfPT5;
+>         const bool dropPT3 = hasPT3 && ap.dropPartOfPT3;
+>         if (!((hasPT5 && !bypassPT5) || dropPT3))
+1927,1939c2740,2746
+<       // Helper: pixel hit rows of a pLS (seedIdx -> trk see_hitIdx, Pixel-type entries).
+<       auto plsPixelHits = [&](int p, std::vector<int>& hits) {
+<         hits.clear();
+<         const int seed = ev.pLS_seedIdx[p];
+<         if (seed < 0 || seed >= static_cast<int>(trk.see_hitIdx.size()))
+<           return;
+<         const auto& hIdx = trk.see_hitIdx[seed];
+<         const auto& hTyp = trk.see_hitType[seed];
+<         for (std::size_t h = 0; h < hIdx.size() && h < hTyp.size(); ++h)
+<           if (hTyp[h] == static_cast<int>(proto::HitType::Pixel))
+<             hits.push_back(hIdx[h]);
+<       };
+< 
+---
+>       // (plsPixelHits is hoisted above, next to the M16 suppression/owner-list block.)
+>       // M16b: -A 4 uses THIS SAME BRANCH -- the general-attach pT5-class delivery IS the
+>       // in-place upgrade of an accepted chain (that is the whole fix). The only -A 4
+>       // addition is the `deliv` provenance mark so compare_types can separate carried pT5
+>       // rows from attach deliveries. The resulting OutTC is byte-for-byte what the retired
+>       // standalone -A 4 delivery block emitted (same eta/phi from the innermost T3, same
+>       // pt = pLS ptIn, same pixel-then-OT hit list, same nhitOT).
+1948a2756,2757
+>       long long nDelivT5 = 0, nDelivT3 = 0, nBareT3Targets = 0;
+>       double attachT3Ms = 0.0;
+1968a2778,2801
+>           // FANOUT4 transition diagnostics (harness-invisible extra branches).
+>           otc.dbgNL = chains.nLayers[c];
+>           otc.dbgNNodes = chains.offsets[c + 1] - chains.offsets[c];
+>           otc.dbgNMD = chains.mdOffsets[c + 1] - chains.mdOffsets[c];
+>           {
+>             int nB = 0, nPS = 0;
+>             for (int mk = chains.mdOffsets[c]; mk < chains.mdOffsets[c + 1]; ++mk) {
+>               const int m = chains.mdItems[mk];
+>               if (ev.md_layer[m] <= 6)
+>                 ++nB;
+>               if (ev.md_type[m] == 1)
+>                 ++nPS;
+>             }
+>             otc.dbgNB = nB;
+>             otc.dbgNPS = nPS;
+>             otc.dbgInLay = chains.mdOffsets[c + 1] > chains.mdOffsets[c] ? ev.md_layer[chains.mdItems[chains.mdOffsets[c]]] : 0;
+>           }
+>           if (!dbgBr.empty()) {
+>             otc.dbgBranch = dbgBr[c];
+>             otc.dbgMP = dbgMP[c];
+>             otc.dbgMDm = dbgMD[c];
+>           }
+>           if (!m3dcaAll.empty())
+>             otc.dbgDca = m3dcaAll[c];
+1972,1973c2805,2811
+<             if (attachMode == 2 && ai < nPass1)
+<               ++nUpgraded;  // pass-1-accepted chain upgraded in place (no claim change)
+---
+>             if (attachMode == 4 || (attachMode == 2 && ai < nPass1)) {
+>               ++nUpgraded;  // accepted chain upgraded in place (no claim change)
+>               if (attachMode == 4) {
+>                 otc.deliv = kDelivAttachT5;  // M16 general-attach pT5-class delivery
+>                 ++nDelivT5;
+>               }
+>             }
+1994a2833,2911
+>       // ================== M16 (-A 4) DELIVERY: steps (5) and (6b) =====================
+>       // (6a) -- the type-7 (pT5-class) deliveries -- is now the in-place upgrade in the
+>       // assembly loop above (M16b); only stage B and its type-5 deliveries live here.
+>       if (attachMode == 4) {
+>         std::vector<int> pixHits;
+> 
+>         // (5) STAGE B + (6b) type-5 (pT3-class) deliveries. Only under -RT3: without the
+>         // carried type-5 rows being replaced there is nothing to measure and the extra
+>         // TCs would be pure duplication of a class the baseline still delivers.
+>         if (replT3 >= 0.5f) {
+>           const auto tb0 = std::chrono::steady_clock::now();
+>           gaStageT3(ev, chains, accepted, cfHyb, gateLogit, gap, ga);
+>           attachT3Ms = msBetween(tb0, std::chrono::steady_clock::now());
+>           // (5b) SEED-FAMILY DEDUP, stage B. Without it a track with N duplicate pixel
+>           // seeds gets N pT3-class deliveries (measured DR 0.82-0.93 before this) --
+>           // and, because the map carries stage A's kept seeds, a track already
+>           // delivered as a pT5 cannot ALSO be delivered as a pT3 by a sibling seed.
+>           if (seedDupClean >= 0.5f) {
+>             std::vector<int> t3Owners;
+>             for (int t = 0; t < static_cast<int>(ga.t3Pls.size()); ++t)
+>               if (ga.t3Pls[t] >= 0)
+>                 t3Owners.push_back(t);
+>             std::sort(t3Owners.begin(), t3Owners.end(), [&ga](int a, int b) {
+>               if (ga.t3Logit[a] != ga.t3Logit[b])
+>                 return ga.t3Logit[a] > ga.t3Logit[b];
+>               return a < b;
+>             });
+>             for (int t : t3Owners) {
+>               const int p = ga.t3Pls[t];
+>               if (seedFamilyDup(p)) {
+>                 ga.t3Pls[t] = -1;
+>                 ga.plsOwned[p] = 0;
+>                 ++nSeedDedupT3;
+>                 continue;
+>               }
+>               seedFamilyKeep(p);
+>             }
+>             ga.nT3Attached -= nSeedDedupT3;
+>           }
+>           for (int t = 0; t < static_cast<int>(ga.t3Pls.size()); ++t) {
+>             if (ga.t3Pls[t] < 0)
+>               continue;
+>             ++nBareT3Targets;
+>             const int p = ga.t3Pls[t];
+>             OutTC otc;
+>             otc.type = 5;  // pT3-class
+>             otc.deliv = kDelivAttachT3;
+>             otc.pt = ev.pLS_pt[p];
+>             otc.eta = ev.t3_eta[t];
+>             otc.phi = ev.t3_phi[t];
+>             plsPixelHits(p, pixHits);
+>             for (int hi : pixHits) {
+>               otc.hitIdxs.push_back(static_cast<unsigned int>(hi));
+>               otc.hitTypes.push_back(proto::HitType::Pixel);
+>             }
+>             const int mds[3] = {ev.t3_md0[t], ev.t3_md1[t], ev.t3_md2[t]};
+>             for (int md : mds) {
+>               if (md < 0 || md >= static_cast<int>(ev.md_anchorHitIdx.size()))
+>                 continue;
+>               otc.hitIdxs.push_back(static_cast<unsigned int>(ev.md_anchorHitIdx[md]));
+>               otc.hitTypes.push_back(proto::HitType::Phase2OT);
+>               otc.hitIdxs.push_back(static_cast<unsigned int>(ev.md_otherHitIdx[md]));
+>               otc.hitTypes.push_back(proto::HitType::Phase2OT);
+>             }
+>             otc.nhitOT = 6;
+>             outTCs.push_back(std::move(otc));
+>             outTCChain.push_back(-1);
+>             ++nDelivT3;
+>           }
+>           // Stage B can newly own pLS, which retires more carried rows (type-8 above all:
+>           // the -RPS predicate now sees the bare-T3 evidence too). Those rows DID
+>           // pre-claim -- they were still owners when K9 ran -- so the chains faced a
+>           // slightly STRICTER claim than the final output implies. Conservative and
+>           // stated; at real integration both universes resolve before the single claim.
+>           m16RefreshSupp();
+>         }
+>         attachMs += attachT3Ms;
+>       }
+> 
+2139a3057,3059
+>       // -A 4 uses the same per-row verdict channel as M7c, fed by the M16 suppression set.
+>       const std::vector<char>* rowMaskOut =
+>           (attachMode == 4) ? &m16RowSuppressed : (attachMode == 2 ? &rowSuppressed : nullptr);
+2141,2142c3061,3062
+<                              attachMode == 2, attachMode == 2 ? nSuppByType : nullptr,
+<                              attachMode == 2 ? &rowSuppressed : nullptr);
+---
+>                              attachMode == 2, (attachMode == 2 || attachMode == 4) ? nSuppByType : nullptr,
+>                              rowMaskOut);
+2178a3099,3112
+>       } else if (attachMode == 4) {
+>         // M16b: claim= ALL chains accepted by K9 (attached chains walk the claim like any
+>         // other; there are no exclusions). delivT5 = accepted chains UPGRADED in place to
+>         // type 7 (a subset of chainTC, not extra TCs); delivT3 = stage-B type-5 TCs (extra);
+>         // supp= carried rows retired by attach [pT5/pT3/pLS]; dcaBlk= accepted 5+-layer
+>         // chains blocked from bidding by -D4.
+>         std::printf(
+>             "evt %lld (run %u lumi %u event %llu): pixKept=%lld chains=%lld -> theta=%lld ->"
+>             " pixdrop=%lld -> claim=%lld | chainTC=%zu (T5c=%lld T4c=%lld) | upgT5=%lld"
+>             " delivT3=%lld supp=%d[%d/%d/%d] dcaBlk=%lld"
+>             " | infer=%.3f weld=%.3f attach=%.3f arb=%.3f fill=%.3f ms\n",
+>             i, ev.run, ev.lumi, ev.evt, nPixKept, nChainsIn, nAfterTheta, nAfterPixDrop, nAfterClaim, chainTCs.size(),
+>             nT5c, nT4c, nDelivT5, nDelivT3, nPixSuppressed, nSuppByType[0], nSuppByType[1], nSuppByType[2],
+>             nGaDcaBlocked, inferMs, weldMs, attachMs, arbMs, fillMs);
+2219a3154,3165
+>       totDelivT5 += nDelivT5;
+>       totDelivT3 += nDelivT3;
+>       totGaDcaBlocked += nGaDcaBlocked;
+>       totM16ChainOwners += nM16ChainOwners;
+>       totGaPairs += ga.nPairs;
+>       totGaScored += ga.nScored;
+>       totGaChainAtt += ga.nChainAttached;
+>       totGaT3Att += ga.nT3Attached;
+>       totSeedDedup += nSeedDedup + nSeedDedupT3;
+>       totM16Supp[0] += nM16SuppT7;
+>       totM16Supp[1] += nM16SuppT5;
+>       totM16Supp[2] += nM16SuppT8;
+2293,2295c3239,3262
+<       std::printf("  output TCs/evt  mean=%.1f (pixel kept %.1f - suppressed %.1f + chain %.1f - k7 %.1f)\n",
+<                   (totPixKept - totPixSuppressed + totChainTCs - totK7Dropped) / nEvD, totPixKept / nEvD,
+<                   totPixSuppressed / nEvD, totChainTCs / nEvD, totK7Dropped / nEvD);
+---
+>       if (attachMode == 4) {
+>         std::printf("  M16 attach      pairs=%lld mean=%.0f scored=%lld | chain-attached=%lld mean=%.1f"
+>                     " | T3-attached=%lld mean=%.1f | dca-blocked=%lld (-D4 %.4g)"
+>                     " | seed-family dedup revoked=%lld mean=%.1f (-RD %d)\n",
+>                     totGaPairs, totGaPairs / nEvD, totGaScored, totGaChainAtt, totGaChainAtt / nEvD, totGaT3Att,
+>                     totGaT3Att / nEvD, totGaDcaBlocked, dcaAttach4, totSeedDedup, totSeedDedup / nEvD,
+>                     seedDupClean >= 0.5f ? 1 : 0);
+>         std::printf("  M16 delivery    type-7 in-place upgrades of accepted chains=%lld mean=%.1f"
+>                     " (of %lld accepted chain TCs) | extra type-5 TCs=%lld mean=%.1f\n",
+>                     totDelivT5, totDelivT5 / nEvD, totChainTCs, totDelivT3, totDelivT3 / nEvD);
+>         std::printf("  M16 suppression carried rows retired: pT5=%lld pT3=%lld pLS=%lld (total=%lld mean=%.1f)"
+>                     " | -RT5=%d -RT3=%d -RPS=%d -a=%.3f -AT3=%.3f\n",
+>                     totM16Supp[0], totM16Supp[1], totM16Supp[2], totM16Supp[0] + totM16Supp[1] + totM16Supp[2],
+>                     (totM16Supp[0] + totM16Supp[1] + totM16Supp[2]) / nEvD, replT5 >= 0.5f ? 1 : 0,
+>                     replT3 >= 0.5f ? 1 : 0, replPls >= 0.5f ? 1 : 0, thetaAttach, thetaAttachT3);
+>       }
+>       // M16b: totDelivT5 are IN-PLACE upgrades already counted inside totChainTCs, so only
+>       // the stage-B type-5 TCs are additive at -A 4.
+>       const long long extraDeliv = (attachMode == 4) ? totDelivT3 : (totDelivT5 + totDelivT3);
+>       std::printf("  output TCs/evt  mean=%.1f (pixel kept %.1f - suppressed %.1f + chain %.1f - k7 %.1f"
+>                   " + attach deliveries %.1f)\n",
+>                   (totPixKept - totPixSuppressed + totChainTCs - totK7Dropped + extraDeliv) / nEvD,
+>                   totPixKept / nEvD, totPixSuppressed / nEvD, totChainTCs / nEvD, totK7Dropped / nEvD,
+>                   extraDeliv / nEvD);

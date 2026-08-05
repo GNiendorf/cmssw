@@ -1,0 +1,123 @@
+{
+ "feature_names": [
+  "af_log10PtIn",
+  "af_ptErrRel",
+  "af_etaErr",
+  "af_charge",
+  "af_isQuad",
+  "af_log10CircleRadius",
+  "af_plsDeltaPhi",
+  "af_fitKappaSigned",
+  "af_chainTanLambda",
+  "af_innermostLayer",
+  "af_nLayers",
+  "af_chainGateLogit",
+  "af_chargeAgree",
+  "af_dKappa",
+  "af_dTanLambda",
+  "af_dPhiAtInnermost",
+  "af_circleCenterDist",
+  "af_zResidAtInnermost",
+  "af_targetType"
+ ],
+ "conditioning": [
+  {
+   "feature": "af_ptErrRel",
+   "op": "log10_1p"
+  },
+  {
+   "feature": "af_circleCenterDist",
+   "op": "log10_1p"
+  },
+  {
+   "feature": "af_log10PtIn",
+   "op": "clip",
+   "lo": -1.0,
+   "hi": 4.0
+  },
+  {
+   "feature": "af_log10CircleRadius",
+   "op": "clip",
+   "lo": 1.0,
+   "hi": 5.0
+  },
+  {
+   "feature": "af_fitKappaSigned",
+   "op": "clip",
+   "lo": -1.0,
+   "hi": 1.0
+  },
+  {
+   "feature": "af_dKappa",
+   "op": "clip",
+   "lo": -1.0,
+   "hi": 1.0
+  }
+ ],
+ "mean": [
+  0.16736763715744019,
+  0.0007132386090233922,
+  0.0012451683869585395,
+  0.02426638826727867,
+  0.4327447712421417,
+  2.1107218265533447,
+  0.0017683353507891297,
+  -0.000680867931805551,
+  0.007054073736071587,
+  3.5527470111846924,
+  3.3293349742889404,
+  0.3127747178077698,
+  0.6426734328269958,
+  0.00043280652607791126,
+  0.0001226930326083675,
+  2.2526795874000527e-05,
+  1.888872742652893,
+  -0.01940542459487915,
+  0.8669674396514893
+ ],
+ "std": [
+  0.2659130394458771,
+  0.0046144211664795876,
+  0.0005390075384639204,
+  0.9997055530548096,
+  0.49545609951019287,
+  0.265412837266922,
+  0.06354419887065887,
+  0.009584165178239346,
+  2.504929780960083,
+  2.693540096282959,
+  0.864567220211029,
+  1.0009677410125732,
+  0.4792121648788452,
+  0.011553753167390823,
+  0.29352882504463196,
+  0.19387221336364746,
+  0.7076528668403625,
+  17.221445083618164,
+  0.33960992097854614
+ ],
+ "seed": 42,
+ "degenerate_columns": [],
+ "per_type": false,
+ "sampling_weights": {
+  "rule": "loss and AUC weighted by the dump 'wgt' branch (bare-T3 FAKES downsampled 1-in-64) x the M19 emphasis multipliers below",
+  "train_W_true": 23379604.0,
+  "train_W_fake": 2704963584.0,
+  "pos_weight": 115.6975791377818
+ },
+ "m19_objective": {
+  "gamma_neg": 2.0,
+  "disp_mid": 1.0,
+  "disp_hi": 1.0,
+  "chain_weight": 1.0,
+  "val_metric": "chain",
+  "val_cap": 6000000
+ },
+ "train_args": {
+  "epochs": 60,
+  "patience": 8,
+  "batch_size": 16384,
+  "lr": 0.001,
+  "hidden": 24
+ }
+}

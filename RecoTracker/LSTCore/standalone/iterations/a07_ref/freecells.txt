@@ -1,0 +1,34 @@
+### cells with N >= 150, sorted by fake count among ZERO-ESSENTIAL cells first
+cell (deliv,type,br,nPS,inLay,pt,eta)                       N    N/evt    fake%   essent
+-- ZERO-ESSENTIAL cells (deletable at exactly zero efficiency cost) --
+('chain', 'T4', 1, 2, 2, 'p1', 'B')                       266     0.89    76.32        0
+('zp8pLS', 'pLS', -1, 0, 0, 'p1', 'E2')                   175     0.58     5.14        0
+('attachT5', 'pT5', 2, 4, 2, 'p1', 'E1')                  168     0.56     1.19        0
+ALL zero-essential cells (N>=150): N 609 (2.03/evt) fake 214 -> purity 35.1%
+
+-- highest-fake cells regardless of essential content --
+('carried', 'pLS', -1, 0, 0, 'p1', 'E2')               102110   340.37     2.90     1628
+('attachT3', 'pT3', -1, 0, 0, 'p1', 'B')                12278    40.93    12.51      333
+('carried', 'pLS', -1, 0, 0, 'p1', 'E1')                 9214    30.71    15.95      135
+('chain', 'T5', 3, 3, 1, 'p1', 'B')                      7355    24.52    18.59      331
+('carried', 'pLS', -1, 0, 0, 'p2', 'E2')                46200   154.00     2.71     1170
+('chain', 'T5', 3, 3, 1, 'p1', 'T')                     12265    40.88     9.98      351
+('attachT3', 'pT3', -1, 0, 0, 'p1', 'E1')                4095    13.65    26.30       50
+('chain', 'T5', 3, 2, 2, 'p1', 'B')                      3266    10.89    28.26      150
+('attachT3', 'pT3', -1, 0, 0, 'p1', 'T')                 4025    13.42    19.25       79
+('carried', 'pLS', -1, 0, 0, 'p2', 'E1')                 3596    11.99    21.13      107
+('chain', 'T5', 3, 3, 1, 'p2', 'B')                      2568     8.56    23.48      213
+('chain', 'T5', 3, 3, 1, 'p2', 'T')                      3522    11.74    13.91      178
+('chain', 'T4', 1, 1, 3, 'p1', 'B')                       877     2.92    55.76       16
+('attachT3', 'pT3', -1, 0, 0, 'p2', 'B')                 3431    11.44    14.02      172
+('carried', 'pLS', -1, 0, 0, 'p3', 'E2')                 6828    22.76     6.72      365
+('chain', 'T5', 3, 2, 2, 'p2', 'B')                      1363     4.54    32.65      118
+('chain', 'T5', 3, 2, 2, 'p1', 'T')                      1743     5.81    24.84       24
+('chain', 'T5', 2, 3, 1, 'p1', 'B')                     18980    63.27     2.19      589
+('carried', 'pLS', -1, 0, 0, 'p4', 'E2')                 1208     4.03    33.94      243
+('attachT3', 'pT3', -1, 0, 0, 'p2', 'E1')                1238     4.13    32.63       33
+('chain', 'T4', 1, 3, 1, 'p1', 'B')                       563     1.88    63.77       18
+('carried', 'pLS', -1, 0, 0, 'p3', 'E1')                  733     2.44    44.47       39
+('carried', 'pLS', -1, 0, 0, 'p4', 'E1')                  341     1.14    84.75       26
+('attachT3', 'pT3', -1, 0, 0, 'p2', 'T')                 1109     3.70    25.07       36
+('chain', 'T4', 1, 1, 3, 'p2', 'B')                       450     1.50    61.33       17

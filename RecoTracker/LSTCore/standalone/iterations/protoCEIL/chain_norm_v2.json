@@ -1,0 +1,102 @@
+{
+ "feature_names": [
+  "cf_nNodes",
+  "cf_nLayers",
+  "cf_sumEdgeLogit",
+  "cf_minEdgeLogit",
+  "cf_meanEdgeLogit",
+  "cf_fullFitChi2PerHit",
+  "cf_rzLineChi2PerHit",
+  "cf_fitKappa",
+  "cf_dKappaFitVsMedianT3",
+  "cf_ptEst",
+  "cf_innermostLayer",
+  "cf_layerSpan",
+  "cf_nPS",
+  "cf_nBarrel",
+  "cf_maxJunctionDegProduct",
+  "cf_chargeConsistency"
+ ],
+ "conditioning": [
+  {
+   "feature": "cf_fullFitChi2PerHit",
+   "op": "log10_1p"
+  },
+  {
+   "feature": "cf_rzLineChi2PerHit",
+   "op": "log10_1p"
+  },
+  {
+   "feature": "cf_maxJunctionDegProduct",
+   "op": "log10_1p"
+  },
+  {
+   "feature": "cf_fitKappa",
+   "op": "clip",
+   "lo": -1.0,
+   "hi": 1.0
+  },
+  {
+   "feature": "cf_dKappaFitVsMedianT3",
+   "op": "clip",
+   "lo": -2.0,
+   "hi": 2.0
+  }
+ ],
+ "mean": [
+  2.407282590866089,
+  4.833219051361084,
+  5.206540584564209,
+  3.1712634563446045,
+  3.3871192932128906,
+  0.014681494794785976,
+  0.25701624155044556,
+  -0.00035630783531814814,
+  0.0009665625402703881,
+  1.5667932033538818,
+  2.016542673110962,
+  5.313845157623291,
+  2.8617682456970215,
+  3.1930582523345947,
+  0.8555997610092163,
+  0.9512861371040344
+ ],
+ "std": [
+  0.6215087175369263,
+  0.7958236336708069,
+  4.235225677490234,
+  1.9359039068222046,
+  1.970992922782898,
+  0.07855524867773056,
+  0.2597582936286926,
+  0.00948312133550644,
+  0.003399610286578536,
+  5.009958744049072,
+  1.8735783100128174,
+  2.1797218322753906,
+  1.112546443939209,
+  1.8183302879333496,
+  0.43658730387687683,
+  0.20680004358291626
+ ],
+ "seed": 42,
+ "degenerate_columns": [],
+ "displaced_weighting": {
+  "rule": "tiered: true chains with 1<=simVxy<5 get weight x mid, simVxy>=5 get x hi; fakes and prompt true 1",
+  "displaced_weight_mid": 8.0,
+  "displaced_weight_hi": 16.0,
+  "n_weighted_mid_train": 2312,
+  "n_weighted_hi_train": 6685
+ },
+ "train_args": {
+  "epochs": 200,
+  "patience": 15,
+  "batch_size": 16384,
+  "lr": 0.001,
+  "feature_clip": true,
+  "displaced_weight": 4.0,
+  "displaced_weight_mid": 8.0,
+  "displaced_weight_hi": 16.0,
+  "select_metric": "min_prompt_disp"
+ }
+}

@@ -1,0 +1,115 @@
+A13 FINAL SCOREBOARD (resumed segment).  Mechanism: -RPSA, a bar on the PRE-EXISTING -RPS
+seed-retirement predicate, unwelded from the pT3/chain DELIVERY margin. No new mechanism.
+
+A. THE -RPSA FRONTIER -- frozen 300-evt subset, everything else the ASSEMBLED BASELINE
+   (-XC 3 -XCT 4 -T3E 1 -CC 1 -CCN 1 -CCR 2)
+```
+tag                     eff    vxy01      v15     v510    v1030      d15     d510    d1030      dup     fake      nhB      nhT      nhE      nTC
+GATE2 (= FINBASE)   0.80992  0.84282  0.79459  0.73356  0.74139  0.61650  0.20161  0.03073  0.06230  0.05551  9.80254  9.87906  3.55956   618793
+-RPSA 6             0.80979  0.84268  0.79459  0.73356  0.74139  0.61650  0.20161  0.03073  0.05956  0.05557  9.84857  9.88238  3.56108   617813
+-RPSA 5.5  [PICK]   0.80970  0.84258  0.79459  0.73356  0.74139  0.61650  0.20161  0.03073  0.05853  0.05560  9.86488  9.88353  3.56221   617338
+-RPSA 5             0.80957  0.84244  0.79459  0.73356  0.74139  0.61650  0.20161  0.03073  0.05787  0.05560  9.87688  9.88519  3.56361   616872
+-RPSA 4.5           0.80939  0.84225  0.79459  0.73187  0.74139  0.61650  0.20161  0.03073  0.05743  0.05559  9.88507  9.88800  3.56562   616429
+-RPSA 4             0.80904  0.84187  0.79313  0.73187  0.74139  0.61650  0.20161  0.03073  0.05719  0.05555  9.89168  9.89171  3.56782   615963
+-RPSA 4.5 -XCT 3.5  0.80851  0.84134  0.79386  0.73187  0.74139  0.61650  0.20161  0.03073  0.05437  0.05566  9.91947  9.92265  3.56968   615031
+-XC 1 -RPSA 4.5     0.80984  0.84268  0.79532  0.73187  0.74139  0.61650  0.20161  0.03073  0.06188  0.05547  9.83685  9.83964  3.56075   618327
+LST (target)        0.80988  0.84296  0.77193  0.65430  0.66453  0.55407  0.20968  0.05674  0.05179  0.04476 10.14804 10.01546  3.56248   608190
+```
+
+B. PER REGION -- frozen 300
+```
+tag                    effB     effT     effE     dupB     dupT     dupE     fakB     fakT     fakE   nhitOT      nhB      nhT      nhE
+GATE2 (= FINBASE)   0.92660  0.88213  0.74496  0.04344  0.03431  0.08106  0.06680  0.06903  0.04525  6.44117  9.80254  9.87906  3.55956
+-RPSA 5.5  [PICK]   0.92625  0.88187  0.74485  0.03179  0.03406  0.08052  0.06720  0.06903  0.04521  6.45642  9.86488  9.88353  3.56221
+-RPSA 5             0.92591  0.88187  0.74485  0.02991  0.03400  0.08032  0.06727  0.06900  0.04520  6.46030  9.87688  9.88519  3.56361
+-XC 1 -RPSA 4.5     0.92614  0.88315  0.74474  0.03591  0.04176  0.08220  0.06699  0.06874  0.04515  6.44489  9.83685  9.83964  3.56075
+LST (target)        0.92557  0.88187  0.74596  0.00989  0.01264  0.08556  0.04249  0.04454  0.04603  6.51865 10.14804 10.01546  3.56248
+```
+
+C. WHAT THE BAR DOES TO THE TRUTH PARTITION (-XCD 2, per event, 300 evts)
+```
+tag              A_N  A_cons   A_rps    A_xc  A_surv |   B_rps    B_xc  B_surv |    C_xc  C_surv
+GATE2          676.0   301.7   234.1   113.9    26.3 |     7.2     5.8   823.4 |     4.2    40.5
+-RPSA 6        676.0   301.7   299.7    51.1    23.6 |     8.8     4.6   823.0 |     3.7    40.4
+-RPSA 5.5      676.0   301.7   323.0    28.9    22.4 |    10.1     3.7   822.6 |     3.4    40.3
+-RPSA 5        676.0   301.7   337.5    15.3    21.5 |    11.6     2.8   822.0 |     3.1    40.3
+-RPSA 4.5      676.0   301.7   346.2     7.1    21.0 |    13.5     1.8   821.1 |     2.8    40.2
+-RPSA 4        676.0   301.7   351.7     2.0    20.7 |    15.7     0.6   820.1 |     2.6    40.0
+```
+The bar SWALLOWS the ported crossclean's bare-chain arm (A_xc 113.9 -> 28.9 at 5.5) and
+retires 3.9 MORE class A per event for 0.8 more class B. Class-A survivors fall 26.3 ->
+22.4 -> 20.7, i.e. it walks the class down to the ~20/evt STRUCTURAL FLOOR the port round
+predicted and no dR mechanism has reached.
+
+D. THE JOINT GRID -- the bar x the two other constants (300 evts). Gap-sum = (dup - LST)
+   + (fake - LST), the two residual gaps added.
+```
+tag            flags added to the assembled baseline    eff       dup      fake      nhB      nTC   gapsum
+GATE2          (assembled baseline)                  0.80992  0.06230  0.05551  9.80254  618793  .0213
+D_R6X45        -XCT 4.5 -RPSA 6                      0.81023  0.06402  0.05545  9.80049  619734  .0219
+C_RPSA55       -RPSA 5.5                             0.80970  0.05853  0.05560  9.86488  617338  .0175
+D_A65R55       -AT3 6.5 -RPSA 5.5                    0.80935  0.05949  0.05188  9.87819  614558  .0148
+D_A65R5        -AT3 6.5 -RPSA 5                      0.80922  0.05878  0.05188  9.89051  614073  .0141
+D_A65R45       -AT3 6.5 -RPSA 4.5                    0.80900  0.05832  0.05187  9.89878  613599  .0136
+D_RPSA55X35    -RPSA 5.5 -XCT 3.5                    0.80882  0.05547  0.05567  9.89928  615929  .0146
+D_A7RPSA55     -AT3 7   -RPSA 5.5                    0.80869  0.06045  0.04976  9.87566  612180  .0137
+D_A7R5         -AT3 7   -RPSA 5                      0.80855  0.05972  0.04976  9.88827  611678  .0132
+D_A7R45        -AT3 7   -RPSA 4.5                    0.80829  0.05925  0.04975  9.89660  611190  .0125
+LST                                                  0.80988  0.05179  0.04476 10.14804  608190  0
+```
+* -RPSA is ORTHOGONAL to -AT3 and to -XCT. -AT3 alone RAISES the duplicate rate (it weakens
+  the welded seed bar); with -RPSA holding the bar down, the fake-leaning corner is reachable
+  without the duplicate penalty. -AT3 7 alone (published frontier) = .80900/.06452/.04970;
+  -AT3 7 -RPSA 4.5 = .80829/.05925/.04975, i.e. -.0053 of duplicate rate for -.0007 of eff.
+* D_A65R55 is the first point of the campaign with BOTH residual gaps below +.008
+  (dup +.0077, fake +.0071) at efficiency within .0005 of LST.
+* Displaced is BIT-FROZEN across the whole grid: v510 .73356 (.73187 on the three
+  deepest rows = ONE track on a ~600 denominator), v1030 .74139, d15 .61650,
+  d510 .20161, d1030 .03073 -- identical on every single row.
+
+E. FULL 977 EVENTS
+```
+tag                     eff    vxy01      v15     v510    v1030      d15     d510    d1030      dup     fake      nhB      nhT      nhE      nTC
+W_X4 (= FINBASE)    0.80905  0.84144  0.80110  0.72161  0.71474  0.58320  0.24521  0.03151  0.06184  0.05607  9.80064  9.88373  3.55719 2033868
+W_RPSA55  [PICK]    0.80886  0.84123  0.80110  0.72161  0.71474  0.58320  0.24521  0.03151  0.05802  0.05614  9.86321  9.88786  3.55994 2029040
+W_RPSA45            0.80852  0.84088  0.80022  0.72111  0.71474  0.58320  0.24521  0.03151  0.05698  0.05614  9.88154  9.89327  3.56303 2026288
+LST(base)           0.80987  0.84285  0.77719  0.64422  0.62567  0.51042  0.22906  0.05402  0.05138  0.04538 10.14984 10.00937  3.55665 1998494
+```
+THE DELTAS TRANSFER EXACTLY. Against the assembled baseline:
+  -RPSA 5.5   300 evts: eff -.00022  dup -.00377  fake +.00009
+              977 evts: eff -.00019  dup -.00382  fake +.00007
+  -RPSA 4.5   300 evts: eff -.00053  dup -.00487  fake +.00008
+              977 evts: eff -.00053  dup -.00486  fake +.00007
+Per region on 977 (-RPSA 5.5): effB .92437 (LST .92430, still ABOVE) effT .87958
+effE .74415 | dupB .03122 dupT .03345 dupE .08010 (LST .08486, still BETTER) |
+fakB .06794 fakT .06933 fakE .04571 (LST .04630, still BETTER).
+Truth partition on 977 at -RPSA 5.5: A 682.8 / cons 305.6 / rps 325.5 / xc 29.3 /
+SURVIVE 22.3; B_rps 10.4 B_xc 3.8; same shape as the 300.
+Per region on 977 (-RPSA 4.5): effB .92398 effT .87920 effE .74385 | dupB .02846
+dupT .03326 dupE .07974 | fakB .06806 fakT .06932 fakE .04565  (LST .92430/.88004/.74658 |
+.00971/.01308/.08486 | .04365/.04542/.04630). Endcap dup AND endcap fake stay BELOW LST.
+
+F. THE SIMPLIFICATION VARIANT ON 977 EVENTS -- the ported bare-chain arm DELETED
+```
+tag                     eff      dup     fake      nhB      nhT      nhE      nTC
+W_X4  (assembled base)  0.80905  0.06184  0.05607  9.80064  9.88373  3.55719  2033868
+W_X1R45 (-XC 1 -RPSA 4.5) 0.80909 0.06148 0.05601  9.83235  9.84514  3.55828  2032598
+LST                     0.80987  0.05138  0.04538 10.14984 10.00937  3.55665  1998494
+```
+`-XC 1 -RPSA 4.5` matches the assembled baseline on EVERY headline number at 977 events
+(eff +.00004, dup -.00036, fake -.00006, nTC -1270) while deleting the bare-chain arm of
+the ported CrossCleanpLS, its dR^2 < 0.02 window and the -XCT constant. It confirms the
+300-evt result (eff -.00008, dup -.00042, fake -.00004). Per region at 977: effB .92476
+effT .88027 effE .74405 | dupB .03579 dupT .04108 dupE .08177 | fakE .04563.
+
+G. THE THREE POINTS ON OFFER (977-evt numbers, all vs LST .80987 / .05138 / .04538)
+```
+                                            eff        dup       fake   constants added
+-RPSA 5.5   [PICK]                       0.80886    0.05802    0.05614   ONE
+-RPSA 4.5   (duplicate-leaning)          0.80852    0.05698    0.05614   ONE
+-XC 1 -RPSA 4.5 (simplification)         0.80909    0.06148    0.05601   ZERO NET (-XCT out)
+assembled baseline                       0.80905    0.06184    0.05607   -
+```
+300-evt-only, two constants, both gaps under +.008 for the first time:
+  -AT3 6.5 -RPSA 5.5 = .80935 / .05949 / .05188   (LST .80988 / .05179 / .04476)
+  -AT3 7   -RPSA 4.5 = .80829 / .05925 / .04975

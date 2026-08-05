@@ -1,0 +1,18 @@
+A = cs_gate1.root
+B = cs_F03_DD4.root
+denominator sims (pt>0.9,|eta|<4.5,|vz|<30,q!=0): 26123
+census              nTC       good  duplicate       fake
+all TC A         616467     546377      38153      31937
+all TC B         616416     546400      38099      31917
+removed              51        -23         54         20
+chainTC A        301078     271758      11456      17864
+chainTC B        301027     271781      11402      17844
+rm chain             51        -23         54         20
+sims matched in A only (LOST by B) = 1
+sims matched in B only (gained)    = 0
+net sims = -1
+per-sim TC multiplicity (denominator sims):
+   nTC :       0       1       2       3       4       5     >=6
+   A   :    5933   19637     549       4       0       0       0
+   B   :    5934   19636     549       4       0       0       0
+lost sims: median pt=33.37 |eta|=1.94 vxy=0.91 ; vxy>=1 frac=0.00 (n=1)

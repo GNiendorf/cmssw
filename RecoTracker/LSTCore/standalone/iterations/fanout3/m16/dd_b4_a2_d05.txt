@@ -1,0 +1,21 @@
+[diag_dups] MODE: EXACT (tc_simIdxAll present; no Frac branch -- rows are pre-thresholded >0.75) on /mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/fanout3/m16/ab_b4_a2_d05.root
+[diag_dups] chain/pix classification: tc_isChain (attach-aware)
+
+totals: nTC=615600  nDup=37162 (6.0% of all TCs)
+TC counts by type      : type4=113111  type9=8029  type7=179938  type5=45274  type8=269248
+dup TC counts by type  : type4=5225 (14.1%)  type9=2482 (6.7%)  type7=3272 (8.8%)  type5=775 (2.1%)  type8=25408 (68.4%)
+dup TCs (by tc_isChain): chain=10979 (29.5%)  pixel=26183 (70.5%)
+
+duplicate TC pairs (exact, sharing a >0.75 sim): 18879
+  chain-chain  =   2625 (13.9%)
+  chain-pix    =   5997 (31.8%)
+  pix-pix      =  10257 (54.3%)
+chain-chain nhitOT: same=930 (35.4%) diff=1695; |dLen| histo: 0:930  2:1313  4:359  6:23
+
+per-dup-TC partner composition:
+  pix dup with partners ['pix']: 20259 (54.5%)
+  chain dup with partners ['pix']: 5735 (15.4%)
+  pix dup with partners ['chain']: 5690 (15.3%)
+  chain dup with partners ['chain']: 5100 (13.7%)
+  pix dup with partners ['chain', 'pix']: 234 (0.6%)
+  chain dup with partners ['chain', 'pix']: 144 (0.4%)

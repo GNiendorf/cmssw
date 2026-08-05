@@ -1,0 +1,1 @@
+OVERRIDES: -a 7.5 -RPS 1 -RD 1

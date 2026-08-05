@@ -1,0 +1,40 @@
+loaded U0: 200 events
+loaded C1: 200 events
+loaded C2: 200 events
+loaded C3: 200 events
+loaded CL: 200 events
+
+================ (1) CANDIDATE-UNIVERSE COMPOSITION at theta=6.0 ============
+universe                  targ/e    rows/e  dupChain   dupEach      fake       NEW   newSims
+GEN-C reference                -    1132.7     884.4      50.6      90.8     106.9         -
+U0 (unconditioned)         40146    1128.8     897.5      24.1      91.7     115.6      1005
+C1 (conditioned -CEN 1)     17880     220.8      53.0      20.5      41.7     105.5       828
+C2 (conditioned -CEN 2)     29500     517.0     303.5      22.1      80.6     110.9       932
+C3 (conditioned -CEN 3)     38489    1037.6     808.1      23.8      90.3     115.4      1004
+CL (conditioned -CEL 1)     19838     333.3     153.2      20.8      52.0     107.2       861
+
+================ (2) ORACLE CEILING (truth-based selection, no threshold) ====
+Each conditioned universe is evaluated under the ownership rule it was
+conditioned with (the natural full configuration); U0 carries all five as the
+post-hoc controls, which is exactly what sibling A measured.
+
+universe / ownership rule           deliv/e   newSim     labEff       dup      fake maxRealEff
+U0 post-hoc nodedup                     3.8     1077    0.82159   0.05252   0.04893    0.81686   [A5: 3.7 / 1061 / 0.8162]
+U0 post-hoc veto-on-1                   2.8      850    0.81164   0.05245   0.04896    0.80791   [A5: 2.8 / 826 / 0.8069]
+U0 post-hoc veto-on-2                   3.2      939    0.81553   0.05247   0.04895    0.81141   [A5: 3.2 / 929 / 0.8110]
+U0 post-hoc veto-on-3                   3.7     1054    0.82060   0.05251   0.04893    0.81597   [A5: 3.5 / 1023 / 0.8147]
+U0 post-hoc layer-contain               3.0      890    0.81336   0.05249   0.04895    0.80945
+
+C1 conditioned -CEN 1 + veto-on-1       3.0      908    0.81415   0.05244   0.04895    0.81016
+C1 conditioned -CEN 1 + nodedup         3.1      908    0.81415   0.05251   0.04895    0.81016
+C2 conditioned -CEN 2 + veto-on-2       3.5     1024    0.81928   0.05246   0.04894    0.81478
+C2 conditioned -CEN 2 + nodedup         3.5     1024    0.81928   0.05251   0.04894    0.81478
+C3 conditioned -CEN 3 + veto-on-3       3.7     1077    0.82159   0.05251   0.04893    0.81686
+C3 conditioned -CEN 3 + nodedup         3.8     1077    0.82159   0.05252   0.04893    0.81686
+CL conditioned -CEL 1 + layer-contain      3.2      944    0.81573   0.05248   0.04895    0.81158
+CL conditioned -CEL 1 + nodedup         3.3      944    0.81573   0.05251   0.04894    0.81158
+
+================ (3) HEAD-RANKED frontier, theta scan (the real selector) ====
+universe / rule                       theta  deliv/e   newSim     labEff       dup      fake
+U0 nodedup                              4.0   1070.1     1048    0.82033   0.25920   0.14056  E..
+U0 nodedup                              6.0    749.9      988    0.81770   0.26872   0.06100  E..

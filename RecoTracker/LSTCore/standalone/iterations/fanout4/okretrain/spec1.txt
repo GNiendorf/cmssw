@@ -1,0 +1,12 @@
+res_b0|chainproto|-B 0
+vb_b5_w050|chainproto_vb|-B 5
+vb_b10_w050|chainproto_vb|-B 10
+vb_b20_w050|chainproto_vb|-B 20
+vb_b40_w050|chainproto_vb|-B 40
+vc_b5_w050|chainproto_vc|-B 5
+vc_b10_w050|chainproto_vc|-B 10
+vc_b20_w050|chainproto_vc|-B 20
+vc_b40_w050|chainproto_vc|-B 40
+vb_b10_w025|chainproto_vb|-B 10 -W 0.25
+vb_b10_w100|chainproto_vb|-B 10 -W 1.0
+vc_b10_w025|chainproto_vc|-B 10 -W 0.25

@@ -1,0 +1,21 @@
+#!/bin/bash
+# ok_run.sh <tag> [extra chainproto args...]
+# Runs the ctl_noatt anchor config in the okredesign workspace, then scores it.
+TAG="$1"; shift
+S=/mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone
+P="$S/fanout4/okredesign"
+ANCHOR="-e 0 -L 0.5 -F 0.3 -G 6 -X 0.5 -M4 3.5 -M5 1e9 -M6 1e9 -M4D -0.75 -MD 1e9 -MR -1.800 -MRI 0.5 -U4 0 -U5 0 -U6 0 -B 10 -H 1 -W 0.50 -FC 1 -PU 2 -C25 2.0 -C25D -2.0"
+CTL="-A 4 -a 999 -D 5 -RT5 1"
+pushd "$S" > /dev/null && source setup.sh > /dev/null 2>&1
+cmsenv > /dev/null 2>&1
+source setup.sh > /dev/null 2>&1
+echo "[ok] $TAG : $*"
+"$P/bin/chainproto" -m hybrid -i "$S/LSTNtuple_PU200RelVal_300evt.root" \
+  -t /data2/segmentlinking/CMSSW_12_5_0_pre3/RelValTTbar_14TeV_CMSSW_12_5_0_pre3/ \
+  -o "$P/ok_${TAG}.root" $ANCHOR $CTL "$@" > "$P/ok_${TAG}.log" 2>&1 \
+  || { tail -20 "$P/ok_${TAG}.log"; exit 1; }
+grep -E "chain TCs|pixel TCs kept" "$P/ok_${TAG}.log"
+createPerfNumDenHists -i "$P/ok_${TAG}.root" -o "$P/ok_${TAG}_hists.root" > "$P/ok_${TAG}_hists.log" 2>&1 \
+  || { tail -20 "$P/ok_${TAG}_hists.log"; exit 1; }
+python3 "$P/compare_ab.py" --proto "$P/ok_${TAG}_hists.root" \
+  --base "$S/prototype/base300_hists.root" --json "$P/ok_${TAG}.json"

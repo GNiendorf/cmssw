@@ -1,0 +1,32 @@
+  predicate                                    killF killT | bandFk globFk |  vxy>=5 vxy>=10  dxy>=1  dxy>=5
+-- calibration: the z1 config (flat exempt mX < -0.5, both lengths)
+  exempt(5+) mX<-0.50   [= z1 real]             1361   549 | 0.0602 0.0510 |      48      46      35      14
+  exempt(5+) mX<0.00    [= z2 real]             1889  1181 | 0.0539 0.0500 |      85      77      62      22
+-- inLay==1 restricted, exempt nL=5
+  ex5 & inLay1 mX<0.50                          1179   932 | 0.0628 0.0514 |      45      39      31       2
+  ex5 & inLay1 mX<1.00                          1375  1590 | 0.0608 0.0511 |      61      53      41       2
+  ex5 & inLay1 mX<1.50                          1501  2251 | 0.0598 0.0509 |      76      66      49       2
+  ex5 & inLay1 mX<2.00                          1569  2897 | 0.0594 0.0508 |      88      77      55       3
+  ex5 & inLay1 mX<2.50                          1610  3744 | 0.0596 0.0508 |      96      84      60       3
+  ex5 & inLay1 mX<3.00                          1649  4760 | 0.0599 0.0509 |     101      89      61       3
+-- inLay==1 restricted, exempt all lengths
+  ex5+6 & inLay1 mX<0.50                        1723  1876 | 0.0566 0.0504 |      83      72      50       6
+  ex5+6 & inLay1 mX<1.00                        2145  3478 | 0.0522 0.0497 |     127     112      73       7
+  ex5+6 & inLay1 mX<1.50                        2430  5356 | 0.0497 0.0494 |     167     143      97       8
+  ex5+6 & inLay1 mX<2.00                        2634  7247 | 0.0482 0.0491 |     203     174     121       9
+  ex5+6 & inLay1 mX<2.50                        2777  9380 | 0.0477 0.0491 |     234     200     135       9
+-- inLay==1, exempt, per-length combos
+  inLay1 ex5 mX<1.0 + ex6 mX<0.0                1732  2025 | 0.0566 0.0504 |      86      75      52       6
+  inLay1 ex5 mX<1.0 + ex6 mX<0.5                1919  2534 | 0.0545 0.0501 |      99      86      60       6
+  inLay1 ex5 mX<1.0 + ex6 mX<1.0                2145  3478 | 0.0522 0.0497 |     127     112      73       7
+  inLay1 ex5 mX<1.5 + ex6 mX<0.0                1858  2686 | 0.0554 0.0502 |     101      88      60       6
+  inLay1 ex5 mX<1.5 + ex6 mX<0.5                2045  3195 | 0.0533 0.0499 |     114      99      68       6
+  inLay1 ex5 mX<1.5 + ex6 mX<1.0                2271  4139 | 0.0510 0.0495 |     142     125      81       7
+  inLay1 ex5 mX<2.0 + ex6 mX<0.0                1926  3332 | 0.0550 0.0502 |     113      99      66       7
+  inLay1 ex5 mX<2.0 + ex6 mX<0.5                2113  3841 | 0.0529 0.0498 |     126     110      74       7
+  inLay1 ex5 mX<2.0 + ex6 mX<1.0                2339  4785 | 0.0505 0.0495 |     154     136      87       8
+-- add band cell (nNodes=2,nL=5) mD tightening on inLay1
+  inLay1 ex5 mX<1.0 + cell mD<-1.0              1412  1729 | 0.0605 0.0510 |      62      53      41       2
+  inLay1 ex5 mX<1.0 + cell mD<0.0               1441  1874 | 0.0602 0.0510 |      64      54      41       2
+  inLay1 ex5 mX<1.5 + cell mD<-1.0              1527  2365 | 0.0595 0.0509 |      76      66      49       2
+  inLay1 ex5 mX<1.5 + cell mD<0.0               1548  2482 | 0.0593 0.0508 |      78      67      49       2

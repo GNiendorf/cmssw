@@ -1,0 +1,7 @@
+DISTINCT DISPLACED SIMS  (displacement = max(vxy, |dxy|); no vxy/dxy double count)
+A = W_X4   B = B   input = LSTNtuple_instr_977evt.root
+tier         nSim        LST       W_X4          -   A vs LST (lost/gained)
+DISP1       16369       7782       8512          -   377/1107 net +730
+DISP5       11809       4238       4859          -   280/901 net +621
+DISP10       9819       2956       3423          -   236/703 net +467
+DISP30       5721        392        494          -   110/212 net +102

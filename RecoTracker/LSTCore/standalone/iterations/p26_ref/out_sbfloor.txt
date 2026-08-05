@@ -1,0 +1,40 @@
+**** Following environment variables are going to be unset.
+      X86_64_V3_PATH
+      X86_64_V3_PYTHON3PATH
+      INTEL_LICENSE_FILE
+
+################ cuda 300-event scoreboard NOISE FLOOR: BEFORE vs BEFORE ################
+metric                           frozen         P2.5         delta        rel
+------------------------------------------------------------------------------
+eff_overall                    0.326415     0.326384    -3.145e-05   -0.0096%   <-- MOVED
+eff_overall_incut              0.813027     0.812939    -8.778e-05   -0.0108%   <-- MOVED
+eff_vxy_0_1                    0.846099     0.846005    -9.462e-05   -0.0112%   <-- MOVED
+eff_vxy_1_5                    0.803534     0.803534    +0.000e+00   +0.0000%
+eff_vxy_5_10                   0.727129     0.727129    +0.000e+00   +0.0000%
+eff_vxy_10_30                  0.717320     0.717320    +0.000e+00   +0.0000%
+eff_dxy_0_1                    0.840424     0.840340    -8.450e-05   -0.0101%   <-- MOVED
+eff_dxy_1_5                    0.560086     0.560086    +0.000e+00   +0.0000%
+eff_dxy_5_10                   0.249123     0.249123    +0.000e+00   +0.0000%
+eff_dxy_10_30                  0.025641     0.025641    +0.000e+00   +0.0000%
+eff_barrel                     0.924626     0.924401    -2.250e-04   -0.0243%   <-- MOVED
+eff_transition                 0.881602     0.881602    +0.000e+00   +0.0000%
+eff_endcap                     0.754253     0.754253    +0.000e+00   +0.0000%
+dup_overall                    0.051172     0.051169    -3.506e-06   -0.0069%   <-- MOVED
+dup_overall_incut              0.051897     0.051887    -1.063e-05   -0.0205%   <-- MOVED
+dup_barrel                     0.013665     0.013679    +1.383e-05   +0.1012%   <-- MOVED
+dup_transition                 0.018699     0.018673    -2.590e-05   -0.1385%   <-- MOVED
+dup_endcap                     0.082118     0.082100    -1.860e-05   -0.0227%   <-- MOVED
+fake_overall                   0.045723     0.045741    +1.768e-05   +0.0387%   <-- MOVED
+fake_overall_incut             0.046349     0.046387    +3.776e-05   +0.0815%   <-- MOVED
+fake_barrel                    0.051532     0.051652    +1.198e-04   +0.2326%   <-- MOVED
+fake_transition                0.053973     0.054001    +2.782e-05   +0.0515%   <-- MOVED
+fake_endcap                    0.041342     0.041338    -3.528e-06   -0.0085%   <-- MOVED
+mean_nhitOT                    6.379917     6.379983    +6.650e-05   +0.0010%   <-- MOVED
+mean_nhitOT_barrel             9.897452     9.897498    +4.662e-05   +0.0005%   <-- MOVED
+mean_nhitOT_transition         9.886880     9.887009    +1.290e-04   +0.0013%   <-- MOVED
+mean_nhitOT_endcap             3.467565     3.467561    -4.096e-06   -0.0001%   <-- MOVED
+n_tc                       614280.000000 614283.000000    +3.000e+00   +0.0005%   <-- MOVED
+n_sim_denom                63603.000000 63603.000000    +0.000e+00   +0.0000%
+
+rows total 29   rows moved 20   rows identical 9
+SBFLOOR_DONE
