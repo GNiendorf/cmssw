@@ -152,3 +152,46 @@ intermediate commits would not each build):
 Deferred edge (recorded): an event with ZERO welded chains skips stage B entirely (arbitrate
 early-return); prototype would still deliver bare-T3 rows. Never occurs at PU200.
 * -M4B/-M4T omitted (winner-inert while m3Theta4D stays global).
+Commit c1d7f52ca7d, pushed to fork.
+
+## M4 -- STRIP (in progress)
+Maintainer addendum folded in: the standalone -v 1 timing table (trkCore.cc
+printTimingInformation + runEvent timers) must lose the T5/T4/pT5/pT3 columns and gain
+chain-path stage columns (per-stage attribution is the deliverable for the timing/memory
+fan-out round). Plan: keep Hits/MD/LS/T3/pLS/TC/Reset, add a Chain column measured around
+arbitrateChains in runEvent (finer attribution stays available via LST_CHAIN_TIMING).
+Three read-only inventory agents dispatched (collections/xml/pixel-map + standalone harness +
+kernel headers). Core strip order: LSTEvent+LST+TrackCandidate/Kernels -> SoAs/collections/xml
+-> NeuralNetwork+weights+embed -> pixel maps -> harness/writer + timing table -> master-switch
+removal. Rebuild + ON-run + commit per group.
+
+STRIP EXECUTED (single sweep, building now):
+* DELETED FILES: src/alpaka/{Quintuplet,Quadruplet,PixelTriplet,PixelQuintuplet}.h,
+  {T5,T4,pT3}NeuralNetworkWeights.h, {T5Embed,pLSEmbed}NetworkWeights.h, and the 12 interface
+  headers of the four collections (SoA + Host + Device).
+* LSTEvent.dev.cc/-h: create/add/getters for the four classes deleted; createTrackCandidates
+  chain-only (CrossCleanpT3/T5/T4/pLS gone, Add pT5/pT3/T5/T4 gone, dedups gone, CheckHitspLS
+  pass 2 kept, CountSurvivingTCs = pLS only, allocation = pLS + nChainCount_ +
+  kChainBareT3TCHeadroom 4096); LST_CHAIN_SKIP_DOOMED deleted; LST.cc sequence chain-only.
+* Kernels.h 868->~100 lines (CheckHitspLS + rmPixelSegmentFromMemory); TrackCandidate.h
+  852->~150 (addpLSTrackCandidateToMemory + pLS-only CountSurvivingTCs + AddpLSasTrackCandidate);
+  NeuralNetwork.h 564->141 (t3dnn + shared primitives).
+* Embedding: plsEmbed compute + column + partOfPT5 column deleted (Segment.h,
+  PixelSegmentsSoA); TripletsSoA loses connectedMax/connectedLSMax/partOfPT5/partOfT5/partOfPT3;
+  ChainOrderAndSelect pixel-consumed drop deleted; ChainConfig dropPixelConsumed/dropPartOf*
+  deleted; ObjectRangesSoA loses all 10 T5/T4 fields; alpaka/Common.h dnn loses
+  plsembdnn/t5dnn/pt3dnn/t4dnn.
+* Pixel maps: PixelMap reduced to pixelModuleIndex only; getConnectedPixels + superbin fill +
+  connectedPixels device fill deleted; pLS_map file loading + lstg.pixel_map consumption deleted
+  (LSTESData.cc); modulesPixel block kept as 1-row stub so the multi-block layout is unchanged.
+  (LSTInputSoA superbin/pixelType columns are now write-only -- deferred, input-format change.)
+* Harness: AccessHelper 26k->8.7k (T4/T5/pT3/pT5 + TC-dispatch blocks gone); writer loses the
+  t5/t4/pt3/pt5/t5dnn/t4dnn create+set+parse machinery (~66k chars), tc_*Idx reduced to
+  tc_plsIdx, occupancy trimmed, parse switches chain+pLS only; trkCore loses the four doomed
+  runners; timing table restructured to Hits/MD/LS/T3/Graph/pLS/Chain/TC/Reset with
+  chainBuildMs_/chainTCMs_ hooks in LSTEvent (maintainer addendum); flags --t5/--pt3/--pt5/--t4/
+  --t5dnn/--t4dnn removed.
+* Dictionaries were already clean; RecoTracker/LST needs nothing (LSTObjType + TC counters kept).
+Maintainer addendum 2 (recorded): after post-strip verification, run timing CPU 1-stream and GPU
+1-stream (-n 200 -v 1 -w 0 -s 1, PU200), SEQUENTIALLY; report per-stage tables; no LST-baseline
+comparison here.

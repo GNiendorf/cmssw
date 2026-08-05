@@ -10,8 +10,6 @@
 #include "RecoTracker/LSTCore/interface/ChainNodesSoA.h"
 #include "RecoTracker/LSTCore/interface/ChainsSoA.h"
 #include "RecoTracker/LSTCore/interface/MiniDoubletsSoA.h"
-#include "RecoTracker/LSTCore/interface/PixelQuintupletsSoA.h"
-#include "RecoTracker/LSTCore/interface/PixelTripletsSoA.h"
 #include "RecoTracker/LSTCore/interface/SegmentsSoA.h"
 #include "RecoTracker/LSTCore/interface/TrackCandidatesSoA.h"
 #include "RecoTracker/LSTCore/interface/TripletsSoA.h"

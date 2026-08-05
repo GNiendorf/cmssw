@@ -122,9 +122,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
   //   (1) score >= thetaForChain: with -G 6 the base threshold is kNoCutTheta for every length,
   //       while a chain on the EXEMPT (large-dcaXY) branch is cut by -U4/-U5/-U6 on the legacy
   //       sum-logit scale. A gate-killed chain carries score -= 1e9 and fails both.
-  //   (2) the pixel-consumed drop: any member T3 flagged partOfPT5 (when -RT5 leaves that half on)
-  //       or partOfPT3 (when -RT3 does). Under the frozen -RT5 1 / -RT3 0 only the partOfPT3 half
-  //       is live.
+  //   (2) the pixel-consumed drop of the pre-deletion hybrid is GONE: the pT5 / pT3 builders that
+  //       wrote partOfPT5 / partOfPT3 are deleted, so the flags (and the drop) no longer exist.
   struct ChainOrderAndSelect {
     ALPAKA_FN_ACC void operator()(Acc1D const& acc,
                                   TripletsConst triplets,
@@ -147,20 +146,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
             exempt ? (nL >= 6 ? cfg.thetaExempt6 : (nL == 5 ? cfg.thetaExempt5 : cfg.thetaExempt4)) : cfg.noCutTheta;
 
         uint8_t claim = 0u;
-        if (score >= thr) {
-          bool consumed = false;
-          if (cfg.dropPixelConsumed) {
-            uint32_t const off = chains.nodeOffset()[c];
-            int const nN = chains.nNodes()[c];
-            for (int k = 0; k < nN && !consumed; ++k) {
-              uint32_t const t3 = nodes.tripletIndex()[items.nodeItems()[off + k]];
-              consumed = (triplets.partOfPT5()[t3] && cfg.dropPartOfPT5) ||
-                         (triplets.partOfPT3()[t3] && cfg.dropPartOfPT3);
-            }
-          }
-          if (!consumed)
-            claim = kChainClaimCandidate;
-        }
+        if (score >= thr)
+          claim = kChainClaimCandidate;
         chains.claimFlags()[c] = claim;
       }
     }

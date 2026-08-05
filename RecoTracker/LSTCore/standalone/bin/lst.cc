@@ -78,11 +78,8 @@ int main(int argc, char **argv) {
       "use_chain_tracking",
       "Enable the chain-tracking pipeline (phase P2.0: triplet compaction + incidence CSR only)")(
       "h,help", "Print help")("md", "Write MD branches in output ntuple.")("ls", "Write LS branches in output ntuple.")(
-      "t3", "Write T3 branches in output ntuple.")("t5", "Write T5 branches in output ntuple.")(
-      "pls", "Write pLS branches in output ntuple.")("pt3", "Write pT3 branches in output ntuple.")(
-      "pt5", "Write pT5 branches in output ntuple.")("occ", "Write occupancy branches in output ntuple.")(
-      "t5dnn", "Write T5 DNN branches in output ntuple.")("t3dnn", "Write T3 DNN branches in output ntuple.")(
-      "t4", "Write T4 branches in output ntuple.")("t4dnn", "Write T4 DNN branches in output ntuple.")(
+      "t3", "Write T3 branches in output ntuple.")("pls", "Write pLS branches in output ntuple.")(
+      "occ", "Write occupancy branches in output ntuple.")("t3dnn", "Write T3 DNN branches in output ntuple.")(
       "allobj", "Write all object branches in output ntuple.")(
       "J,jet", "Accounts for specific jet branches in input root file for testing")(
       "sim", "Write extra sim branches in output ntuple");
@@ -280,31 +277,14 @@ int main(int argc, char **argv) {
   ana.t3_branches = result["t3"].as<bool>() || result["allobj"].as<bool>();
 
   //_______________________________________________________________________________
-  // --t5
-  ana.t5_branches = result["t5"].as<bool>() || result["allobj"].as<bool>();
-
-  //_______________________________________________________________________________
   // --pls
   ana.pls_branches = result["pls"].as<bool>() || result["allobj"].as<bool>();
 
   //_______________________________________________________________________________
-  // --pt3
-  ana.pt3_branches = result["pt3"].as<bool>() || result["allobj"].as<bool>();
-
-  //_______________________________________________________________________________
-  // --pt5
-  ana.pt5_branches = result["pt5"].as<bool>() || result["allobj"].as<bool>();
-
-  //_______________________________________________________________________________
-  // --t4
-  ana.t4_branches = result["t4"].as<bool>() || result["allobj"].as<bool>();
-
-  //_______________________________________________________________________________
   // P1 RE-BASELINE: the algorithmic isDup snapshots inside LSTCore are pure bookkeeping for
-  // the pLS / pT3 / pT5 branches above. Turn the LSTCore-side host copies on exactly when one
-  // of those blocks is being written; every other build and every CMSSW job leaves them off
-  // and pays nothing.
-  if (ana.pls_branches || ana.pt3_branches || ana.pt5_branches)
+  // the pLS branches above. Turn the LSTCore-side host copies on exactly when that block is
+  // being written; every other build and every CMSSW job leaves them off and pays nothing.
+  if (ana.pls_branches)
     setenv("LST_DUP_SNAPSHOTS", "1", 1);
 
   //_______________________________________________________________________________
@@ -312,16 +292,8 @@ int main(int argc, char **argv) {
   ana.occ_branches = result["occ"].as<bool>() || result["allobj"].as<bool>();
 
   //_______________________________________________________________________________
-  // --t5dnn
-  ana.t5dnn_branches = result["t5dnn"].as<bool>() || result["allobj"].as<bool>();
-
-  //_______________________________________________________________________________
   // --t3dnn
   ana.t3dnn_branches = result["t3dnn"].as<bool>() || result["allobj"].as<bool>();
-
-  //_______________________________________________________________________________
-  // --t4dnn
-  ana.t4dnn_branches = result["t4dnn"].as<bool>() || result["allobj"].as<bool>();
 
   //_______________________________________________________________________________
   // --jet (Not triggered by allobj since most files don't have jet info)
@@ -514,11 +486,7 @@ void run_lst() {
     float timing_MD;
     float timing_LS;
     float timing_T3;
-    float timing_T5;
     float timing_pLS;
-    float timing_T4;
-    float timing_pT5;
-    float timing_pT3;
     float timing_TC;
 
 #pragma omp for  // nowait// private(event)
@@ -538,13 +506,15 @@ void run_lst() {
       timing_MD = runMiniDoublet(events.at(omp_get_thread_num()), evt);
       timing_LS = runSegment(events.at(omp_get_thread_num()));
       timing_T3 = runT3(events.at(omp_get_thread_num()));
-      timing_T5 = runQuintuplet(events.at(omp_get_thread_num()));
-
       timing_pLS = runPixelLineSegment(events.at(omp_get_thread_num()), ana.no_pls_dupclean);
-      timing_T4 = runQuadruplet(events.at(omp_get_thread_num()));
-      timing_pT5 = runPixelQuintuplet(events.at(omp_get_thread_num()));
-      timing_pT3 = runpT3(events.at(omp_get_thread_num()));
       timing_TC = runTrackCandidate(events.at(omp_get_thread_num()), ana.no_pls_dupclean, ana.tc_pls_triplets);
+      // Chain-stage attribution: the graph build (incidence + edges + weld + gate) ran inside the
+      // T3 stage and the chain TC work (K9 + attach + CC + XC + emission + retirement) inside the
+      // TC stage; both are re-attributed to their own columns.
+      float const timing_chain_graph = static_cast<float>(events.at(omp_get_thread_num())->getChainBuildMs()) / 1000.f;
+      float const timing_chain_tc = static_cast<float>(events.at(omp_get_thread_num())->getChainTCMs()) / 1000.f;
+      timing_T3 -= timing_chain_graph;
+      timing_TC -= timing_chain_tc;
 
       if (ana.verbose == 4) {
 #pragma omp critical
@@ -585,11 +555,9 @@ void run_lst() {
                                     timing_MD,
                                     timing_LS,
                                     timing_T3,
-                                    timing_T5,
+                                    timing_chain_graph,
                                     timing_pLS,
-                                    timing_T4,
-                                    timing_pT5,
-                                    timing_pT3,
+                                    timing_chain_tc,
                                     timing_TC,
                                     timing_resetEvent});
     }

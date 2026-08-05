@@ -88,8 +88,6 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     c.xcDR2Chain = a.getParameter<double>("xcDR2Chain");
     c.replacePT5 = a.getParameter<bool>("replacePT5");
     c.replacePT3 = a.getParameter<bool>("replacePT3");
-    c.dropPartOfPT5 = !c.replacePT5;
-    c.dropPartOfPT3 = !c.replacePT3;
     c.attachSuppressBarePLS = a.getParameter<bool>("suppressBarePLS");
     c.attachSeedDedup = a.getParameter<bool>("seedDedup");
     c.attachDcaMax = a.getParameter<double>("dcaMax");

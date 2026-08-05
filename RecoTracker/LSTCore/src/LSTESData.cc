@@ -40,8 +40,7 @@ namespace {
     return fullpath.string();
   }
 
-  void loadMapsHost(lst::MapPLStoLayer& pLStoLayer,
-                    lst::EndcapGeometry& endcapGeometry,
+  void loadMapsHost(lst::EndcapGeometry& endcapGeometry,
                     lst::TiltedGeometry& tiltedGeometry,
                     lst::ModuleConnectionMap& moduleConnectionMap,
                     std::string& ptCutLabel) {
@@ -58,24 +57,6 @@ namespace {
     tiltedGeometry.load(tilted_geom);
     moduleConnectionMap.load(mappath);
 
-    auto pLSMapDir = geometryDataDir() + "/data/OT800_IT615_pt" + ptCutLabel + "/pixelmap/pLS_map";
-    const std::array<std::string, 4> connects{
-        {"_layer1_subdet5", "_layer2_subdet5", "_layer1_subdet4", "_layer2_subdet4"}};
-    std::string path;
-
-    static_assert(connects.size() == std::tuple_size<std::decay_t<decltype(pLStoLayer[0])>>{});
-    for (unsigned int i = 0; i < connects.size(); i++) {
-      auto connectData = connects[i].data();
-
-      path = pLSMapDir + connectData + ".bin";
-      pLStoLayer[0][i] = lst::ModuleConnectionMap(get_absolute_path_after_check_file_exists(path));
-
-      path = pLSMapDir + "_pos" + connectData + ".bin";
-      pLStoLayer[1][i] = lst::ModuleConnectionMap(get_absolute_path_after_check_file_exists(path));
-
-      path = pLSMapDir + "_neg" + connectData + ".bin";
-      pLStoLayer[2][i] = lst::ModuleConnectionMap(get_absolute_path_after_check_file_exists(path));
-    }
   }
 }  // namespace
 
@@ -83,12 +64,11 @@ std::unique_ptr<lst::LSTESData<alpaka_common::DevHost>> lst::loadAndFillESDataHo
   uint16_t nModules;
   uint16_t nLowerModules;
   unsigned int nPixels;
-  MapPLStoLayer pLStoLayer;
   EndcapGeometry endcapGeometry;
   TiltedGeometry tiltedGeometry;
   PixelMap pixelMapping;
   ModuleConnectionMap moduleConnectionMap;
-  ::loadMapsHost(pLStoLayer, endcapGeometry, tiltedGeometry, moduleConnectionMap, ptCutLabel);
+  ::loadMapsHost(endcapGeometry, tiltedGeometry, moduleConnectionMap, ptCutLabel);
 
   auto endcapGeometryDev =
       std::make_shared<EndcapGeometryDevHostCollection>(cms::alpakatools::host(), endcapGeometry.nEndCapMap);
@@ -101,8 +81,7 @@ std::unique_ptr<lst::LSTESData<alpaka_common::DevHost>> lst::loadAndFillESDataHo
 
   auto path = get_absolute_path_after_check_file_exists(geometryDataDir() + "/data/OT800_IT615_pt" + ptCutLabel +
                                                         "/sensor_centroids.bin");
-  auto modulesBuffers = lst::loadModulesFromFile(pLStoLayer,
-                                                 path.c_str(),
+  auto modulesBuffers = lst::loadModulesFromFile(path.c_str(),
                                                  nModules,
                                                  nLowerModules,
                                                  nPixels,
@@ -124,7 +103,6 @@ std::unique_ptr<lst::LSTESData<alpaka_common::DevHost>> lst::fillESDataHost(lstg
   uint16_t nModules;
   uint16_t nLowerModules;
   unsigned int nPixels;
-  MapPLStoLayer pLStoLayer;
   EndcapGeometry endcapGeometry;
   TiltedGeometry tiltedGeometry;
   PixelMap pixelMapping;
@@ -150,22 +128,6 @@ std::unique_ptr<lst::LSTESData<alpaka_common::DevHost>> lst::fillESDataHost(lstg
   }
   moduleConnectionMap.load(final_modulemap);
 
-  for (auto& [layersubdetcharge, map] : lstg.pixel_map) {
-    auto& [layer, subdet, charge] = layersubdetcharge;
-
-    std::map<unsigned int, std::vector<unsigned int>> final_pixelmap;
-    for (unsigned int isuperbin = 0; isuperbin < map.size(); isuperbin++) {
-      auto const& vec = map.at(isuperbin);
-      if (vec.empty())
-        continue;
-      final_pixelmap[isuperbin] = vec;
-    }
-
-    int charge_index = (charge == 0 ? 0 : (charge > 0 ? 1 : 2));
-    int layer_subdet_index = layer - 1 + (subdet == Endcap ? 2 : 0);
-    pLStoLayer[charge_index][layer_subdet_index] = lst::ModuleConnectionMap(final_pixelmap);
-  }
-
   ModuleMetaData mmd;
   unsigned int counter = 0;
   for (auto const& [detId, sensor] : lstg.sensors) {
@@ -180,8 +142,7 @@ std::unique_ptr<lst::LSTESData<alpaka_common::DevHost>> lst::fillESDataHost(lstg
   counter++;
   nModules = counter;
 
-  auto modulesBuffers = constructModuleCollection(pLStoLayer,
-                                                  mmd,
+  auto modulesBuffers = constructModuleCollection(mmd,
                                                   nModules,
                                                   nLowerModules,
                                                   nPixels,

@@ -154,115 +154,6 @@ float runT3(LSTEvent* event) {
 }
 
 //___________________________________________________________________________________________________________________________________________________________________________________________
-float runpT3(LSTEvent* event) {
-  TStopwatch my_timer;
-  if (ana.verbose >= 2)
-    std::cout << "Reco Pixel Triplet pT3 start" << std::endl;
-  my_timer.Start();
-  event->createPixelTriplets();
-  event->wait();  // device side event calls are asynchronous: wait to measure time or print
-  float pt3_elapsed = my_timer.RealTime();
-  if (ana.verbose >= 2)
-    std::cout << "Reco pT3 processing time: " << pt3_elapsed << " secs" << std::endl;
-  if (ana.verbose >= 2)
-    std::cout << "# of Pixel T3s produced: " << event->getNumberOfPixelTriplets() << std::endl;
-
-  return pt3_elapsed;
-}
-
-//___________________________________________________________________________________________________________________________________________________________________________________________
-float runQuadruplet(LSTEvent* event) {
-  TStopwatch my_timer;
-  if (ana.verbose >= 2)
-    std::cout << "Reco Quadruplet start" << std::endl;
-  my_timer.Start();
-  event->createQuadruplets();
-  event->wait();  // device side event calls are asynchronous: wait to measure time or print
-  float t4_elapsed = my_timer.RealTime();
-  if (ana.verbose >= 2)
-    std::cout << "Reco Quadruplet processing time: " << t4_elapsed << " secs" << std::endl;
-
-  if (ana.verbose >= 2)
-    std::cout << "# of Quadruplets produced: " << event->getNumberOfQuadruplets() << std::endl;
-  if (ana.verbose >= 2)
-    std::cout << "# of Quadruplets produced layer 1-2-3-4: " << event->getNumberOfQuadrupletsByLayerBarrel(0)
-              << std::endl;
-  if (ana.verbose >= 2)
-    std::cout << "# of Quadruplets produced layer 2: " << event->getNumberOfQuadrupletsByLayerBarrel(1) << std::endl;
-  if (ana.verbose >= 2)
-    std::cout << "# of Quadruplets produced layer 3: " << event->getNumberOfQuadrupletsByLayerBarrel(2) << std::endl;
-  if (ana.verbose >= 2)
-    std::cout << "# of Quadruplets produced layer 4: " << event->getNumberOfQuadrupletsByLayerBarrel(3) << std::endl;
-  if (ana.verbose >= 2)
-    std::cout << "# of Quadruplets produced layer 5: " << event->getNumberOfQuadrupletsByLayerBarrel(4) << std::endl;
-  if (ana.verbose >= 2)
-    std::cout << "# of Quadruplets produced layer 6: " << event->getNumberOfQuadrupletsByLayerBarrel(5) << std::endl;
-  if (ana.verbose >= 2)
-    std::cout << "# of Quadruplets produced endcap layer 1: " << event->getNumberOfQuadrupletsByLayerEndcap(0)
-              << std::endl;
-  if (ana.verbose >= 2)
-    std::cout << "# of Quadruplets produced endcap layer 2: " << event->getNumberOfQuadrupletsByLayerEndcap(1)
-              << std::endl;
-  if (ana.verbose >= 2)
-    std::cout << "# of Quadruplets produced endcap layer 3: " << event->getNumberOfQuadrupletsByLayerEndcap(2)
-              << std::endl;
-  if (ana.verbose >= 2)
-    std::cout << "# of Quadruplets produced endcap layer 4: " << event->getNumberOfQuadrupletsByLayerEndcap(3)
-              << std::endl;
-  if (ana.verbose >= 2)
-    std::cout << "# of Quadruplets produced endcap layer 5: " << event->getNumberOfQuadrupletsByLayerEndcap(4)
-              << std::endl;
-
-  return t4_elapsed;
-}
-
-//___________________________________________________________________________________________________________________________________________________________________________________________
-float runQuintuplet(LSTEvent* event) {
-  TStopwatch my_timer;
-  if (ana.verbose >= 2)
-    std::cout << "Reco Quintuplet start" << std::endl;
-  my_timer.Start();
-  event->createQuintuplets();
-  event->wait();  // device side event calls are asynchronous: wait to measure time or print
-  float t5_elapsed = my_timer.RealTime();
-  if (ana.verbose >= 2)
-    std::cout << "Reco Quintuplet processing time: " << t5_elapsed << " secs" << std::endl;
-
-  if (ana.verbose >= 2)
-    std::cout << "# of Quintuplets produced: " << event->getNumberOfQuintuplets() << std::endl;
-  if (ana.verbose >= 2)
-    std::cout << "# of Quintuplets produced layer 1-2-3-4-5-6: " << event->getNumberOfQuintupletsByLayerBarrel(0)
-              << std::endl;
-  if (ana.verbose >= 2)
-    std::cout << "# of Quintuplets produced layer 2: " << event->getNumberOfQuintupletsByLayerBarrel(1) << std::endl;
-  if (ana.verbose >= 2)
-    std::cout << "# of Quintuplets produced layer 3: " << event->getNumberOfQuintupletsByLayerBarrel(2) << std::endl;
-  if (ana.verbose >= 2)
-    std::cout << "# of Quintuplets produced layer 4: " << event->getNumberOfQuintupletsByLayerBarrel(3) << std::endl;
-  if (ana.verbose >= 2)
-    std::cout << "# of Quintuplets produced layer 5: " << event->getNumberOfQuintupletsByLayerBarrel(4) << std::endl;
-  if (ana.verbose >= 2)
-    std::cout << "# of Quintuplets produced layer 6: " << event->getNumberOfQuintupletsByLayerBarrel(5) << std::endl;
-  if (ana.verbose >= 2)
-    std::cout << "# of Quintuplets produced endcap layer 1: " << event->getNumberOfQuintupletsByLayerEndcap(0)
-              << std::endl;
-  if (ana.verbose >= 2)
-    std::cout << "# of Quintuplets produced endcap layer 2: " << event->getNumberOfQuintupletsByLayerEndcap(1)
-              << std::endl;
-  if (ana.verbose >= 2)
-    std::cout << "# of Quintuplets produced endcap layer 3: " << event->getNumberOfQuintupletsByLayerEndcap(2)
-              << std::endl;
-  if (ana.verbose >= 2)
-    std::cout << "# of Quintuplets produced endcap layer 4: " << event->getNumberOfQuintupletsByLayerEndcap(3)
-              << std::endl;
-  if (ana.verbose >= 2)
-    std::cout << "# of Quintuplets produced endcap layer 5: " << event->getNumberOfQuintupletsByLayerEndcap(4)
-              << std::endl;
-
-  return t5_elapsed;
-}
-
-//___________________________________________________________________________________________________________________________________________________________________________________________
 float runPixelLineSegment(LSTEvent* event, bool no_pls_dupclean) {
   TStopwatch my_timer;
   if (ana.verbose >= 2)
@@ -276,23 +167,6 @@ float runPixelLineSegment(LSTEvent* event, bool no_pls_dupclean) {
     std::cout << "Reco Pixel Line Segment processing time: " << pls_elapsed << " secs" << std::endl;
 
   return pls_elapsed;
-}
-
-//___________________________________________________________________________________________________________________________________________________________________________________________
-float runPixelQuintuplet(LSTEvent* event) {
-  TStopwatch my_timer;
-  if (ana.verbose >= 2)
-    std::cout << "Reco Pixel Quintuplet start" << std::endl;
-  my_timer.Start();
-  event->createPixelQuintuplets();
-  event->wait();  // device side event calls are asynchronous: wait to measure time or print
-  float pt5_elapsed = my_timer.RealTime();
-  if (ana.verbose >= 2)
-    std::cout << "Reco Pixel Quintuplet processing time: " << pt5_elapsed << " secs" << std::endl;
-  if (ana.verbose >= 2)
-    std::cout << "# of Pixel Quintuplets produced: " << event->getNumberOfPixelQuintuplets() << std::endl;
-
-  return pt5_elapsed;
 }
 
 //___________________________________________________________________________________________________________________________________________________________________________________________
@@ -781,102 +655,85 @@ void printTimingInformation(std::vector<std::vector<float>>& timing_information,
   if (ana.verbose == 0)
     return;
 
+  // Post-deletion stage columns. "Graph" = the chain graph build inside the T3 stage (incidence +
+  // edges + weld + gate); "Chain" = arbitrateChains inside the TC stage (K9 claim + attach + CC +
+  // XC + emission + retirement); "T3" and "TC" are their residuals. "Total(short)" excludes pLS,
+  // as before.
+  static const std::vector<std::string> kCols = {"Hits", "MD", "LS", "T3", "Graph", "pLS", "Chain", "TC", "Reset"};
+  const size_t nCols = kCols.size();
+  const size_t plsCol = 5;
+
   std::cout << std::showpoint;
   std::cout << std::fixed;
   std::cout << std::setprecision(2);
   std::cout << std::right;
   std::cout << "Timing summary" << std::endl;
-  std::cout << std::setw(6) << "Evt";
-  std::cout << "   " << std::setw(6) << "Hits";
-  std::cout << "   " << std::setw(6) << "MD";
-  std::cout << "   " << std::setw(6) << "LS";
-  std::cout << "   " << std::setw(6) << "T3";
-  std::cout << "   " << std::setw(6) << "T5";
-  std::cout << "   " << std::setw(6) << "pLS";
-  std::cout << "   " << std::setw(6) << "T4";
-  std::cout << "   " << std::setw(6) << "pT5";
-  std::cout << "   " << std::setw(6) << "pT3";
-  std::cout << "   " << std::setw(6) << "TC";
-  std::cout << "   " << std::setw(6) << "Reset";
-  std::cout << "   " << std::setw(7) << "Total";
-  std::cout << "   " << std::setw(7) << "Total(short)";
-  std::cout << std::endl;
-  std::vector<float> timing_sum_information(timing_information[0].size());
+  auto printHeader = [&]() {
+    std::cout << std::setw(6) << "Evt";
+    for (auto const& c : kCols)
+      std::cout << "   " << std::setw(6) << c;
+    std::cout << "   " << std::setw(7) << "Total";
+    std::cout << "   " << std::setw(7) << "Total(short)";
+    std::cout << std::endl;
+  };
+  printHeader();
+
+  std::vector<float> timing_sum_information(nCols, 0.f);
   std::vector<float> timing_shortlist;
   std::vector<float> timing_list;
   for (size_t ievt = 0; ievt < timing_information.size(); ++ievt) {
     auto timing = timing_information[ievt];
     float timing_total = 0.f;
     float timing_total_short = 0.f;
-    timing_total += timing[0] * 1000;           // Hits
-    for (size_t iobj = 1; iobj <= 9; ++iobj) {  // MD-TC
+    for (size_t iobj = 0; iobj < nCols - 1; ++iobj) {  // Hits .. TC (Reset excluded, as before)
       timing_total += timing[iobj] * 1000;
-      if (iobj != 5)
-        timing_total_short += timing[iobj] * 1000;  // exclude pLS
+      if (iobj != plsCol && iobj != 0)
+        timing_total_short += timing[iobj] * 1000;  // exclude Hits and pLS, as before
     }
-    timing_total_short += timing[10] * 1000;  // Reset
+    timing_total_short += timing[nCols - 1] * 1000;  // Reset
     std::cout << std::setw(6) << ievt;
-    for (auto objtime : timing) {
-      std::cout << "   " << std::setw(6) << objtime * 1000;  // Print Hits-Reset
-    }
-    std::cout << "   " << std::setw(7) << timing_total;        // Total time
-    std::cout << "   " << std::setw(7) << timing_total_short;  // Total time
+    for (auto objtime : timing)
+      std::cout << "   " << std::setw(6) << objtime * 1000;
+    std::cout << "   " << std::setw(7) << timing_total;
+    std::cout << "   " << std::setw(7) << timing_total_short;
     std::cout << std::endl;
-    for (size_t iobj = 0; iobj <= 10; ++iobj) {  // Hits-Reset
+    for (size_t iobj = 0; iobj < nCols; ++iobj)
       timing_sum_information[iobj] += timing[iobj] * 1000;
-    }
-    timing_shortlist.push_back(timing_total_short);  // short total
-    timing_list.push_back(timing_total);             // short total
+    timing_shortlist.push_back(timing_total_short);
+    timing_list.push_back(timing_total);
   }
-  for (size_t iobj = 0; iobj <= 10; iobj++) {  // Hits-Reset
+  for (size_t iobj = 0; iobj < nCols; iobj++)
     timing_sum_information[iobj] /= timing_information.size();
-  }
 
   float timing_total_avg = 0.0;
   float timing_totalshort_avg = 0.0;
-  timing_total_avg += timing_sum_information[0];  // Hits
-  for (size_t iobj = 1; iobj <= 10; iobj++) {     // MD-Reset
+  for (size_t iobj = 0; iobj < nCols; iobj++) {
     timing_total_avg += timing_sum_information[iobj];
-    if (iobj != 5)
-      timing_totalshort_avg += timing_sum_information[iobj];  // exclude pLS
+    if (iobj != plsCol && iobj != 0)
+      timing_totalshort_avg += timing_sum_information[iobj];
   }
 
   float standardDeviation = 0.0;
-  for (auto shorttime : timing_shortlist) {
+  for (auto shorttime : timing_shortlist)
     standardDeviation += pow(shorttime - timing_totalshort_avg, 2);
-  }
   float stdDev = sqrt(standardDeviation / timing_shortlist.size());
 
   std::cout << std::setprecision(1);
-  std::cout << std::setw(6) << "Evt";
-  std::cout << "   " << std::setw(6) << "Hits";
-  std::cout << "   " << std::setw(6) << "MD";
-  std::cout << "   " << std::setw(6) << "LS";
-  std::cout << "   " << std::setw(6) << "T3";
-  std::cout << "   " << std::setw(6) << "T5";
-  std::cout << "   " << std::setw(6) << "pLS";
-  std::cout << "   " << std::setw(6) << "T4";
-  std::cout << "   " << std::setw(6) << "pT5";
-  std::cout << "   " << std::setw(6) << "pT3";
-  std::cout << "   " << std::setw(6) << "TC";
-  std::cout << "   " << std::setw(6) << "Reset";
-  std::cout << "   " << std::setw(7) << "Total";
-  std::cout << "   " << std::setw(7) << "Total(short)";
-  std::cout << std::endl;
+  printHeader();
   std::cout << std::setw(6) << "avg";
-  for (auto objsum : timing_sum_information) {
-    std::cout << "   " << std::setw(6) << objsum;  // Print Hits-Reset
-  }
-  std::cout << "   " << std::setw(7) << timing_total_avg;       // Average total time
-  std::cout << "   " << std::setw(7) << timing_totalshort_avg;  // Average total time
+  for (auto objsum : timing_sum_information)
+    std::cout << "   " << std::setw(6) << objsum;
+  std::cout << "   " << std::setw(7) << timing_total_avg;
+  std::cout << "   " << std::setw(7) << timing_totalshort_avg;
   std::cout << "+/- " << std::setw(4) << stdDev;
-  std::cout << "   " << std::setw(7) << fullavg;  // Average full time
+  std::cout << "   " << std::setw(7) << fullavg;
   std::cout << "   " << ana.compilation_target;
   std::cout << "[s=" << ana.streams << "]";
   std::cout << std::endl;
 
   std::cout << std::left;
 }
+
 
 //  ---------------------------------- =========================================== ----------------------------------------------
 //  ---------------------------------- =========================================== ----------------------------------------------

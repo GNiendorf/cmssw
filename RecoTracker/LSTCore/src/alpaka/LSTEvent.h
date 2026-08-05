@@ -14,10 +14,6 @@
 #include "RecoTracker/LSTCore/interface/ChainConfig.h"
 #include "RecoTracker/LSTCore/interface/HitsHostCollection.h"
 #include "RecoTracker/LSTCore/interface/MiniDoubletsHostCollection.h"
-#include "RecoTracker/LSTCore/interface/PixelQuintupletsHostCollection.h"
-#include "RecoTracker/LSTCore/interface/PixelTripletsHostCollection.h"
-#include "RecoTracker/LSTCore/interface/QuintupletsHostCollection.h"
-#include "RecoTracker/LSTCore/interface/QuadrupletsHostCollection.h"
 #include "RecoTracker/LSTCore/interface/SegmentsHostCollection.h"
 #include "RecoTracker/LSTCore/interface/PixelSegmentsHostCollection.h"
 #include "RecoTracker/LSTCore/interface/TrackCandidatesHostCollection.h"
@@ -33,10 +29,6 @@
 #include "RecoTracker/LSTCore/interface/alpaka/ChainsDeviceCollection.h"
 #include "RecoTracker/LSTCore/interface/alpaka/HitsDeviceCollection.h"
 #include "RecoTracker/LSTCore/interface/alpaka/MiniDoubletsDeviceCollection.h"
-#include "RecoTracker/LSTCore/interface/alpaka/PixelQuintupletsDeviceCollection.h"
-#include "RecoTracker/LSTCore/interface/alpaka/PixelTripletsDeviceCollection.h"
-#include "RecoTracker/LSTCore/interface/alpaka/QuintupletsDeviceCollection.h"
-#include "RecoTracker/LSTCore/interface/alpaka/QuadrupletsDeviceCollection.h"
 #include "RecoTracker/LSTCore/interface/alpaka/SegmentsDeviceCollection.h"
 #include "RecoTracker/LSTCore/interface/alpaka/PixelSegmentsDeviceCollection.h"
 #include "RecoTracker/LSTCore/interface/alpaka/TrackCandidatesDeviceCollection.h"
@@ -76,10 +68,6 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     std::array<unsigned int, 5> n_segments_by_layer_endcap_{};
     std::array<unsigned int, 6> n_triplets_by_layer_barrel_{};
     std::array<unsigned int, 5> n_triplets_by_layer_endcap_{};
-    std::array<unsigned int, 6> n_quintuplets_by_layer_barrel_{};
-    std::array<unsigned int, 5> n_quintuplets_by_layer_endcap_{};
-    std::array<unsigned int, 6> n_quadruplets_by_layer_barrel_{};
-    std::array<unsigned int, 5> n_quadruplets_by_layer_endcap_{};
     unsigned int nTotalSegments_;
     unsigned int pixelSize_;
     uint16_t pixelModuleIndex_;
@@ -98,12 +86,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     std::optional<SegmentsDeviceCollection> segmentsDC_;
     std::optional<PixelSegmentsDeviceCollection> pixelSegmentsDC_;
     std::optional<TripletsDeviceCollection> tripletsDC_;
-    std::optional<QuintupletsDeviceCollection> quintupletsDC_;
-    std::optional<QuadrupletsDeviceCollection> quadrupletsDC_;
     std::optional<TrackCandidatesBaseDeviceCollection> trackCandidatesBaseDC_;
     std::optional<TrackCandidatesExtendedDeviceCollection> trackCandidatesExtendedDC_;
-    std::optional<PixelTripletsDeviceCollection> pixelTripletsDC_;
-    std::optional<PixelQuintupletsDeviceCollection> pixelQuintupletsDC_;
     // Chain-tracking graph state, only allocated when useChainTracking_ is true.
     std::optional<ChainIncidenceDeviceCollection> chainMdIncidenceDC_;  // keyed by MiniDoublet index
     std::optional<ChainIncidenceDeviceCollection> chainLsIncidenceDC_;  // keyed by Segment index
@@ -123,10 +107,6 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     std::optional<TrackCandidatesBaseHostCollection> trackCandidatesBaseHC_;
     std::optional<TrackCandidatesExtendedHostCollection> trackCandidatesExtendedHC_;
     std::optional<ModulesHostCollection> modulesHC_;
-    std::optional<QuintupletsHostCollection> quintupletsHC_;
-    std::optional<PixelTripletsHostCollection> pixelTripletsHC_;
-    std::optional<PixelQuintupletsHostCollection> pixelQuintupletsHC_;
-    std::optional<QuadrupletsHostCollection> quadrupletsHC_;
     // Chain tracking (P2.3): a chain TC's pt / eta / phi live in ChainsSoA rather than in any
     // object the TC row points at, so the ntuple writer needs a host view of the chains.
     std::optional<ChainsHostCollection> chainsHC_;
@@ -140,6 +120,11 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     EndcapGeometryDevDeviceCollection const& endcapGeometry_;
     bool objectsStatistics_ = false;
     double memoryAllocatedMB_ = 0;
+    // -v 1 stage attribution for the standalone timing table: the chain GRAPH work inside
+    // createTriplets (incidence + edges + weld + gate) and the chain TC work inside
+    // createTrackCandidates (K9 + attach + CC + XC + emission + retirement).
+    double chainBuildMs_ = 0.;
+    double chainTCMs_ = 0.;
 
   public:
     // Constructor used for CMSSW integration. Uses an external queue.
@@ -184,11 +169,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     void createSegmentsWithModuleMap();
     void createTriplets();
     void createTrackCandidates(bool no_pls_dupclean, bool tc_pls_triplets);
-    void createPixelTriplets();
-    void createQuintuplets();
     void pixelLineSegmentCleaning(bool no_pls_dupclean);
-    void createPixelQuintuplets();
-    void createQuadruplets();
 
     // Chain-tracking phase P2.0: K0 triplet compaction plus the K1b/K1c incidence CSR build.
     // Only called when useChainTracking_ is true; writes nothing any other stage reads.
@@ -281,9 +262,6 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     std::vector<char> plsIsDupSelf_;   // end of pixelLineSegmentCleaning (CheckHitspLS pass 1)
     std::vector<char> plsIsDupPass2_;  // after the second CheckHitspLS (both self-clean passes)
     std::vector<char> plsIsDupFinal_;  // after CrossCleanpLS, before AddpLSasTrackCandidate
-    std::vector<char> pt3IsDupSelf_;   // after RemoveDupPixelTripletsFromMap
-    std::vector<char> pt3IsDupFinal_;  // after CrossCleanpT3
-    std::vector<char> pt5IsDup_;       // after RemoveDupPixelQuintupletsFromMap
 
     // Env-gated (LST_CHAIN_TC_DUMP) TC-level parity sidecar; writes nothing otherwise.
     void dumpChainTCs();
@@ -291,6 +269,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     void dumpChains();
 
     unsigned int getNumberOfChains() const { return nChainCount_; }
+    double getChainBuildMs() const { return chainBuildMs_; }
+    double getChainTCMs() const { return chainTCMs_; }
     unsigned int getNumberOfChainNodes() const { return nChainNodes_; }
     unsigned int getNumberOfChainE1Edges() const { return nChainE1Edges_; }
     unsigned int getNumberOfChainE2Edges() const { return nChainE2Edges_; }
@@ -298,10 +278,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     // functions that map the objects to the appropriate modules
     void addMiniDoubletsToEventExplicit();
     void addSegmentsToEventExplicit();
-    void addQuintupletsToEventExplicit();
     void addTripletsToEventExplicit();
     void resetObjectsInModule();
-    void addQuadrupletsToEventExplicit();
 
     unsigned int getNumberOfMiniDoublets();
     unsigned int getNumberOfMiniDoubletsByLayerBarrel(unsigned int layer);
@@ -315,12 +293,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     unsigned int getNumberOfTripletsByLayerBarrel(unsigned int layer);
     unsigned int getNumberOfTripletsByLayerEndcap(unsigned int layer);
 
-    int getNumberOfPixelTriplets();
-    int getNumberOfPixelQuintuplets();
 
-    unsigned int getNumberOfQuintuplets();
-    unsigned int getNumberOfQuintupletsByLayerBarrel(unsigned int layer);
-    unsigned int getNumberOfQuintupletsByLayerEndcap(unsigned int layer);
 
     int getNumberOfTrackCandidates();
     int getNumberOfPT5TrackCandidates();
@@ -330,9 +303,6 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     int getNumberOfT5TrackCandidates();
     int getNumberOfT4TrackCandidates();
 
-    unsigned int getNumberOfQuadruplets();
-    unsigned int getNumberOfQuadrupletsByLayerBarrel(unsigned int layer);
-    unsigned int getNumberOfQuadrupletsByLayerEndcap(unsigned int layer);
 
     double getMemoryAllocatedMB() const { return memoryAllocatedMB_; }
 
@@ -352,16 +322,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     typename TSoA::ConstView getSegments(bool sync = true);
     template <typename TSoA, typename TDev = Device>
     typename TSoA::ConstView getTriplets(bool sync = true);
-    template <typename TSoA, typename TDev = Device>
-    typename TSoA::ConstView getQuadruplets(bool sync = true);
-    template <typename TSoA, typename TDev = Device>
-    typename TSoA::ConstView getQuintuplets(bool sync = true);
-    template <typename TDev = Device>
-    PixelTripletsConst getPixelTriplets(bool sync = true);
     template <typename TDev = Device>
     PixelSegmentsConst getPixelSegments(bool sync = true);
-    template <typename TDev = Device>
-    PixelQuintupletsConst getPixelQuintuplets(bool sync = true);
     template <typename TDev = Device>
     TrackCandidatesBaseConst getTrackCandidatesBase(bool sync = true);
     template <typename TDev = Device>

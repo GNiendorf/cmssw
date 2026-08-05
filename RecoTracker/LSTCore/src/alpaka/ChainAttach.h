@@ -16,8 +16,6 @@
 #include "RecoTracker/LSTCore/interface/TripletsSoA.h"
 #include "RecoTracker/LSTCore/interface/ObjectRangesSoA.h"
 #include "RecoTracker/LSTCore/interface/PixelSegmentsSoA.h"
-#include "RecoTracker/LSTCore/interface/PixelTripletsSoA.h"
-#include "RecoTracker/LSTCore/interface/PixelQuintupletsSoA.h"
 #include "RecoTracker/LSTCore/interface/TrackCandidatesSoA.h"
 
 #include "AttachNetworkWeights.h"

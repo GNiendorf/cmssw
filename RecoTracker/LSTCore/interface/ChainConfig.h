@@ -83,12 +83,6 @@ namespace lst {
     float thetaExempt5 = 0.f;
     float thetaExempt6 = 0.f;
 
-    // Pixel-consumed drop (the structural mimic of CrossCleanT5 / CrossCleanpT3). -RT5 1 / -RT3 1
-    // remove every carried type-7 and type-5 row, so BOTH halves would be killing chains for
-    // colliding with rows that no longer exist -- both are OFF (the POSTDELP2 -ZPF 3 universe).
-    bool dropPixelConsumed = true;
-    bool dropPartOfPT5 = false;  // == !replacePT5
-    bool dropPartOfPT3 = false;  // == !replacePT3
 
     // -B 10 / -BK 1 / -BT 5: the K9 best-first ORDER key. Never a threshold (M9 lesson):
     //   orderKey = score - orderAlpha * max(0, orderHinge - marginX)
@@ -227,6 +221,10 @@ namespace lst {
   // exceed the detector layer count; this is a device-safe stand-in for the reference's `visited`
   // array and has never been reached.
   static constexpr uint32_t kChainMaxNodes = 64;
+
+  // TrackCandidates allocation headroom for the stage-B pT3-class deliveries (~120/event measured
+  // at PU200; the emission sweep guards the bound and counts any overflow).
+  static constexpr unsigned int kChainBareT3TCHeadroom = 4096u;
 
   // prototype/PixelAttach.h kAttachFeat: the frozen pair-feature contract.
   static constexpr int kAttachFeatures = 19;

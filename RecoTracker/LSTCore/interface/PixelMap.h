@@ -7,24 +7,11 @@
 #include "RecoTracker/LSTCore/interface/Common.h"
 
 namespace lst {
+  // Post-deletion: the pT5 / pT3 superbin -> outer-tracker connection maps are gone with their
+  // builders. What remains is the one datum the pLS machinery needs -- the index of the virtual
+  // pixel module row at the end of the module list.
   struct PixelMap {
-    uint16_t pixelModuleIndex;
-
-    std::vector<unsigned int> connectedPixelsIndex;
-    std::vector<unsigned int> connectedPixelsSizes;
-    std::vector<unsigned int> connectedPixelsIndexPos;
-    std::vector<unsigned int> connectedPixelsSizesPos;
-    std::vector<unsigned int> connectedPixelsIndexNeg;
-    std::vector<unsigned int> connectedPixelsSizesNeg;
-
-    PixelMap(unsigned int sizef = size_superbins)
-        : pixelModuleIndex(0),
-          connectedPixelsIndex(sizef),
-          connectedPixelsSizes(sizef),
-          connectedPixelsIndexPos(sizef),
-          connectedPixelsSizesPos(sizef),
-          connectedPixelsIndexNeg(sizef),
-          connectedPixelsSizesNeg(sizef) {}
+    uint16_t pixelModuleIndex = 0;
   };
 }  // namespace lst
 
