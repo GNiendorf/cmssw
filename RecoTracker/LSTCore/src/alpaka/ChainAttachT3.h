@@ -358,82 +358,74 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
   // table stage A left behind -- which is what stops a track already delivered as a pT5-class
   // object from being delivered again as a pT3-class one by a sibling seed.
   //
-  // Serial by construction (both rules are order-dependent greedy walks over a few hundred
-  // entries) and it is a measurement kernel, so no parallel variant is offered.
-  struct ChainAttachT3Contend {
+  // Decomposed exactly like stage A's parallel form (ChainParallel.h T7): the contention is the
+  // argmax over the packed (logit, earlier position) key -- ChainAttachArgmax runs unchanged on
+  // the raw arrays -- and the -RDT visiting order is a rank count under a strict total order, so
+  // the reference's selection sort and the rank produce the same permutation element for
+  // element. Only the hash-table walk itself stays sequential (ChainAttachT3Dedup). This one
+  // decomposition runs on BOTH backends: on the serial backend it costs what the old walk cost,
+  // and on a device it removes the single most expensive kernel of the whole chain pass
+  // (an O(n^2) selection sort chased through global memory by one thread, ~15 ms/event).
+
+  // K8B-c1. Zap every position that did not win its pLS's argmax; keep[] flags the winners for
+  // the CSR gather. Identical verdicts to the reference walk (strictly-greater displaces, the
+  // earlier position keeps a tie).
+  struct ChainAttachT3Resolve {
     ALPAKA_FN_ACC void operator()(Acc1D const& acc,
-                                  PixelSeedsConst pixelSeeds,
-                                  HitsBaseConst hitsBase,
-                                  uint32_t const* targets,
-                                  uint32_t nTargets,
                                   int32_t* tgtPls,
                                   float* tgtLogit,
-                                  int32_t* plsOwnerPos,
-                                  uint8_t* plsOwned,
-                                  uint32_t nPls,
-                                  uint32_t* hashKey,
-                                  int32_t* hashVal,
-                                  uint32_t nHits,
-                                  uint32_t* order,
-                                  uint32_t* stats,
-                                  uint8_t seedDedup) const {
-      if (!cms::alpakatools::once_per_grid(acc))
-        return;
-
-      for (uint32_t p = 0; p < nPls; ++p)
-        plsOwnerPos[p] = -1;
-
-      for (uint32_t pos = 0; pos < nTargets; ++pos) {
+                                  uint32_t nTargets,
+                                  uint64_t const* plsKey,
+                                  uint32_t* keep) const {
+      for (uint32_t pos : cms::alpakatools::uniform_elements(acc, nTargets)) {
         int32_t const p = tgtPls[pos];
-        if (p < 0)
-          continue;
-        int32_t const prev = plsOwnerPos[p];
-        if (prev < 0) {
-          plsOwnerPos[p] = static_cast<int32_t>(pos);
-          continue;
-        }
-        if (tgtLogit[pos] > tgtLogit[prev]) {
-          tgtPls[prev] = -1;
-          tgtLogit[prev] = kAttachNoLogit;
-          plsOwnerPos[p] = static_cast<int32_t>(pos);
-        } else {
+        if (p >= 0 && plsKey[static_cast<uint32_t>(p)] != attachContendKey(tgtLogit[pos], pos)) {
           tgtPls[pos] = -1;
           tgtLogit[pos] = kAttachNoLogit;
         }
+        keep[pos] = (tgtPls[pos] >= 0) ? 1u : 0u;
       }
+    }
+  };
 
-      uint32_t nOwners = 0;
-      for (uint32_t pos = 0; pos < nTargets; ++pos)
-        if (tgtPls[pos] >= 0)
-          order[nOwners++] = pos;
-
-      if (seedDedup && nOwners > 0) {
-        // Selection pass over (logit desc, target position asc) == (logit desc, T3 row asc).
-        for (uint32_t i = 0; i < nOwners; ++i) {
-          uint32_t best = i;
-          float lb = tgtLogit[order[best]];
-          for (uint32_t j = i + 1; j < nOwners; ++j) {
-            float const lj = tgtLogit[order[j]];
-            bool const jFirst = (lj != lb) ? (lj > lb) : (order[j] < order[best]);
-            if (jFirst) {
-              best = j;
-              lb = lj;
-            }
-          }
-          uint32_t const tmp = order[i];
-          order[i] = order[best];
-          order[best] = tmp;
-        }
-
-        uint32_t nIns = 0;
-        for (uint32_t i = 0; i < nOwners; ++i) {
-          uint32_t const pos = order[i];
-          int32_t const p = tgtPls[pos];
-          if (p < 0)
+  // K8B-c2. The (logit desc, position asc) visiting order as a rank count (the ChainClaimRank
+  // argument: strict total order over distinct positions, so the rank IS the sorted slot), plus
+  // the staging of each owner's pLS row and DISTINCT pixel hit rows at its ranked slot, so the
+  // serial walk below touches compact arrays only (the ChainAttachOwnerHits idiom).
+  struct ChainAttachT3Rank {
+    ALPAKA_FN_ACC void operator()(Acc1D const& acc,
+                                  PixelSeedsConst pixelSeeds,
+                                  HitsBaseConst hitsBase,
+                                  int32_t const* tgtPls,
+                                  float const* tgtLogit,
+                                  uint32_t const* ownersIn,
+                                  uint32_t const* nOwnersPtr,
+                                  uint32_t nBound,
+                                  uint32_t nHits,
+                                  uint32_t* orderOut,
+                                  int32_t* ownerPls,
+                                  uint32_t* ownerHits,
+                                  uint8_t* ownerNHits) const {
+      uint32_t const n = *nOwnersPtr;
+      for (uint32_t i : cms::alpakatools::uniform_elements(acc, nBound)) {
+        if (i >= n)
+          continue;
+        uint32_t const a = ownersIn[i];
+        float const la = tgtLogit[a];
+        uint32_t rank = 0u;
+        for (uint32_t j = 0; j < n; ++j) {
+          if (j == i)
             continue;
-
-          uint32_t g[kMaxPLSHitsInHitsSoA];
-          int nh = 0;
+          uint32_t const b = ownersIn[j];
+          float const lb = tgtLogit[b];
+          bool const bFirst = (lb != la) ? (lb > la) : (b < a);
+          rank += bFirst ? 1u : 0u;
+        }
+        orderOut[rank] = a;
+        int32_t const p = tgtPls[a];
+        ownerPls[rank] = p;
+        int nh = 0;
+        if (p >= 0) {
           uint32_t const first = pixelSeeds.firstHit()[p];
           uint32_t const nSeedHits = static_cast<uint32_t>(pixelSeeds.nHits()[p]);
           uint32_t const nStored = nSeedHits < kMaxPLSHitsInHitsSoA ? nSeedHits : kMaxPLSHitsInHitsSoA;
@@ -443,8 +435,47 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
               continue;
             if (hitsBase.detid()[h] != kPixelModuleId)
               continue;
-            g[nh++] = hitsBase.idxs()[h];
+            ownerHits[static_cast<size_t>(rank) * kMaxPLSHitsInHitsSoA + nh] = hitsBase.idxs()[h];
+            ++nh;
           }
+        }
+        ownerNHits[rank] = static_cast<uint8_t>(nh);
+      }
+    }
+  };
+
+  // K8B-c3, the serial residue: the -RDT hash walk in ranked order against the table stage A
+  // left behind, then the publish of the surviving owners into the LIVE plsOwned (invariant I1
+  // -- a stage-B owner is visible to the -XC anchor set and to the carried-row retirement, and
+  // the -CC sweep can still release it, -CCR 2). keep[] is maintained through the revocations:
+  // after this kernel it flags exactly the DELIVERIES, which is what the -CC sweep's gather
+  // reads.
+  struct ChainAttachT3Dedup {
+    ALPAKA_FN_ACC void operator()(Acc1D const& acc,
+                                  uint32_t const* order,
+                                  uint32_t const* nOwnersPtr,
+                                  int32_t const* ownerPls,
+                                  uint32_t const* ownerHits,
+                                  uint8_t const* ownerNHits,
+                                  int32_t* tgtPls,
+                                  float* tgtLogit,
+                                  uint32_t* keep,
+                                  uint8_t* plsOwned,
+                                  uint32_t* hashKey,
+                                  int32_t* hashVal,
+                                  uint32_t* stats,
+                                  uint8_t seedDedup) const {
+      if (!cms::alpakatools::once_per_grid(acc))
+        return;
+      uint32_t const nOwners = *nOwnersPtr;
+      uint32_t nIns = 0;
+      for (uint32_t i = 0; i < nOwners; ++i) {
+        int32_t const p = ownerPls[i];
+        if (p < 0)
+          continue;
+        if (seedDedup) {
+          uint32_t const* g = ownerHits + static_cast<size_t>(i) * kMaxPLSHitsInHitsSoA;
+          int const nh = ownerNHits[i];
 
           bool dup = false;
           int32_t seen[chainattach::kSeedDedupSeenMax];
@@ -469,8 +500,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
           }
 
           if (dup) {
+            uint32_t const pos = order[i];
             tgtPls[pos] = -1;
             tgtLogit[pos] = kAttachNoLogit;
+            keep[pos] = 0u;
             ++stats[5];
             continue;
           }
@@ -487,17 +520,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
             ++nIns;
           }
         }
+        plsOwned[static_cast<uint32_t>(p)] = 1u;
       }
-
-      for (uint32_t pos = 0; pos < nTargets; ++pos) {
-        if (tgtPls[pos] < 0)
-          continue;
-        // PRODUCTION: plsOwned is the LIVE ownership array (invariant I1) -- a stage-B owner is
-        // visible to the -XC anchor set and to the carried-row retirement, and the -CC sweep can
-        // still release it (-CCR 2).
-        plsOwned[tgtPls[pos]] = 1u;
-      }
-      (void)targets;
     }
   };
 
@@ -539,8 +563,11 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
   static constexpr uint32_t kBareT3TCMarker = 0xFFFFFFFFu;
 
   // -CC sweep + emission, one serial kernel (the greedy order is load-bearing):
-  //   (1) gather the deliveries (tgtPls >= 0) and order them by (logit desc, target position asc)
-  //       == (logit desc, T3 row asc) -- the -CCK 0 sweep order, ties on the lower T3 row;
+  //   (1) the deliveries (tgtPls >= 0) arrive PRE-GATHERED and PRE-RANKED by (logit desc, target
+  //       position asc) == (logit desc, T3 row asc) -- the -CCK 0 sweep order, ties on the lower
+  //       T3 row. The gather is the keep[] CSR the dedup kernel maintained, the order is
+  //       ChainAttachT3Rank over it (same total-order argument, so the permutation is exactly
+  //       the reference's sorted sequence);
   //   (2) for each delivery count its MDs already in the claim map; >= ccMinShared -> REVOKE and
   //       apply -CCR 2: tgtPls = -1, plsOwned[p] = 0, plsBestT3[p] = 0 (orderFloat(-inf)) -- the
   //       seed is genuinely released, its carried type-8 row survives unless other evidence
@@ -563,9 +590,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                   TrackCandidatesExtended candsExtended,
                                   uint32_t const* targets,
                                   int32_t* tgtPls,
-                                  float const* tgtLogit,
-                                  uint32_t nTargets,
-                                  uint32_t* order,
+                                  uint32_t const* order,
+                                  uint32_t const* nDelivPtr,
                                   uint8_t* ccClaimed,
                                   uint8_t* plsOwned,
                                   uint32_t* plsBestT3,
@@ -577,28 +603,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
       if (!cms::alpakatools::once_per_grid(acc))
         return;
 
-      // (1) gather + order. Ascending position IS ascending T3 row (the target array is ascending
-      // in dense node index); selection sort over a few hundred deliveries.
-      uint32_t n = 0;
-      for (uint32_t pos = 0; pos < nTargets; ++pos)
-        if (tgtPls[pos] >= 0)
-          order[n++] = pos;
-      for (uint32_t i = 0; i < n; ++i) {
-        uint32_t best = i;
-        float lb = tgtLogit[order[best]];
-        for (uint32_t j = i + 1; j < n; ++j) {
-          float const lj = tgtLogit[order[j]];
-          bool const jFirst = (lj != lb) ? (lj > lb) : (order[j] < order[best]);
-          if (jFirst) {
-            best = j;
-            lb = lj;
-          }
-        }
-        uint32_t const tmp = order[i];
-        order[i] = order[best];
-        order[best] = tmp;
-      }
-
+      uint32_t const n = *nDelivPtr;
       uint32_t row = candsBase.nTrackCandidates();
       uint32_t nEmit = 0;
       for (uint32_t i = 0; i < n; ++i) {

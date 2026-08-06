@@ -244,6 +244,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     std::optional<cms::alpakatools::device_buffer<Device, uint32_t[]>> bareT3Targets_;
     std::optional<cms::alpakatools::device_buffer<Device, int32_t[]>> bareT3TgtPls_;
     std::optional<cms::alpakatools::device_buffer<Device, float[]>> bareT3TgtLogit_;
+    // keep[pos] = 1 iff position pos is a DELIVERY (stage-B owner that survived the -RDT dedup);
+    // the -CC sweep's gather+rank reads it.
+    std::optional<cms::alpakatools::device_buffer<Device, uint32_t[]>> bareT3Keep_;
     uint32_t nBareT3_ = 0;
 
     // ---- P1 RE-BASELINE INSTRUMENT: ALGORITHMIC DUPLICATE-FLAG SNAPSHOTS -------------------

@@ -765,6 +765,16 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     return (b & 0x80000000u) ? ~b : (b | 0x80000000u);
   }
 
+  // The packed (logit, earlier position) argmax key of the attach contention (stage A's parallel
+  // form in ChainParallel.h and the stage-B kernels of ChainAttachT3.h share it).
+  // -0.0f and +0.0f compare equal as floats but have different order keys, so the packed argmax
+  // would rank them. Every logit that reaches it is >= cfg.attachTheta, but canonicalising costs
+  // one instruction and removes the question entirely.
+  ALPAKA_FN_ACC ALPAKA_FN_INLINE uint64_t attachContendKey(float logit, uint32_t pos) {
+    float const v = (logit == 0.f) ? 0.f : logit;
+    return (static_cast<uint64_t>(attachOrderFloat(v)) << 32) | static_cast<uint64_t>(0xFFFFFFFFu - pos);
+  }
+
   // ------------------------------------------------------------------------------------------
   // K8b / the per-target half of K8c. One thread per target: gather the grid candidates, evaluate
   // the exact predicate, score the survivors and keep the best.

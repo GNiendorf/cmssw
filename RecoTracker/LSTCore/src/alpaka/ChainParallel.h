@@ -1036,14 +1036,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
 
   // ==========================================================================================
   // K8. The attach contention and the -RD seed-family dedup.
-
-  // -0.0f and +0.0f compare equal as floats but have different order keys, so the packed argmax
-  // below would rank them. Every logit that reaches it is >= cfg.attachTheta, but canonicalising
-  // costs one instruction and removes the question entirely.
-  ALPAKA_FN_ACC ALPAKA_FN_INLINE uint64_t attachContendKey(float logit, uint32_t pos) {
-    float const v = (logit == 0.f) ? 0.f : logit;
-    return (static_cast<uint64_t>(attachOrderFloat(v)) << 32) | static_cast<uint64_t>(0xFFFFFFFFu - pos);
-  }
+  // (attachContendKey, the packed argmax key, lives in ChainAttach.h next to attachOrderFloat:
+  // the stage-B kernels of ChainAttachT3.h share it.)
 
   struct ChainTargetFlags {
     ALPAKA_FN_ACC void operator()(Acc1D const& acc,
