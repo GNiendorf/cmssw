@@ -2951,3 +2951,38 @@ residue batching; then the physics-gated tier: pair-volume reduction under decis
 audit (head rejects 40% of window-kept pairs - A03), FP16/tensor-core head eval
 (noise-gated NONEXACT), -EX removal decision on the measured A/B. Floor estimate ~1.5-2 ms.
 Master-LST GPU baseline timing (clean master build) still owed - defines "competitive".
+
+## 2026-08-05 night -- SIMP PASS 1 ENDED EARLY (agent stopped by maintainer). STATE OF RECORD
+Accepted+committed (3 changes, all gated, pushed to fork):
+  48c57cc612e  Simp 1: stage-B contention decomposed - parallel argmax + rank + tiny serial
+               residue; the O(n^2) SELECTION SORT INSIDE ONE GPU THREAD deleted.
+               GPU total 28.8 -> 12.7 ms/evt, Chain 25.4 -> 9.3. CPU neutral.
+               Gate: CPU n25 BIT-IDENTICAL 35/35; GPU drift 0.0124% < same-binary noise 0.0207%.
+  cde9b41e5ae  Simp 2 (NONEXACT/noise): CC sweep in row order, CC ordering machinery deleted
+               (-16 LOC). n300 scoreboard NULL: max delta .0003, displaced bands .0000.
+  578972f4cf4  Simp 3 (NONEXACT/noise): -RD/-RDT dedup walks in gather order (both stages, both
+               backends); RDRank struct + serial sort deleted (-86 LOC, -1 kernel).
+               ==> ZERO SORTS REMAIN IN THE CHAIN PASS.
+  b0d9321a484  instrumentation: K10-emit stamp split into emit / T3CC / XC / suppress.
+Kernel census 85 -> 86 (change 1 +2, change 3 -1); net LOC ~ +5 (the -102 of deleted ordering
+machinery offset by change 1's decomposition).
+STASHED, UNGATED (stash@{0}): parallel CAS insert for the XC anchor-hit set (serial insert was
+~0.9 ms/evt, one thread chasing dependent global accesses). Author's argument: the table is a
+SET with no deletions, membership is interleaving-invariant, readers probe to first empty ->
+claimed bit-exact. NEEDS build + n25 bit gate + GPU timing before landing. First item for the
+follow-up pass; do NOT land unmeasured.
+Tree is CLEAN at b0d9321a484.
+GPU profile at this state (n30, Chain 9.3): K8 attach 5.9 (score 1.2+1.2, ccs 1.1, RDdedup 0.8
+[now less], grid/pre 0.6, contend ~1.0), K10 emit 1.5 (now split emit/T3CC/XC/suppress),
+EXwalk 1.0, K0K1 0.88 (2 host syncs), K9 claim 0.43, EXadj 0.38.
+UNDONE (-> follow-up pass, Opus, tighter brief): launch/sync fusion (K0K1, EXadj, small
+stages); dead-code prune (~1120 LOC inventoried by the agent: env-gated dumps/audits ~500,
+writer dead fns ~215, trkCore helpers ~115, constant-folded ChainConfig ~60, Params_* ~31,
+write-only SoA columns, ModulesPixel stub, dead includes, CreateTriplets aliases, unused CLI
+flags, sigmoid_activation); TWIN COLLAPSE 86 -> ~55-60 (ChainArbitrate/ChainParallel duplication
+is the bulk); -EX removal A/B (measure-only, maintainer decides); then the physics-gated tier
+(CCS fold, emit fusion, extension round-fusion, contention-residue batching, pair-volume
+reduction under decision-safety audit, FP16 head eval). Methodology carried forward: CPU pLS
+timing is BIMODAL (~312 vs ~358 ms) by machine page/THP state and binary-independent - all CPU
+A/Bs must interleave saved binaries in one session; GPU same-binary rerun noise ~0.02% on row
+counts; copied lst_cpu binaries abort at teardown after the timing table prints (harmless).
