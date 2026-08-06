@@ -3029,3 +3029,16 @@ EXECUTION: coordinator (me) does this work directly after the collapse agent fin
 minimal agents (only where genuinely parallelizable and non-timing-contaminating). Compiler-
 only checks per step, bit-identity gate + one timing pair at checkpoints. Commit per step,
 push to fork.
+
+## 2026-08-05 night -- HARD RULE: NO BACKEND-SPECIFIC CODE
+Maintainer, line in the sand: "there should be no backend specific anything unless it gives a
+fucking massive advantage ... LST has no backend specific anything neither should we ... Same
+with backend specific kernels. Maybe some small backend specific stuff is fine but ideally no
+duplicate code, if you find a case ask me and I can approve it but it will be rare."
+Applies to: (a) the chain*Batch MLP helpers in ChainEdges.h/ChainAttach.h (the kB=16 host-only
+batched-transposed path; device takes kB=1 and calls the shared NeuralNetwork.h primitives) ->
+collapse to ONE path unless the CPU advantage is massive and approved; (b) every
+`if constexpr (requires_single_thread_per_block_v<Acc>)` site that exists for PERFORMANCE rather
+than correctness -> collapse; (c) backend-specific kernels -> already eliminated (the 7
+serial/parallel twins are deleted, kChainSerialArb sites = 0, verified bit-identical).
+Each surviving case must be brought to the maintainer with its measured advantage for approval.
