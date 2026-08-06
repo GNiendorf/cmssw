@@ -128,14 +128,20 @@ namespace lst {
     // ------------------------------------------------------------------------------------------
     // P2.4 -- pixel attach (-A 4, the general pLS -> outer-tracker attach as the DELIVERY path).
     // ------------------------------------------------------------------------------------------
-    // -a 5.0 / -a2 5.0 / -a3 6.0 (CHAINFINAL2): the pair-head logit an (accepted chain, pLS) pair
-    // must reach to attach, banded on |eta| of the SEED (pLS) at the literal 1.1 / 1.7 boundaries.
-    // The head's logit calibration shifts ~4.6 units across eta, so one global margin would be a
-    // different working point per band. All three are RESOLVED values (no follow-the-barrel
-    // sentinel survives the port). plsBestChainLogit stays UNBANDED: it is recorded for every
-    // scored pair BEFORE the threshold (invariant I4).
-    float attachTheta = 5.0f;   // -a   delivery margin, |eta| < 1.1
-    float attachThetaT = 5.0f;  // -a2  delivery margin, 1.1 <= |eta| < 1.7
+    // The pair-head logit an (accepted chain, pLS) pair must reach to attach, banded on |eta| of the
+    // SEED (pLS) at the literal 1.1 / 1.7 boundaries. The head's logit calibration shifts ~4.6 units
+    // across eta, so one global margin would be a different working point per band. All three are
+    // RESOLVED values (no follow-the-barrel sentinel survives the port). plsBestChainLogit stays
+    // UNBANDED: it is recorded for every scored pair BEFORE the threshold (invariant I4).
+    //
+    // ALL THREE BANDS ARE BACK AT 6.0 (maintainer, 2026-08-06). The barrel-dup round lowered the
+    // barrel and transition margins to 5.0 to convert failed attaches into single longer tracks; it
+    // bought barrel duplicate rate but every one of its displaced losses was a bare chain converted
+    // with a WRONG seed (the T5 -> type-7 match is lost), and together with -CCS it accounted for
+    // ~34 of the 77 distinct DISP1 sims the round spent (displaced ledger in the plan). Displaced
+    // efficiency is the headline advantage, so the trade is unwound.
+    float attachTheta = 6.0f;   // -a   delivery margin, |eta| < 1.1
+    float attachThetaT = 6.0f;  // -a2  delivery margin, 1.1 <= |eta| < 1.7
     float attachThetaE = 6.0f;  // -a3  delivery margin, |eta| >= 1.7
     // -AT3 6.0: the bare-T3 (stage B) delivery margin, GLOBAL -- no eta bands. Also the T3-side
     // retirement bar of the -RPS predicate (-RPST was measured as a dead end and is deleted; the
@@ -163,8 +169,12 @@ namespace lst {
     // SENTINEL SEMANTICS DIFFER from the -a family: >= 1e8 means OFF FOR THAT BAND, with NO
     // follow-the-barrel fallback -- the endcap dup rate is already below LST and must not move by
     // accident. Do not "resolve" these.
-    float ccsTheta = 6.0f;
-    float ccsThetaT = 5.0f;
+    //
+    // ALL THREE BANDS ARE OFF (maintainer, 2026-08-06): -CCS was part of the same barrel-dup trade
+    // as the -a lowering above and is unwound with it. The mechanism stays in the code -- setting
+    // these fields is all it takes to switch it back on.
+    float ccsTheta = 1e9f;
+    float ccsThetaT = 1e9f;
     float ccsThetaE = 1e9f;
     // -XC 3 -XCT 3.75 -XCT2 3.5 -XCT3 3.75 -XCR2 1e-6 -XCW2 0.02 -XC4 1: the ported CrossCleanpLS.
     // Pixel-anchored arm: retire a bare quad seed sharing >= 1 pixel hit row with, or within

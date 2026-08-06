@@ -191,8 +191,11 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
         chainDesc.add<edm::ParameterSetDescription>("claim", claimDesc);
 
         edm::ParameterSetDescription attachDesc;
-        attachDesc.add<std::vector<double>>("theta", {5.0, 5.0, 6.0})
-            ->setComment("-a / -a2 / -a3: pair-head delivery margins, banded on |seed eta| at 1.1 / 1.7.");
+        attachDesc.add<std::vector<double>>("theta", {6.0, 6.0, 6.0})
+            ->setComment(
+                "-a / -a2 / -a3: pair-head delivery margins, banded on |seed eta| at 1.1 / 1.7. All "
+                "three at 6.0: the lowered barrel/transition margins spent ~34 displaced sims on "
+                "wrong-seed conversions and are unwound.");
         attachDesc.add<double>("thetaT3", 6.0)->setComment("-AT3: the bare-T3 (stage B) delivery margin, global.");
         attachDesc.add<double>("rpsThetaChain", 5.5)
             ->setComment("-RPSA: chain-side seed-retirement bar (global; the T3 bar is thetaT3).");
@@ -200,8 +203,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
             ->setComment("-T3F: stage-B target admission on the T3 fake score (NaN rejected).");
         attachDesc.add<int32_t>("ccMinShared", 1)
             ->setComment("-CCN: revoke a stage-B delivery when >= this many of its 3 MDs are already claimed.");
-        attachDesc.add<std::vector<double>>("ccsTheta", {6.0, 5.0, 1e9})
-            ->setComment("-CCS / -CCS2 / -CCS3: chain-loser suppression bars per TC-|eta| band; >= 1e8 = band OFF.");
+        attachDesc.add<std::vector<double>>("ccsTheta", {1e9, 1e9, 1e9})
+            ->setComment(
+                "-CCS / -CCS2 / -CCS3: chain-loser suppression bars per TC-|eta| band; >= 1e8 = band "
+                "OFF. All OFF: unwound with the -a lowering it was tuned alongside.");
         attachDesc.add<std::vector<double>>("xcTheta", {3.75, 3.5, 3.75})
             ->setComment("-XCT / -XCT2 / -XCT3: seed-crossclean bare-chain-arm logit bars per |seed eta| band.");
         attachDesc.add<double>("xcDR2Pix", 1e-6)->setComment("-XCR2: pixel-anchored crossclean dR^2 window.");
