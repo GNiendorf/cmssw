@@ -3114,3 +3114,47 @@ e.g. (target, cell) work items via a per-target cell-count prefix, or a persiste
 (c) T3CC 0.44 and the K9 claim 0.46; (d) Graph 1.4 on the CPU side is now visible too.
 STILL UNDONE from the earlier list: the ~1120-LOC dead-code inventory in simp_ref/STATUS.md, the
 K0/K1 host-sync elimination (~0.4 ms), the pLS-side grid built once instead of twice (~0.3 ms).
+
+## 2026-08-06 -- THE MASTER BASELINE, MEASURED AT LAST (physics + timing, same box, same args)
+
+Baseline = local branch `master` @ b42d8f97ad5 (pure LST, an ancestor of chain_tracking_proto),
+checked out into this same area and built with lst_make_tracklooper -mcCG. Artifacts in
+standalone/master_ref/ (master_rv1000.root/_hists.root, timing_cpu.log, timing_gpu.log,
+chain_vs_master_1000.json). Chain side = commit 6e0d95c4655 (overnight/cur_rv1000*).
+
+TIMING, 1 stream, PU200, -n 200 -v 1 -w 0 -s 1, sequential on a quiet box:
+                 Hits   MD    LS    T3   Graph  pLS  Chain    TC  | TOTAL
+  chain  GPU      0.6   0.2   0.2   0.6   1.4   0.2   6.9    0.1  |  10.3
+  chain  CPU     14.7  89.8  73.9  63.5  27.5 314.7 131.7   37.9  | 754.2
+                 Hits   MD    LS    T3    T5   pLS    T4   pT5  pT3   TC | TOTAL
+  master GPU      0.6   0.2   0.2   0.5   0.8   0.2   0.4   0.4  0.2  0.8 |   4.5
+  master CPU     14.3  89.9  72.6  63.8  31.5 316.6   5.7  24.9 41.8 102.3| 763.6
+=> CPU: a wash, we are 9 ms/evt FASTER (754.2 vs 763.6).
+=> GPU: we are 2.3x SLOWER (10.3 vs 4.5). The stages we replaced cost master
+   T5 0.8 + T4 0.4 + pT5 0.4 + pT3 0.2 + TC 0.8 = ~2.6 ms; our Graph+Chain = 8.3 ms.
+   THAT is the gap to close, and it is now measured instead of estimated.
+
+PHYSICS, 1000 evt PU200RelVal (chain vs master; master_ref/chain_vs_master_1000.json):
+  eff (pt>0.9)      .8096 vs .8100   (-0.0004)
+  eff B/T/E         .9257/.8803/.7445 vs .9246/.8801/.7466  (+.0011/+.0001/-.0021)
+  eff vxy [1,5)     .8001 vs .7774   (+0.0227)
+  eff vxy [5,10)    .7212 vs .6448   (+0.0764)
+  eff vxy [10,30)   .7111 vs .6257   (+0.0854)
+  eff dxy [1,5)     .5812 vs .5097   (+0.0715)
+  eff dxy [5,10)    .2463 vs .2314   (+0.0149)
+  eff dxy [10,30)   .0323 vs .0545   (-0.0222)   <- inherited, cube-round item
+  dup overall       .0504 vs .0514   (-0.0010)
+  dup B/T/E         .0277/.0227/.0711 vs .0097/.0131/.0849  (+.018/+.010/-.014)
+  fake overall      .0494 vs .0454   (+0.0040)
+  fake B/T/E        .0550/.0592/.0434 vs .0437/.0453/.0463  (+.011/+.014/-.003)
+  mean nhitOT       6.427 vs 6.519   (-0.093)
+  nTC               2055609 vs 2046210
+PLOTS (176, ChainCurrent vs LSTmaster, 1000 evt):
+  standalone/performance/chain_vs_master_1000_e6f694D-PU200_b42d8f-PU200/mtv/var/
+
+STATE OF THE CONFIG after the two displaced reverts (commits e6f69405304, 6e0d95c4655):
+  -MRB/-MRT back at the global -MR -1.8; -a/-a2/-a3 all 6.0; -CCS/-CCS2/-CCS3 all OFF.
+  Kept from the barrel round: -T3F 0.10, -XC4 1, -RPSA 5.5, -XCT 3.75/-XCT2 3.5, -CC/-CCN 1/-CCR 2.
+  Net vs pre-tonight (1000 evt, overnight/cur_vs_pretonight.json): displaced vxy[10,30) +0.0120,
+  dxy[1,5) +0.0101, vxy[5,10) +0.0049; dup +0.0023 and fake +0.0030 given back; eff -0.0001;
+  length -0.075 (the extension deletion).
