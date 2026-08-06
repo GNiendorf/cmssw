@@ -2005,34 +2005,23 @@ void LSTEvent::attachPixels(unsigned int nHits,
   auto stats_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, chainattach::kStats);
   auto tgtPls_buf = cms::alpakatools::make_device_buffer<int32_t[]>(queue_, nTargets);
   auto tgtLogit_buf = cms::alpakatools::make_device_buffer<float[]>(queue_, nTargets);
-  // The per-target winner of the (target, phase) split, as a packed (logit, lowest-row) key.
-  auto tgtBestKey_buf = cms::alpakatools::make_device_buffer<uint64_t[]>(queue_, nTargets);
   alpaka::memset(queue_, stats_buf, 0u);
-  alpaka::memset(queue_, tgtBestKey_buf, 0u);
   alpaka::exec<Acc1D>(queue_,
                       chainFlat_workDiv,
                       ChainAttachScore{},
                       plsPre,
                       tgtPre_buf.data(),
                       nTargets,
-                      kAttachScorePhases,
                       offsets_buf.data(),
                       items_buf.data(),
-                      tgtBestKey_buf.data(),
+                      tgtPls_buf.data(),
+                      tgtLogit_buf.data(),
                       plsBestChain,
                       xcPairs,
                       xcCursor,
                       xcCap,
                       stats_buf.data(),
                       chainConfig_);
-  alpaka::exec<Acc1D>(queue_,
-                      chainFlat_workDiv,
-                      ChainAttachUnpackBest{},
-                      tgtBestKey_buf.data(),
-                      nTargets,
-                      tgtPls_buf.data(),
-                      tgtLogit_buf.data(),
-                      stats_buf.data());
   auto const a3 = stamp();
 
   // K8c: contention and the -RD seed dedup.
@@ -2142,31 +2131,18 @@ void LSTEvent::attachPixels(unsigned int nHits,
   // after the grants are final, exactly as the reference builds its map after -RD
   // (main.cc:4109-4127); the map itself came out of ChainAttachPublish above.
   {
-    auto ccsLoser_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, nTgtAll);
-    alpaka::memset(queue_, ccsLoser_buf, 0u);
     alpaka::exec<Acc1D>(queue_,
                         chainFlat_workDiv,
                         ChainAttachCcsScore{},
                         chainsDC_->view(),
                         tgtPre_buf.data(),
                         nTgtAll,
-                        kAttachScorePhases,
-                        ccsLoser_buf.data(),
                         offsets_buf.data(),
                         items_buf.data(),
                         plsOwnerChain_buf.data(),
                         xcPairs,
                         xcCursor,
                         xcCap,
-                        stats_buf.data(),
-                        chainConfig_);
-    alpaka::exec<Acc1D>(queue_,
-                        chainFlat_workDiv,
-                        ChainAttachCcsVerdict{},
-                        chainsDC_->view(),
-                        tgtPre_buf.data(),
-                        nTgtAll,
-                        ccsLoser_buf.data(),
                         stats_buf.data(),
                         chainConfig_);
     alpaka::wait(queue_);  // the owner-chain scratch dies with this scope

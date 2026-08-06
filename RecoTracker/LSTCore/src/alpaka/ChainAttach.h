@@ -728,10 +728,6 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     }
   }
 
-  // Work items per target in the scoring kernels (see ChainAttachScore). 16 puts stage A's ~1k
-  // targets and stage B's ~8.5k targets into the 10^4-10^5 range the device needs, while the
-  // per-candidate walk it repeats is two orders of magnitude cheaper than the head it splits.
-  static constexpr uint32_t kAttachScorePhases = 16u;
 
   // The packed (logit, earlier position) argmax key of the attach contention (stage A's parallel
   // form below and the stage-B kernels of ChainAttachT3.h share it).
@@ -780,10 +776,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                   AttachPlsPre const* pls,
                                   AttachTargetPre const* tgt,
                                   uint32_t nTargets,
-                                  uint32_t nPhase,
                                   uint32_t const* offsets,
                                   AttachPlsPre const* items,
-                                  uint64_t* tgtBestKey,
+                                  int32_t* tgtPls,
+                                  float* tgtLogit,
                                   uint32_t* plsBest,
                                   ChainXcPair* xcPairs,
                                   uint32_t* xcCursor,
@@ -800,20 +796,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
       for (int i = 0; i < kIn * kB; ++i)
         xT[i] = 0.f;  // the tail lanes of a partial batch are evaluated and discarded
 
-      // One work item per (target, PHASE): the target's grid candidates are dealt out round-robin
-      // over nPhase items, so the launch has nTargets * nPhase items instead of nTargets. This is
-      // what puts the device to work -- stage A has ~1k targets against ~360k candidate pairs, so
-      // one item per target left the machine essentially idle. Each item still walks the same cells
-      // (cheap: an offsets read and a mask test per candidate) and evaluates only its own share of
-      // the head (~1700 MACs per pair, which is everything). The per-target argmax that used to be
-      // a private sequential maximum becomes an atomicMax on the packed (logit, lowest-row) key, so
-      // the winner -- and the tie -- are identical for any interleaving; ChainAttachUnpackBest turns
-      // the key back into (tgtPls, tgtLogit).
-      uint32_t const nWork = nTargets * nPhase;
-      for (uint32_t w : cms::alpakatools::uniform_elements(acc, nWork)) {
-        uint32_t const t = w / nPhase;
-        uint32_t const phase = w - t * nPhase;
-        uint32_t ord = 0;
+      for (uint32_t t : cms::alpakatools::uniform_elements(acc, nTargets)) {
         AttachTargetPre const cp = tgt[t];
         int32_t bestPls = -1;
         float bestLogit = kAttachNoLogit;
@@ -880,11 +863,6 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
             uint32_t const cell = attachCellId(rb, tb, pb);
             uint32_t const b = offsets[cell], e = offsets[cell + 1u];
             for (uint32_t i = b; i < e; ++i) {
-              // Round-robin deal of this target's candidate stream over the phases. The ordinal is
-              // counted over every candidate the walk reaches, so the phases partition the stream
-              // exactly and every per-target counter below still sums to the same total.
-              if ((ord++ % nPhase) != phase)
-                continue;
               AttachPlsPre const& pp = items[i];
               uint32_t const p = pp.row;
               ++nCand;
@@ -908,41 +886,17 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         if (nb > 0)
           flush();
 
-        if (bestPls >= 0)
-          alpaka::atomicMax(acc,
-                            &tgtBestKey[t],
-                            attachContendKey(bestLogit, static_cast<uint32_t>(bestPls)),
-                            alpaka::hierarchy::Threads{});
+        tgtPls[t] = bestPls;
+        tgtLogit[t] = bestLogit;
         alpaka::atomicAdd(acc, &stats[1], nCand, alpaka::hierarchy::Threads{});
         alpaka::atomicAdd(acc, &stats[2], nScored, alpaka::hierarchy::Threads{});
         alpaka::atomicAdd(acc, &stats[10], nDup, alpaka::hierarchy::Threads{});
+        if (bestPls >= 0)
+          alpaka::atomicAdd(acc, &stats[3], 1u, alpaka::hierarchy::Threads{});
       }
     }
   };
 
-  // The (target, phase) split above leaves the per-target winner in a packed key; this turns it back
-  // into the (tgtPls, tgtLogit) pair the contention kernels read, and counts the targets that have a
-  // pick (stats[3], which used to be counted inside the scoring loop).
-  struct ChainAttachUnpackBest {
-    ALPAKA_FN_ACC void operator()(Acc1D const& acc,
-                                  uint64_t const* tgtBestKey,
-                                  uint32_t nTargets,
-                                  int32_t* tgtPls,
-                                  float* tgtLogit,
-                                  uint32_t* stats) const {
-      for (uint32_t t : cms::alpakatools::uniform_elements(acc, nTargets)) {
-        uint64_t const key = tgtBestKey[t];
-        if (key == 0u) {
-          tgtPls[t] = -1;
-          tgtLogit[t] = kAttachNoLogit;
-          continue;
-        }
-        tgtPls[t] = static_cast<int32_t>(0xFFFFFFFFu - static_cast<uint32_t>(key & 0xFFFFFFFFu));
-        tgtLogit[t] = chainUnorderFloat(static_cast<uint32_t>(key >> 32));
-        alpaka::atomicAdd(acc, &stats[3], 1u, alpaka::hierarchy::Threads{});
-      }
-    }
-  };
 
   // A14 -CCS / A15 -XC4: the RESTRICTED second scoring pass (SPEC_CCS_MR section 1.8 -- one
   // inverted map plus one restricted pass; the reference's pair log is never materialised).
@@ -967,8 +921,6 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                   Chains chains,
                                   AttachTargetPre const* tgt,
                                   uint32_t nTgtAll,
-                                  uint32_t nPhase,
-                                  uint32_t* loserKey,
                                   uint32_t const* offsets,
                                   AttachPlsPre const* items,
                                   int32_t const* plsOwnerChain,
@@ -992,14 +944,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
       if (cms::alpakatools::once_per_grid(acc))
         chains.nAttached() = stats[4];
 
-      // One work item per (ELIGIBLE target, PHASE) -- see ChainAttachScore. This pass is the most
-      // work-starved of the three: only the bare 5+ chains and the aux 4-layer list are eligible,
-      // a few hundred targets in a PU200 event, so one item per target left the device idle.
-      uint32_t const nWork = nTgtAll * nPhase;
-      for (uint32_t w : cms::alpakatools::uniform_elements(acc, nWork)) {
-        uint32_t const t = w / nPhase;
-        uint32_t const phase = w - t * nPhase;
-        uint32_t ord = 0;
+      for (uint32_t t : cms::alpakatools::uniform_elements(acc, nTgtAll)) {
         AttachTargetPre const cp = tgt[t];
         uint32_t const c = cp.chain;
         bool const is4L = chains.nLayers()[c] < 5;
@@ -1055,8 +1000,6 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
             uint32_t const cell = attachCellId(rb, tb, pb);
             uint32_t const b = offsets[cell], e = offsets[cell + 1u];
             for (uint32_t i = b; i < e; ++i) {
-              if ((ord++ % nPhase) != phase)
-                continue;  // this target's candidate stream, dealt round-robin over the phases
               AttachPlsPre const& pp = items[i];
               uint32_t const m = pp.phiMask;
               uint32_t const rot = ((m >> pbLo) | (m << (kAttachPhiBins - pbLo))) & (kAttachPhiCellMask);
@@ -1081,43 +1024,20 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         if (nb > 0)
           flush();
 
-        // The phases reduce into the per-target loser key; ChainAttachCcsVerdict applies the -CCS
-        // rule once every phase has retired. atomicMax on the monotone order key gives the same
-        // maximum for any interleaving, and an untouched key (0) reads as "no evidence".
-        if (loser > kAttachNoLogit)
-          alpaka::atomicMax(acc, &loserKey[t], chainOrderFloat(loser), alpaka::hierarchy::Threads{});
-      }
-    }
-  };
-
-  // The -CCS verdict: bare targets only, band on the emitted-TC |eta|, >= comparison, per-band
-  // 1e9 = OFF with no cross-band fallback (SPEC_CCS_MR 1.1 / 1.5). Split out of the scoring pass
-  // because the loser max is now reduced across phases.
-  struct ChainAttachCcsVerdict {
-    ALPAKA_FN_ACC void operator()(Acc1D const& acc,
-                                  Chains chains,
-                                  AttachTargetPre const* tgt,
-                                  uint32_t nTgtAll,
-                                  uint32_t const* loserKey,
-                                  uint32_t* stats,
-                                  ChainConfig cfg) const {
-      for (uint32_t t : cms::alpakatools::uniform_elements(acc, nTgtAll)) {
-        uint32_t const key = loserKey[t];
-        if (key == 0u)
-          continue;
-        AttachTargetPre const cp = tgt[t];
-        uint32_t const c = cp.chain;
-        if (chains.attachPls()[c] >= 0)
-          continue;  // not bare: never CCS-eligible
-        float const ae = attachFabs(cp.tcEta);
-        float const bar = (ae < 1.1f) ? cfg.ccsTheta : ((ae < 1.7f) ? cfg.ccsThetaT : cfg.ccsThetaE);
-        if (bar < 1e8f && chainUnorderFloat(key) >= bar) {
-          chains.flags()[c] = chains.flags()[c] | kChainFlagCcsSuppressed;
-          alpaka::atomicAdd(acc, &stats[12], 1u, alpaka::hierarchy::Threads{});
+        // The -CCS verdict: bare targets only, band on the emitted-TC |eta|, >= comparison,
+        // per-band 1e9 = OFF with no cross-band fallback (SPEC_CCS_MR 1.1 / 1.5).
+        if (bare) {
+          float const ae = attachFabs(cp.tcEta);
+          float const bar = (ae < 1.1f) ? cfg.ccsTheta : ((ae < 1.7f) ? cfg.ccsThetaT : cfg.ccsThetaE);
+          if (bar < 1e8f && loser >= bar) {
+            chains.flags()[c] = chains.flags()[c] | kChainFlagCcsSuppressed;
+            alpaka::atomicAdd(acc, &stats[12], 1u, alpaka::hierarchy::Threads{});
+          }
         }
       }
     }
   };
+
 
   // The aux 4-layer target list: accepted chains with nLayers == 4, appended AFTER the stage-A
   // (5+) targets in the combined array. Serial because it reads the K9 accepted order (order is
