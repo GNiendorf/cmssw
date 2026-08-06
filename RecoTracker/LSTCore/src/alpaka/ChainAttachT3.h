@@ -263,7 +263,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
             float const lo = logits[b];
             int32_t const p = rowB[b];
             alpaka::atomicMax(
-                acc, &plsBest[static_cast<uint32_t>(p)], attachOrderFloat(lo), alpaka::hierarchy::Threads{});
+                acc, &plsBest[static_cast<uint32_t>(p)], chainOrderFloat(lo), alpaka::hierarchy::Threads{});
             if (lo >= theta)
               ++nOverTheta;
             if (plsOwned[static_cast<uint32_t>(p)] != 0u)
@@ -346,7 +346,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
   // table stage A left behind -- which is what stops a track already delivered as a pT5-class
   // object from being delivered again as a pT3-class one by a sibling seed.
   //
-  // Decomposed exactly like stage A's parallel form (ChainParallel.h T7): the contention is the
+  // Decomposed exactly like stage A's parallel form (the stage-A form in ChainAttach.h): the contention is the
   // argmax over the packed (logit, earlier position) key -- ChainAttachArgmax runs unchanged on
   // the raw arrays -- and the -RDT visiting order is a rank count under a strict total order, so
   // the reference's selection sort and the rank produce the same permutation element for

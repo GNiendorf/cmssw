@@ -65,6 +65,12 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     return (b >> 31) ? (b ^ 0xffffffffu) : (b ^ 0x80000000u);
   }
 
+  // Its exact inverse: a value that went through an atomicMax on the order key comes back unchanged.
+  ALPAKA_FN_ACC ALPAKA_FN_INLINE float chainUnorderFloat(uint32_t k) {
+    uint32_t const b = (k & 0x80000000u) ? (k & 0x7fffffffu) : ~k;
+    return std::bit_cast<float>(b);
+  }
+
   ALPAKA_FN_ACC ALPAKA_FN_INLINE uint64_t chainWeldKey(float logOdds, uint32_t tie) {
     return (static_cast<uint64_t>(chainOrderFloat(logOdds)) << 32) | static_cast<uint64_t>(tie);
   }

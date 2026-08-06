@@ -38,9 +38,9 @@
 // PARALLELISATION NOTE (port map section 1 K9b, risk R3). The reference K9 is a SERIAL greedy
 // walk whose acceptances depend on what earlier chains claimed. The claim, the extension, the
 // TC-row assignment, the two row compactions and the stage-A contention are therefore expressed
-// as the conflict-free-round / rank decompositions of ChainParallel.h, which are bit-exact by
-// construction (that file's header carries the argument) and run on EVERY backend: the
-// single-thread forms that used to shadow them on the CPU are gone.
+// as conflict-free-round / rank decompositions (the argument is carried at their definitions in
+// the second half of this file) and run on EVERY backend: the single-thread forms that used to
+// shadow them on the CPU are gone.
 
 namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
 
@@ -382,6 +382,602 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
           candsBase.hitIndices()[tc][slot][1] = mds.outerHitIndices()[md];
         }
       }
+    }
+  };
+
+
+  // ==========================================================================================
+  // Multi-kernel forms of the order-dependent K9 / K10 / carried-row stages (was ChainParallel.h).
+
+  namespace chainpar {
+    constexpr uint32_t kNoPos = 0xFFFFFFFFu;
+    constexpr uint8_t kUndecided = 0u;
+    constexpr uint8_t kRejected = 1u;
+    constexpr uint8_t kAccepted = 2u;
+    // Hard stop on the claim round loop. Progress is proved (>= 1 chain decided per round), so this
+    // can only fire on a logic bug; it is reported through stats[13].
+    constexpr uint32_t kMaxClaimRounds = 4096u;
+  }  // namespace chainpar
+
+  // ==========================================================================================
+  // Stable stream compaction of the TrackCandidates rows.
+  //
+  // The serial kernels rewrite rows in place with `w <= r`, which a thread-parallel form cannot do:
+  // the thread compacting row r would be writing into row w while the thread for row w is still
+  // reading it. The payload is staged through a scratch array instead, which is two passes over
+  // ~15k x 160 B -- a few microseconds -- against the 1.5 ms the in-place serial walk costs on the
+  // device.
+  struct ChainTCRowPayload {
+    unsigned int hitIndices[Params_TC::kLayers][Params_TC::kHitsPerLayer];
+    unsigned int pixelSeedIndex;
+    unsigned int directObjectIndices;
+    unsigned int objectIndices[2];
+    uint16_t lowerModuleIndices[Params_TC::kLayers];
+    uint8_t logicalLayers[Params_TC::kLayers];
+    LSTObjType type;
+  };
+
+  // The -RT5 1 keep predicate, transcribed from ChainCompactCarriedTCs.
+  //
+  // nBound is the ALLOCATED row count, not the live one: the live count is a device scalar and
+  // reading it on the host would cost a queue synchronisation, so the flag pass simply covers the
+  // whole allocation and zeroes everything past the live end.
+  struct ChainTCKeepCompact {
+    ALPAKA_FN_ACC void operator()(
+        Acc1D const& acc, TrackCandidatesBaseConst candsBase, uint32_t* keep, uint32_t nBound, ChainConfig cfg) const {
+      uint32_t const nIn = candsBase.nTrackCandidates();
+      for (uint32_t r : cms::alpakatools::uniform_elements(acc, nBound)) {
+        if (r >= nIn) {
+          keep[r] = 0u;
+          continue;
+        }
+        LSTObjType const ty = candsBase.trackCandidateType()[r];
+        bool k = false;
+        if (ty == LSTObjType::pT3)
+          k = !cfg.replacePT3;
+        else if (ty == LSTObjType::pLS)
+          k = true;
+        else if (ty == LSTObjType::pT5)
+          k = !cfg.replacePT5;
+        // LSTObjType::T5 and LSTObjType::T4 are the classes the chain pipeline replaces outright.
+        keep[r] = k ? 1u : 0u;
+      }
+    }
+  };
+
+  // The K8d contention / -RPS / -XC keep predicate, transcribed from ChainSuppressCarriedTCs (see
+  // the semantics there: two evidence arrays against two bars, the xcRetired channel, and the
+  // chain-row tail kept verbatim). The kept per-class tallies are integer sums, so accumulating
+  // them with atomics is order-independent.
+  //   classCounts[0] pT5   [1] pT3   [2] pLS   [3] T5   [4] T4
+  struct ChainTCKeepSuppress {
+    ALPAKA_FN_ACC void operator()(Acc1D const& acc,
+                                  TrackCandidatesBaseConst candsBase,
+                                  TrackCandidatesExtendedConst candsExtended,
+                                  ChainsConst chains,
+                                  uint8_t const* plsOwned,
+                                  uint32_t const* plsBestChain,
+                                  uint32_t const* plsBestT3,
+                                  uint8_t const* xcRetired,
+                                  uint32_t nPls,
+                                  uint32_t* keep,
+                                  uint32_t* classCounts,
+                                  uint32_t nBound,
+                                  uint32_t* stats,
+                                  ChainConfig cfg) const {
+      uint32_t const keyChain = chainOrderFloat(cfg.rpsThetaChain);
+      uint32_t const keyT3 = chainOrderFloat(cfg.attachThetaT3);
+      uint32_t const nIn = candsBase.nTrackCandidates();
+      uint32_t const nChainRows = chains.nChainTCs();
+      uint32_t const boundary = (nChainRows <= nIn) ? (nIn - nChainRows) : 0u;
+      for (uint32_t r : cms::alpakatools::uniform_elements(acc, nBound)) {
+        if (r >= nIn) {
+          keep[r] = 0u;
+          continue;
+        }
+        LSTObjType const ty = candsBase.trackCandidateType()[r];
+        bool drop = false;
+        if (r < boundary && ty == LSTObjType::pLS) {
+          int32_t const p = static_cast<int32_t>(candsExtended.directObjectIndices()[r]);
+          if (p >= 0 && static_cast<uint32_t>(p) < nPls) {
+            drop = plsOwned[p] != 0u;
+            if (cfg.attachSuppressBarePLS)
+              drop = drop || (plsBestChain[p] >= keyChain) || (plsBestT3[p] >= keyT3);
+            drop = drop || (xcRetired[p] != 0u);
+          }
+        }
+        if (drop) {
+          alpaka::atomicAdd(acc, &stats[6], 1u, alpaka::hierarchy::Blocks{});
+          keep[r] = 0u;
+          continue;
+        }
+        keep[r] = 1u;
+        if (ty == LSTObjType::pT5)
+          alpaka::atomicAdd(acc, &classCounts[0], 1u, alpaka::hierarchy::Blocks{});
+        else if (ty == LSTObjType::pT3)
+          alpaka::atomicAdd(acc, &classCounts[1], 1u, alpaka::hierarchy::Blocks{});
+        else if (ty == LSTObjType::pLS)
+          alpaka::atomicAdd(acc, &classCounts[2], 1u, alpaka::hierarchy::Blocks{});
+        else if (ty == LSTObjType::T5)
+          alpaka::atomicAdd(acc, &classCounts[3], 1u, alpaka::hierarchy::Blocks{});
+        else if (ty == LSTObjType::T4)
+          alpaka::atomicAdd(acc, &classCounts[4], 1u, alpaka::hierarchy::Blocks{});
+      }
+    }
+  };
+
+  struct ChainTCGather {
+    ALPAKA_FN_ACC void operator()(Acc1D const& acc,
+                                  TrackCandidatesBaseConst candsBase,
+                                  TrackCandidatesExtendedConst candsExtended,
+                                  uint32_t const* keep,
+                                  uint32_t const* offs,
+                                  uint32_t nBound,
+                                  ChainTCRowPayload* out) const {
+      for (uint32_t r : cms::alpakatools::uniform_elements(acc, nBound)) {
+        if (keep[r] == 0u)
+          continue;
+        ChainTCRowPayload p;
+        p.type = candsBase.trackCandidateType()[r];
+        p.pixelSeedIndex = candsBase.pixelSeedIndex()[r];
+        p.directObjectIndices = candsExtended.directObjectIndices()[r];
+        p.objectIndices[0] = candsExtended.objectIndices()[r][0];
+        p.objectIndices[1] = candsExtended.objectIndices()[r][1];
+        for (int s = 0; s < Params_TC::kLayers; ++s) {
+          p.logicalLayers[s] = candsExtended.logicalLayers()[r][s];
+          p.lowerModuleIndices[s] = candsExtended.lowerModuleIndices()[r][s];
+          p.hitIndices[s][0] = candsBase.hitIndices()[r][s][0];
+          p.hitIndices[s][1] = candsBase.hitIndices()[r][s][1];
+        }
+        out[offs[r]] = p;
+      }
+    }
+  };
+
+  struct ChainTCScatter {
+    ALPAKA_FN_ACC void operator()(Acc1D const& acc,
+                                  TrackCandidatesBase candsBase,
+                                  TrackCandidatesExtended candsExtended,
+                                  ChainTCRowPayload const* in,
+                                  uint32_t const* offs,
+                                  uint32_t nIn) const {
+      uint32_t const nOut = offs[nIn];
+      for (uint32_t w : cms::alpakatools::uniform_elements(acc, nOut)) {
+        ChainTCRowPayload const p = in[w];
+        candsBase.trackCandidateType()[w] = p.type;
+        candsBase.pixelSeedIndex()[w] = p.pixelSeedIndex;
+        candsExtended.directObjectIndices()[w] = p.directObjectIndices;
+        candsExtended.objectIndices()[w][0] = p.objectIndices[0];
+        candsExtended.objectIndices()[w][1] = p.objectIndices[1];
+        for (int s = 0; s < Params_TC::kLayers; ++s) {
+          candsExtended.logicalLayers()[w][s] = p.logicalLayers[s];
+          candsExtended.lowerModuleIndices()[w][s] = p.lowerModuleIndices[s];
+          candsBase.hitIndices()[w][s][0] = p.hitIndices[s][0];
+          candsBase.hitIndices()[w][s][1] = p.hitIndices[s][1];
+        }
+      }
+    }
+  };
+
+  // The scalar tail of the -RT5 compaction.
+  struct ChainTCFinishCompact {
+    ALPAKA_FN_ACC void operator()(Acc1D const& acc,
+                                  TrackCandidatesBase candsBase,
+                                  TrackCandidatesExtended candsExtended,
+                                  uint32_t const* offs,
+                                  uint32_t nIn,
+                                  ChainConfig cfg) const {
+      if (!cms::alpakatools::once_per_grid(acc))
+        return;
+      candsBase.nTrackCandidates() = offs[nIn];
+      candsExtended.nTrackCandidatespT5() = 0u;
+      candsExtended.nTrackCandidatesT5() = 0u;
+      candsExtended.nTrackCandidatesT4() = 0u;
+      if (cfg.replacePT3)
+        candsExtended.nTrackCandidatespT3() = 0u;
+    }
+  };
+
+  // The scalar tail of the K8d retirement pass. Recounts every class from the kept rows, exactly
+  // as the serial form does.
+  struct ChainTCFinishSuppress {
+    ALPAKA_FN_ACC void operator()(Acc1D const& acc,
+                                  TrackCandidatesBase candsBase,
+                                  TrackCandidatesExtended candsExtended,
+                                  uint32_t const* offs,
+                                  uint32_t const* classCounts,
+                                  uint32_t nIn) const {
+      if (!cms::alpakatools::once_per_grid(acc))
+        return;
+      candsBase.nTrackCandidates() = offs[nIn];
+      candsExtended.nTrackCandidatespT5() = classCounts[0];
+      candsExtended.nTrackCandidatespT3() = classCounts[1];
+      candsExtended.nTrackCandidatespLS() = classCounts[2];
+      candsExtended.nTrackCandidatesT5() = classCounts[3];
+      candsExtended.nTrackCandidatesT4() = classCounts[4];
+    }
+  };
+
+  // ==========================================================================================
+  // K9. The claim.
+
+  // The (orderKey, stableKey, chain index) comparison operands of one candidate, gathered into one
+  // contiguous record so the O(n^2) rank pass reads 12 contiguous bytes per comparison instead of
+  // chasing three SoA columns.
+  struct ChainOrderKeyRec {
+    float key;
+    uint32_t stable;
+    uint32_t chain;
+  };
+
+  struct ChainCandScatter {
+    ALPAKA_FN_ACC void operator()(Acc1D const& acc,
+                                  ChainsConst chains,
+                                  uint32_t const* keep,
+                                  uint32_t const* offs,
+                                  ChainOrderKeyRec* recs) const {
+      uint32_t const nChains = static_cast<uint32_t>(chains.metadata().size());
+      for (uint32_t c : cms::alpakatools::uniform_elements(acc, nChains)) {
+        if (keep[c] == 0u)
+          continue;
+        ChainOrderKeyRec r;
+        r.key = chains.orderKey()[c];
+        r.stable = chains.stableKey()[c];
+        r.chain = c;
+        recs[offs[c]] = r;
+      }
+    }
+  };
+
+  // The K9 priority order, as a RANK instead of a sort.
+  //
+  // The reference builds `order` with a bottom-up merge sort under the strict total order
+  // (orderKey desc, stableKey asc, chain index asc). Because that comparator is a strict TOTAL
+  // order -- the chain index is unique, so no two candidates ever compare equal -- the position of
+  // a candidate in the sorted sequence is exactly the number of candidates that compare before it.
+  // Counting that directly is a perfectly parallel O(n^2) pass over n ~ 2-4k records that all fit
+  // in cache, and it reproduces the merge sort's permutation element for element by construction.
+  struct ChainClaimRank {
+    ALPAKA_FN_ACC void operator()(Acc1D const& acc,
+                                  ChainOrderKeyRec const* recs,
+                                  uint32_t const* nCandPtr,
+                                  uint32_t nBound,
+                                  uint32_t* order) const {
+      uint32_t const n = *nCandPtr;
+      for (uint32_t i : cms::alpakatools::uniform_elements(acc, nBound)) {
+        if (i >= n)
+          continue;
+        ChainOrderKeyRec const a = recs[i];
+        uint32_t rank = 0u;
+        for (uint32_t j = 0; j < n; ++j) {
+          if (j == i)
+            continue;
+          ChainOrderKeyRec const b = recs[j];
+          bool const bFirst = (b.key != a.key) ? (b.key > a.key)
+                                               : ((b.stable != a.stable) ? (b.stable < a.stable) : (b.chain < a.chain));
+          rank += bFirst ? 1u : 0u;
+        }
+        order[rank] = a.chain;
+      }
+    }
+  };
+
+  // K9a, the -PU 1 pre-claim of the SURVIVING carried pixel rows' outer-tracker hits.
+  //
+  // The reference walks the rows in TC order first come first served, but every writer stores the
+  // SAME value (kPixOwner) into a map that starts entirely free, so the result is the plain union
+  // and the order is immaterial. Two threads storing the identical word to the same address is a
+  // benign race on every backend.
+  struct ChainPreClaimPixels {
+    ALPAKA_FN_ACC void operator()(Acc1D const& acc,
+                                  TrackCandidatesBaseConst candsBase,
+                                  TrackCandidatesExtendedConst candsExtended,
+                                  int32_t* owner,
+                                  uint32_t nOwner) const {
+      uint32_t const nCarried = candsBase.nTrackCandidates();
+      for (uint32_t row : cms::alpakatools::uniform_elements(acc, nCarried)) {
+        if (candsBase.trackCandidateType()[row] != LSTObjType::pT3)
+          continue;
+        for (int slot = 0; slot < Params_TC::kLayers; ++slot) {
+          if (candsExtended.lowerModuleIndices()[row][slot] == kTCEmptyLowerModule)
+            continue;
+          if (candsExtended.logicalLayers()[row][slot] == 0)
+            continue;  // pixel layer slot: not an outer-tracker hit
+          for (int q = 0; q < Params_TC::kHitsPerLayer; ++q) {
+            unsigned int const h = candsBase.hitIndices()[row][slot][q];
+            if (h == kTCEmptyHitIdx || h >= nOwner)
+              continue;
+            owner[h] = chainarb::kPixOwner;
+          }
+        }
+      }
+    }
+  };
+
+  // K9b + K9c, the conflict-free-round form of the greedy claim. Single block, one internal loop
+  // over rounds; see the file header for the exactness and termination argument.
+  //
+  // The P2.5 tie-exercise census (stats[9]: adjacent exact orderKey ties in the finished order) is
+  // the prologue below -- it reads the same finished `order` the walk reads and writes nothing the
+  // walk touches, so it needs no launch of its own.
+  //
+  // stats[11] rounds to convergence   stats[12] peak undecided-after-a-round   stats[13] round cap hit
+  struct ChainClaimRounds {
+    ALPAKA_FN_ACC void operator()(Acc1D const& acc,
+                                  Chains chains,
+                                  uint32_t const* claimHits,
+                                  uint32_t const* order,
+                                  uint32_t const* nCandPtr,
+                                  int32_t* owner,
+                                  uint32_t* minPos,
+                                  uint32_t* nClaimedScratch,
+                                  uint8_t* state,
+                                  uint8_t* part,
+                                  uint32_t* accepted,
+                                  int32_t const* bandItems,
+                                  float const* bandFrac,
+                                  float const* bandBraid,
+                                  uint32_t* stats,
+                                  ChainConfig cfg) const {
+      ALPAKA_ASSERT_ACC((alpaka::getWorkDiv<alpaka::Grid, alpaka::Blocks>(acc)[0u] == 1));
+      auto& partial = alpaka::declareSharedVar<uint32_t[kChainScanBlockThreads], __COUNTER__>(acc);
+      auto& sRemaining = alpaka::declareSharedVar<uint32_t, __COUNTER__>(acc);
+
+      uint32_t const nWorkers = chainScanWorkerCount(acc);
+      uint32_t const worker = chainScanWorkerIndex(acc);
+      ALPAKA_ASSERT_ACC(nWorkers <= kChainScanBlockThreads);
+
+      uint32_t const n = *nCandPtr;
+      bool const braidOn = cfg.braidFrac > 0.f || cfg.braidFracAlt > 0.f;
+
+      for (uint32_t oi = worker; oi < n; oi += nWorkers) {
+        state[oi] = chainpar::kUndecided;
+        if (oi + 1u < n && chains.orderKey()[order[oi]] == chains.orderKey()[order[oi + 1u]])
+          alpaka::atomicAdd(acc, &stats[9], 1u, alpaka::hierarchy::Threads{});
+      }
+      alpaka::syncBlockThreads(acc);
+
+      uint32_t rounds = 0u;
+      uint32_t peak = 0u;
+      for (;;) {
+        // The sync pair brackets the reset so that no worker can zero sRemaining before every
+        // worker has read the previous round's value.
+        alpaka::syncBlockThreads(acc);
+        if (cms::alpakatools::once_per_block(acc))
+          sRemaining = 0u;
+        alpaka::syncBlockThreads(acc);
+
+        // --- phase A: claim statistics, the monotone pre-reject, and the position registration ---
+        for (uint32_t oi = worker; oi < n; oi += nWorkers) {
+          part[oi] = 0u;
+          if (state[oi] != chainpar::kUndecided)
+            continue;
+          uint32_t const c = order[oi];
+          uint32_t const hitBase = 6u * chains.nodeOffset()[c];
+          int const total = chains.nClaimHits()[c];
+
+          int nClaimed = 0;
+          for (int k = 0; k < total; ++k)
+            nClaimed += (owner[claimHits[hitBase + k]] != chainarb::kFree) ? 1 : 0;
+          float const frac = (total > 0) ? static_cast<float>(nClaimed) / static_cast<float>(total) : 0.f;
+
+          int const cItems = bandItems[c];
+          float const cFrac = bandFrac[c];
+
+          // prototype/K9K10.cc claimOkV, same operand order and the same float comparison.
+          bool claimOk;
+          if (cItems < 0)
+            claimOk = !(frac > cFrac);
+          else if (cfg.claimCountExclusive)
+            claimOk = nClaimed <= cItems;
+          else
+            claimOk = (nClaimed <= cItems) || !(frac > cFrac);
+          if (!claimOk) {
+            state[oi] = chainpar::kRejected;  // monotone: this verdict can never turn around
+            continue;
+          }
+
+          nClaimedScratch[oi] = static_cast<uint32_t>(nClaimed);
+          part[oi] = 1u;
+          for (int k = 0; k < total; ++k)
+            alpaka::atomicMin(acc, &minPos[claimHits[hitBase + k]], oi, alpaka::hierarchy::Threads{});
+        }
+        alpaka::syncBlockThreads(acc);
+
+        // --- phase B: the position test, then the -W braid for whoever passed it ----------------
+        for (uint32_t oi = worker; oi < n; oi += nWorkers) {
+          if (part[oi] == 0u)
+            continue;
+          uint32_t const c = order[oi];
+          uint32_t const hitBase = 6u * chains.nodeOffset()[c];
+          int const total = chains.nClaimHits()[c];
+
+          bool safe = true;
+          for (int k = 0; k < total && safe; ++k)
+            safe = (minPos[claimHits[hitBase + k]] == oi);
+          if (!safe) {
+            alpaka::atomicAdd(acc, &sRemaining, 1u, alpaka::hierarchy::Threads{});
+            continue;
+          }
+
+          int const nClaimed = static_cast<int>(nClaimedScratch[oi]);
+          float const bFrac = bandBraid[c];
+          bool killed = false;
+          if (braidOn && bFrac > 0.f && nClaimed > 0) {
+            // Owner-relative braid, per-chain and allocation-free: the reference's touched-owner
+            // list is replaced by "count the occurrences of the FIRST appearance of each owner
+            // label", which visits every distinct owner exactly once with the same denominator.
+            for (int k = 0; k < total && !killed; ++k) {
+              int32_t const o = owner[claimHits[hitBase + k]];
+              if (o == chainarb::kFree)
+                continue;
+              if (o <= chainarb::kPixOwner)
+                continue;  // -PU 1: pixel owners do not take part in the braid
+              bool first = true;
+              for (int j = 0; j < k; ++j)
+                if (owner[claimHits[hitBase + j]] == o) {
+                  first = false;
+                  break;
+                }
+              if (!first)
+                continue;
+              int cnt = 0;
+              for (int j = 0; j < total; ++j)
+                cnt += (owner[claimHits[hitBase + j]] == o) ? 1 : 0;
+              int const oTot = chains.nClaimHits()[static_cast<uint32_t>(o)];
+              if (oTot > 0 && static_cast<float>(cnt) >= bFrac * static_cast<float>(oTot))
+                killed = true;
+            }
+          }
+          state[oi] = killed ? chainpar::kRejected : chainpar::kAccepted;
+        }
+        alpaka::syncBlockThreads(acc);
+
+        // --- phase C: the owner writes of everything accepted THIS round -------------------------
+        // Two chains decided in the same round are the unique minimum at each of their own claim
+        // hits, so their hit sets are disjoint and these stores never race.
+        for (uint32_t oi = worker; oi < n; oi += nWorkers) {
+          if (part[oi] == 0u || state[oi] != chainpar::kAccepted)
+            continue;
+          uint32_t const c = order[oi];
+          uint32_t const hitBase = 6u * chains.nodeOffset()[c];
+          int const total = chains.nClaimHits()[c];
+          for (int k = 0; k < total; ++k)
+            owner[claimHits[hitBase + k]] = static_cast<int32_t>(c);
+          chains.claimFlags()[c] |= kChainClaimAccepted;
+        }
+        alpaka::syncBlockThreads(acc);
+
+        // --- phase D: put minPos back to its empty state, touching only the hits used ------------
+        for (uint32_t oi = worker; oi < n; oi += nWorkers) {
+          if (part[oi] == 0u)
+            continue;
+          uint32_t const c = order[oi];
+          uint32_t const hitBase = 6u * chains.nodeOffset()[c];
+          int const total = chains.nClaimHits()[c];
+          for (int k = 0; k < total; ++k)
+            minPos[claimHits[hitBase + k]] = chainpar::kNoPos;
+        }
+        alpaka::syncBlockThreads(acc);
+
+        ++rounds;
+        uint32_t const remaining = sRemaining;
+        if (remaining > peak)
+          peak = remaining;
+        if (remaining == 0u)
+          break;
+        if (rounds >= chainpar::kMaxClaimRounds) {
+          if (cms::alpakatools::once_per_block(acc))
+            stats[13] = 1u;
+          break;
+        }
+      }
+
+      // --- the accepted list, in K9 accepted (best-first) order --------------------------------
+      uint32_t const chunk = (n + nWorkers - 1u) / nWorkers;
+      uint32_t const begin = (worker * chunk < n) ? worker * chunk : n;
+      uint32_t const end = (begin + chunk < n) ? begin + chunk : n;
+      uint32_t local = 0u;
+      for (uint32_t i = begin; i < end; ++i)
+        local += (state[i] == chainpar::kAccepted) ? 1u : 0u;
+      partial[worker] = local;
+      alpaka::syncBlockThreads(acc);
+
+      uint32_t base = 0u, total = 0u;
+      for (uint32_t w = 0; w < nWorkers; ++w) {
+        if (w == worker)
+          base = total;
+        total += partial[w];
+      }
+      uint32_t run = base;
+      for (uint32_t i = begin; i < end; ++i)
+        if (state[i] == chainpar::kAccepted)
+          accepted[run++] = order[i];
+      alpaka::syncBlockThreads(acc);
+
+      if (cms::alpakatools::once_per_block(acc)) {
+        chains.nAccepted() = total;
+        stats[11] = rounds;
+        stats[12] = peak;
+      }
+    }
+  };
+
+  // ==========================================================================================
+  // EX. The extension.
+
+  // ==========================================================================================
+  // K10, first half: the output row of every accepted chain long enough to emit a TC.
+
+  struct ChainRowFlags {
+    ALPAKA_FN_ACC void operator()(
+        Acc1D const& acc, ChainsConst chains, uint32_t const* accepted, uint32_t nBound, uint32_t* keep) const {
+      uint32_t const nAcc = chains.nAccepted();
+      for (uint32_t ai : cms::alpakatools::uniform_elements(acc, nBound))
+        keep[ai] = (ai < nAcc && chains.nLayers()[accepted[ai]] >= kChainTCMinLayers &&
+                    (chains.flags()[accepted[ai]] & kChainFlagCcsSuppressed) == 0u)
+                       ? 1u
+                       : 0u;
+    }
+  };
+
+  // The serial kernel stops handing out rows at nAllocated ("if (row >= nAllocated) break"), which
+  // over a filtered list in accepted order is exactly "the first nAllocated - base qualifying
+  // chains get a row", i.e. a bound on the prefix index.
+  struct ChainRowAssign {
+    ALPAKA_FN_ACC void operator()(Acc1D const& acc,
+                                  TrackCandidatesBaseConst candsBase,
+                                  Chains chains,
+                                  uint32_t const* accepted,
+                                  uint32_t const* keep,
+                                  uint32_t const* offs,
+                                  uint32_t nBound,
+                                  uint32_t nAllocated,
+                                  uint32_t* classCounts) const {
+      uint32_t const base = candsBase.nTrackCandidates();
+      for (uint32_t ai : cms::alpakatools::uniform_elements(acc, nBound)) {
+        if (keep[ai] == 0u)
+          continue;
+        uint32_t const row = base + offs[ai];
+        if (row >= nAllocated)
+          continue;
+        uint32_t const c = accepted[ai];
+        chains.tcRow()[c] = static_cast<int32_t>(row);
+        // P2.4: an accepted chain that won a pLS is UPGRADED in place, so it is counted in the
+        // pT5 class rather than in T5 -- no extra row is ever created by the attach.
+        if (chains.attachPls()[c] >= 0)
+          alpaka::atomicAdd(acc, &classCounts[2], 1u, alpaka::hierarchy::Blocks{});
+        else if (chains.nLayers()[c] >= 5)
+          alpaka::atomicAdd(acc, &classCounts[0], 1u, alpaka::hierarchy::Blocks{});
+        else
+          alpaka::atomicAdd(acc, &classCounts[1], 1u, alpaka::hierarchy::Blocks{});
+      }
+    }
+  };
+
+  struct ChainRowFinish {
+    ALPAKA_FN_ACC void operator()(Acc1D const& acc,
+                                  TrackCandidatesBase candsBase,
+                                  TrackCandidatesExtended candsExtended,
+                                  Chains chains,
+                                  uint32_t const* offs,
+                                  uint32_t const* classCounts,
+                                  uint32_t nBound,
+                                  uint32_t nAllocated) const {
+      if (!cms::alpakatools::once_per_grid(acc))
+        return;
+      uint32_t const base = candsBase.nTrackCandidates();
+      uint32_t const want = base + offs[nBound];
+      // The serial kernel breaks out of the row hand-out as soon as row >= nAllocated, which also
+      // means it hands out nothing at all (and leaves the count at base) if base is already there.
+      uint32_t const row = (base >= nAllocated) ? base : ((want < nAllocated) ? want : nAllocated);
+      chains.nChainTCs() = row - base;
+      candsBase.nTrackCandidates() = row;
+      candsExtended.nTrackCandidatesT5() = classCounts[0];
+      candsExtended.nTrackCandidatesT4() = classCounts[1];
+      // ADD, not assign: ChainSuppressCarriedTCs has already counted whatever carried pT5 rows
+      // survived (none under the frozen -RT5 1), and the attach upgrades are additional.
+      candsExtended.nTrackCandidatespT5() = candsExtended.nTrackCandidatespT5() + classCounts[2];
     }
   };
 

@@ -11,7 +11,6 @@
 #include "ChainEdges.h"
 #include "ChainGate.h"
 #include "ChainGraph.h"
-#include "ChainParallel.h"
 #include "ChainWeld.h"
 #include "Hit.h"
 #include "Kernels.h"
@@ -1327,7 +1326,7 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
   // the configuration, not by how many chains an event happened to weld.
   //
   // The in-place serial compaction (1.5 ms/event on CUDA) is done as flags + single-block prefix +
-  // gather/scatter through a staging array, on every backend (one form, ChainParallel.h).
+  // gather/scatter through a staging array, on every backend (one form).
   {
     uint32_t const nIn = nAllocatedTCs;
     auto keep_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, std::max(1u, nIn));
@@ -1401,7 +1400,7 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
                       chainConfig_);
   auto const t2 = stamp();
 
-  // K9a / K9b / K9c: pre-claim, greedy claim, braid, as conflict-free rounds (see ChainParallel.h).
+  // K9a / K9b / K9c: pre-claim, greedy claim, braid, as conflict-free rounds (see ChainArbitrate.h).
   auto owner_buf = cms::alpakatools::make_device_buffer<int32_t[]>(queue_, nHits);
   auto order_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, nChainCount_);
   auto accepted_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, nChainCount_);
@@ -1410,7 +1409,7 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
 
   {
     // P2.6a: the same walk, reached by conflict-free rounds instead of a single thread. See the
-    // exactness / termination argument at the top of ChainParallel.h.
+    // exactness / termination argument in ChainArbitrate.h.
     auto candOffs_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, nChainCount_ + 1u);
     auto candRecs_buf = cms::alpakatools::make_device_buffer<ChainOrderKeyRec[]>(queue_, nChainCount_);
     auto nCand_buf = cms::alpakatools::make_device_buffer<uint32_t>(queue_);
