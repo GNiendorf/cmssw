@@ -2939,3 +2939,15 @@ Deferred items logged: write-only LSTInput superbin columns, zero-chain stage-B 
 non-chain CreateTriplets variants (all simplification-pass candidates).
 NEXT: maintainer reviews plots + timing -> massive simplification pass (queued above) ->
 timing/memory fan-outs -> head retrain -> cube/jet.
+
+## 2026-08-05 late -- SIMP PASS 1 SCOPE CONFIRMED; FOLLOW-UP PASS QUEUE
+Simp agent 1 (running): its worklist as written (no-sort x3, launch/sync fusion, dead-code
+~1120 LOC, twin collapse, free-only score batching, -EX measure-only A/B) -> expected
+GPU Chain ~6.5-7 ms. Maintainer target for the campaign: Chain O(few ms), ideally 1-3.
+FOLLOW-UP PASS (after this agent delivers; maintainer-confirmed): (a) CCS fold into the
+main scoring pass (~1.1 -> ~0.3), (b) deeper emit fusion (~1.5 -> ~0.6), (c) extension
+round-fusion (keep-but-fuse option vs the removal A/B numbers), (d) further contention-
+residue batching; then the physics-gated tier: pair-volume reduction under decision-safety
+audit (head rejects 40% of window-kept pairs - A03), FP16/tensor-core head eval
+(noise-gated NONEXACT), -EX removal decision on the measured A/B. Floor estimate ~1.5-2 ms.
+Master-LST GPU baseline timing (clean master build) still owed - defines "competitive".
