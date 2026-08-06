@@ -176,19 +176,19 @@ namespace lst {
     float ccsTheta = 1e9f;
     float ccsThetaT = 1e9f;
     float ccsThetaE = 1e9f;
-    // -XC 3 -XCT 3.75 -XCT2 3.5 -XCT3 3.75 -XCR2 1e-6 -XCW2 0.02 -XC4 1: the ported CrossCleanpLS.
+    // -XC 3 -XCT 3.665 -XCT2 3.15 -XCT3 3.75 -XCR2 1e-6 -XC4 1: the ported CrossCleanpLS.
     // Pixel-anchored arm: retire a bare quad seed sharing >= 1 pixel hit row with, or within
     // dR^2 < xcDR2Pix of, the seed of any delivery (LST's own pT5/pT3 arms, windows verbatim).
-    // Bare-chain arm: retire a bare quad seed within dR^2 < xcDR2Chain of a delivered SEEDLESS
-    // chain TC whose attach-head logit for that exact (seed, chain) pair reaches the |seed eta|-
-    // banded xcTheta -- the substitution for LST's deleted pLS/T5 embedding test. -XC4 is folded
-    // in unconditionally (4-layer accepted chains join the scored-pair stream, score-only);
-    // -XC4T / -XCD / -XCG 1 are dead ends and are not ported.
-    float xcTheta = 3.75f;     // |seed eta| < 1.1
-    float xcThetaT = 3.5f;     // 1.1 <= |seed eta| < 1.7
-    float xcThetaE = 3.75f;    // |seed eta| >= 1.7
-    float xcDR2Pix = 1e-6f;    // LST TrackCandidate.h pT5/pT3 arm window, verbatim
-    float xcDR2Chain = 0.02f;  // LST TrackCandidate.h T5 arm window, verbatim
+    // Bare-chain arm: retire a bare quad seed whose attach-head logit for SOME delivered SEEDLESS
+    // chain TC reaches the |seed eta|-banded xcTheta -- the substitution for LST's deleted pLS/T5
+    // embedding test. LST's T5 arm also required dR^2 < 0.02 against the TC centroid direction;
+    // that window is DROPPED (see ChainAttach.h pass 1 for why, and for the measurement).
+    // -XC4 is folded in unconditionally (4-layer accepted chains join the scored-pair stream,
+    // score-only); -XC4T / -XCD / -XCG 1 are dead ends and are not ported.
+    float xcTheta = 3.665f;  // |seed eta| < 1.1
+    float xcThetaT = 3.15f;  // 1.1 <= |seed eta| < 1.7
+    float xcThetaE = 3.75f;  // |seed eta| >= 1.7
+    float xcDR2Pix = 1e-6f;  // LST TrackCandidate.h pT5/pT3 arm window, verbatim
     // -RPS 1: also retire a carried bare-pLS (type 8) row whose seed had a scored pair above its
     // class RETIREMENT bar but lost the contention. -RD 1: seed-family dedup of the attach owners,
     // two pLS being the same seed when they share >= 2 pixel hit rows (also gates the stage-B

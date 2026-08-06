@@ -815,20 +815,21 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
             alpaka::atomicMax(
                 acc, &plsBest[static_cast<uint32_t>(p)], chainOrderFloat(lo), alpaka::hierarchy::Threads{});
             // -XC bare-chain arm, pass 1 (A15): the filtered (chain, seed) compaction of the
-            // scored-pair stream. Threshold on the |seed eta|-banded xcTheta, window on the
-            // emitted-TC direction. Ordering: BEFORE the delivery threshold (the crossclean sees
-            // sub-margin pairs; xcThr 3.5-3.75 sits well below attachThr 5.0-6.0).
+            // scored-pair stream. Threshold on the |seed eta|-banded xcTheta ONLY -- no geometric
+            // window. LST's T5 arm gated its embedding test with a dR^2 < 0.02 window on the
+            // TC CENTROID direction, which for a bare chain is the mean of hits spanning several
+            // layers and is not where the seed's helix points; the window was therefore vetoing
+            // pairs the head had already scored as matches. Dropping it and re-fitting the three
+            // bars buys dup barrel -.0046 / transition -.0027 at eff -.0005, displaced bit-flat
+            // (977 evt, d3_ref/r_E1_977 vs r_BASE977). Ordering: BEFORE the delivery threshold
+            // (the crossclean sees sub-margin pairs; xcThr 3.15-3.75 sits below attachThr 6.0).
             if (xcPairs != nullptr && pq.isQuad != 0u && lo >= pq.xcThr) {
-              float const dEta = pq.eta - cp.tcEta;
-              float const dPhi = chainWrapPhi(pq.phi - cp.tcPhi);
-              if (dEta * dEta + dPhi * dPhi < cfg.xcDR2Chain) {
-                uint32_t const slot = alpaka::atomicAdd(acc, xcCursor, 1u, alpaka::hierarchy::Threads{});
-                if (slot < xcCap) {
-                  xcPairs[slot].chain = cp.chain;
-                  xcPairs[slot].pls = static_cast<uint32_t>(p);
-                } else {
-                  alpaka::atomicAdd(acc, &stats[11], 1u, alpaka::hierarchy::Threads{});  // overflow census
-                }
+              uint32_t const slot = alpaka::atomicAdd(acc, xcCursor, 1u, alpaka::hierarchy::Threads{});
+              if (slot < xcCap) {
+                xcPairs[slot].chain = cp.chain;
+                xcPairs[slot].pls = static_cast<uint32_t>(p);
+              } else {
+                alpaka::atomicAdd(acc, &stats[11], 1u, alpaka::hierarchy::Threads{});  // overflow census
               }
             }
             if (lo < pq.attachThr)
@@ -961,17 +962,14 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
             float const lo = logits[b];
             int32_t const p = rowB[b];
             AttachPlsPre const& pq = *ppB[b];
+            // Same window-free pass-1 append as the stage-A scorer above.
             if (is4L && xcPairs != nullptr && pq.isQuad != 0u && lo >= pq.xcThr) {
-              float const dEta = pq.eta - cp.tcEta;
-              float const dPhi = chainWrapPhi(pq.phi - cp.tcPhi);
-              if (dEta * dEta + dPhi * dPhi < cfg.xcDR2Chain) {
-                uint32_t const slot = alpaka::atomicAdd(acc, xcCursor, 1u, alpaka::hierarchy::Threads{});
-                if (slot < xcCap) {
-                  xcPairs[slot].chain = c;
-                  xcPairs[slot].pls = static_cast<uint32_t>(p);
-                } else {
-                  alpaka::atomicAdd(acc, &stats[11], 1u, alpaka::hierarchy::Threads{});
-                }
+              uint32_t const slot = alpaka::atomicAdd(acc, xcCursor, 1u, alpaka::hierarchy::Threads{});
+              if (slot < xcCap) {
+                xcPairs[slot].chain = c;
+                xcPairs[slot].pls = static_cast<uint32_t>(p);
+              } else {
+                alpaka::atomicAdd(acc, &stats[11], 1u, alpaka::hierarchy::Threads{});
               }
             }
             int32_t const oc = plsOwnerChain[p];

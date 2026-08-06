@@ -85,7 +85,6 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     c.xcThetaT = xt.at(1);
     c.xcThetaE = xt.at(2);
     c.xcDR2Pix = a.getParameter<double>("xcDR2Pix");
-    c.xcDR2Chain = a.getParameter<double>("xcDR2Chain");
     c.replacePT5 = a.getParameter<bool>("replacePT5");
     c.replacePT3 = a.getParameter<bool>("replacePT3");
     c.attachSuppressBarePLS = a.getParameter<bool>("suppressBarePLS");
@@ -207,10 +206,11 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
             ->setComment(
                 "-CCS / -CCS2 / -CCS3: chain-loser suppression bars per TC-|eta| band; >= 1e8 = band "
                 "OFF. All OFF: unwound with the -a lowering it was tuned alongside.");
-        attachDesc.add<std::vector<double>>("xcTheta", {3.75, 3.5, 3.75})
-            ->setComment("-XCT / -XCT2 / -XCT3: seed-crossclean bare-chain-arm logit bars per |seed eta| band.");
+        attachDesc.add<std::vector<double>>("xcTheta", {3.665, 3.15, 3.75})
+            ->setComment(
+                "-XCT / -XCT2 / -XCT3: seed-crossclean bare-chain-arm logit bars per |seed eta| band. "
+                "The arm carries no geometric window (LST's dR^2 < 0.02 centroid window was dropped).");
         attachDesc.add<double>("xcDR2Pix", 1e-6)->setComment("-XCR2: pixel-anchored crossclean dR^2 window.");
-        attachDesc.add<double>("xcDR2Chain", 0.02)->setComment("-XCW2: bare-chain crossclean dR^2 window.");
         attachDesc.add<bool>("replacePT5", true)->setComment("-RT5: retire every carried pT5 row.");
         attachDesc.add<bool>("replacePT3", true)->setComment("-RT3: retire every carried pT3 row.");
         attachDesc.add<bool>("suppressBarePLS", true)

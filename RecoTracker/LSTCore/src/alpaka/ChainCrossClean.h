@@ -24,9 +24,11 @@
 //
 //   BARE-CHAIN arm (LST's T5 arm with the working-point substitution): resolved from the pass-1
 //   filtered pair compaction the attach scorers appended (threshold on the |seed eta|-banded
-//   xcTheta, window dR^2 < xcDR2Chain against the chain's innermost-T3 direction). Pass 2 keeps a
-//   pair only when the chain actually EMITTED a seedless TC (tcRow >= 0 -- which already excludes
-//   the -CCS-suppressed and the too-short -- and attachPls < 0) and the seed is still unowned.
+//   xcTheta, no geometric window -- LST's dR^2 < 0.02 centroid window was dropped, see
+//   ChainAttach.h pass 1). Pass 2 keeps a pair only when the chain actually EMITTED a seedless TC
+//   (tcRow >= 0 -- which already excludes the -CCS-suppressed and the too-short -- and
+//   attachPls < 0) and the seed is still unowned. The two passes together are exactly "retire the
+//   seed iff its MAX pair logit over DELIVERED seedless chain TCs reaches the band bar".
 //
 // Candidacy is restricted to the carried type-8 rows (the admitted set), the SPEC_XC 2.4
 // restriction: every other seed's verdict would be inert, at ~70x the work.
