@@ -18,25 +18,25 @@
 #include "ChainAttach.h"
 #include "ChainGraph.h"
 
-// P2.6a. Data-parallel replacements for the five deliberately-serial kernels of P2.3 / P2.4.
+// P2.6a. The data-parallel form of the seven order-dependent stages of P2.3 / P2.4. These are the
+// ONLY implementation of those stages: the single-thread kernels they were verified against were
+// deleted in the twin-collapse pass, so every backend runs the code below (on the serial CPU
+// accelerator each kernel's element loop simply runs sequentially in one thread).
 //
-// Every kernel here is REQUIRED to produce output that is bit-identical to the serial reference it
-// replaces, on both backends. The serial kernels stay in the tree unchanged and remain the CPU
-// path (they cost 0.01 - 0.6 ms/event there, so there is nothing to win); the host picks between
-// the two forms with `requires_single_thread_per_block_v`, and the CPU-vs-GPU comparison of the
-// P2.5 sidecars is then a direct proof that the two forms agree.
+// Every kernel here was REQUIRED to produce output bit-identical to the serial reference it
+// replaced. The stages, and the cascade that implements each:
 //
-//   serial reference                       parallel form here
+//   stage                                  form here
 //   -------------------------------------  ---------------------------------------------------
-//   ChainCompactCarriedTCs                 ChainTCKeepCompact + prefix + gather/scatter
-//   ChainArbitrateSerial (K9a/K9b/K9c)     ChainClaimBands, ChainCandFlags + prefix + scatter,
+//   -RT5 carried-row compaction            ChainTCKeepCompact + prefix + gather/scatter + finish
+//   K9a/K9b/K9c claim                      ChainClaimBands(+cand flags), prefix + scatter,
 //                                          ChainClaimRank, ChainPreClaimPixels, ChainClaimRounds
-//   ChainExtendSerial                      ChainExtendReach + ChainExtendRound x2 + finisher
-//   ChainAssignTCRows                      ChainRowFlags + prefix + ChainRowAssign
-//   ChainAttachSelectTargets               ChainTargetFlags + prefix + ChainTargetScatter
-//   ChainAttachContend                     ChainAttachArgmax / Resolve / OwnerScatter /
-//                                          ChainAttachSeedDedup / ChainAttachPublish
-//   ChainSuppressCarriedTCs                ChainTCKeepSuppress + prefix + gather/scatter
+//   EX extension                           ChainExtendReach + ChainExtendRound x4 + finisher
+//   K10 row assignment                     ChainRowFlags + prefix + ChainRowAssign + ChainRowFinish
+//   K8-0b stage-A target list              ChainTargetFlags + prefix + compaction
+//   K8c stage-A contend + -RD dedup        ChainAttachArgmax / Resolve / compaction /
+//                                          ChainAttachOwnerHits / SeedDedup / Publish
+//   K8d carried-row retirement             ChainTCKeepSuppress + prefix + gather/scatter + finish
 //
 // WHY THE GREEDY WALKS COME OUT THE SAME (port map risk R3).
 //

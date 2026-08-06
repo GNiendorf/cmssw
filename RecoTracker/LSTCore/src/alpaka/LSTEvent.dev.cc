@@ -68,15 +68,6 @@ namespace {
     alpaka::wait(queue);
   }
 
-  // P2.6a. Which form of the five order-dependent chain stages this backend runs.
-  //
-  // On a backend that gives one thread per block (the CPU serial accelerator) the P2.3 / P2.4
-  // single-thread kernels ARE the fast form -- they cost 0.014 to 0.6 ms/event there -- and the
-  // parallel replacements would only add prefix-sum and staging passes. On a device backend the
-  // same kernels cost 35 ms/event between them, so the parallel forms of ChainParallel.h run
-  // instead. The two forms are required to agree bit for bit; the CPU-vs-GPU leg of the P2.5
-  // reproducibility harness is exactly that comparison.
-  constexpr bool kChainSerialArb = cms::alpakatools::requires_single_thread_per_block_v<Acc1D>;
 }  // namespace
 
 void LSTEvent::initSync() {
@@ -1339,17 +1330,9 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
   // whose class the chain pipeline now builds. Runs even with zero chains: the mode is defined by
   // the configuration, not by how many chains an event happened to weld.
   //
-  // P2.6a: on a backend with real thread parallelism the in-place serial compaction (1.5 ms/event
-  // on CUDA) is replaced by flags + single-block prefix + gather/scatter through a staging array.
-  // The serial form stays the CPU path, where it costs 14 us and the staging pass would not pay.
-  if constexpr (kChainSerialArb) {
-    alpaka::exec<Acc1D>(queue_,
-                        serial_workDiv,
-                        ChainCompactCarriedTCs{},
-                        trackCandidatesBaseDC_->view(),
-                        trackCandidatesExtendedDC_->view(),
-                        chainConfig_);
-  } else {
+  // The in-place serial compaction (1.5 ms/event on CUDA) is done as flags + single-block prefix +
+  // gather/scatter through a staging array, on every backend (one form, ChainParallel.h).
+  {
     uint32_t const nIn = nAllocatedTCs;
     auto keep_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, std::max(1u, nIn));
     auto offs_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, nIn + 1u);
@@ -1417,41 +1400,14 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
                       chainConfig_);
   auto const t2 = stamp();
 
-  // K9a / K9b / K9c: pre-claim, greedy claim, braid. Serial by construction (see ChainArbitrate.h).
+  // K9a / K9b / K9c: pre-claim, greedy claim, braid, as conflict-free rounds (see ChainParallel.h).
   auto owner_buf = cms::alpakatools::make_device_buffer<int32_t[]>(queue_, nHits);
   auto order_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, nChainCount_);
-  auto orderScratch_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, nChainCount_);
   auto accepted_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, nChainCount_);
-  auto braidCount_buf = cms::alpakatools::make_device_buffer<int32_t[]>(queue_, nChainCount_);
-  constexpr uint32_t kBraidTouchedCapacity = 4096u;  // >= the largest per-chain claim-hit count
-  auto braidTouched_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, kBraidTouchedCapacity);
   auto stats_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, kChainArbStats);
   alpaka::memset(queue_, stats_buf, 0u);
 
-  if constexpr (kChainSerialArb) {
-    alpaka::exec<Acc1D>(queue_,
-                        serial_workDiv,
-                        ChainArbitrateSerial{},
-                        miniDoubletsDC_->const_view().miniDoublets(),
-                        tripletsDC_->const_view().triplets(),
-                        segmentsDC_->const_view().segments(),
-                        chainNodesDC_->const_view(),
-                        chainItemsDC_->const_view(),
-                        chainsDC_->view(),
-                        claimHits_buf.data(),
-                        trackCandidatesBaseDC_->const_view(),
-                        trackCandidatesExtendedDC_->const_view(),
-                        owner_buf.data(),
-                        nHits,
-                        order_buf.data(),
-                        orderScratch_buf.data(),
-                        accepted_buf.data(),
-                        braidCount_buf.data(),
-                        braidTouched_buf.data(),
-                        kBraidTouchedCapacity,
-                        stats_buf.data(),
-                        chainConfig_);
-  } else {
+  {
     // P2.6a: the same walk, reached by conflict-free rounds instead of a single thread. See the
     // exactness / termination argument at the top of ChainParallel.h.
     auto bandItems_buf = cms::alpakatools::make_device_buffer<int32_t[]>(queue_, nChainCount_);
@@ -1650,24 +1606,7 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
         queue_, chainFlat_workDiv, ChainSegSort{}, segOffsets_buf.data(), segItems_buf.data(), nMDall);
     t3c = stamp();
 
-    if constexpr (kChainSerialArb) {
-      alpaka::exec<Acc1D>(queue_,
-                          serial_workDiv,
-                          ChainExtendSerial{},
-                          modules_.const_view().modules(),
-                          miniDoubletsDC_->const_view().miniDoublets(),
-                          segmentsDC_->const_view().segments(),
-                          chainItemsDC_->view(),
-                          chainsDC_->view(),
-                          accepted_buf.data(),
-                          claimedHit_buf.data(),
-                          nHits,
-                          segOffsets_buf.data(),
-                          segItems_buf.data(),
-                          nMDall,
-                          stats_buf.data(),
-                          chainConfig_);
-    } else {
+    {
       // P2.6a: the extension is the single most expensive serial kernel on the device (16.5 ms/event
       // -- it is a double-precision circle+line refit per accepted chain, run by one thread on a
       // part whose FP64 rate is 1/64 of its FP32 rate). Two conflict-free rounds over the static
@@ -1798,16 +1737,7 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
   auto const t4 = stamp();
 
   // K10: row assignment then emission.
-  if constexpr (kChainSerialArb) {
-    alpaka::exec<Acc1D>(queue_,
-                        serial_workDiv,
-                        ChainAssignTCRows{},
-                        trackCandidatesBaseDC_->view(),
-                        trackCandidatesExtendedDC_->view(),
-                        chainsDC_->view(),
-                        accepted_buf.data(),
-                        nAllocatedTCs);
-  } else {
+  {
     auto rowKeep_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, nChainCount_);
     auto rowOffs_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, nChainCount_ + 1u);
     auto rowTotal_buf = cms::alpakatools::make_device_buffer<uint32_t>(queue_);
@@ -2010,21 +1940,7 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
   // The contention / -RPS / -XC verdicts applied to the carried bare-pLS rows, with the chain
   // rows (the last nChainTCs positions) kept verbatim. This is the reference's last
   // m16RefreshSupp plus the -XC type-8 channel, applied once, at the end.
-  if constexpr (kChainSerialArb) {
-    alpaka::exec<Acc1D>(queue_,
-                        serial_workDiv,
-                        ChainSuppressCarriedTCs{},
-                        trackCandidatesBaseDC_->view(),
-                        trackCandidatesExtendedDC_->view(),
-                        chainsDC_->const_view(),
-                        plsOwned_buf.data(),
-                        plsBestChain_buf.data(),
-                        plsBestT3_buf.data(),
-                        xcRetired_buf.data(),
-                        pixelSize_,
-                        postStats_buf.data(),
-                        chainConfig_);
-  } else {
+  {
     uint32_t const nIn = nAllocatedTCs;
     auto keep_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, std::max(1u, nIn));
     auto offs_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, nIn + 1u);
@@ -2174,16 +2090,7 @@ void LSTEvent::attachPixels(unsigned int nHits,
   auto nTargets_buf_d = cms::alpakatools::make_device_buffer<uint32_t>(queue_);
   auto tgtKeep_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, nChainCount_);
   auto tgtOffs_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, nChainCount_ + 1u);
-  if constexpr (kChainSerialArb) {
-    alpaka::exec<Acc1D>(queue_,
-                        serial_workDiv,
-                        ChainAttachSelectTargets{},
-                        chainsDC_->const_view(),
-                        accepted,
-                        targets_buf.data(),
-                        nTargets_buf_d.data(),
-                        chainConfig_);
-  } else {
+  {
     // The same filtered copy of the K9 accepted array, order-preserving through a prefix sum.
     auto tgtTotal_buf = cms::alpakatools::make_device_buffer<uint32_t>(queue_);
     alpaka::exec<Acc1D>(queue_,
@@ -2327,32 +2234,11 @@ void LSTEvent::attachPixels(unsigned int nHits,
   auto const a3 = stamp();
 
   // K8c: contention and the -RD seed dedup.
-  auto plsOwnerPos_buf = cms::alpakatools::make_device_buffer<int32_t[]>(queue_, nPls);
   auto order_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, nTargets);
   // Split point of the contend stage: up to it the one-pLS-one-owner argmax, after it the -RD
   // seed-family dedup, whose hash walk is the one piece of P2.4 that stays sequential.
   auto a3rd = a3;
-  if constexpr (kChainSerialArb) {
-    alpaka::exec<Acc1D>(queue_,
-                        serial_workDiv,
-                        ChainAttachContend{},
-                        lstInputDC_->const_view().pixelSeeds(),
-                        lstInputDC_->const_view().hits(),
-                        chainsDC_->view(),
-                        targets_buf.data(),
-                        nTargets,
-                        tgtPls_buf.data(),
-                        tgtLogit_buf.data(),
-                        plsOwnerPos_buf.data(),
-                        plsOwned,
-                        pixelSize_,
-                        hashKey,
-                        hashVal,
-                        nHits,
-                        order_buf.data(),
-                        stats_buf.data(),
-                        chainConfig_);
-  } else {
+  {
     // P2.6a. The one-pLS-one-owner rule is an argmax, so it becomes a packed atomicMax; the -RD
     // visiting order is the gathered ascending-position (K9 accepted) order -- zero sorts, simp
     // change 3, replacing the reference's O(n^2) selection sort (7-10 ms per event on the device,
