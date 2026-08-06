@@ -3158,3 +3158,33 @@ STATE OF THE CONFIG after the two displaced reverts (commits e6f69405304, 6e0d95
   Net vs pre-tonight (1000 evt, overnight/cur_vs_pretonight.json): displaced vxy[10,30) +0.0120,
   dxy[1,5) +0.0101, vxy[5,10) +0.0049; dup +0.0023 and fake +0.0030 given back; eff -0.0001;
   length -0.075 (the extension deletion).
+
+## 2026-08-06 -- BLESSING CHANGE: the CrossCleanpLS dR^2 window is NO LONGER sacred
+Maintainer, in response to D3's finding that the dR^2 < 0.02 (-XCW2) window in the ported
+bare-chain arm is the binding constraint on barrel seed retirement (AUC .732 with it, .900 with
+the SAME head without it, GBDT ceiling .957; end to end -.0104 dupB for -.0012 eff vs -.0047 for
+the same eff on the shipped knob):
+
+  "I'm fine with removing it from crosscleanpls and just adjusting the pls OT chain matching
+   thresholds if it is equivalent/near equivalent. That is simpler. I blessed it because that's
+   what LST has but this condition in LST is also confusing to us who develop LST."
+
+PROVENANCE, from the maintainer (this is why LST looks the way it does, and it has never been
+written down anywhere in this repo): the LST arm started as a BARE deltaR requirement to kill a
+pLS, which "killed a lot of efficiency". The embedding requirement was then ADDED on top as a
+second condition and improved things - but "it was always confusing to us why we couldn't just
+adjust the matching requirements." So LST's structure is historical accretion (deltaR too
+aggressive -> add a second gate), not a designed necessity. Our port replaced the embedding half
+with the attach pair logit and kept the deltaR half; D3's measurement is the first test of the
+path LST never took (drop the geometry, re-derive the matching bar).
+
+CONSEQUENCE FOR THIS ROUND: dropping -XCW2 in the bare-chain arm and re-deriving the logit bar is
+now an ALLOWED and PREFERRED simplification, not a scope violation, PROVIDED it is
+equivalent-or-better end to end. It also removes a constant and a geometric concept from the
+algorithm. Alpaka constraint unchanged: the window-free form must stay a per-seed reduction over
+DELIVERED chain TCs (atomicMax at attach-scoring time, the same ownership-map shape as -CC), never
+an N^2 seed x TC loop - that loop is exactly what was deleted from LST.
+NEXT-ROUND SEED (maintainer: "one thing of many for the general agents to look into next round if
+this stays a good lead"): why the matching requirement alone is sufficient, whether the pixel-
+anchored arms' dR^2 (-XCR2 1e-6) deserve the same treatment, and whether the same logic applies
+anywhere else a geometric window shadows a learned score.
