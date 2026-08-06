@@ -2918,3 +2918,24 @@ Discipline: every step gated (bit-identity where the change claims none; frozen-
 scoreboard where noise-level claimed), timing A/B per consolidation, commit per step,
 push to fork. THEN: timing/memory fan-outs on the consolidated tree, head-retrain round,
 cube/jet samples.
+
+## 2026-08-05 evening -- INTEGRATION COMPLETE: ported, stripped, verified (commits c1d7f52ca7d / 7dff05be2ee / bbed527249a / f57e8a5a94b)
+Single-agent end-to-end job (port2_ref/STATUS.md M0-M7 is the record). Port: all CHAINFINAL2
+mechanisms, master-OFF gate bit-identical throughout. Strip: -12,572 LOC - all post-T3 LST
+code deleted (builders, crosscleans incl. CrossCleanpLS, dedup, both pixel maps, T5/T4/pT3/
+embed DNNs, 12 collection headers, harness) and the MASTER SWITCH REMOVED - chain path is
+the only path. Kept: CheckHitspLS 1+2, MD/LS/T3+t3dnn, pLS machinery. Timing table now
+Hits/MD/LS/T3/Graph/pLS/Chain/TC/Reset.
+VERIFIED: (1) port numerically exact vs prototype CHAINFINAL2 - every metric within
+.0001-.0014 on PU200RelVal n1000 (p5_rv1000_vsCF2.txt); (2) CUDA clean, CPU-vs-GPU 0.006%
+row drift (ULP precedent); (3) vs M0 LST baseline same events (p5_rv300_vsLST.txt): eff
+equal, displaced +.025/+.062/+.072/+.046 (v15/v510/v1030/d15), dup -.0027 BELOW LST
+(endcap -.013; barrel +.014 = known residual), fake +.0012. Plots (172):
+performance/p5_final_compare_528840D-PU200_fc6ae0D-PU200/mtv/.
+TIMING (1 stream, sequential, PU200): CPU 756.6 ms/evt (pLS 312.8 dominant, Chain 131.0,
+Graph 27.7); GPU 28.8 ms/evt (Chain 25.4, the known serial kernels). No LST-baseline
+comparison made here (clean-master baseline to be measured separately, maintainer).
+Deferred items logged: write-only LSTInput superbin columns, zero-chain stage-B skip,
+non-chain CreateTriplets variants (all simplification-pass candidates).
+NEXT: maintainer reviews plots + timing -> massive simplification pass (queued above) ->
+timing/memory fan-outs -> head retrain -> cube/jet.
