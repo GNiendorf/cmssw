@@ -1381,22 +1381,27 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
   unsigned int const nHits = static_cast<unsigned int>(lstInputDC_->const_view().hits().metadata().size());
   unsigned int const nMDall = static_cast<unsigned int>(miniDoubletsDC_->view().miniDoublets().metadata().size());
 
-  // K9-0 / K9-1: the claim universe and the order key + candidate mask.
+  // K9-0 / K9-1: the claim universe, the order key, the candidate mask and the -WE/-WZ band
+  // tolerances -- one per-chain visit (ChainClaimPrep).
   auto claimHits_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, 6u * nChainWeldedNodes_);
+  auto candKeep_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, nChainCount_);
+  auto bandItems_buf = cms::alpakatools::make_device_buffer<int32_t[]>(queue_, nChainCount_);
+  auto bandFrac_buf = cms::alpakatools::make_device_buffer<float[]>(queue_, nChainCount_);
+  auto bandBraid_buf = cms::alpakatools::make_device_buffer<float[]>(queue_, nChainCount_);
   alpaka::exec<Acc1D>(queue_,
                       chainFlat_workDiv,
-                      ChainBuildClaimHits{},
+                      ChainClaimPrep{},
                       miniDoubletsDC_->const_view().miniDoublets(),
-                      chainItemsDC_->const_view(),
-                      chainsDC_->view(),
-                      claimHits_buf.data());
-  alpaka::exec<Acc1D>(queue_,
-                      chainFlat_workDiv,
-                      ChainOrderAndSelect{},
                       tripletsDC_->const_view().triplets(),
+                      segmentsDC_->const_view().segments(),
                       chainNodesDC_->const_view(),
                       chainItemsDC_->const_view(),
                       chainsDC_->view(),
+                      claimHits_buf.data(),
+                      candKeep_buf.data(),
+                      bandItems_buf.data(),
+                      bandFrac_buf.data(),
+                      bandBraid_buf.data(),
                       chainConfig_);
   auto const t2 = stamp();
 
@@ -1410,10 +1415,6 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
   {
     // P2.6a: the same walk, reached by conflict-free rounds instead of a single thread. See the
     // exactness / termination argument at the top of ChainParallel.h.
-    auto bandItems_buf = cms::alpakatools::make_device_buffer<int32_t[]>(queue_, nChainCount_);
-    auto bandFrac_buf = cms::alpakatools::make_device_buffer<float[]>(queue_, nChainCount_);
-    auto bandBraid_buf = cms::alpakatools::make_device_buffer<float[]>(queue_, nChainCount_);
-    auto candKeep_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, nChainCount_);
     auto candOffs_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, nChainCount_ + 1u);
     auto candRecs_buf = cms::alpakatools::make_device_buffer<ChainOrderKeyRec[]>(queue_, nChainCount_);
     auto nCand_buf = cms::alpakatools::make_device_buffer<uint32_t>(queue_);
@@ -1424,20 +1425,6 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
     alpaka::memset(queue_, owner_buf, 0xFF);    // chainarb::kFree everywhere
     alpaka::memset(queue_, minPos_buf, 0xFF);   // chainpar::kNoPos everywhere
 
-    alpaka::exec<Acc1D>(queue_,
-                        chainFlat_workDiv,
-                        ChainClaimBands{},
-                        miniDoubletsDC_->const_view().miniDoublets(),
-                        tripletsDC_->const_view().triplets(),
-                        segmentsDC_->const_view().segments(),
-                        chainNodesDC_->const_view(),
-                        chainItemsDC_->const_view(),
-                        chainsDC_->const_view(),
-                        bandItems_buf.data(),
-                        bandFrac_buf.data(),
-                        bandBraid_buf.data(),
-                        chainConfig_);
-    alpaka::exec<Acc1D>(queue_, chainFlat_workDiv, ChainCandFlags{}, chainsDC_->const_view(), candKeep_buf.data());
     alpaka::exec<Acc1D>(queue_,
                         chainScan_workDiv,
                         ChainSegPrefix{},
@@ -1459,14 +1446,6 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
                         nCand_buf.data(),
                         nChainCount_,
                         order_buf.data());
-    alpaka::exec<Acc1D>(queue_,
-                        chainFlat_workDiv,
-                        ChainClaimTieCensus{},
-                        chainsDC_->const_view(),
-                        order_buf.data(),
-                        nCand_buf.data(),
-                        nChainCount_,
-                        stats_buf.data());
     if (chainConfig_.preClaim)
       alpaka::exec<Acc1D>(queue_,
                           chainFlat_workDiv,
@@ -1652,10 +1631,12 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
       // single-thread finisher pays for anything left over. stats[15] reports the leftover.
       constexpr int kExtendRounds = 4;
       for (int round = 0; round < kExtendRounds; ++round) {
-        if (round > 0)
+        // Same kernel twice: reset = true puts the reach sets' minPos entries (and blockPos) back
+        // to kNoPos, reset = false registers the undecided chains' positions on them.
+        for (int pass = (round > 0) ? 0 : 1; pass < 2; ++pass)
           alpaka::exec<Acc1D>(queue_,
                               chainFlat_workDiv,
-                              ChainExtendResetMinPos{},
+                              ChainExtendMinPos{},
                               miniDoubletsDC_->const_view().miniDoublets(),
                               segmentsDC_->const_view().segments(),
                               chainsDC_->const_view(),
@@ -1665,30 +1646,14 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
                               directReach,
                               reachMd_buf.data(),
                               reachN_buf.data(),
+                              reachOvf_buf.data(),
                               reachTerm_buf.data(),
+                              extDone_buf.data(),
                               nChainCount_,
                               extMinPos_buf.data(),
                               nHits,
-                              blockPos_buf.data());
-        alpaka::exec<Acc1D>(queue_,
-                            chainFlat_workDiv,
-                            ChainExtendMinPos{},
-                            miniDoubletsDC_->const_view().miniDoublets(),
-                            segmentsDC_->const_view().segments(),
-                            chainsDC_->const_view(),
-                            segOffsets_buf.data(),
-                            segItems_buf.data(),
-                            nMDall,
-                            directReach,
-                            reachMd_buf.data(),
-                            reachN_buf.data(),
-                            reachOvf_buf.data(),
-                            reachTerm_buf.data(),
-                            extDone_buf.data(),
-                            nChainCount_,
-                            extMinPos_buf.data(),
-                            nHits,
-                            blockPos_buf.data());
+                              blockPos_buf.data(),
+                              pass == 0);
         alpaka::exec<Acc1D>(queue_,
                             chainFlat_workDiv,
                             ChainExtendRound{},

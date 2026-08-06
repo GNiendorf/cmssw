@@ -68,24 +68,51 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
   static constexpr uint32_t kChainArbStats = 16u;
 
   // ------------------------------------------------------------------------------------------
-  // K9-0. The per-chain claim universe: anchor hit + other hit of every member MD, sorted unique.
-  // prototype/K9K10.cc builds it with sort + unique over a scratch vector; the chains here are a
-  // few dozen entries at most, so an insertion sort in place is both simpler and faster, and it
-  // produces the identical set (the ORDER inside the list never enters a decision: the claim tests
-  // are counts over the whole list).
-  struct ChainBuildClaimHits {
+  // K9-0 + K9-1. Everything the claim needs to know about a chain BEFORE the owner map exists.
+  // Four passes that used to be four launches; each one is per-chain elementwise and reads nothing
+  // another chain's thread writes, so they are the same computation in one visit:
+  //
+  //   (a) the claim universe: anchor hit + other hit of every member MD, sorted unique.
+  //       prototype/K9K10.cc builds it with sort + unique over a scratch vector; the chains here
+  //       are a few dozen entries at most, so an insertion sort in place is both simpler and
+  //       faster, and it produces the identical set (the ORDER inside the list never enters a
+  //       decision: the claim tests are counts over the whole list).
+  //   (b) the order key (-B 10 -BK 1 -BT 5): score - alpha * max(0, hinge - marginX). It is NEVER
+  //       a threshold; acceptance always cuts on chains.score (the M9 cross-scale-inversion
+  //       lesson).
+  //   (c) the candidate set = score >= thetaForChain. With -G 6 the base threshold is kNoCutTheta
+  //       for every length, while a chain on the EXEMPT (large-dcaXY) branch is cut by
+  //       -U4/-U5/-U6 on the legacy sum-logit scale; a gate-killed chain carries score -= 1e9 and
+  //       fails both. (The pixel-consumed drop of the pre-deletion hybrid is GONE: the pT5 / pT3
+  //       builders that wrote partOfPT5 / partOfPT3 are deleted.) candKeep is the flag array the
+  //       candidate compaction prefixes.
+  //   (d) the -WZ / -WN band decision and the three per-chain tolerances it selects, hoisted out
+  //       of the claim walk -- legal because none of it depends on the owner map.
+  struct ChainClaimPrep {
     ALPAKA_FN_ACC void operator()(Acc1D const& acc,
                                   MiniDoubletsConst mds,
+                                  TripletsConst triplets,
+                                  SegmentsConst segments,
+                                  ChainNodesConst nodes,
                                   ChainItemsConst items,
                                   Chains chains,
-                                  uint32_t* claimHits) const {
+                                  uint32_t* claimHits,
+                                  uint32_t* candKeep,
+                                  int32_t* bandItems,
+                                  float* bandFrac,
+                                  float* bandBraid,
+                                  ChainConfig cfg) const {
       uint32_t const nChains = static_cast<uint32_t>(chains.metadata().size());
+      // -FC is given in MD units; the claim universe is hits, so the budget doubles.
+      int const maxItems = cfg.maxClaimedMDs >= 0 ? 2 * cfg.maxClaimedMDs : -1;
+      int const maxItemsAlt = cfg.claimItemsAltMDs > -2 ? 2 * cfg.claimItemsAltMDs : -2;
       for (uint32_t c : cms::alpakatools::uniform_elements(acc, nChains)) {
         uint32_t const off = chains.nodeOffset()[c];
         uint32_t const mdBase = 3u * off;
         uint32_t const hitBase = 6u * off;
         int const nMD = chains.nMDs()[c];
 
+        // (a) the claim universe
         int n = 0;
         for (int k = 0; k < nMD; ++k) {
           uint32_t const md = items.mdItems()[mdBase + k];
@@ -106,31 +133,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
           if (m == 0 || claimHits[hitBase + m - 1] != claimHits[hitBase + i])
             claimHits[hitBase + m++] = claimHits[hitBase + i];
         chains.nClaimHits()[c] = static_cast<uint16_t>(m);
-      }
-    }
-  };
 
-  // ------------------------------------------------------------------------------------------
-  // K9-1. The K9 order key and the candidate set.
-  //
-  // Order key (-B 10 -BK 1 -BT 5): score - alpha * max(0, hinge - marginX). It is NEVER a
-  // threshold; acceptance always cuts on chains.score (the M9 cross-scale-inversion lesson).
-  //
-  // Candidate set = the reference's two pre-claim gates, in order:
-  //   (1) score >= thetaForChain: with -G 6 the base threshold is kNoCutTheta for every length,
-  //       while a chain on the EXEMPT (large-dcaXY) branch is cut by -U4/-U5/-U6 on the legacy
-  //       sum-logit scale. A gate-killed chain carries score -= 1e9 and fails both.
-  //   (2) the pixel-consumed drop of the pre-deletion hybrid is GONE: the pT5 / pT3 builders that
-  //       wrote partOfPT5 / partOfPT3 are deleted, so the flags (and the drop) no longer exist.
-  struct ChainOrderAndSelect {
-    ALPAKA_FN_ACC void operator()(Acc1D const& acc,
-                                  TripletsConst triplets,
-                                  ChainNodesConst nodes,
-                                  ChainItemsConst items,
-                                  Chains chains,
-                                  ChainConfig cfg) const {
-      uint32_t const nChains = static_cast<uint32_t>(chains.metadata().size());
-      for (uint32_t c : cms::alpakatools::uniform_elements(acc, nChains)) {
+        // (b) + (c) the order key, the reset of the per-chain decision columns, the candidate mask
         chains.tcRow()[c] = -1;
         chains.attachPls()[c] = -1;  // P2.4: no attach decision yet, and none at all when K8 is off
         chains.attachLogit()[c] = -1e30f;
@@ -147,6 +151,23 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         if (score >= thr)
           claim = kChainClaimCandidate;
         chains.claimFlags()[c] = claim;
+        candKeep[c] = (claim & kChainClaimCandidate) ? 1u : 0u;
+
+        // (d) the -WE / -WZ band tolerances
+        bool altBand = false;
+        {
+          int const nN = chains.nNodes()[c];
+          if (nN > 0) {
+            uint32_t const t3In = nodes.tripletIndex()[items.nodeItems()[off]];
+            unsigned int m0, m1, m2;
+            chainNodeMDs(triplets, segments, t3In, m0, m1, m2);
+            float const aEta = alpaka::math::abs(acc, chainT3Eta(acc, mds, m2));
+            altBand = (aEta >= cfg.braidAltEta) && (static_cast<float>(nN) <= cfg.braidAltMaxNodes);
+          }
+        }
+        bandItems[c] = (altBand && maxItemsAlt != -2) ? maxItemsAlt : maxItems;
+        bandFrac[c] = (altBand && cfg.claimFracAlt > 0.f) ? cfg.claimFracAlt : cfg.maxClaimedFrac;
+        bandBraid[c] = (altBand && cfg.braidFracAlt > 0.f) ? cfg.braidFracAlt : cfg.braidFrac;
       }
     }
   };

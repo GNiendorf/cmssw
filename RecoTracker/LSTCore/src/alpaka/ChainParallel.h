@@ -29,7 +29,7 @@
 //   stage                                  form here
 //   -------------------------------------  ---------------------------------------------------
 //   -RT5 carried-row compaction            ChainTCKeepCompact + prefix + gather/scatter + finish
-//   K9a/K9b/K9c claim                      ChainClaimBands(+cand flags), prefix + scatter,
+//   K9a/K9b/K9c claim                      ChainClaimPrep (ChainArbitrate.h), prefix + scatter,
 //                                          ChainClaimRank, ChainPreClaimPixels, ChainClaimRounds
 //   EX extension                           ChainExtendReach + ChainExtendRound x4 + finisher
 //   K10 row assignment                     ChainRowFlags + prefix + ChainRowAssign + ChainRowFinish
@@ -296,53 +296,6 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
   // ==========================================================================================
   // K9. The claim.
 
-  // The -WZ / -WN band decision and the three per-chain tolerances it selects, hoisted out of the
-  // walk. Verbatim from ChainArbitrateSerial's inline block; hoisting is legal because none of it
-  // depends on the owner map.
-  struct ChainClaimBands {
-    ALPAKA_FN_ACC void operator()(Acc1D const& acc,
-                                  MiniDoubletsConst mds,
-                                  TripletsConst triplets,
-                                  SegmentsConst segments,
-                                  ChainNodesConst nodes,
-                                  ChainItemsConst items,
-                                  ChainsConst chains,
-                                  int32_t* bandItems,
-                                  float* bandFrac,
-                                  float* bandBraid,
-                                  ChainConfig cfg) const {
-      uint32_t const nChains = static_cast<uint32_t>(chains.metadata().size());
-      // -FC is given in MD units; the claim universe is hits, so the budget doubles.
-      int const maxItems = cfg.maxClaimedMDs >= 0 ? 2 * cfg.maxClaimedMDs : -1;
-      int const maxItemsAlt = cfg.claimItemsAltMDs > -2 ? 2 * cfg.claimItemsAltMDs : -2;
-      for (uint32_t c : cms::alpakatools::uniform_elements(acc, nChains)) {
-        bool altBand = false;
-        {
-          uint32_t const off = chains.nodeOffset()[c];
-          int const nN = chains.nNodes()[c];
-          if (nN > 0) {
-            uint32_t const t3In = nodes.tripletIndex()[items.nodeItems()[off]];
-            unsigned int m0, m1, m2;
-            chainNodeMDs(triplets, segments, t3In, m0, m1, m2);
-            float const aEta = alpaka::math::abs(acc, chainT3Eta(acc, mds, m2));
-            altBand = (aEta >= cfg.braidAltEta) && (static_cast<float>(nN) <= cfg.braidAltMaxNodes);
-          }
-        }
-        bandItems[c] = (altBand && maxItemsAlt != -2) ? maxItemsAlt : maxItems;
-        bandFrac[c] = (altBand && cfg.claimFracAlt > 0.f) ? cfg.claimFracAlt : cfg.maxClaimedFrac;
-        bandBraid[c] = (altBand && cfg.braidFracAlt > 0.f) ? cfg.braidFracAlt : cfg.braidFrac;
-      }
-    }
-  };
-
-  struct ChainCandFlags {
-    ALPAKA_FN_ACC void operator()(Acc1D const& acc, ChainsConst chains, uint32_t* keep) const {
-      uint32_t const nChains = static_cast<uint32_t>(chains.metadata().size());
-      for (uint32_t c : cms::alpakatools::uniform_elements(acc, nChains))
-        keep[c] = (chains.claimFlags()[c] & kChainClaimCandidate) ? 1u : 0u;
-    }
-  };
-
   // The (orderKey, stableKey, chain index) comparison operands of one candidate, gathered into one
   // contiguous record so the O(n^2) rank pass reads 12 contiguous bytes per comparison instead of
   // chasing three SoA columns.
@@ -405,24 +358,6 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     }
   };
 
-  // P2.5 tie-exercise census, stats[9]: adjacent exact orderKey ties in the finished order.
-  struct ChainClaimTieCensus {
-    ALPAKA_FN_ACC void operator()(Acc1D const& acc,
-                                  ChainsConst chains,
-                                  uint32_t const* order,
-                                  uint32_t const* nCandPtr,
-                                  uint32_t nBound,
-                                  uint32_t* stats) const {
-      uint32_t const n = *nCandPtr;
-      for (uint32_t i : cms::alpakatools::uniform_elements(acc, nBound)) {
-        if (i + 1u >= n)
-          continue;
-        if (chains.orderKey()[order[i]] == chains.orderKey()[order[i + 1u]])
-          alpaka::atomicAdd(acc, &stats[9], 1u, alpaka::hierarchy::Blocks{});
-      }
-    }
-  };
-
   // K9a, the -PU 1 pre-claim of the SURVIVING carried pixel rows' outer-tracker hits.
   //
   // The reference walks the rows in TC order first come first served, but every writer stores the
@@ -458,6 +393,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
   // K9b + K9c, the conflict-free-round form of the greedy claim. Single block, one internal loop
   // over rounds; see the file header for the exactness and termination argument.
   //
+  // The P2.5 tie-exercise census (stats[9]: adjacent exact orderKey ties in the finished order) is
+  // the prologue below -- it reads the same finished `order` the walk reads and writes nothing the
+  // walk touches, so it needs no launch of its own.
+  //
   // stats[11] rounds to convergence   stats[12] peak undecided-after-a-round   stats[13] round cap hit
   struct ChainClaimRounds {
     ALPAKA_FN_ACC void operator()(Acc1D const& acc,
@@ -487,8 +426,11 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
       uint32_t const n = *nCandPtr;
       bool const braidOn = cfg.braidFrac > 0.f || cfg.braidFracAlt > 0.f;
 
-      for (uint32_t oi = worker; oi < n; oi += nWorkers)
+      for (uint32_t oi = worker; oi < n; oi += nWorkers) {
         state[oi] = chainpar::kUndecided;
+        if (oi + 1u < n && chains.orderKey()[order[oi]] == chains.orderKey()[order[oi + 1u]])
+          alpaka::atomicAdd(acc, &stats[9], 1u, alpaka::hierarchy::Threads{});
+      }
       alpaka::syncBlockThreads(acc);
 
       uint32_t rounds = 0u;
@@ -775,6 +717,12 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     }
   };
 
+  // The reach-set walk over minPos, in its two roles: `reset` puts the entries every accepted
+  // chain can touch back to kNoPos (round > 0 preamble, over ALL accepted chains, no done or
+  // overflow test), and the registration pass atomicMins the undecided chains' positions onto the
+  // same entries. One walk, one source of truth for "which minPos entries belong to chain ai";
+  // the two roles stay two launches because the reset must be globally complete before the first
+  // atomicMin lands.
   struct ChainExtendMinPos {
     ALPAKA_FN_ACC void operator()(Acc1D const& acc,
                                   MiniDoubletsConst mds,
@@ -792,23 +740,37 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                   uint32_t nBound,
                                   uint32_t* minPos,
                                   uint32_t nHitUniverse,
-                                  uint32_t* blockPos) const {
+                                  uint32_t* blockPos,
+                                  bool reset) const {
+      if (reset && cms::alpakatools::once_per_grid(acc))
+        *blockPos = chainpar::kNoPos;
       uint32_t const nAcc = chains.nAccepted();
       for (uint32_t ai : cms::alpakatools::uniform_elements(acc, nBound)) {
-        if (ai >= nAcc || done[ai] != 0u)
+        if (ai >= nAcc)
           continue;
-        if (reachOvf[ai] != 0u)
-          alpaka::atomicMin(acc, blockPos, ai, alpaka::hierarchy::Blocks{});
+        if (!reset) {
+          if (done[ai] != 0u)
+            continue;
+          if (reachOvf[ai] != 0u)
+            alpaka::atomicMin(acc, blockPos, ai, alpaka::hierarchy::Blocks{});
+        }
         uint32_t const nR = chainReachCount(segOffsets, reachN, reachTerm, direct, ai);
         for (uint32_t k = 0; k < nR; ++k) {
           uint32_t const m = chainReachAt(segments, segOffsets, segItems, reachMd, reachTerm, direct, ai, k);
           if (m >= nMDall)
             continue;
           unsigned int const ha = mds.anchorHitIndices()[m], hb = mds.outerHitIndices()[m];
-          if (ha < nHitUniverse)
-            alpaka::atomicMin(acc, &minPos[ha], ai, alpaka::hierarchy::Blocks{});
-          if (hb < nHitUniverse)
-            alpaka::atomicMin(acc, &minPos[hb], ai, alpaka::hierarchy::Blocks{});
+          if (reset) {
+            if (ha < nHitUniverse)
+              minPos[ha] = chainpar::kNoPos;
+            if (hb < nHitUniverse)
+              minPos[hb] = chainpar::kNoPos;
+          } else {
+            if (ha < nHitUniverse)
+              alpaka::atomicMin(acc, &minPos[ha], ai, alpaka::hierarchy::Blocks{});
+            if (hb < nHitUniverse)
+              alpaka::atomicMin(acc, &minPos[hb], ai, alpaka::hierarchy::Blocks{});
+          }
         }
       }
     }
@@ -873,43 +835,6 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                          stats,
                          cfg);
         done[ai] = 1u;
-      }
-    }
-  };
-
-  struct ChainExtendResetMinPos {
-    ALPAKA_FN_ACC void operator()(Acc1D const& acc,
-                                  MiniDoubletsConst mds,
-                                  SegmentsConst segments,
-                                  ChainsConst chains,
-                                  uint32_t const* segOffsets,
-                                  uint32_t const* segItems,
-                                  uint32_t nMDall,
-                                  bool direct,
-                                  uint32_t const* reachMd,
-                                  uint8_t const* reachN,
-                                  uint32_t const* reachTerm,
-                                  uint32_t nBound,
-                                  uint32_t* minPos,
-                                  uint32_t nHitUniverse,
-                                  uint32_t* blockPos) const {
-      if (cms::alpakatools::once_per_grid(acc))
-        *blockPos = chainpar::kNoPos;
-      uint32_t const nAcc = chains.nAccepted();
-      for (uint32_t ai : cms::alpakatools::uniform_elements(acc, nBound)) {
-        if (ai >= nAcc)
-          continue;
-        uint32_t const nR = chainReachCount(segOffsets, reachN, reachTerm, direct, ai);
-        for (uint32_t k = 0; k < nR; ++k) {
-          uint32_t const m = chainReachAt(segments, segOffsets, segItems, reachMd, reachTerm, direct, ai, k);
-          if (m >= nMDall)
-            continue;
-          unsigned int const ha = mds.anchorHitIndices()[m], hb = mds.outerHitIndices()[m];
-          if (ha < nHitUniverse)
-            minPos[ha] = chainpar::kNoPos;
-          if (hb < nHitUniverse)
-            minPos[hb] = chainpar::kNoPos;
-        }
       }
     }
   };
