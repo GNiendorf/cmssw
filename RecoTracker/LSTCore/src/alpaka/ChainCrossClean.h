@@ -93,6 +93,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                   uint32_t* hashKey,
                                   uint32_t* stats) const {
       uint32_t const n = *nAnchors;
+      // Local copy: atomicCas takes its compare value by reference, and a constexpr in namespace
+      // scope has no device-side storage to bind to.
+      uint32_t const empty = chainxc::kHitHashEmpty;
       for (uint32_t i : cms::alpakatools::uniform_elements(acc, nAnchorBound)) {
         if (i >= n)
           continue;
@@ -109,9 +112,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
           uint32_t const g = hitsBase.idxs()[h];
           uint32_t slot = chainxc::hitHash(g);
           for (uint32_t probe = 0; probe < chainxc::kHitHashMaxProbe; ++probe) {
-            uint32_t const prev = alpaka::atomicCas(
-                acc, &hashKey[slot], chainxc::kHitHashEmpty, g, alpaka::hierarchy::Blocks{});
-            if (prev == chainxc::kHitHashEmpty || prev == g)
+            uint32_t const prev = alpaka::atomicCas(acc, &hashKey[slot], empty, g, alpaka::hierarchy::Blocks{});
+            if (prev == empty || prev == g)
               break;  // claimed the slot, or this key is already present
             slot = (slot + 1u) & (chainxc::kHitHashSlots - 1u);
             if (probe + 1u == chainxc::kHitHashMaxProbe)
