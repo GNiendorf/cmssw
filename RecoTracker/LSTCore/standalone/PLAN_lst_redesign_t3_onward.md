@@ -3042,3 +3042,75 @@ collapse to ONE path unless the CPU advantage is massive and approved; (b) every
 than correctness -> collapse; (c) backend-specific kernels -> already eliminated (the 7
 serial/parallel twins are deleted, kChainSerialArb sites = 0, verified bit-identical).
 Each surviving case must be brought to the maintainer with its measured advantage for approval.
+
+## 2026-08-06 overnight -- SIMPLIFICATION + GPU PASS (coordinator, direct): RESULTS OF RECORD
+
+HEADLINE, 1-stream, PU200, -n 200 -v 1 -w 0, quiet box (overnight/final_timing_{cpu,gpu}.log):
+  GPU  Hits 0.6 | MD 0.2 | LS 0.2 | T3 0.6 | Graph 1.4 | pLS 0.2 | CHAIN 6.3 | TC 0.1 | TOTAL 9.7
+       (start of the night: total 12.7, Chain 9.3)  => -24% total, -32% on the chain column
+  CPU  Hits 14.8 | MD 90.1 | LS 74.3 | T3 63.9 | Graph 27.9 | pLS 314.0 | CHAIN 147.6 | TC 37.9
+       | TOTAL 771.2   (start: total 756.6, Chain 131.0)  => +1.9% total, see the phasing trade
+Chain kernels 86 -> 60. Header files 11 -> 10. Code: -1719 lines net in src/interface (excluding
+the format commit), of which the extension removal is -810 and ChainParallel.h's deletion is
+pure motion.
+
+WHAT LANDED (each gated CPU n25 BIT-IDENTICAL 35/35 unless stated):
+1. 54239594079 / 20b0854d949 / 23406beb7bc (collapse agent, groups 1-3 of 6): the SEVEN
+   serial/parallel kernel twins deleted, K9 claim prep merged into one visit, attach stage A/B
+   unified. 86 -> 66 kernels. The agent never ran its gate; I ran it: bit-identical 35/35.
+2. fc75596b18c EXTENSION DELETED (directive). -8 kernels, -810 lines, and it turns out the stage
+   was COSTING physics: 300-evt A/B (overnight/ex_ab.json) eff +0.0004 overall, barrel +0.0007,
+   transition +0.0010, vxy[1,5) +0.0014, vxy[5,10) +0.0016, dxy[1,5) +0.0011, fake -0.0003,
+   dup flat; the only cost is track length, mean nhitOT -0.084 (barrel -0.107, transition -0.206).
+   Mechanism: an appended hit enters the 75%-match definition, so a wrong one drops a matched
+   track below threshold - removing the stage RAISES efficiency and LOWERS the fake rate.
+   GPU: EXwalk 1.135 + EXadj 0.356 = 1.49 ms/evt freed.
+3. 5dec6768a59 XC anchor-hit insert: one device thread -> one thread per anchor with CAS inserts
+   (set with no deletions => membership is interleaving-invariant). XC 1.061 -> 0.120 ms/evt.
+4. eaa91a20443 ATTACH SCORING WORK SPLIT: one work item per (target, PHASE), 16 phases, for
+   stage A and the CCS pass; per-target argmax becomes an atomicMax on the packed
+   (logit, lowest-row) key; new ChainAttachUnpackBest + ChainAttachCcsVerdict passes.
+   Stage-A score 1.301 -> 0.942, CCS 1.240 -> ~0.95, K8 attach 6.549 -> 5.848 ms/evt.
+   ROOT CAUSE this fixes: the scoring kernels were launched with ONE WORK ITEM PER TARGET, i.e.
+   ~1.1k items for stage A's 358k candidate pairs and a few hundred for CCS, on a part that wants
+   1e5 threads. The measured sub-timings that exposed it are in the K8/K8B summary lines.
+5. 77a7c567f0f scram b code-format over the package (formatting only, build green, bit-identical).
+6. d57dd0ec925 ChainParallel.h DELETED - the name stopped meaning anything once the serial twins
+   were gone. Its 22 entities moved to the stage files (16 -> ChainArbitrate.h, 6 ->
+   ChainAttach.h). Also found and removed a REAL duplicate: attachOrderFloat/attachUnorderFloat
+   vs chainOrderFloat are the same monotone order key written two ways; the attach pair is gone
+   and chainUnorderFloat now lives beside chainOrderFloat in ChainWeld.h.
+
+NEGATIVE RESULTS (measured, reverted, do NOT retry as-is):
+* Fusing the attach MLP's layer 2 into the output tail to cut registers 96 -> 80: K8 attach
+  6.5 -> 25.4 ms (the fused form walks the weight matrix down a column with a 32-float stride);
+  blocking the fusion by 8 outputs still measured 16.5 ms. The two-array form is correct for this
+  hardware. Occupancy is NOT what limits these kernels.
+* The (target, phase) split applied to STAGE B: score 1.527 -> 3.499 ms. With ~362 candidates per
+  target over 8.5k targets the 16x repeated walk costs more than the parallelism buys. Phasing
+  pays only where targets are starved relative to candidates.
+
+THE ONE TRADE TO RULE ON: the phase split costs CPU. Chain CPU 131.0 -> 147.6 ms/evt (+16.6, the
+16x repeated candidate walk), against -1.5 ms GPU. Total CPU +1.9%. Options: keep as is (GPU is
+the stated priority), lower kAttachScorePhases (8 or 4 - roughly halves the CPU cost and keeps
+most of the GPU gain), or make the phase count backend-dependent (ONE constant, no duplicate
+code - but it needs approval under the no-backend-specific rule).
+
+PHYSICS OF RECORD (300 evt PU200RelVal, overnight/final_vs_lst.json, vs the M0 LST baseline on
+the same events): eff .8140 vs .8136 (+0.0005); vxy[1,5) +0.0254, vxy[5,10) +0.0631,
+vxy[10,30) +0.0719, dxy[1,5) +0.0472 (the displaced advantage, intact and slightly better than
+before tonight); dup .0486 vs .0513 (-0.0027 BELOW LST; barrel +0.0140 and transition +0.0043
+remain the known residual, endcap -0.0131 below); fake .0466 vs .0455 (+0.0011); mean nhitOT
+6.411 vs 6.514 (-0.103, the extension removal); dxy[10,30) -0.0214 (inherited, cube-round item).
+
+WHERE THE REMAINING GPU TIME IS (n30 s1 per-stage, chain total 7.09 ms in that instrumented run):
+  K8 attach 5.85  ->  stage A: pre 0.16 grid 0.16 score 0.94 contend 0.02 RDdedup 0.83 ccs ~0.95
+                      stage B: pre 0.11 grid 0.20 score 1.53 contend 0.92
+  K9 claim 0.46 | T3CC 0.44 | XC 0.12 | compact 0.07 | K10 rows+emit 0.07 | suppress 0.07
+NEXT TARGETS, in value order: (a) the two SERIAL greedy kernels - stage A -RD dedup 0.83 and
+stage B contend+RDT 0.92, 1.75 ms of single-thread hash walking, order-dependent so they need a
+rank/round decomposition like K9's; (b) stage B score 1.53 (a work split that does NOT re-walk -
+e.g. (target, cell) work items via a per-target cell-count prefix, or a persistent-block form);
+(c) T3CC 0.44 and the K9 claim 0.46; (d) Graph 1.4 on the CPU side is now visible too.
+STILL UNDONE from the earlier list: the ~1120-LOC dead-code inventory in simp_ref/STATUS.md, the
+K0/K1 host-sync elimination (~0.4 ms), the pLS-side grid built once instead of twice (~0.3 ms).
