@@ -562,12 +562,16 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
   // map that does not apply to them.
   static constexpr uint32_t kBareT3TCMarker = 0xFFFFFFFFu;
 
-  // -CC sweep + emission, one serial kernel (the greedy order is load-bearing):
-  //   (1) the deliveries (tgtPls >= 0) arrive PRE-GATHERED and PRE-RANKED by (logit desc, target
-  //       position asc) == (logit desc, T3 row asc) -- the -CCK 0 sweep order, ties on the lower
-  //       T3 row. The gather is the keep[] CSR the dedup kernel maintained, the order is
-  //       ChainAttachT3Rank over it (same total-order argument, so the permutation is exactly
-  //       the reference's sorted sequence);
+  // -CC sweep + emission, one serial kernel:
+  //   (1) the deliveries (tgtPls >= 0) are walked in ASCENDING position order == ascending T3
+  //       row, PRE-GATHERED into `order` by the keep[] CSR (prefix + scatter preserve position
+  //       order, so the compacted list IS the row-order walk; the compaction only spares the
+  //       serial thread the skip-scan over ~4x more positions). The reference swept in -CCK 0
+  //       order (logit desc, T3 row asc on ties); the sweep order was A/B'd NULL twice (a05 M13
+  //       -CCK 1 pt-order, t3attach R4 -CCK 3 quality-order: eff/dup deltas ~1e-4 or below --
+  //       the contention's outcome is set by WHICH MDs are claimed, not the order), so the rank
+  //       machinery is gone. NONEXACT vs the logit-order sweep by construction; gated NULL on
+  //       the n300 scoreboard (simp change 2: max |delta| 0.0003, displaced bands 0.0000).
   //   (2) for each delivery count its MDs already in the claim map; >= ccMinShared -> REVOKE and
   //       apply -CCR 2: tgtPls = -1, plsOwned[p] = 0, plsBestT3[p] = 0 (orderFloat(-inf)) -- the
   //       seed is genuinely released, its carried type-8 row survives unless other evidence

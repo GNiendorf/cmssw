@@ -1878,17 +1878,12 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
   if (nBareT3_ > 0 && pixelSize_ > 0) {
     auto ccClaimed_buf = cms::alpakatools::make_device_buffer<uint8_t[]>(queue_, nMDall);
     alpaka::memset(queue_, ccClaimed_buf, 0u);
-    // The delivery order for the sweep: gather the keep[] survivors of the stage-B dedup and
-    // rank them by (logit desc, T3 row asc) -- the same rank kernel, so the permutation is the
-    // reference's sorted sequence and the serial residue below only walks it.
+    // Compact the keep[] deliveries into an ascending-position list (prefix + scatter preserve
+    // position order) so the serial sweep walks the ~n deliveries instead of skip-scanning every
+    // target. No rank: the sweep order is the row order (see ChainT3CCSweepEmit).
     auto ccOffs_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, nBareT3_ + 1u);
     auto nDeliv_buf = cms::alpakatools::make_device_buffer<uint32_t>(queue_);
     auto ccOwners_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, nBareT3_);
-    auto ccOrder_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, nBareT3_);
-    auto ccPls_buf = cms::alpakatools::make_device_buffer<int32_t[]>(queue_, nBareT3_);
-    auto ccHits_buf =
-        cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, size_t{nBareT3_} * kMaxPLSHitsInHitsSoA);
-    auto ccNHits_buf = cms::alpakatools::make_device_buffer<uint8_t[]>(queue_, nBareT3_);
     alpaka::exec<Acc1D>(queue_,
                         chainScan_workDiv,
                         ChainSegPrefix{},
@@ -1903,21 +1898,6 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
                         ccOffs_buf.data(),
                         nBareT3_,
                         ccOwners_buf.data());
-    alpaka::exec<Acc1D>(queue_,
-                        chainFlat_workDiv,
-                        ChainAttachT3Rank{},
-                        lstInputDC_->const_view().pixelSeeds(),
-                        lstInputDC_->const_view().hits(),
-                        bareT3TgtPls_->data(),
-                        bareT3TgtLogit_->data(),
-                        ccOwners_buf.data(),
-                        nDeliv_buf.data(),
-                        nBareT3_,
-                        nHits,
-                        ccOrder_buf.data(),
-                        ccPls_buf.data(),
-                        ccHits_buf.data(),
-                        ccNHits_buf.data());
     alpaka::exec<Acc1D>(queue_,
                         chainFlat_workDiv,
                         ChainT3CCPreclaim{},
@@ -1939,7 +1919,7 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
                         trackCandidatesExtendedDC_->view(),
                         bareT3Targets_->data(),
                         bareT3TgtPls_->data(),
-                        ccOrder_buf.data(),
+                        ccOwners_buf.data(),
                         nDeliv_buf.data(),
                         ccClaimed_buf.data(),
                         plsOwned_buf.data(),
