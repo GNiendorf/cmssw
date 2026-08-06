@@ -1867,6 +1867,7 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
                       nHits,
                       pixelModuleIndex_,
                       stats_buf.data());
+  auto const t4c = stamp();
 
   // ---- -CC contention + the pT3-class delivery -----------------------------------------------
   // The stage-B owners meet the hit-overlap contention and, surviving it, are emitted as type-5
@@ -1935,6 +1936,7 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
   bareT3TgtPls_.reset();
   bareT3TgtLogit_.reset();
   bareT3Keep_.reset();
+  auto const t4d = stamp();
 
   // ---- -XC: the ported CrossCleanpLS ---------------------------------------------------------
   // Anchors and candidates are both final now (the -CC sweep can release seeds). One byte per
@@ -2002,6 +2004,7 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
                         xcStats_buf.data());
     alpaka::wait(queue_);  // the anchor scratch dies with this scope
   }
+  auto const t4e = stamp();
 
   // ---- Final carried-row retirement (K8d) ----------------------------------------------------
   // The contention / -RPS / -XC verdicts applied to the carried bare-pLS rows, with the chain
@@ -2112,7 +2115,8 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
       auto ms = [](auto a, auto b) { return std::chrono::duration<double, std::milli>(b - a).count(); };
       lstWarning(std::format("[CHAIN TIMING] compact {:.3f} ms | K9 prep {:.3f} ms | K9 claim {:.3f} ms | "
                              "K8 attach {:.3f} ms | EXadj {:.3f} ms | EXwalk {:.3f} ms | K10 rows {:.3f} ms | "
-                             "K10 emit {:.3f} ms | total {:.3f} ms",
+                             "K10 emit {:.3f} ms | T3CC {:.3f} ms | XC {:.3f} ms | suppress {:.3f} ms | "
+                             "total {:.3f} ms",
                              ms(t0, t1),
                              ms(t1, t2),
                              ms(t2, t3),
@@ -2120,7 +2124,10 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
                              ms(t3b, t3c),
                              ms(t3c, t4),
                              ms(t4, t4b),
-                             ms(t4b, t5),
+                             ms(t4b, t4c),
+                             ms(t4c, t4d),
+                             ms(t4d, t4e),
+                             ms(t4e, t5),
                              ms(t0, t5)));
       lstWarning(std::format("[CHAIN K8] {}", attachSummary_));
     }
