@@ -142,18 +142,6 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     }
   };
 
-  struct ChainAttachT3Scatter {
-    ALPAKA_FN_ACC void operator()(Acc1D const& acc,
-                                  uint32_t const* keep,
-                                  uint32_t const* offs,
-                                  uint32_t nNodes,
-                                  uint32_t* targets) const {
-      for (uint32_t n : cms::alpakatools::uniform_elements(acc, nNodes))
-        if (keep[n])
-          targets[offs[n]] = n;
-    }
-  };
-
   // ------------------------------------------------------------------------------------------
   // K8B-0c. The per-target record of a BARE T3, field for field prototype/PixelAttach.cc
   // makeT3Pre + makeT3PreGeom.
@@ -367,71 +355,6 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
   // and on a device it removes the single most expensive kernel of the whole chain pass
   // (an O(n^2) selection sort chased through global memory by one thread, ~15 ms/event).
 
-  // K8B-c1. Zap every position that did not win its pLS's argmax; keep[] flags the winners for
-  // the CSR gather. Identical verdicts to the reference walk (strictly-greater displaces, the
-  // earlier position keeps a tie).
-  struct ChainAttachT3Resolve {
-    ALPAKA_FN_ACC void operator()(Acc1D const& acc,
-                                  int32_t* tgtPls,
-                                  float* tgtLogit,
-                                  uint32_t nTargets,
-                                  uint64_t const* plsKey,
-                                  uint32_t* keep) const {
-      for (uint32_t pos : cms::alpakatools::uniform_elements(acc, nTargets)) {
-        int32_t const p = tgtPls[pos];
-        if (p >= 0 && plsKey[static_cast<uint32_t>(p)] != attachContendKey(tgtLogit[pos], pos)) {
-          tgtPls[pos] = -1;
-          tgtLogit[pos] = kAttachNoLogit;
-        }
-        keep[pos] = (tgtPls[pos] >= 0) ? 1u : 0u;
-      }
-    }
-  };
-
-  // K8B-c2. Stage each owner's pLS row and DISTINCT pixel hit rows at its gather slot, so the
-  // serial walk below touches compact arrays only (the ChainAttachOwnerHits idiom). The visiting
-  // order IS the gather order -- ascending position == ascending T3 row -- per the zero-sorts
-  // directive (the old (logit desc, pos asc) rank count is gone; simp change 3, NONEXACT,
-  // n300-gated).
-  struct ChainAttachT3StageOwners {
-    ALPAKA_FN_ACC void operator()(Acc1D const& acc,
-                                  PixelSeedsConst pixelSeeds,
-                                  HitsBaseConst hitsBase,
-                                  int32_t const* tgtPls,
-                                  uint32_t const* ownersIn,
-                                  uint32_t const* nOwnersPtr,
-                                  uint32_t nBound,
-                                  uint32_t nHits,
-                                  int32_t* ownerPls,
-                                  uint32_t* ownerHits,
-                                  uint8_t* ownerNHits) const {
-      uint32_t const n = *nOwnersPtr;
-      for (uint32_t i : cms::alpakatools::uniform_elements(acc, nBound)) {
-        if (i >= n)
-          continue;
-        uint32_t const a = ownersIn[i];
-        int32_t const p = tgtPls[a];
-        ownerPls[i] = p;
-        int nh = 0;
-        if (p >= 0) {
-          uint32_t const first = pixelSeeds.firstHit()[p];
-          uint32_t const nSeedHits = static_cast<uint32_t>(pixelSeeds.nHits()[p]);
-          uint32_t const nStored = nSeedHits < kMaxPLSHitsInHitsSoA ? nSeedHits : kMaxPLSHitsInHitsSoA;
-          for (uint32_t k = 0; k < nStored; ++k) {
-            uint32_t const h = first + k;
-            if (h >= nHits)
-              continue;
-            if (hitsBase.detid()[h] != kPixelModuleId)
-              continue;
-            ownerHits[static_cast<size_t>(i) * kMaxPLSHitsInHitsSoA + nh] = hitsBase.idxs()[h];
-            ++nh;
-          }
-        }
-        ownerNHits[i] = static_cast<uint8_t>(nh);
-      }
-    }
-  };
-
   // K8B-c3, the serial residue: the -RDT hash walk in gather (ascending T3 row) order against the table stage A
   // left behind, then the publish of the surviving owners into the LIVE plsOwned (invariant I1
   // -- a stage-B owner is visible to the -XC anchor set and to the carried-row retirement, and
@@ -518,27 +441,6 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
   // (the reference's one loop, main.cc:4293-4489). Ownership-map based, never pairwise: each
   // delivery looks up ITS OWN 3 MDs in one claim map and decides alone.
   // ==========================================================================================
-
-  // -CCP 1 pre-claim: every EMITTED chain TC (bare and attach-upgraded alike) claims its deduped
-  // MD union -- the POST-extension mdItems CSR, matching the reference's ordering (EX before -CC).
-  // The surviving carried pixel rows of the reference contribute nothing here: replacePT5 and
-  // replacePT3 dropped them all, so the hit2md inversion machinery is not needed.
-  struct ChainT3CCPreclaim {
-    ALPAKA_FN_ACC void operator()(Acc1D const& acc,
-                                  ChainsConst chains,
-                                  ChainItemsConst items,
-                                  uint8_t* ccClaimed) const {
-      uint32_t const nChains = static_cast<uint32_t>(chains.metadata().size());
-      for (uint32_t c : cms::alpakatools::uniform_elements(acc, nChains)) {
-        if (chains.tcRow()[c] < 0)
-          continue;  // not emitted (K9-rejected, too short, -CCS-suppressed, or out of rows)
-        uint32_t const mdBase = 3u * chains.nodeOffset()[c];
-        int const nMD = chains.nMDs()[c];
-        for (int k = 0; k < nMD; ++k)
-          ccClaimed[items.mdItems()[mdBase + k]] = 1u;
-      }
-    }
-  };
 
   // The type-5 (pT3-class) rows. prototype/main.cc:4470-4488 assembles exactly this object: the
   // seed's DISTINCT pixel hit rows followed by the T3's three MDs (six outer-tracker hits).

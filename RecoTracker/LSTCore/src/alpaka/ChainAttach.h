@@ -906,21 +906,6 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     }
   };
 
-  // ------------------------------------------------------------------------------------------
-  // A14 -CCS support: the inverted stage-A grant map, pLS row -> owning chain row or -1.
-  // Single-valued by the one-pLS-one-owner invariant, so no atomics. Run AFTER the contention and
-  // the -RD dedup are final (chains.attachPls() is the post-dedup grant).
-  struct ChainBuildPlsOwnerChain {
-    ALPAKA_FN_ACC void operator()(Acc1D const& acc, ChainsConst chains, int32_t* plsOwnerChain) const {
-      uint32_t const nChains = static_cast<uint32_t>(chains.metadata().size());
-      for (uint32_t c : cms::alpakatools::uniform_elements(acc, nChains)) {
-        int32_t const p = chains.attachPls()[c];
-        if (p >= 0)
-          plsOwnerChain[p] = static_cast<int32_t>(c);
-      }
-    }
-  };
-
   // A14 -CCS / A15 -XC4: the RESTRICTED second scoring pass (SPEC_CCS_MR section 1.8 -- one
   // inverted map plus one restricted pass; the reference's pair log is never materialised).
   //
@@ -961,6 +946,11 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
       float logits[kB];
       for (int i = 0; i < kIn * kB; ++i)
         xT[i] = 0.f;
+
+      // The stage-A grant count. Published here because this is the first kernel that runs with
+      // stats[4] final: ChainAttachPublish's atomics are complete before this launch.
+      if (cms::alpakatools::once_per_grid(acc))
+        chains.nAttached() = stats[4];
 
       for (uint32_t t : cms::alpakatools::uniform_elements(acc, nTgtAll)) {
         AttachTargetPre const cp = tgt[t];

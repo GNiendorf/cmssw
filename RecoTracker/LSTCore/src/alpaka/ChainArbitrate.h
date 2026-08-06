@@ -255,6 +255,29 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     }
   };
 
+  // The one stream compaction of the chain pass. For every i with keep[i] != 0 it writes
+  //   out[offs[i]] = (src != nullptr) ? src[i] : i
+  // where offs is ChainSegPrefix's exclusive prefix over keep, and publishes the compacted length
+  // through totalOut when that is not null. Order-preserving by construction, which is what every
+  // caller needs (the K9 accepted order, the ascending T3 row order, the delivery position order).
+  struct ChainCompactSelect {
+    ALPAKA_FN_ACC void operator()(Acc1D const& acc,
+                                  uint32_t const* keep,
+                                  uint32_t const* offs,
+                                  uint32_t nBound,
+                                  uint32_t const* src,
+                                  uint32_t* out,
+                                  uint32_t* totalOut) const {
+      if (totalOut != nullptr && cms::alpakatools::once_per_grid(acc))
+        *totalOut = offs[nBound];
+      for (uint32_t i : cms::alpakatools::uniform_elements(acc, nBound)) {
+        if (keep[i] == 0u)
+          continue;
+        out[offs[i]] = (src != nullptr) ? src[i] : i;
+      }
+    }
+  };
+
   struct ChainSegScatter {
     ALPAKA_FN_ACC void operator()(Acc1D const& acc,
                                   ModulesConst modules,
@@ -646,6 +669,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                   TrackCandidatesExtended candsExtended,
                                   uint32_t nHits,
                                   uint16_t pixelModuleIndex,
+                                  uint8_t* ccClaimed,
                                   uint32_t* stats) const {
       uint32_t const nChains = static_cast<uint32_t>(chains.metadata().size());
       for (uint32_t c : cms::alpakatools::uniform_elements(acc, nChains)) {
@@ -731,6 +755,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         }
         for (int k = 0; k < nMD; ++k) {
           uint32_t const md = items.mdItems()[mdBase + k];
+          // The -CC pre-claim map: the MDs of every EMITTED chain TC. Same rows, same walk, so the
+          // sweep's claimed set is built here rather than in a second pass over the same items.
+          if (ccClaimed != nullptr)
+            ccClaimed[md] = 1u;
           uint16_t const mod = mds.moduleIndices()[md];
           int const logical = chainMdLayer(modules, mds, md);
           int slot = (logical - 1) + Params_TC::kPixelLayerSlots;

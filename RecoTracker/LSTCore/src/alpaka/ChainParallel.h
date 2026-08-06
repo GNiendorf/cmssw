@@ -983,33 +983,6 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     }
   };
 
-  struct ChainTargetScatter {
-    ALPAKA_FN_ACC void operator()(Acc1D const& acc,
-                                  uint32_t const* accepted,
-                                  uint32_t const* keep,
-                                  uint32_t const* offs,
-                                  uint32_t nBound,
-                                  uint32_t* targets,
-                                  uint32_t* nTargetsOut) const {
-      if (cms::alpakatools::once_per_grid(acc))
-        *nTargetsOut = offs[nBound];
-      for (uint32_t ai : cms::alpakatools::uniform_elements(acc, nBound)) {
-        if (keep[ai] == 0u)
-          continue;
-        targets[offs[ai]] = accepted[ai];
-      }
-    }
-  };
-
-  struct ChainAttachInitPls {
-    ALPAKA_FN_ACC void operator()(Acc1D const& acc, uint8_t* plsOwned, uint64_t* plsKey, uint32_t nPls) const {
-      for (uint32_t p : cms::alpakatools::uniform_elements(acc, nPls)) {
-        plsOwned[p] = 0u;
-        plsKey[p] = 0ull;
-      }
-    }
-  };
-
   // K8c contention. The reference walks the target positions and lets a later target take a
   // contested pLS only on a STRICTLY higher logit -- which is the argmax over the positions that
   // picked that pLS, with the EARLIER position keeping an exact tie. An argmax has no order, so it
@@ -1030,6 +1003,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     }
   };
 
+  // Both attach stages resolve their argmax with this kernel. `targets == nullptr` is stage B,
+  // whose verdicts stay on the position arrays; stage A passes its target list and the winners are
+  // published onto the chain rows as well, because its -RD pass and its delivery are chain-row
+  // keyed.
   struct ChainAttachResolve {
     ALPAKA_FN_ACC void operator()(Acc1D const& acc,
                                   Chains chains,
@@ -1045,26 +1022,12 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
           tgtPls[pos] = -1;
           tgtLogit[pos] = kAttachNoLogit;
         }
-        // Publish onto the chain rows: the -RD pass and the delivery are both chain-row keyed.
-        uint32_t const c = targets[pos];
-        chains.attachPls()[c] = tgtPls[pos];
-        chains.attachLogit()[c] = tgtLogit[pos];
+        if (targets != nullptr) {
+          uint32_t const c = targets[pos];
+          chains.attachPls()[c] = tgtPls[pos];
+          chains.attachLogit()[c] = tgtLogit[pos];
+        }
         keep[pos] = (tgtPls[pos] >= 0) ? 1u : 0u;
-      }
-    }
-  };
-
-  struct ChainAttachOwnerScatter {
-    ALPAKA_FN_ACC void operator()(Acc1D const& acc,
-                                  uint32_t const* targets,
-                                  uint32_t const* keep,
-                                  uint32_t const* offs,
-                                  uint32_t nTargets,
-                                  uint32_t* order) const {
-      for (uint32_t pos : cms::alpakatools::uniform_elements(acc, nTargets)) {
-        if (keep[pos] == 0u)
-          continue;
-        order[offs[pos]] = targets[pos];
       }
     }
   };
@@ -1075,11 +1038,16 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
 
   // The pLS's DISTINCT pixel hit indices, staged so the serial dedup walk below touches a compact
   // array instead of chasing the hits SoA. Keyed by owner slot, not by pLS row.
+  //
+  // Both stages stage their owners here. The owner list holds chain rows in stage A (its grant
+  // lives on the chain row, so `tgtPls == nullptr` reads chains.attachPls()) and target positions
+  // in stage B (`tgtPls` is its position-keyed grant array). Nothing else differs.
   struct ChainAttachOwnerHits {
     ALPAKA_FN_ACC void operator()(Acc1D const& acc,
                                   PixelSeedsConst pixelSeeds,
                                   HitsBaseConst hitsBase,
                                   ChainsConst chains,
+                                  int32_t const* tgtPls,
                                   uint32_t const* owners,
                                   uint32_t const* nOwnersPtr,
                                   uint32_t nBound,
@@ -1092,7 +1060,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         if (i >= n)
           continue;
         uint32_t const c = owners[i];
-        int32_t const p = chains.attachPls()[c];
+        int32_t const p = (tgtPls != nullptr) ? tgtPls[c] : chains.attachPls()[c];
         ownerPls[i] = p;
         int nh = 0;
         if (p >= 0) {
@@ -1188,28 +1156,27 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     }
   };
 
+  // The stage-A grants, after the -RD revocations: the one-pLS-one-owner authority array plsOwned,
+  // and its inversion plsOwnerChain (pLS row -> owning chain row, single-valued by that same
+  // invariant, so no atomics) which the A14 -CCS second pass reads. A chain can only carry a grant
+  // if it is a target, so one pass over the target list covers both arrays.
   struct ChainAttachPublish {
     ALPAKA_FN_ACC void operator()(Acc1D const& acc,
                                   ChainsConst chains,
                                   uint32_t const* targets,
                                   uint32_t nTargets,
                                   uint8_t* plsOwned,
+                                  int32_t* plsOwnerChain,
                                   uint32_t* stats) const {
       for (uint32_t pos : cms::alpakatools::uniform_elements(acc, nTargets)) {
-        int32_t const p = chains.attachPls()[targets[pos]];
+        uint32_t const c = targets[pos];
+        int32_t const p = chains.attachPls()[c];
         if (p < 0)
           continue;
         plsOwned[static_cast<uint32_t>(p)] = 1u;
+        plsOwnerChain[static_cast<uint32_t>(p)] = static_cast<int32_t>(c);
         alpaka::atomicAdd(acc, &stats[4], 1u, alpaka::hierarchy::Blocks{});
       }
-    }
-  };
-
-  struct ChainAttachCount {
-    ALPAKA_FN_ACC void operator()(Acc1D const& acc, Chains chains, uint32_t const* stats) const {
-      if (!cms::alpakatools::once_per_grid(acc))
-        return;
-      chains.nAttached() = stats[4];
     }
   };
 
