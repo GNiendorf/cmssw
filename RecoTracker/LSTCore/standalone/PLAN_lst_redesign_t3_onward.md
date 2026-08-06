@@ -2986,3 +2986,15 @@ reduction under decision-safety audit, FP16 head eval). Methodology carried forw
 timing is BIMODAL (~312 vs ~358 ms) by machine page/THP state and binary-independent - all CPU
 A/Bs must interleave saved binaries in one session; GPU same-binary rerun noise ~0.02% on row
 counts; copied lst_cpu binaries abort at teardown after the timing table prints (harmless).
+
+## 2026-08-05 night -- DIRECTIVE: THE EXTENSION STAGE IS REMOVED (not an A/B, not optional)
+Maintainer, verbatim in substance: the extension "never should have been added in the first
+place, it is set in stone that it should be ripped from the code." So -EX/-EXW/-EXR/-EXS/-EXL/
+-EXU/-EXF/-EXD/-EXJ/-EXC and the whole extension stage (Extend.* in the prototype lineage;
+in the tree: the EXwalk round kernels + EXadj segment-adjacency build + their config fields
+and any SoA columns only they write) are to be DELETED, not flag-gated, not measured-first.
+Scoreboard consequences are recorded when it lands (expect track length to drop; dup/fake/
+displaced couplings expected noise - extension hits enter the CC claim map and the 75%-match
+definition), but the removal does NOT depend on those numbers. Frees ~1.4 ms GPU (EXwalk 1.0
++ EXadj 0.38) and a whole stage of code. The earlier "-EX removal A/B, maintainer decides on
+the numbers" framing in this plan is SUPERSEDED - it is a deletion order.
