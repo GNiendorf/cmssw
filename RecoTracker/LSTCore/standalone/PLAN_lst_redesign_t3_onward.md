@@ -3222,3 +3222,71 @@ or REMOVE at least as much machinery as it adds (D3's separate retirement head b
 of its own result over the free window fix). Feature engineering + retraining of the EXISTING
 attach head adds no component and, per D3, should pay TWICE: the residual barrel duplicates and
 the wrong-seed conversions that made lowering -a cost displaced efficiency share that root cause.
+
+================================================================================================
+NEW BASELINE: THE WINDOW FIX IS IN (2026-08-06, commit a2f81bb5760)
+================================================================================================
+
+WHAT CHANGED, and why it is a DELETION rather than an addition. LST's T5 crossclean arm gates its
+pLS/T5 embedding test with dR^2 < 0.02 measured against the TC CENTROID direction. For a bare
+chain the centroid is the mean of hits spanning several layers, which is not where the seed's
+helix points, so the window was vetoing pairs the attach head had already scored as matches. That
+is the mechanical reason three rounds of band-threshold work on this arm produced nothing (and it
+compounds D4's truncated-residual finding: the arm was thresholding the residual of the attach
+acceptance cut, inside a window evaluated on the wrong direction).
+
+The integrated code already factored the arm as pass 1 (append (chain, seed) pairs clearing the
+banded logit bar) + pass 2 (keep a pair only if the chain delivered a SEEDLESS TC and the seed is
+unowned). Deleting the window from pass 1 makes the two passes exactly
+
+    retire the seed iff its MAX pair logit over DELIVERED SEEDLESS chain TCs reaches the band bar
+
+with no atomicMax, no N^2 seed x TC loop and no new state. Bars re-fit to xcTheta 3.665 / 3.15 /
+3.75. cfg.xcDR2Chain (-XCW2) is now dead and is deleted, PSet entry included. xcPairs overflow
+census stays 0 without the window (the 1<<17 cap is untouched).
+
+MEASURED, 977 evt PU200 (d3_ref/r_E1_977 vs r_BASE977, same events, prototype), CONFIRMED after
+the port by the 1000-evt integrated run in win_ref/:
+    dup barrel      .0277 -> .0231      dup transition  .0227 -> .0199
+    dup overall     .0503 -> .0485      dup endcap      .0710 -> .0709   (flat)
+    fake            flat (+.0001 barrel, +.0001 transition)
+    eff overall     .8096 -> .8091      (-.0005, ALL of it prompt: barrel -.0007, trans -.0011)
+    mean nhitOT     6.426 -> 6.435      (longer, the right direction)
+    displaced       vxy[5,10) .7216, vxy[10,30) .7125, dxy[1,5) .5822 - BIT-FLAT, all bands
+The eff cost sits exactly where the duplicates were, which is what a correct duplicate deletion
+looks like. The alternative endcap bar 4.25 gave back duplicate rate and was rejected in favour
+of 3.75.
+
+REJECTED ALONGSIDE IT (maintainer, same session): D3's trained seed-retirement head, which buys
+only ~.002 dupB ON TOP of this free fix. Three agents built three variants of that idea and all
+three landed in the same place. The standing rule is now explicit: the end state is ONE head
+answering "is this pLS and this OT object a track" plus one cut, so a SECOND network is not a win
+unless it removes more machinery than it adds.
+
+STILL OPEN AT THIS BASELINE (the round-2 target table, and D1's oracle bound):
+    dup barrel .0231 vs LST .0099 (2.3x)   dup transition .0199 vs .0126
+    fake barrel .0551 vs .0437             fake transition .0592 vs .0454   <- untouched half
+and D1's oracle says the barrel/transition bare-seed cell is 100% addressable at ZERO efficiency
+cost (dupB -> .0053, fakes and track length improving with it), so the entire remaining gap in
+that cell is selector quality, not structure.
+
+TIMING AND THE 1000-EVT CONFIRMATION OF THE NEW BASELINE (2026-08-06, same box/args as the master
+baseline entry, runs strictly sequential):
+  GPU 1 stream:  10.3 ms/evt  -- IDENTICAL to the pre-fix baseline. The extra pass-1 pairs the
+                 window removal admits cost nothing measurable on GPU. Master 4.5. Chain block
+                 6.9 of our 10.3; the gap is unchanged and is still THE timing problem.
+  CPU 1 stream:  768.1 ms/evt vs master 763.6 -- we are now 4.5 ms SLOWER, where before the fix we
+                 were 9.4 ms faster (754.2). So the window removal cost ~13.9 ms of CPU (+1.8%),
+                 which is the price of appending and resolving more (chain, seed) pairs. Paid
+                 knowingly for dup barrel -.0046 / transition -.0027; if it needs recovering, the
+                 lever is pair volume (pass 2 only needs the per-seed existential, so a per-seed
+                 dedup at append time would cut the list without changing the verdict).
+  1000 evt vs master: dup overall .0486 vs .0514 (we are .0028 BELOW, was .0010), dup barrel .0231
+                 vs .0097, transition .0200 vs .0131, endcap .0710 vs .0849. fake .0494 vs .0454
+                 (barrel .0552 vs .0437, transition .0592 vs .0453, endcap .0434 vs .0463).
+                 eff .8092 vs .8100. Displaced lead INTACT: vxy[1,5) +.0220, vxy[5,10) +.0764,
+                 vxy[10,30) +.0854, dxy[1,5) +.0715; dxy[10,30) -.0222 still inherited.
+                 mean nhitOT 6.435 vs 6.519 (-.084; barrel 9.869 vs 10.151) -- we build SHORTER
+                 objects than master, which is round 2's R5 direction.
+  Artifacts: win_ref/{win_rv1000.root,win_rv1000_hists.root,win_vs_master_1000.json,
+             timing_gpu.log,timing_cpu.log}.
