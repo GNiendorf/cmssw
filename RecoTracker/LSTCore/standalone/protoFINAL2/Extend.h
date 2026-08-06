@@ -74,15 +74,15 @@ struct ExtendParams {
 };
 
 struct ExtendStats {
-  long long nChains = 0;      // chains examined (accepted, >= minLayers, fit usable)
-  long long nNoFit = 0;       // chains skipped: degenerate circle / rz fit
-  long long nCand = 0;        // candidate MDs that passed the cheap geometric prefilter
-  long long nExtOuter = 0;    // outer-end MDs appended
-  long long nExtInner = 0;    // inner-end MDs prepended
-  long long nRejChi2 = 0;     // best candidate rejected by the refit chi2 factor
-  long long nRejUniq = 0;     // best candidate rejected by the -EXU ambiguity guard
-  long long nRejFit = 0;      // chains refused by the -EXC own-fit-quality guard
-  long long nExtChains = 0;   // chains that gained at least one MD
+  long long nChains = 0;     // chains examined (accepted, >= minLayers, fit usable)
+  long long nNoFit = 0;      // chains skipped: degenerate circle / rz fit
+  long long nCand = 0;       // candidate MDs that passed the cheap geometric prefilter
+  long long nExtOuter = 0;   // outer-end MDs appended
+  long long nExtInner = 0;   // inner-end MDs prepended
+  long long nRejChi2 = 0;    // best candidate rejected by the refit chi2 factor
+  long long nRejUniq = 0;    // best candidate rejected by the -EXU ambiguity guard
+  long long nRejFit = 0;     // chains refused by the -EXC own-fit-quality guard
+  long long nExtChains = 0;  // chains that gained at least one MD
 };
 
 // Mutates `chains` in place: mdItems / mdOffsets / nLayers of extended chains grow; the

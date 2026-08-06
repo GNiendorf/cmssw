@@ -135,7 +135,6 @@ public:
   // Boolean to enable reduced-memory mode via exact precompute counting kernels
   bool reduce_mem_by_full_precompute;
 
-
   // Boolean to enable MD branches
   bool md_branches;
 
@@ -145,20 +144,14 @@ public:
   // Boolean to enable T3 branches
   bool t3_branches;
 
-
   // Boolean to enable pLS branches
   bool pls_branches;
-
-
-
 
   // Boolean to enable occupancy branches
   bool occ_branches;
 
   // Boolean to enable T3 DNN branches
   bool t3dnn_branches;
-
-
 
   // Boolean to enable jet branches
   bool jet_branches;

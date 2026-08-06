@@ -20,43 +20,42 @@
 
 namespace {
 
-template <int IN_FEATURES, int OUT_FEATURES>
-inline void linear_layer(const float (&input)[IN_FEATURES],
-                         float (&output)[OUT_FEATURES],
-                         const float (&weights)[IN_FEATURES][OUT_FEATURES],
-                         const float (&biases)[OUT_FEATURES]) {
-  CHAINMLP_UNROLL_LOOP
-  for (int i = 0; i < OUT_FEATURES; ++i) {
-    output[i] = biases[i];
+  template <int IN_FEATURES, int OUT_FEATURES>
+  inline void linear_layer(const float (&input)[IN_FEATURES],
+                           float (&output)[OUT_FEATURES],
+                           const float (&weights)[IN_FEATURES][OUT_FEATURES],
+                           const float (&biases)[OUT_FEATURES]) {
     CHAINMLP_UNROLL_LOOP
-    for (int j = 0; j < IN_FEATURES; ++j) {
-      output[i] += input[j] * weights[j][i];
+    for (int i = 0; i < OUT_FEATURES; ++i) {
+      output[i] = biases[i];
+      CHAINMLP_UNROLL_LOOP
+      for (int j = 0; j < IN_FEATURES; ++j) {
+        output[i] += input[j] * weights[j][i];
+      }
     }
   }
-}
 
-template <int FEATURES>
-inline void relu_activation(float (&input)[FEATURES]) {
-  CHAINMLP_UNROLL_LOOP
-  for (int col = 0; col < FEATURES; ++col) {
-    input[col] = (input[col] > 0.f) ? input[col] : 0.f;
+  template <int FEATURES>
+  inline void relu_activation(float (&input)[FEATURES]) {
+    CHAINMLP_UNROLL_LOOP
+    for (int col = 0; col < FEATURES; ++col) {
+      input[col] = (input[col] > 0.f) ? input[col] : 0.f;
+    }
   }
-}
 
-// Per-input preprocessing baked into the generated header (order matters, see there):
-// optional log10(1+x) -> clip -> standardize.
-inline float preprocess(float x, int i) {
-  if (chainmlp::kLog10p1[i])
-    x = std::log10(1.f + x);
-  x = std::min(std::max(x, chainmlp::kClipLo[i]), chainmlp::kClipHi[i]);
-  return (x - chainmlp::kFeatMean[i]) / chainmlp::kFeatStd[i];
-}
+  // Per-input preprocessing baked into the generated header (order matters, see there):
+  // optional log10(1+x) -> clip -> standardize.
+  inline float preprocess(float x, int i) {
+    if (chainmlp::kLog10p1[i])
+      x = std::log10(1.f + x);
+    x = std::min(std::max(x, chainmlp::kClipLo[i]), chainmlp::kClipHi[i]);
+    return (x - chainmlp::kFeatMean[i]) / chainmlp::kFeatStd[i];
+  }
 
 }  // namespace
 
 float chainGateLogit(const float* f) {
-  static_assert(chainmlp::kInput == kChainFeat,
-                "chain_mlp_weights.h input size does not match ChainFeatures.h layout");
+  static_assert(chainmlp::kInput == kChainFeat, "chain_mlp_weights.h input size does not match ChainFeatures.h layout");
 
   float x[chainmlp::kInput];
   CHAINMLP_UNROLL_LOOP
@@ -97,12 +96,12 @@ void runChainInference(const ChainFeatures& cf, std::vector<float>& out) {
 
 namespace {
 
-inline float preprocess3(float x, int i) {
-  if (chain3mlp::kLog10p1[i])
-    x = std::log10(1.f + x);
-  x = std::min(std::max(x, chain3mlp::kClipLo[i]), chain3mlp::kClipHi[i]);
-  return (x - chain3mlp::kFeatMean[i]) / chain3mlp::kFeatStd[i];
-}
+  inline float preprocess3(float x, int i) {
+    if (chain3mlp::kLog10p1[i])
+      x = std::log10(1.f + x);
+    x = std::min(std::max(x, chain3mlp::kClipLo[i]), chain3mlp::kClipHi[i]);
+    return (x - chain3mlp::kFeatMean[i]) / chain3mlp::kFeatStd[i];
+  }
 
 }  // namespace
 
@@ -158,12 +157,12 @@ void runChainInference3(const ChainFeatures& cf, const std::vector<float>& dca, 
 
 namespace {
 
-inline float preprocessMF(float x, int i) {
-  if (mfmlp::kLog10p1[i])
-    x = std::log10(1.f + x);
-  x = std::min(std::max(x, mfmlp::kClipLo[i]), mfmlp::kClipHi[i]);
-  return (x - mfmlp::kFeatMean[i]) / mfmlp::kFeatStd[i];
-}
+  inline float preprocessMF(float x, int i) {
+    if (mfmlp::kLog10p1[i])
+      x = std::log10(1.f + x);
+    x = std::min(std::max(x, mfmlp::kClipLo[i]), mfmlp::kClipHi[i]);
+    return (x - mfmlp::kFeatMean[i]) / mfmlp::kFeatStd[i];
+  }
 
 }  // namespace
 
@@ -211,31 +210,31 @@ void runChainInferenceMF(const ChainFeatures& cf, const std::vector<float>& dca,
 
 namespace {
 
-inline float preprocess3b(float x, int i) {
-  if (chain3bmlp::kLog10p1[i])
-    x = std::log10(1.f + x);
-  x = std::min(std::max(x, chain3bmlp::kClipLo[i]), chain3bmlp::kClipHi[i]);
-  return (x - chain3bmlp::kFeatMean[i]) / chain3bmlp::kFeatStd[i];
-}
-
-void chainGate3bLogits(const float* f, float dcaXY, float* out3) {
-  static_assert(chain3bmlp::kOutput == 3, "chain3b head must have 3 outputs");
-  float x[chain3bmlp::kInput];
-  for (int i = 0; i < chain3bmlp::kInput; ++i) {
-    const int col = chain3bmlp::kSrcCol[i];
-    x[i] = preprocess3b(col < 0 ? dcaXY : f[col], i);
+  inline float preprocess3b(float x, int i) {
+    if (chain3bmlp::kLog10p1[i])
+      x = std::log10(1.f + x);
+    x = std::min(std::max(x, chain3bmlp::kClipLo[i]), chain3bmlp::kClipHi[i]);
+    return (x - chain3bmlp::kFeatMean[i]) / chain3bmlp::kFeatStd[i];
   }
-  float x1[chain3bmlp::kHidden];
-  float x2[chain3bmlp::kHidden];
-  linear_layer<chain3bmlp::kInput, chain3bmlp::kHidden>(x, x1, chain3bmlp::wgt_l1, chain3bmlp::bias_l1);
-  relu_activation<chain3bmlp::kHidden>(x1);
-  linear_layer<chain3bmlp::kHidden, chain3bmlp::kHidden>(x1, x2, chain3bmlp::wgt_l2, chain3bmlp::bias_l2);
-  relu_activation<chain3bmlp::kHidden>(x2);
-  float out[chain3bmlp::kOutput];
-  linear_layer<chain3bmlp::kHidden, chain3bmlp::kOutput>(x2, out, chain3bmlp::wgt_out, chain3bmlp::bias_out);
-  for (int o = 0; o < chain3bmlp::kOutput; ++o)
-    out3[o] = out[o];
-}
+
+  void chainGate3bLogits(const float* f, float dcaXY, float* out3) {
+    static_assert(chain3bmlp::kOutput == 3, "chain3b head must have 3 outputs");
+    float x[chain3bmlp::kInput];
+    for (int i = 0; i < chain3bmlp::kInput; ++i) {
+      const int col = chain3bmlp::kSrcCol[i];
+      x[i] = preprocess3b(col < 0 ? dcaXY : f[col], i);
+    }
+    float x1[chain3bmlp::kHidden];
+    float x2[chain3bmlp::kHidden];
+    linear_layer<chain3bmlp::kInput, chain3bmlp::kHidden>(x, x1, chain3bmlp::wgt_l1, chain3bmlp::bias_l1);
+    relu_activation<chain3bmlp::kHidden>(x1);
+    linear_layer<chain3bmlp::kHidden, chain3bmlp::kHidden>(x1, x2, chain3bmlp::wgt_l2, chain3bmlp::bias_l2);
+    relu_activation<chain3bmlp::kHidden>(x2);
+    float out[chain3bmlp::kOutput];
+    linear_layer<chain3bmlp::kHidden, chain3bmlp::kOutput>(x2, out, chain3bmlp::wgt_out, chain3bmlp::bias_out);
+    for (int o = 0; o < chain3bmlp::kOutput; ++o)
+      out3[o] = out[o];
+  }
 
 }  // namespace
 

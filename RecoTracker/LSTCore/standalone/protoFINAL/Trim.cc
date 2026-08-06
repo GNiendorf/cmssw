@@ -8,35 +8,35 @@
 
 namespace {
 
-// chi2 denominator floor: a remaining fit that is numerically perfect (or degenerate, which
-// the ChainFeatures guards report as 0) must not produce a NaN ratio. 1e-9 cm^2 is far below
-// any physical anchor-hit residual, so the ratio simply becomes "enormous" -- which is the
-// correct reading of "the remainder lies exactly on a circle".
-constexpr double kChi2Floor = 1e-9;
+  // chi2 denominator floor: a remaining fit that is numerically perfect (or degenerate, which
+  // the ChainFeatures guards report as 0) must not produce a NaN ratio. 1e-9 cm^2 is far below
+  // any physical anchor-hit residual, so the ratio simply becomes "enormous" -- which is the
+  // correct reading of "the remainder lies exactly on a circle".
+  constexpr double kChi2Floor = 1e-9;
 
-// MD union over a node sublist, first-appearance order -- the VERBATIM K6Weld.cc rule
-// (linear dedup scan over the chain's own slice), plus the layer bitmask popcount that
-// produces nLayers.
-void mdUnionOf(const LSTEventData& ev, const int* nodes, int n, std::vector<int>& md, int& nLayers) {
-  md.clear();
-  uint32_t layerMask = 0;
-  for (int k = 0; k < n; ++k) {
-    const int t3 = nodes[k];
-    const int mds[3] = {ev.t3_md0[t3], ev.t3_md1[t3], ev.t3_md2[t3]};
-    for (int m : mds) {
-      bool seen = false;
-      for (std::size_t q = 0; q < md.size() && !seen; ++q)
-        seen = (md[q] == m);
-      if (!seen) {
-        md.push_back(m);
-        layerMask |= (1u << ev.md_layer[m]);
+  // MD union over a node sublist, first-appearance order -- the VERBATIM K6Weld.cc rule
+  // (linear dedup scan over the chain's own slice), plus the layer bitmask popcount that
+  // produces nLayers.
+  void mdUnionOf(const LSTEventData& ev, const int* nodes, int n, std::vector<int>& md, int& nLayers) {
+    md.clear();
+    uint32_t layerMask = 0;
+    for (int k = 0; k < n; ++k) {
+      const int t3 = nodes[k];
+      const int mds[3] = {ev.t3_md0[t3], ev.t3_md1[t3], ev.t3_md2[t3]};
+      for (int m : mds) {
+        bool seen = false;
+        for (std::size_t q = 0; q < md.size() && !seen; ++q)
+          seen = (md[q] == m);
+        if (!seen) {
+          md.push_back(m);
+          layerMask |= (1u << ev.md_layer[m]);
+        }
       }
     }
+    nLayers = 0;
+    for (uint32_t b = layerMask; b != 0u; b &= b - 1)
+      ++nLayers;
   }
-  nLayers = 0;
-  for (uint32_t b = layerMask; b != 0u; b &= b - 1)
-    ++nLayers;
-}
 
 }  // namespace
 

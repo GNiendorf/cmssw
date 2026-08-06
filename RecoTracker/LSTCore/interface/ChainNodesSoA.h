@@ -51,10 +51,10 @@ namespace lst {
                       SOA_COLUMN(uint32_t, lsT3InItems),   // payload of ChainIncidence(LS).t3InOffsets
                       SOA_COLUMN(uint32_t, stableId),      // K1c, run/backend-invariant node identity
                       SOA_COLUMN(Params_ChainNode::ArrayFxFeat, features),  // K3, frozen 13-float row
-                      SOA_COLUMN(float, phiC01),  // atan2(c01y, c01x)
-                      SOA_COLUMN(float, phiC12),  // atan2(c12y, c12x)
-                      SOA_COLUMN(float, thetaC01),  // atan2(|c01_xy|, c01z)
-                      SOA_COLUMN(float, thetaC12),  // atan2(|c12_xy|, c12z)
+                      SOA_COLUMN(float, phiC01),                            // atan2(c01y, c01x)
+                      SOA_COLUMN(float, phiC12),                            // atan2(c12y, c12x)
+                      SOA_COLUMN(float, thetaC01),                          // atan2(|c01_xy|, c01z)
+                      SOA_COLUMN(float, thetaC12),                          // atan2(|c12_xy|, c12z)
                       // P2.6c. The two DENSE incidence keys of this node's "in" side: the dense
                       // index of its last MD and of its outer Segment (ChainPrefixKeyModules in
                       // ChainGraph.h defines the dense numbering). These are exactly the keys the

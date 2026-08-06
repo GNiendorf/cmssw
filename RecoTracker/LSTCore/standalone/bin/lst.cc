@@ -394,14 +394,14 @@ void run_lst() {
     // resolution here is the same one the ntuple writer uses for its pLS_hit0_* branches.
     std::vector<float> see_hit0X, see_hit0Y, see_hit0Z;
     {
-      auto const& see_hitIdx = trk.getVVI("see_hitIdx");
-      auto const& see_hitType = trk.getVVI("see_hitType");
-      auto const& pix_x = trk.getVF("pix_x");
-      auto const& pix_y = trk.getVF("pix_y");
-      auto const& pix_z = trk.getVF("pix_z");
-      auto const& ph2_x = trk.getVF("ph2_x");
-      auto const& ph2_y = trk.getVF("ph2_y");
-      auto const& ph2_z = trk.getVF("ph2_z");
+      auto const &see_hitIdx = trk.getVVI("see_hitIdx");
+      auto const &see_hitType = trk.getVVI("see_hitType");
+      auto const &pix_x = trk.getVF("pix_x");
+      auto const &pix_y = trk.getVF("pix_y");
+      auto const &pix_z = trk.getVF("pix_z");
+      auto const &ph2_x = trk.getVF("ph2_x");
+      auto const &ph2_y = trk.getVF("ph2_y");
+      auto const &ph2_z = trk.getVF("ph2_z");
       see_hit0X.resize(see_hitIdx.size(), 0.f);
       see_hit0Y.resize(see_hitIdx.size(), 0.f);
       see_hit0Z.resize(see_hitIdx.size(), 0.f);
@@ -456,12 +456,8 @@ void run_lst() {
   std::vector<LSTEvent *> events;
   std::vector<ALPAKA_ACCELERATOR_NAMESPACE::Queue *> event_queues;
   for (int s = 0; s < ana.streams; s++) {
-    LSTEvent *event = new LSTEvent(ana.verbose >= 2,
-                                   ana.ptCut,
-                                   ana.clustSizeCut,
-                                   queues[s],
-                                   &deviceESData,
-                                   ana.reduce_mem_by_full_precompute);
+    LSTEvent *event = new LSTEvent(
+        ana.verbose >= 2, ana.ptCut, ana.clustSizeCut, queues[s], &deviceESData, ana.reduce_mem_by_full_precompute);
     events.push_back(event);
     event_queues.push_back(&queues[s]);
   }

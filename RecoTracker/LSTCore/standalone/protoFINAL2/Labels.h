@@ -47,15 +47,15 @@ void labelEdges(const LSTEventData& ev, const ChainGraph& g, const T3SimSets& t3
 // intersection pick the highest sim_pt; a pileup-only match keeps label 1 with
 // simIdx = the smallest full-row index and kinematics -999.
 struct ChainLabels {
-  std::vector<int8_t> label;    // 1 = TRUE chain (see labelChains / labelChainsHarness)
-  std::vector<int> simIdx;      // FULL tracking-ntuple sim row (see EdgeLabels), -1 if label 0
+  std::vector<int8_t> label;         // 1 = TRUE chain (see labelChains / labelChainsHarness)
+  std::vector<int> simIdx;           // FULL tracking-ntuple sim row (see EdgeLabels), -1 if label 0
   std::vector<float> simPt, simVxy;  // accepted-sim kinematics, -999 otherwise
   // ---- M12 additions (populated only by labelChainsHarness) ----------------------------
-  std::vector<int8_t> labelOld;   // the pre-M12 >=2/3-MD-intersection label, kept for the
-                                  // flip matrix / ablation. Empty after plain labelChains().
-  std::vector<float> matchFrac;   // best hit-level match fraction from the production
-                                  // matcher (pmatched), -1 when no hits. Empty after
-                                  // plain labelChains().
+  std::vector<int8_t> labelOld;  // the pre-M12 >=2/3-MD-intersection label, kept for the
+                                 // flip matrix / ablation. Empty after plain labelChains().
+  std::vector<float> matchFrac;  // best hit-level match fraction from the production
+                                 // matcher (pmatched), -1 when no hits. Empty after
+                                 // plain labelChains().
 };
 
 void labelChains(const LSTEventData& ev, const Chains& chains, const T3SimSets& t3sims, ChainLabels& out);
@@ -80,10 +80,7 @@ void labelChains(const LSTEventData& ev, const Chains& chains, const T3SimSets& 
 // by fraction desc) the first ACCEPTED one supplies them; a pileup-only match keeps
 // label 1 with simIdx = the top-fraction full row and -999 kinematics.
 // labelOld is filled from labelChains() on the same chains for the flip matrix.
-void labelChainsHarness(const LSTEventData& ev,
-                        const TrkEventData& trk,
-                        const Chains& chains,
-                        const T3SimSets& t3sims,
-                        ChainLabels& out);
+void labelChainsHarness(
+    const LSTEventData& ev, const TrkEventData& trk, const Chains& chains, const T3SimSets& t3sims, ChainLabels& out);
 
 #endif

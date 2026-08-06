@@ -100,15 +100,15 @@ enum AttachCandMode : int {
 
 // Volume / audit counters. Owned by the caller, accumulated across events.
 struct CandStats {
-  long long nTargets = 0;        // targets enumerated (both kinds)
-  long long nFullScan = 0;       // nTargets * nPls -- what mode 0 examines
-  long long nExamined = 0;       // pairs the candidate finder handed to the window test
-  long long nEmitted = 0;        // pairs that passed and were emitted
-  long long nAnalytic = 0;       // -CFA: pairs the analytic full scan accepts
-  long long nMissing = 0;        // -CFA: analytic-accepted pairs ABSENT from the candidate
-                                 //       set. MUST BE 0. This is the superset audit.
-  long long nWildTargets = 0;    // targets with non-finite geometry (scanned every pLS)
-  long long nMapTargetsEmpty = 0;  // mode 2: bare targets with no map entry
+  long long nTargets = 0;           // targets enumerated (both kinds)
+  long long nFullScan = 0;          // nTargets * nPls -- what mode 0 examines
+  long long nExamined = 0;          // pairs the candidate finder handed to the window test
+  long long nEmitted = 0;           // pairs that passed and were emitted
+  long long nAnalytic = 0;          // -CFA: pairs the analytic full scan accepts
+  long long nMissing = 0;           // -CFA: analytic-accepted pairs ABSENT from the candidate
+                                    //       set. MUST BE 0. This is the superset audit.
+  long long nWildTargets = 0;       // targets with non-finite geometry (scanned every pLS)
+  long long nMapTargetsEmpty = 0;   // mode 2: bare targets with no map entry
   long long nMapEventsMissing = 0;  // mode 2: events absent from the candidate file
 };
 
@@ -119,10 +119,10 @@ struct PlsCandIndex {
   // ---------------- mode 1: the binned index (rebuilt per event) ----------------
   int nPls = 0;
   int nRt = 0, nTan = 0, nPhi = 0;
-  float rtW = 8.f;      // rt bin width [cm]; the LAST bin is open-ended
-  float tanClamp = 0.f; // tanLambda axis covers [-tanClamp, +tanClamp]
-  float tanW = 1.f;     // tanLambda bin width
-  float phiW = 1.f;     // phi bin width [rad]; nPhi bins tile [0, 2pi) exactly
+  float rtW = 8.f;             // rt bin width [cm]; the LAST bin is open-ended
+  float tanClamp = 0.f;        // tanLambda axis covers [-tanClamp, +tanClamp]
+  float tanW = 1.f;            // tanLambda bin width
+  float phiW = 1.f;            // phi bin width [rad]; nPhi bins tile [0, 2pi) exactly
   std::vector<int> cellStart;  // CSR, size nRt*nTan*nPhi + 1
   std::vector<int> cellItems;  // pLS rows, ASCENDING within each cell
   std::vector<int> wildPls;    // non-finite seed geometry: scanned by every target
@@ -140,11 +140,11 @@ struct PlsCandIndex {
 
 // Tuning of the binned index. Defaults are the ones the audit was run at.
 struct CandIndexParams {
-  float rtBinW = 8.f;    // -CFR  rt bin width [cm]
-  float binMult = 1.f;   // -CFB  bin width as a multiple of the analytic window
-  float phiPad = 0.02f;  // -CFP  extra pad on the inserted phi arc [rad]
-  float tanClamp = 40.f; // tanLambda axis half-range (|eta| ~ 4.4); clamping is safe
-  float rtMax = 130.f;   // last rt bin is open-ended above this [cm]
+  float rtBinW = 8.f;     // -CFR  rt bin width [cm]
+  float binMult = 1.f;    // -CFB  bin width as a multiple of the analytic window
+  float phiPad = 0.02f;   // -CFP  extra pad on the inserted phi arc [rad]
+  float tanClamp = 40.f;  // tanLambda axis half-range (|eta| ~ 4.4); clamping is safe
+  float rtMax = 130.f;    // last rt bin is open-ended above this [cm]
 };
 
 // ------------------------------- mode 1 ------------------------------------------------

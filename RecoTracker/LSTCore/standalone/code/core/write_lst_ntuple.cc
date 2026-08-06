@@ -1250,8 +1250,7 @@ std::map<unsigned int, unsigned int> setPixelLineSegmentBranches(
     // score. The snapshot vectors are empty unless LST_DUP_SNAPSHOTS was set; -999 then marks
     // "not recorded" so a stale ntuple can never be mistaken for a measured zero.
     ana.tx->pushbackToBranch<int>(
-        "pLS_isDupAlgSelf",
-        ipLS < event->plsIsDupSelf_.size() ? static_cast<int>(event->plsIsDupSelf_[ipLS]) : -999);
+        "pLS_isDupAlgSelf", ipLS < event->plsIsDupSelf_.size() ? static_cast<int>(event->plsIsDupSelf_[ipLS]) : -999);
     ana.tx->pushbackToBranch<int>(
         "pLS_isDupAlgPass2",
         ipLS < event->plsIsDupPass2_.size() ? static_cast<int>(event->plsIsDupPass2_[ipLS]) : -999);
@@ -1806,7 +1805,6 @@ std::tuple<int, float, float, float, int, std::vector<int>> parseTrackCandidate(
       throw std::logic_error("unsupported non-chain type " + std::to_string(type));
   }
 
-
   // Perform matching
   std::vector<int> simidx = matchedSimTrkIdxs(
       hit_idx, hit_type, trk_simhit_simTrkIdx, trk_ph2_simHitIdx, trk_pix_simHitIdx, false, matchfrac);
@@ -1849,7 +1847,6 @@ std::tuple<int, float, float, float, int, std::vector<int>, std::vector<float>> 
     else
       throw std::logic_error("unsupported non-chain type " + std::to_string(type));
   }
-
 
   // Perform matching
   auto [simidx, simidxfrac] = matchedSimTrkIdxsAndFracs(
@@ -2041,4 +2038,3 @@ void printT3s(LSTEvent* event) {
   }
   std::cout << "VALIDATION nTriplets: " << nTriplets << std::endl;
 }
-

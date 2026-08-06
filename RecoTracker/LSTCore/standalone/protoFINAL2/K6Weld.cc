@@ -22,33 +22,33 @@
 
 namespace {
 
-// P2.5 (production ChainGraph.h chainMix32/chainNodeStableId, copied verbatim).
-inline uint32_t chainMix32(uint32_t x) {
-  x ^= x >> 16;
-  x *= 0x7feb352du;
-  x ^= x >> 15;
-  x *= 0x846ca68bu;
-  x ^= x >> 16;
-  return x;
-}
+  // P2.5 (production ChainGraph.h chainMix32/chainNodeStableId, copied verbatim).
+  inline uint32_t chainMix32(uint32_t x) {
+    x ^= x >> 16;
+    x *= 0x7feb352du;
+    x ^= x >> 15;
+    x *= 0x846ca68bu;
+    x ^= x >> 16;
+    return x;
+  }
 
-// Deterministic "edge a beats current best b": higher logOdds first, then the P2.5 STABLE
-// TIE WORD (larger wins, matching production's packed key whose low word is the tie and
-// where a larger key wins). The pre-P2.5 rule was "lower edge index", and an edge index is
-// a position in the K2 enumeration -- a numbering that descends from LST's atomicAdd
-// triplet slots and permutes run to run and backend to backend. Exact logit ties are
-// common (duplicate feature rows give bit-identical MLP outputs), so the welded chain set
-// was run-dependent. `tie` is nodeStableId[inner] ^ nodeStableId[outer], a function of hit
-// rows alone. The edge index survives as a third key so the order stays strict and total.
-inline bool beats(int a, int b, const std::vector<float>& logOdds, const std::vector<uint32_t>& tie) {
-  if (b < 0)
-    return true;
-  if (logOdds[a] != logOdds[b])
-    return logOdds[a] > logOdds[b];
-  if (tie[a] != tie[b])
-    return tie[a] > tie[b];
-  return a < b;
-}
+  // Deterministic "edge a beats current best b": higher logOdds first, then the P2.5 STABLE
+  // TIE WORD (larger wins, matching production's packed key whose low word is the tie and
+  // where a larger key wins). The pre-P2.5 rule was "lower edge index", and an edge index is
+  // a position in the K2 enumeration -- a numbering that descends from LST's atomicAdd
+  // triplet slots and permutes run to run and backend to backend. Exact logit ties are
+  // common (duplicate feature rows give bit-identical MLP outputs), so the welded chain set
+  // was run-dependent. `tie` is nodeStableId[inner] ^ nodeStableId[outer], a function of hit
+  // rows alone. The edge index survives as a third key so the order stays strict and total.
+  inline bool beats(int a, int b, const std::vector<float>& logOdds, const std::vector<uint32_t>& tie) {
+    if (b < 0)
+      return true;
+    if (logOdds[a] != logOdds[b])
+      return logOdds[a] > logOdds[b];
+    if (tie[a] != tie[b])
+      return tie[a] > tie[b];
+    return a < b;
+  }
 
 }  // namespace
 
@@ -76,12 +76,8 @@ void buildNodeStableIds(const LSTEventData& ev, std::vector<uint32_t>& out) {
     out[t] = chainNodeStableId(ev, t);
 }
 
-void k6WeldChains(const LSTEventData& ev,
-                  const ChainGraph& g,
-                  const EdgeScores& s,
-                  float thetaEdge,
-                  float lambdaLen,
-                  Chains& out) {
+void k6WeldChains(
+    const LSTEventData& ev, const ChainGraph& g, const EdgeScores& s, float thetaEdge, float lambdaLen, Chains& out) {
   const int nT3 = static_cast<int>(ev.t3_lsIdx0.size());
   const int nEdges = static_cast<int>(g.edges.size());
 

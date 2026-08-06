@@ -16,7 +16,6 @@
 #include "RecoTracker/LSTCore/interface/EndcapGeometry.h"
 #include "RecoTracker/LSTCore/interface/ObjectRangesSoA.h"
 
-
 namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
 
   ALPAKA_FN_ACC ALPAKA_FN_INLINE bool isTighterTiltedModules_seg(ModulesConst modules, unsigned int moduleIndex) {
@@ -300,7 +299,6 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     pixelSegments.circleCenterX()[pixelSegmentArrayIndex] = candidateCenterXs[bestIndex];
     pixelSegments.circleCenterY()[pixelSegmentArrayIndex] = candidateCenterYs[bestIndex];
     pixelSegments.circleRadius()[pixelSegmentArrayIndex] = circleRadius;
-
   }
 
   // When LooseOnly=true, returns after the pre-check (used by counting kernel).

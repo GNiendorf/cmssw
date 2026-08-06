@@ -6,10 +6,12 @@ void m12_filter_evts(const char* in, const char* out, const char* evtlist) {
   std::ifstream fs(evtlist);
   std::vector<ULong64_t> keep;
   ULong64_t v;
-  while (fs >> v) keep.push_back(v);
+  while (fs >> v)
+    keep.push_back(v);
   TString sel;
   for (size_t i = 0; i < keep.size(); ++i) {
-    if (i) sel += "||";
+    if (i)
+      sel += "||";
     sel += TString::Format("evt==%llu", keep[i]);
   }
   printf("keeping %zu event keys\n", keep.size());

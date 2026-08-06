@@ -166,354 +166,354 @@
 
 namespace {
 
-void usage(const char* prog) {
-  std::fprintf(stderr,
-               "Usage: %s -i <lst_ntuple.root> -t <tracking file-or-dir> [options]\n"
-               "  -i <file>   LST --allobj ntuple (required)\n"
-               "  -t <path>   tracking ntuple file or directory (required)\n"
-               "  -o <file>   output ROOT file (required in identity, dump, chaindump, pairdump,\n"
-               "              and hybrid modes)\n"
-               "  -n <N>      max events to process (default -1 = all)\n"
-               "  -m <mode>   identity | graph | dump | chains | oracle | hybrid | chaindump |\n"
-               "              pairdump (default identity)\n"
-               "  -l <label>  input label for the output TNamed (default PU200)\n"
-               "  -e <theta>  thetaEdge: edge log-odds threshold for K6 welding in chains\n"
-               "              and hybrid modes (default 0.0; oracle always uses thetaEdge=0)\n"
-               "  -L <lam>    lambdaLen: chain-length prior weight passed to K6 in chains,\n"
-               "              oracle, and hybrid modes (default 0.0)\n"
-               "  -T4/-T5/-T6 <theta>  per-length thetaChain: K9 chain-score acceptance\n"
-               "              threshold in hybrid mode, applied by chain nLayers\n"
-               "              (==4 -> -T4, ==5 -> -T5, >=6 -> -T6; defaults 0.0)\n"
-               "  -T <theta>  shorthand: set thetaChain4/5/6 all to <theta>\n"
-               "  -F <frac>   maxClaimedFrac: max fraction of already-claimed MDs a chain may\n"
-               "              tolerate in K9 arbitration, hybrid mode (default 0.3)\n"
-               "  -FC <n>     (B4) absolute K9 claim tolerance in MD units: a chain also passes when\n"
-               "              it has <= floor(n) already-claimed MDs, regardless of its length\n"
-               "              (with -H 1 the budget is 2*floor(n) hits). <0 = off (legacy).\n"
-               "  -FCX <0|1>  (B4) 1 = the -FC count REPLACES the -F fraction; 0 (default) =\n"
-               "              OR with it (loosen-only).\n"
-               "  -FCE <0|1|2>  (DUPCUT) 0 (default, bit-exact) = -FCX binds on every chain;\n"
-               "              2 = as 1, and the exempt chains additionally skip the -W braid\n"
-               "              kill, so -W can be tightened on the IP population alone.\n"
-               "              1 = it binds on IP-COMPATIBLE chains only (dcaXY < -X), while\n"
-               "              the dca-exempt (displaced) chains keep the loosen-only OR.\n"
-               "              The chain-vs-chain duplicates the strict count removes are an\n"
-               "              IP-population artifact; the displaced chains are the ones that\n"
-               "              legitimately have to ride a few already-claimed hits.\n"
-               "  -FS <frac>  (M17) SUBORDINATE share pass: after the -F greedy walk, a SECOND\n"
-               "              greedy pass over exactly the chains pass 1 rejected on the claim\n"
-               "              budget, same order, same owner map, tolerance <frac>. The pass-1\n"
-               "              accepted set is bit-identical to the -FS-off run, so nothing is\n"
-               "              evicted (raising -F outright DOES evict). <= -F = off.\n"
-               "  -DD <n>     (M17) POST-ARBITRATION structural dedup of the ACCEPTED chains:\n"
-               "              walking the accepted list best-first (K9 order), a chain sharing\n"
-               "              >= n outer-tracker HIT rows with an already-kept chain is dropped\n"
-               "              from the TC output (it frees nothing: the claim map is final).\n"
-               "              Shared-hit structure ONLY -- no dR/dEta/dPhi/embedding test --\n"
-               "              so hit-disjoint neighbours in a jet can never interact.\n"
-               "              <= 0 = off (bit-exact legacy).\n"
-               "  -DDF <f>    (M17) extra requirement for -DD: shared >= f * min(hits of the\n"
-               "              two chains), so two long chains crossing on a few stray hits are\n"
-               "              not called copies. 0 (default) = count test alone.\n"
-               "  -DDP <0|1>  (M17) 1 = the -PU pre-claim pixel owners join the dedup as\n"
-               "              un-killable kept entries (a chain duplicating a CARRIED pixel TC\n"
-               "              is dropped too). 0 (default) = chains only.\n"
-               "  -DDK <0|1>  (M17) -DD keep-best key: 0 (default) = the K9 accepted order,\n"
-               "              1 = longest chain first (nLayers desc, K9 order on ties).\n"
-               "  -OK <0..3>  (B4) K9 ordering-key shape (thresholds stay on chains.score):\n"
-               "              0 legacy score, 1 score - lambdaLen*nLayers (pure sum-logit),\n"
-               "              2 score/nLayers, 3 mean edge logit. The -B fake penalty is\n"
-               "              subtracted after the reshape.\n"
-               "  -P          keep pixel-consumed chains in K9 (default: chains containing a\n"
-               "              t3_partOfPT5/pT3 member are dropped in hybrid mode)\n"
-               "  -PU <0|1|2> B1 claim-universe unification (default 0 = off, bit-exact legacy).\n"
-               "              1 = PRE-CLAIM the kept baseline pixel TCs' outer-tracker hits\n"
-               "              (type 7 -> pT5_t5Idx -> t5_hitIndices incl. the T5 extension,\n"
-               "              type 5 -> pT3_otHitIndices; type 8 owns no OT hits) before the K9\n"
-               "              greedy walk, so a chain riding on a pixel-delivered track's hits\n"
-               "              faces the same -F maxClaimedFrac test as chain-vs-chain.\n"
-               "              2 = 1 + pixel owners also participate in the -W braid test.\n"
-               "              Defined for -A 0 (attach off) only.\n"
-               "  -G <0..6>   chain gate (hybrid mode, default 1). ANGLE-1 -G 6 = 3-CLASS gate\n"
-               "              (fake/prompt-true/displaced-true softmax over 17 inputs = the 16\n"
-               "              ChainFeatures + the chain dcaXY), kill-only, LEGACY ordering:\n"
-               "              nLayers<=4 killed if mX < -M4; 5+ with dca < -X killed if\n"
-               "              mP < -MP; 5+ with dca >= -X killed if mD < -MD; either 5+ kill\n"
-               "              is vetoed when mX >= -MR. mP/mD/mX = prompt/displaced/max logit\n"
-               "              minus fake logit. Exempt masks (-U4/-U5/-U6) as in -G 5.\n"
-               "  -M4 -M5 -M6 -MD -M4D -MR  -G 6 margin thresholds (defaults -1e9 .. +1e9 =\n"
-               "              no kill). -M4 IP T4-class (mX), -M5/-M6 IP 5+/6+ (mP), -MD\n"
-               "              exempt 5+ (mD), -M4D exempt T4-class (mD), -MR mX OR-rescue.\n"
-               "              -MP is an alias setting both -M5 and -M6.\n"
-               "  -MRI <v>    (M14) IP-5+ mX OR-rescue threshold; the exempt-5+ branch keeps\n"
-               "              -MR. Unset = follow -MR (bit-exact legacy).\n"
-               "  -C25 <v>    (M15 angle C1) PER-CELL margin for (nNodes=2,nLayers=5) chains\n"
-               "              only, additive to their branch rule, in BOTH dca branches:\n"
-               "              killed iff mP < -C25 AND mD < -C25D (displaced head respected).\n"
-               "  -C25D <v>   displaced-margin floor of that cell kill; unset = follow -C25\n"
-               "              (then the rule is exactly mX < -C25). -C25 -1e9 = off.\n"
-               "  -Q4 -Q5 <v> (M14) POST-CLAIM absolute mX floors on the IP-compatible\n"
-               "              T4-class / 5+ branches (-G 6 only, default -1e9 = off). Applied\n"
-               "              after K9 arbitration, so removed chains free NO hits and no\n"
-               "              runner-up backfills -- the escape hatch from the M9 claim\n"
-               "              conservation that makes pre-claim acceptance cuts self-defeating.\n"
-               "  -G <0|1|2|3>  1 = K9 acceptance score per\n"
-               "              chain is the chain-gate MLP LOGIT (ChainInference over the\n"
-               "              ChainFeatures.h vector; thetaChain4/5/6 cut on that scale and\n"
-               "              arbitration order uses it too); 0 = legacy K6 sum-logit score\n"
-               "              (regression path); 2 = split: gate logit for nLayers <= 4 only\n"
-               "              (thetaChain4 on the gate scale), legacy score for nLayers >= 5;\n"
-               "              3 = DCA split (M9): gate logit for chains with transverse DCA\n"
-               "              < dcaSplit (-X), legacy score for dcaXY >= dcaSplit (large-DCA\n"
-               "              secondaries exempt); thresholds cut on the governing scale\n"
-               "              (-X 0 == -G 0, -X 1e9 == -G 1 at equal thresholds);\n"
-               "              4 = length+DCA split (M9 repair): T4-class always gate-scored\n"
-               "              (as -G 2), 5+-layer chains DCA-split as in -G 3\n"
-               "              (-X 0 == -G 2, -X 1e9 == -G 1 at equal thresholds);\n"
-               "              5 = order-preserving DCA split: ordering stays LEGACY for all\n"
-               "              chains (no cross-scale eviction); gate acts as a CUT only --\n"
-               "              IP-compatible chains killed if gate logit < -T4/-T5/-T6,\n"
-               "              exempt chains cut by -U4/-U5/-U6 (legacy scale)\n"
-               "              (-G 5 -X 0 -U4 u == -G 0 -T4 u)\n"
-               "  -X <cm>     dcaSplit (M9, default 0.5): IP-compatibility boundary for the\n"
-               "              -G 3/-G 4 score split and the -A 3 evidence rule (transverse DCA\n"
-               "              of the chain's full-fit circle to the origin, k8ChainDcaXY)\n"
-               "  -Z <cm>     t4ExemptDcaMin (M9, -G 5 only, default 0 = no-op): displaced-\n"
-               "              oriented exempt-T4 acceptance -- a T4-class chain rides the\n"
-               "              exempt (legacy, -U4) branch only if dcaXY >= max(-X, -Z); T4s\n"
-               "              with dca in [-X, -Z) are gate-cut like IP chains (-T4). The\n"
-               "              LST-style displaced-only length-4 restriction (plan 10.5)\n"
-               "  -V4/-V5/-V6 <theta>  a2 exempt-branch GATE-SCALE kill (-G 5 only,\n"
-               "              defaults -1e9 = no-op): an exempt (dca >= -X) chain is ALSO\n"
-               "              killed when its chain-gate logit is below this. Additive to\n"
-               "              -U4/-U5/-U6 (legacy scale); ordering stays legacy for everyone\n"
-               "              (the -G 5 order-preserving form). Targets the M9 residual-fake\n"
-               "              localization: ~85%% of it lives in the exempt 5+ branch\n"
-               "  -U4/-U5/-U6 <theta>  M9 exempt-branch thresholds (defaults 6/0/0): dca-exempt\n"
-               "              chains in -G 3/-G 4 keep the LEGACY sum-logit score, where the\n"
-               "              gate-scale -T thresholds are nearly no-ops; their per-length\n"
-               "              acceptance cuts therefore come from this separate set (legacy\n"
-               "              scale; U4=6 is the pre-gate r5-winner legacy T4 threshold).\n"
-               "              -T4/-T5/-T6 keep governing the gate-scored chains.\n"
-               "  -Y <pen>    demotion penalty for -A 3 (default 1e6 = reject outright):\n"
-               "              subtracted from the acceptance score of IP-compatible 5+-layer\n"
-               "              theta-passing chains whose K8 attach found no pair above\n"
-               "              thetaAttach (pre-contention), BEFORE K9 ordering/thresholds\n"
-               "  -A <0|1|2|3>  hybrid mode (default 0): 1 = K8 pixel attach v1 (REJECTED,\n"
-               "              reference): attached chains bypass the partOfPT5 drop, become\n"
-               "              type-7 TCs, own pT5/pLS rows suppressed. 2 = M7b subordinate\n"
-               "              two-pass claim: pass 1 is exactly the -A 0 pipeline (no bypass);\n"
-               "              attached chains pixdropped in pass 1 claim only against the\n"
-               "              post-pass-1 MD map (never evicting pass-1 chains) and become\n"
-               "              type-7 TCs; attached pass-1 chains upgrade in place to type 7;\n"
-               "              seed-family suppression drops kept-baseline pT5/pT3/pLS rows\n"
-               "              whose pLS shares >= 2 pixel hits with any attached pLS.\n"
-               "              3 = M9 attach-as-EVIDENCE: K8 outcome consumed only as an\n"
-               "              acceptance modifier -- IP-compatible (dcaXY < -X) theta-passing\n"
-               "              5+-layer chains with no pair above thetaAttach are demoted by\n"
-               "              -Y before K9; large-DCA chains exempt; no type upgrade, no\n"
-               "              suppression, no hit-list change (TCs stay bare type 4/9)\n"
-               "  -a <theta>  thetaAttach: attach-head logit threshold for K8 (default 0.0;\n"
-               "              only used with -A 1/2)\n"
-               "  -D <cm>     dcaMax (M7c, -A 2 only, default 1.0): IP-compatibility gate --\n"
-               "              transverse DCA of the chain's full-fit circle to the origin must\n"
-               "              be < dcaMax for the chain to be attach-ELIGIBLE (pass-2 candidacy\n"
-               "              and in-place upgrade) and for K7-lite to consider dropping it\n"
-               "  -K <0|1>    K7-lite kinematic dedup (M7c, -A 2 only, default 1): after attach\n"
-               "              + suppression, drop bare (non-attached) chain TCs that are\n"
-               "              IP-compatible (-D) and kinematically match a KEPT baseline type-7\n"
-               "              row (dR < -R, pt ratio < 2)\n"
-               "  -R <dR>     K7-lite dR window (M7c, default 0.03)\n"
-               "  -S <dR>     suppression-guard dR window (M7c, -A 2 only, default 0.05): a\n"
-               "              family-suppressed row is actually dropped only if\n"
-               "              dR(row, attaching chain+pLS TC) < -S and pt ratio < 2; rows\n"
-               "              failing the test survive\n"
-               "  -TR <0|1>   ANGLE B2 TERMINAL TRIM (hybrid mode, default 0 = off, bit-exact\n"
-               "              legacy). After K6 welding and BEFORE the chain gate / DCA split /\n"
-               "              K9 claim, each chain with >= 3 member T3s tests dropping its\n"
-               "              innermost and its outermost T3: the combined full-chain fit\n"
-               "              chi2/hit (xy Kasa circle + rz line, the ChainFeatures 5+6\n"
-               "              arithmetic) is recomputed over the remaining MD union and the end\n"
-               "              with the larger improvement factor is dropped iff that factor\n"
-               "              exceeds -TT and the remainder still has >= 2 T3s and >= -TL\n"
-               "              distinct layers. Trimmed chains are rebuilt exactly as K6 would\n"
-               "              emit them (node/edge/MD lists, nLayers, score = sum of remaining\n"
-               "              weld-edge logits + -L * nLayers), so EVERYTHING downstream --\n"
-               "              ChainFeatures, the 3-class gate, dcaXY, the exempt masks, K9 --\n"
-               "              is recomputed on the trimmed object.\n"
-               "  -TT <fac>   terminal-trim chi2 improvement factor (default 5.0)\n"
-               "  -TL <n>     minimum distinct layers the trimmed remainder must keep\n"
-               "              (default 5; measured -- see main.cc: at 4 the trim is net\n"
-               "              NEGATIVE, at 5 it converts 110-155 fakes per true destroyed)\n"
-               "  -TP <n>     terminal-trim passes (default 1); >1 allows a chain to lose one\n"
-               "              terminal per pass\n"
-               "  -A 4        M16 GENERAL pLS->OT ATTACH AS THE DELIVERY PATH (plan 11).\n"
-               "              One target-agnostic attach over {5+-layer chains, bare T3s};\n"
-               "              ONE contention rule (one pLS, one owner across target types);\n"
-               "              attached chains are PIXEL-BACKED deliveries -- they pre-claim\n"
-               "              their OT hits next to the surviving carried pixel rows and are\n"
-               "              emitted unconditionally as type-7 TCs (pixel hits + OT hits,\n"
-               "              pt = pLS ptIn), so they never walk the K9 greedy claim.\n"
-               "              ORDER (the M16 mandate): attach decisions -> suppression set ->\n"
-               "              pre-claim owner list -> K9 -> bare-T3 attach -> delivery.\n"
-               "              Composes with -PU (which is what makes the order matter: a\n"
-               "              carried row that attach replaced must NOT pre-claim).\n"
-               "  -RT5 <0|1>  (-A 4) REPLACEMENT A/B, pT5 class: 1 = drop EVERY carried type-7\n"
-               "              row; the attached chains are the whole pT5-class delivery. Also\n"
-               "              disables the partOfPT5 half of the K9 pixel-consumed drop (the\n"
-               "              rows it protects no longer exist). 0 = additive (only the\n"
-               "              attached pLS's own carried rows are suppressed).\n"
-               "  -RT3 <0|1>  (-A 4) REPLACEMENT A/B, pT3 class: 1 = drop EVERY carried type-5\n"
-               "              row; (pLS, bare-T3) pairs deliver type-5 TCs instead (pixel hits\n"
-               "              + the T3's 6 OT hits, pt = pLS ptIn). Also disables the\n"
-               "              partOfPT3 half of the pixel-consumed drop.\n"
-               "  -AT3 <v>    (-A 4) PER-CLASS attach margin for bare-T3 targets on the SAME\n"
-               "              attach-logit scale as -a (default 6.0 = tight). The per-length\n"
-               "              principle: a 3-layer target carries the least independent\n"
-               "              evidence, so it must be the most certain pair to deliver.\n"
-               "  -RPS <0|1>  (-A 4) bare-pLS contention: 1 = drop carried type-8 rows whose\n"
-               "              pLS attached anywhere OR lost a contention above -a / -AT3\n"
-               "              (i.e. had real OT evidence but is not the owner). The\n"
-               "              contention rule replacing CrossCleanpLS / plsembdnn.\n"
-               "  -RD <0|1>   (-A 4) SEED-FAMILY dedup of the attach owners (default 0 = off):\n"
-               "              among attached pLS, one sharing >= 2 pixel hit rows with a\n"
-               "              higher-logit attached pLS loses its attachment (its target\n"
-               "              returns to the K9 walk and its carried rows survive). This is\n"
-               "              plan 11's 'retain only the upstream pLS seed dup-clean', moved\n"
-               "              inside the contention rule; sim-blind, mirroring production\n"
-               "              pixelHitsOverlapAny. Without it a track with N duplicate pixel\n"
-               "              seeds gets N attach deliveries.\n"
-               "  -D4 <cm>    (-A 4) attach-eligibility dcaXY gate, default 1e9 = OFF.\n"
-               "              Deliberately NOT the -A 2 default of 1.0: the M7c gate blocks\n"
-               "              displaced chains from attaching, and the plan-11 mandate is that\n"
-               "              the low-vxy displaced-with-pixel-seed population is upside to\n"
-               "              CLAIM. Set it only to A/B the M7c dilution guard back on.\n"
-               "  -TA <cm^2>  absolute full-chain combined chi2/hit floor for trim eligibility\n"
-               "              (default 0 = off). The CONCENTRATING guard: -TT alone is a pure\n"
-               "              volume knob (conversion purity flat at ~5.7%% for every -TT), so\n"
-               "              it buys fake and pays track length at a fixed rate; -TA restricts\n"
-               "              the trim to chains that genuinely mis-fit (purity 11.9%% at 3.0,\n"
-               "              ~3x the conversions at equal trim volume)\n"
-               " ---- M20 (T3ATTACH) CANDIDATE FINDING, all default to the frozen behaviour ----\n"
-               "  -CF <0|1|2> (-A 4) candidate finding for the general attach:\n"
-               "              0 = the frozen FULL ANALYTIC SCAN (default, bit-exact),\n"
-               "              1 = the scalar BINNED PREFILTER (provable superset of 0; see\n"
-               "                  PixelAttachCand.h for the proof and -CFA for the audit),\n"
-               "              2 = an EXTERNAL candidate-pair list from -CFM (LST's pixel map\n"
-               "                  used as a prefilter only, no map port).\n"
-               "  -CFA <0|1>  run the analytic full scan ALONGSIDE the candidate finder and\n"
-               "              count the analytic-accepted pairs the candidate set missed.\n"
-               "              MUST report 0 for -CF 1. Expensive: audit runs only.\n"
-               "  -CFB <mult> bin width as a multiple of the analytic window (default 1.0).\n"
-               "              Smaller = tighter candidate volume, more cells.\n"
-               "  -CFR <cm>   rt bin width (default 8.0). -CFP <rad> phi arc pad (default 0.02).\n"
-               "  -CFC <0|1>  also route CHAIN targets through the candidate finder (default 0:\n"
-               "              chain targets keep the full scan so the frozen pT5 line cannot\n"
-               "              move while only the bare-T3 side is being developed).\n"
-               "  -CFM <path> candidate-pair file for -CF 2 (text or binary; format documented\n"
-               "              in PixelAttachCand.h). -CFW <0|1> additionally enforces the\n"
-               "              analytic windows on map candidates (default 0: the map IS the\n"
-               "              prefilter and the windows are features only).\n"
-               " ---- M20 pT3-CLASS HIT-OVERLAP CONTENTION (the CrossCleanpT3 analogue) ----\n"
-               "  -CC <0|1>   (-A 4) run a post-assembly hit-overlap contention over the\n"
-               "              bare-T3 (type-5) deliveries. They are decided AFTER the K9 claim\n"
-               "              and otherwise never compete for hits with anything, which is the\n"
-               "              measured cause of the pT3-class duplicate explosion. Shared-hit\n"
-               "              structure ONLY -- no dR/dEta/embedding proximity, by rule.\n"
-               "  -CCG <0|1>  ownership-map unit: 1 (default) MD rows, 0 outer-tracker hits.\n"
-               "  -CCN <n>    kill a delivery that finds >= n of its own units already\n"
-               "              claimed. A delivery is 3 MDs / 6 OT hits, so at -CCG 1 the\n"
-               "              steps are 1 (any shared MD), 2 (default: 2 of 3 == same\n"
-               "              track), 3 (identical MD triple only).\n"
-               "  -CCP <0|1>  1 (default) = everything already delivered (chain TCs and the\n"
-               "              surviving carried pixel rows) pre-claims its units; 0 = the\n"
-               "              deliveries contend only with each other.\n"
-               "  -CCK <0|1|2> keep-best key: 0 attach logit (default), 1 pLS pt, 2 t3 row.\n"
-               "  -CCR <0|1|2> on revoke: 1 (default) release plsOwned (MEASURED no-op at\n"
-               "              -RPS 1), 0 keep the pLS retired, 2 also erase the seed's\n"
-               "              bare-T3 evidence so its carried type-8 row survives.\n"
-               "  -RDT <n>    stage-B PIXEL-side seed-family dedup: -1 (default) follow -RD,\n"
-               "              0 off, 1 on. Splitting it from -RD is what lets OT-only be\n"
-               "              measured against pixel-assisted.\n"
-               "  -T3E <n>    bare-T3 stage B: -1 (default) follow -RT3, 0 force off, 1 force\n"
-               "              on even with LST's pT3 rows carried (DIAGNOSTIC: double-counts).\n"
-               "  -XC <mask>  SEED CROSSCLEAN: structural port of LST CrossCleanpLS onto our\n"
-               "              track candidates. 0 = OFF (default, bit-identical). bit 0 (1) =\n"
-               "              pixel-anchored branches (LST's pT5 + pT3 arms: retire a bare\n"
-               "              seed sharing ANY pixel hit row with a delivered TC's seed, or\n"
-               "              within dR^2 < -XCR2 of it). bit 1 (2) = bare-chain branch\n"
-               "              (LST's T5 arm: dR^2 < -XCW2 of a seedless chain TC, then the\n"
-               "              attach head's logit for that pair >= -XCT, replacing the\n"
-               "              deleted pLS-embedding test). 3 = both.\n"
-               "  -XCT <v>    bare-chain dedup threshold on the attach logit. Deliberately\n"
-               "              LOOSER than the delivery margin (-a / -AT3): attaching needs\n"
-               "              precision, retiring a redundant seed is bookkeeping.\n"
-               "  -XCT2 <v>   same, transition bin 1.1 <= |eta| < 1.7 (default: -XCT).\n"
-               "  -XCT3 <v>   same, endcap bin |eta| >= 1.7 (default: -XCT). LST bins its\n"
-               "              pLS-embedding WP in |eta| for the same reason.\n"
-               "  -XCR2 <v>   pixel-anchored dR^2 window (default 1e-6, LST's value).\n"
-               "  -XCW2 <v>   bare-chain dR^2 pre-window (default 0.02, LST's value).\n"
-               "  -XCG <0|1>  bare-chain score source: 0 (default) the logit of THAT\n"
-               "              (seed, chain) pair -- LST's own structure -- or 1 the per-seed\n"
-               "              best logit over any chain (the -RPS quantity), which is looser.\n"
-               "  -XCD <0|1>  truth partition of the post-deletion bare-seed universe by\n"
-               "              (sim match x sim already has a chain TC) x fate. Diagnostic\n"
-               "              only: changes no decision and no output row.\n",
-               prog);
-}
-
-double msBetween(std::chrono::steady_clock::time_point a, std::chrono::steady_clock::time_point b) {
-  return std::chrono::duration<double, std::milli>(b - a).count();
-}
-
-// M7c kinematic tests (suppression guard / K7-lite): wrap a phi difference to (-pi, pi].
-float wrapDPhi(float d) {
-  constexpr float kPi = 3.14159265358979323846f;
-  while (d > kPi)
-    d -= 2.f * kPi;
-  while (d < -kPi)
-    d += 2.f * kPi;
-  return d;
-}
-
-// Chain node-count histogram bins: 2, 3, 4, 5+ (K6 chains have >= 2 nodes by contract).
-int nodeBin(int n) { return n >= 5 ? 3 : (n <= 2 ? 0 : n - 2); }
-
-// Chain nLayers histogram bins (chains mode): <=4, 5, 6, 7, 8, 9+.
-int layerBin9(int n) { return n <= 4 ? 0 : (n >= 9 ? 5 : n - 4); }
-
-// Max-nLayers-per-sim bins (oracle table): <=4, 5, 6, 7, 8+.
-int layerBin8(int n) { return n <= 4 ? 0 : (n >= 8 ? 4 : n - 4); }
-
-// Oracle chain -> sim assignment: the sim (Labels simIdx space = FULL tracking-ntuple sim
-// rows) present in the sim-sets of >= 2 member T3s, majority count; ties prefer accepted
-// sims (row < nAccepted, i.e. kinematics known), then the smaller row. -1 if none reaches 2.
-int chainSimIdx(const Chains& ch, int c, const T3SimSets& t3sims, int nAccepted) {
-  std::unordered_map<int, int> cnt;
-  for (int k = ch.offsets[c]; k < ch.offsets[c + 1]; ++k)
-    for (int s : t3sims.sims[ch.items[k]])
-      ++cnt[s];  // per-T3 sim sets are unique, so this counts member T3s per sim
-  int best = -1, bestCnt = 0;
-  bool bestAcc = false;
-  for (const auto& kv : cnt) {
-    if (kv.second < 2)
-      continue;
-    const bool acc = kv.first < nAccepted;
-    bool better;
-    if (kv.second != bestCnt)
-      better = kv.second > bestCnt;
-    else if (acc != bestAcc)
-      better = acc;
-    else
-      better = best < 0 || kv.first < best;
-    if (better) {
-      best = kv.first;
-      bestCnt = kv.second;
-      bestAcc = acc;
-    }
+  void usage(const char* prog) {
+    std::fprintf(stderr,
+                 "Usage: %s -i <lst_ntuple.root> -t <tracking file-or-dir> [options]\n"
+                 "  -i <file>   LST --allobj ntuple (required)\n"
+                 "  -t <path>   tracking ntuple file or directory (required)\n"
+                 "  -o <file>   output ROOT file (required in identity, dump, chaindump, pairdump,\n"
+                 "              and hybrid modes)\n"
+                 "  -n <N>      max events to process (default -1 = all)\n"
+                 "  -m <mode>   identity | graph | dump | chains | oracle | hybrid | chaindump |\n"
+                 "              pairdump (default identity)\n"
+                 "  -l <label>  input label for the output TNamed (default PU200)\n"
+                 "  -e <theta>  thetaEdge: edge log-odds threshold for K6 welding in chains\n"
+                 "              and hybrid modes (default 0.0; oracle always uses thetaEdge=0)\n"
+                 "  -L <lam>    lambdaLen: chain-length prior weight passed to K6 in chains,\n"
+                 "              oracle, and hybrid modes (default 0.0)\n"
+                 "  -T4/-T5/-T6 <theta>  per-length thetaChain: K9 chain-score acceptance\n"
+                 "              threshold in hybrid mode, applied by chain nLayers\n"
+                 "              (==4 -> -T4, ==5 -> -T5, >=6 -> -T6; defaults 0.0)\n"
+                 "  -T <theta>  shorthand: set thetaChain4/5/6 all to <theta>\n"
+                 "  -F <frac>   maxClaimedFrac: max fraction of already-claimed MDs a chain may\n"
+                 "              tolerate in K9 arbitration, hybrid mode (default 0.3)\n"
+                 "  -FC <n>     (B4) absolute K9 claim tolerance in MD units: a chain also passes when\n"
+                 "              it has <= floor(n) already-claimed MDs, regardless of its length\n"
+                 "              (with -H 1 the budget is 2*floor(n) hits). <0 = off (legacy).\n"
+                 "  -FCX <0|1>  (B4) 1 = the -FC count REPLACES the -F fraction; 0 (default) =\n"
+                 "              OR with it (loosen-only).\n"
+                 "  -FCE <0|1|2>  (DUPCUT) 0 (default, bit-exact) = -FCX binds on every chain;\n"
+                 "              2 = as 1, and the exempt chains additionally skip the -W braid\n"
+                 "              kill, so -W can be tightened on the IP population alone.\n"
+                 "              1 = it binds on IP-COMPATIBLE chains only (dcaXY < -X), while\n"
+                 "              the dca-exempt (displaced) chains keep the loosen-only OR.\n"
+                 "              The chain-vs-chain duplicates the strict count removes are an\n"
+                 "              IP-population artifact; the displaced chains are the ones that\n"
+                 "              legitimately have to ride a few already-claimed hits.\n"
+                 "  -FS <frac>  (M17) SUBORDINATE share pass: after the -F greedy walk, a SECOND\n"
+                 "              greedy pass over exactly the chains pass 1 rejected on the claim\n"
+                 "              budget, same order, same owner map, tolerance <frac>. The pass-1\n"
+                 "              accepted set is bit-identical to the -FS-off run, so nothing is\n"
+                 "              evicted (raising -F outright DOES evict). <= -F = off.\n"
+                 "  -DD <n>     (M17) POST-ARBITRATION structural dedup of the ACCEPTED chains:\n"
+                 "              walking the accepted list best-first (K9 order), a chain sharing\n"
+                 "              >= n outer-tracker HIT rows with an already-kept chain is dropped\n"
+                 "              from the TC output (it frees nothing: the claim map is final).\n"
+                 "              Shared-hit structure ONLY -- no dR/dEta/dPhi/embedding test --\n"
+                 "              so hit-disjoint neighbours in a jet can never interact.\n"
+                 "              <= 0 = off (bit-exact legacy).\n"
+                 "  -DDF <f>    (M17) extra requirement for -DD: shared >= f * min(hits of the\n"
+                 "              two chains), so two long chains crossing on a few stray hits are\n"
+                 "              not called copies. 0 (default) = count test alone.\n"
+                 "  -DDP <0|1>  (M17) 1 = the -PU pre-claim pixel owners join the dedup as\n"
+                 "              un-killable kept entries (a chain duplicating a CARRIED pixel TC\n"
+                 "              is dropped too). 0 (default) = chains only.\n"
+                 "  -DDK <0|1>  (M17) -DD keep-best key: 0 (default) = the K9 accepted order,\n"
+                 "              1 = longest chain first (nLayers desc, K9 order on ties).\n"
+                 "  -OK <0..3>  (B4) K9 ordering-key shape (thresholds stay on chains.score):\n"
+                 "              0 legacy score, 1 score - lambdaLen*nLayers (pure sum-logit),\n"
+                 "              2 score/nLayers, 3 mean edge logit. The -B fake penalty is\n"
+                 "              subtracted after the reshape.\n"
+                 "  -P          keep pixel-consumed chains in K9 (default: chains containing a\n"
+                 "              t3_partOfPT5/pT3 member are dropped in hybrid mode)\n"
+                 "  -PU <0|1|2> B1 claim-universe unification (default 0 = off, bit-exact legacy).\n"
+                 "              1 = PRE-CLAIM the kept baseline pixel TCs' outer-tracker hits\n"
+                 "              (type 7 -> pT5_t5Idx -> t5_hitIndices incl. the T5 extension,\n"
+                 "              type 5 -> pT3_otHitIndices; type 8 owns no OT hits) before the K9\n"
+                 "              greedy walk, so a chain riding on a pixel-delivered track's hits\n"
+                 "              faces the same -F maxClaimedFrac test as chain-vs-chain.\n"
+                 "              2 = 1 + pixel owners also participate in the -W braid test.\n"
+                 "              Defined for -A 0 (attach off) only.\n"
+                 "  -G <0..6>   chain gate (hybrid mode, default 1). ANGLE-1 -G 6 = 3-CLASS gate\n"
+                 "              (fake/prompt-true/displaced-true softmax over 17 inputs = the 16\n"
+                 "              ChainFeatures + the chain dcaXY), kill-only, LEGACY ordering:\n"
+                 "              nLayers<=4 killed if mX < -M4; 5+ with dca < -X killed if\n"
+                 "              mP < -MP; 5+ with dca >= -X killed if mD < -MD; either 5+ kill\n"
+                 "              is vetoed when mX >= -MR. mP/mD/mX = prompt/displaced/max logit\n"
+                 "              minus fake logit. Exempt masks (-U4/-U5/-U6) as in -G 5.\n"
+                 "  -M4 -M5 -M6 -MD -M4D -MR  -G 6 margin thresholds (defaults -1e9 .. +1e9 =\n"
+                 "              no kill). -M4 IP T4-class (mX), -M5/-M6 IP 5+/6+ (mP), -MD\n"
+                 "              exempt 5+ (mD), -M4D exempt T4-class (mD), -MR mX OR-rescue.\n"
+                 "              -MP is an alias setting both -M5 and -M6.\n"
+                 "  -MRI <v>    (M14) IP-5+ mX OR-rescue threshold; the exempt-5+ branch keeps\n"
+                 "              -MR. Unset = follow -MR (bit-exact legacy).\n"
+                 "  -C25 <v>    (M15 angle C1) PER-CELL margin for (nNodes=2,nLayers=5) chains\n"
+                 "              only, additive to their branch rule, in BOTH dca branches:\n"
+                 "              killed iff mP < -C25 AND mD < -C25D (displaced head respected).\n"
+                 "  -C25D <v>   displaced-margin floor of that cell kill; unset = follow -C25\n"
+                 "              (then the rule is exactly mX < -C25). -C25 -1e9 = off.\n"
+                 "  -Q4 -Q5 <v> (M14) POST-CLAIM absolute mX floors on the IP-compatible\n"
+                 "              T4-class / 5+ branches (-G 6 only, default -1e9 = off). Applied\n"
+                 "              after K9 arbitration, so removed chains free NO hits and no\n"
+                 "              runner-up backfills -- the escape hatch from the M9 claim\n"
+                 "              conservation that makes pre-claim acceptance cuts self-defeating.\n"
+                 "  -G <0|1|2|3>  1 = K9 acceptance score per\n"
+                 "              chain is the chain-gate MLP LOGIT (ChainInference over the\n"
+                 "              ChainFeatures.h vector; thetaChain4/5/6 cut on that scale and\n"
+                 "              arbitration order uses it too); 0 = legacy K6 sum-logit score\n"
+                 "              (regression path); 2 = split: gate logit for nLayers <= 4 only\n"
+                 "              (thetaChain4 on the gate scale), legacy score for nLayers >= 5;\n"
+                 "              3 = DCA split (M9): gate logit for chains with transverse DCA\n"
+                 "              < dcaSplit (-X), legacy score for dcaXY >= dcaSplit (large-DCA\n"
+                 "              secondaries exempt); thresholds cut on the governing scale\n"
+                 "              (-X 0 == -G 0, -X 1e9 == -G 1 at equal thresholds);\n"
+                 "              4 = length+DCA split (M9 repair): T4-class always gate-scored\n"
+                 "              (as -G 2), 5+-layer chains DCA-split as in -G 3\n"
+                 "              (-X 0 == -G 2, -X 1e9 == -G 1 at equal thresholds);\n"
+                 "              5 = order-preserving DCA split: ordering stays LEGACY for all\n"
+                 "              chains (no cross-scale eviction); gate acts as a CUT only --\n"
+                 "              IP-compatible chains killed if gate logit < -T4/-T5/-T6,\n"
+                 "              exempt chains cut by -U4/-U5/-U6 (legacy scale)\n"
+                 "              (-G 5 -X 0 -U4 u == -G 0 -T4 u)\n"
+                 "  -X <cm>     dcaSplit (M9, default 0.5): IP-compatibility boundary for the\n"
+                 "              -G 3/-G 4 score split and the -A 3 evidence rule (transverse DCA\n"
+                 "              of the chain's full-fit circle to the origin, k8ChainDcaXY)\n"
+                 "  -Z <cm>     t4ExemptDcaMin (M9, -G 5 only, default 0 = no-op): displaced-\n"
+                 "              oriented exempt-T4 acceptance -- a T4-class chain rides the\n"
+                 "              exempt (legacy, -U4) branch only if dcaXY >= max(-X, -Z); T4s\n"
+                 "              with dca in [-X, -Z) are gate-cut like IP chains (-T4). The\n"
+                 "              LST-style displaced-only length-4 restriction (plan 10.5)\n"
+                 "  -V4/-V5/-V6 <theta>  a2 exempt-branch GATE-SCALE kill (-G 5 only,\n"
+                 "              defaults -1e9 = no-op): an exempt (dca >= -X) chain is ALSO\n"
+                 "              killed when its chain-gate logit is below this. Additive to\n"
+                 "              -U4/-U5/-U6 (legacy scale); ordering stays legacy for everyone\n"
+                 "              (the -G 5 order-preserving form). Targets the M9 residual-fake\n"
+                 "              localization: ~85%% of it lives in the exempt 5+ branch\n"
+                 "  -U4/-U5/-U6 <theta>  M9 exempt-branch thresholds (defaults 6/0/0): dca-exempt\n"
+                 "              chains in -G 3/-G 4 keep the LEGACY sum-logit score, where the\n"
+                 "              gate-scale -T thresholds are nearly no-ops; their per-length\n"
+                 "              acceptance cuts therefore come from this separate set (legacy\n"
+                 "              scale; U4=6 is the pre-gate r5-winner legacy T4 threshold).\n"
+                 "              -T4/-T5/-T6 keep governing the gate-scored chains.\n"
+                 "  -Y <pen>    demotion penalty for -A 3 (default 1e6 = reject outright):\n"
+                 "              subtracted from the acceptance score of IP-compatible 5+-layer\n"
+                 "              theta-passing chains whose K8 attach found no pair above\n"
+                 "              thetaAttach (pre-contention), BEFORE K9 ordering/thresholds\n"
+                 "  -A <0|1|2|3>  hybrid mode (default 0): 1 = K8 pixel attach v1 (REJECTED,\n"
+                 "              reference): attached chains bypass the partOfPT5 drop, become\n"
+                 "              type-7 TCs, own pT5/pLS rows suppressed. 2 = M7b subordinate\n"
+                 "              two-pass claim: pass 1 is exactly the -A 0 pipeline (no bypass);\n"
+                 "              attached chains pixdropped in pass 1 claim only against the\n"
+                 "              post-pass-1 MD map (never evicting pass-1 chains) and become\n"
+                 "              type-7 TCs; attached pass-1 chains upgrade in place to type 7;\n"
+                 "              seed-family suppression drops kept-baseline pT5/pT3/pLS rows\n"
+                 "              whose pLS shares >= 2 pixel hits with any attached pLS.\n"
+                 "              3 = M9 attach-as-EVIDENCE: K8 outcome consumed only as an\n"
+                 "              acceptance modifier -- IP-compatible (dcaXY < -X) theta-passing\n"
+                 "              5+-layer chains with no pair above thetaAttach are demoted by\n"
+                 "              -Y before K9; large-DCA chains exempt; no type upgrade, no\n"
+                 "              suppression, no hit-list change (TCs stay bare type 4/9)\n"
+                 "  -a <theta>  thetaAttach: attach-head logit threshold for K8 (default 0.0;\n"
+                 "              only used with -A 1/2)\n"
+                 "  -D <cm>     dcaMax (M7c, -A 2 only, default 1.0): IP-compatibility gate --\n"
+                 "              transverse DCA of the chain's full-fit circle to the origin must\n"
+                 "              be < dcaMax for the chain to be attach-ELIGIBLE (pass-2 candidacy\n"
+                 "              and in-place upgrade) and for K7-lite to consider dropping it\n"
+                 "  -K <0|1>    K7-lite kinematic dedup (M7c, -A 2 only, default 1): after attach\n"
+                 "              + suppression, drop bare (non-attached) chain TCs that are\n"
+                 "              IP-compatible (-D) and kinematically match a KEPT baseline type-7\n"
+                 "              row (dR < -R, pt ratio < 2)\n"
+                 "  -R <dR>     K7-lite dR window (M7c, default 0.03)\n"
+                 "  -S <dR>     suppression-guard dR window (M7c, -A 2 only, default 0.05): a\n"
+                 "              family-suppressed row is actually dropped only if\n"
+                 "              dR(row, attaching chain+pLS TC) < -S and pt ratio < 2; rows\n"
+                 "              failing the test survive\n"
+                 "  -TR <0|1>   ANGLE B2 TERMINAL TRIM (hybrid mode, default 0 = off, bit-exact\n"
+                 "              legacy). After K6 welding and BEFORE the chain gate / DCA split /\n"
+                 "              K9 claim, each chain with >= 3 member T3s tests dropping its\n"
+                 "              innermost and its outermost T3: the combined full-chain fit\n"
+                 "              chi2/hit (xy Kasa circle + rz line, the ChainFeatures 5+6\n"
+                 "              arithmetic) is recomputed over the remaining MD union and the end\n"
+                 "              with the larger improvement factor is dropped iff that factor\n"
+                 "              exceeds -TT and the remainder still has >= 2 T3s and >= -TL\n"
+                 "              distinct layers. Trimmed chains are rebuilt exactly as K6 would\n"
+                 "              emit them (node/edge/MD lists, nLayers, score = sum of remaining\n"
+                 "              weld-edge logits + -L * nLayers), so EVERYTHING downstream --\n"
+                 "              ChainFeatures, the 3-class gate, dcaXY, the exempt masks, K9 --\n"
+                 "              is recomputed on the trimmed object.\n"
+                 "  -TT <fac>   terminal-trim chi2 improvement factor (default 5.0)\n"
+                 "  -TL <n>     minimum distinct layers the trimmed remainder must keep\n"
+                 "              (default 5; measured -- see main.cc: at 4 the trim is net\n"
+                 "              NEGATIVE, at 5 it converts 110-155 fakes per true destroyed)\n"
+                 "  -TP <n>     terminal-trim passes (default 1); >1 allows a chain to lose one\n"
+                 "              terminal per pass\n"
+                 "  -A 4        M16 GENERAL pLS->OT ATTACH AS THE DELIVERY PATH (plan 11).\n"
+                 "              One target-agnostic attach over {5+-layer chains, bare T3s};\n"
+                 "              ONE contention rule (one pLS, one owner across target types);\n"
+                 "              attached chains are PIXEL-BACKED deliveries -- they pre-claim\n"
+                 "              their OT hits next to the surviving carried pixel rows and are\n"
+                 "              emitted unconditionally as type-7 TCs (pixel hits + OT hits,\n"
+                 "              pt = pLS ptIn), so they never walk the K9 greedy claim.\n"
+                 "              ORDER (the M16 mandate): attach decisions -> suppression set ->\n"
+                 "              pre-claim owner list -> K9 -> bare-T3 attach -> delivery.\n"
+                 "              Composes with -PU (which is what makes the order matter: a\n"
+                 "              carried row that attach replaced must NOT pre-claim).\n"
+                 "  -RT5 <0|1>  (-A 4) REPLACEMENT A/B, pT5 class: 1 = drop EVERY carried type-7\n"
+                 "              row; the attached chains are the whole pT5-class delivery. Also\n"
+                 "              disables the partOfPT5 half of the K9 pixel-consumed drop (the\n"
+                 "              rows it protects no longer exist). 0 = additive (only the\n"
+                 "              attached pLS's own carried rows are suppressed).\n"
+                 "  -RT3 <0|1>  (-A 4) REPLACEMENT A/B, pT3 class: 1 = drop EVERY carried type-5\n"
+                 "              row; (pLS, bare-T3) pairs deliver type-5 TCs instead (pixel hits\n"
+                 "              + the T3's 6 OT hits, pt = pLS ptIn). Also disables the\n"
+                 "              partOfPT3 half of the pixel-consumed drop.\n"
+                 "  -AT3 <v>    (-A 4) PER-CLASS attach margin for bare-T3 targets on the SAME\n"
+                 "              attach-logit scale as -a (default 6.0 = tight). The per-length\n"
+                 "              principle: a 3-layer target carries the least independent\n"
+                 "              evidence, so it must be the most certain pair to deliver.\n"
+                 "  -RPS <0|1>  (-A 4) bare-pLS contention: 1 = drop carried type-8 rows whose\n"
+                 "              pLS attached anywhere OR lost a contention above -a / -AT3\n"
+                 "              (i.e. had real OT evidence but is not the owner). The\n"
+                 "              contention rule replacing CrossCleanpLS / plsembdnn.\n"
+                 "  -RD <0|1>   (-A 4) SEED-FAMILY dedup of the attach owners (default 0 = off):\n"
+                 "              among attached pLS, one sharing >= 2 pixel hit rows with a\n"
+                 "              higher-logit attached pLS loses its attachment (its target\n"
+                 "              returns to the K9 walk and its carried rows survive). This is\n"
+                 "              plan 11's 'retain only the upstream pLS seed dup-clean', moved\n"
+                 "              inside the contention rule; sim-blind, mirroring production\n"
+                 "              pixelHitsOverlapAny. Without it a track with N duplicate pixel\n"
+                 "              seeds gets N attach deliveries.\n"
+                 "  -D4 <cm>    (-A 4) attach-eligibility dcaXY gate, default 1e9 = OFF.\n"
+                 "              Deliberately NOT the -A 2 default of 1.0: the M7c gate blocks\n"
+                 "              displaced chains from attaching, and the plan-11 mandate is that\n"
+                 "              the low-vxy displaced-with-pixel-seed population is upside to\n"
+                 "              CLAIM. Set it only to A/B the M7c dilution guard back on.\n"
+                 "  -TA <cm^2>  absolute full-chain combined chi2/hit floor for trim eligibility\n"
+                 "              (default 0 = off). The CONCENTRATING guard: -TT alone is a pure\n"
+                 "              volume knob (conversion purity flat at ~5.7%% for every -TT), so\n"
+                 "              it buys fake and pays track length at a fixed rate; -TA restricts\n"
+                 "              the trim to chains that genuinely mis-fit (purity 11.9%% at 3.0,\n"
+                 "              ~3x the conversions at equal trim volume)\n"
+                 " ---- M20 (T3ATTACH) CANDIDATE FINDING, all default to the frozen behaviour ----\n"
+                 "  -CF <0|1|2> (-A 4) candidate finding for the general attach:\n"
+                 "              0 = the frozen FULL ANALYTIC SCAN (default, bit-exact),\n"
+                 "              1 = the scalar BINNED PREFILTER (provable superset of 0; see\n"
+                 "                  PixelAttachCand.h for the proof and -CFA for the audit),\n"
+                 "              2 = an EXTERNAL candidate-pair list from -CFM (LST's pixel map\n"
+                 "                  used as a prefilter only, no map port).\n"
+                 "  -CFA <0|1>  run the analytic full scan ALONGSIDE the candidate finder and\n"
+                 "              count the analytic-accepted pairs the candidate set missed.\n"
+                 "              MUST report 0 for -CF 1. Expensive: audit runs only.\n"
+                 "  -CFB <mult> bin width as a multiple of the analytic window (default 1.0).\n"
+                 "              Smaller = tighter candidate volume, more cells.\n"
+                 "  -CFR <cm>   rt bin width (default 8.0). -CFP <rad> phi arc pad (default 0.02).\n"
+                 "  -CFC <0|1>  also route CHAIN targets through the candidate finder (default 0:\n"
+                 "              chain targets keep the full scan so the frozen pT5 line cannot\n"
+                 "              move while only the bare-T3 side is being developed).\n"
+                 "  -CFM <path> candidate-pair file for -CF 2 (text or binary; format documented\n"
+                 "              in PixelAttachCand.h). -CFW <0|1> additionally enforces the\n"
+                 "              analytic windows on map candidates (default 0: the map IS the\n"
+                 "              prefilter and the windows are features only).\n"
+                 " ---- M20 pT3-CLASS HIT-OVERLAP CONTENTION (the CrossCleanpT3 analogue) ----\n"
+                 "  -CC <0|1>   (-A 4) run a post-assembly hit-overlap contention over the\n"
+                 "              bare-T3 (type-5) deliveries. They are decided AFTER the K9 claim\n"
+                 "              and otherwise never compete for hits with anything, which is the\n"
+                 "              measured cause of the pT3-class duplicate explosion. Shared-hit\n"
+                 "              structure ONLY -- no dR/dEta/embedding proximity, by rule.\n"
+                 "  -CCG <0|1>  ownership-map unit: 1 (default) MD rows, 0 outer-tracker hits.\n"
+                 "  -CCN <n>    kill a delivery that finds >= n of its own units already\n"
+                 "              claimed. A delivery is 3 MDs / 6 OT hits, so at -CCG 1 the\n"
+                 "              steps are 1 (any shared MD), 2 (default: 2 of 3 == same\n"
+                 "              track), 3 (identical MD triple only).\n"
+                 "  -CCP <0|1>  1 (default) = everything already delivered (chain TCs and the\n"
+                 "              surviving carried pixel rows) pre-claims its units; 0 = the\n"
+                 "              deliveries contend only with each other.\n"
+                 "  -CCK <0|1|2> keep-best key: 0 attach logit (default), 1 pLS pt, 2 t3 row.\n"
+                 "  -CCR <0|1|2> on revoke: 1 (default) release plsOwned (MEASURED no-op at\n"
+                 "              -RPS 1), 0 keep the pLS retired, 2 also erase the seed's\n"
+                 "              bare-T3 evidence so its carried type-8 row survives.\n"
+                 "  -RDT <n>    stage-B PIXEL-side seed-family dedup: -1 (default) follow -RD,\n"
+                 "              0 off, 1 on. Splitting it from -RD is what lets OT-only be\n"
+                 "              measured against pixel-assisted.\n"
+                 "  -T3E <n>    bare-T3 stage B: -1 (default) follow -RT3, 0 force off, 1 force\n"
+                 "              on even with LST's pT3 rows carried (DIAGNOSTIC: double-counts).\n"
+                 "  -XC <mask>  SEED CROSSCLEAN: structural port of LST CrossCleanpLS onto our\n"
+                 "              track candidates. 0 = OFF (default, bit-identical). bit 0 (1) =\n"
+                 "              pixel-anchored branches (LST's pT5 + pT3 arms: retire a bare\n"
+                 "              seed sharing ANY pixel hit row with a delivered TC's seed, or\n"
+                 "              within dR^2 < -XCR2 of it). bit 1 (2) = bare-chain branch\n"
+                 "              (LST's T5 arm: dR^2 < -XCW2 of a seedless chain TC, then the\n"
+                 "              attach head's logit for that pair >= -XCT, replacing the\n"
+                 "              deleted pLS-embedding test). 3 = both.\n"
+                 "  -XCT <v>    bare-chain dedup threshold on the attach logit. Deliberately\n"
+                 "              LOOSER than the delivery margin (-a / -AT3): attaching needs\n"
+                 "              precision, retiring a redundant seed is bookkeeping.\n"
+                 "  -XCT2 <v>   same, transition bin 1.1 <= |eta| < 1.7 (default: -XCT).\n"
+                 "  -XCT3 <v>   same, endcap bin |eta| >= 1.7 (default: -XCT). LST bins its\n"
+                 "              pLS-embedding WP in |eta| for the same reason.\n"
+                 "  -XCR2 <v>   pixel-anchored dR^2 window (default 1e-6, LST's value).\n"
+                 "  -XCW2 <v>   bare-chain dR^2 pre-window (default 0.02, LST's value).\n"
+                 "  -XCG <0|1>  bare-chain score source: 0 (default) the logit of THAT\n"
+                 "              (seed, chain) pair -- LST's own structure -- or 1 the per-seed\n"
+                 "              best logit over any chain (the -RPS quantity), which is looser.\n"
+                 "  -XCD <0|1>  truth partition of the post-deletion bare-seed universe by\n"
+                 "              (sim match x sim already has a chain TC) x fate. Diagnostic\n"
+                 "              only: changes no decision and no output row.\n",
+                 prog);
   }
-  return best;
-}
+
+  double msBetween(std::chrono::steady_clock::time_point a, std::chrono::steady_clock::time_point b) {
+    return std::chrono::duration<double, std::milli>(b - a).count();
+  }
+
+  // M7c kinematic tests (suppression guard / K7-lite): wrap a phi difference to (-pi, pi].
+  float wrapDPhi(float d) {
+    constexpr float kPi = 3.14159265358979323846f;
+    while (d > kPi)
+      d -= 2.f * kPi;
+    while (d < -kPi)
+      d += 2.f * kPi;
+    return d;
+  }
+
+  // Chain node-count histogram bins: 2, 3, 4, 5+ (K6 chains have >= 2 nodes by contract).
+  int nodeBin(int n) { return n >= 5 ? 3 : (n <= 2 ? 0 : n - 2); }
+
+  // Chain nLayers histogram bins (chains mode): <=4, 5, 6, 7, 8, 9+.
+  int layerBin9(int n) { return n <= 4 ? 0 : (n >= 9 ? 5 : n - 4); }
+
+  // Max-nLayers-per-sim bins (oracle table): <=4, 5, 6, 7, 8+.
+  int layerBin8(int n) { return n <= 4 ? 0 : (n >= 8 ? 4 : n - 4); }
+
+  // Oracle chain -> sim assignment: the sim (Labels simIdx space = FULL tracking-ntuple sim
+  // rows) present in the sim-sets of >= 2 member T3s, majority count; ties prefer accepted
+  // sims (row < nAccepted, i.e. kinematics known), then the smaller row. -1 if none reaches 2.
+  int chainSimIdx(const Chains& ch, int c, const T3SimSets& t3sims, int nAccepted) {
+    std::unordered_map<int, int> cnt;
+    for (int k = ch.offsets[c]; k < ch.offsets[c + 1]; ++k)
+      for (int s : t3sims.sims[ch.items[k]])
+        ++cnt[s];  // per-T3 sim sets are unique, so this counts member T3s per sim
+    int best = -1, bestCnt = 0;
+    bool bestAcc = false;
+    for (const auto& kv : cnt) {
+      if (kv.second < 2)
+        continue;
+      const bool acc = kv.first < nAccepted;
+      bool better;
+      if (kv.second != bestCnt)
+        better = kv.second > bestCnt;
+      else if (acc != bestAcc)
+        better = acc;
+      else
+        better = best < 0 || kv.first < best;
+      if (better) {
+        best = kv.first;
+        bestCnt = kv.second;
+        bestAcc = acc;
+      }
+    }
+    return best;
+  }
 
 }  // namespace
 
@@ -522,15 +522,15 @@ int main(int argc, char** argv) {
   std::string mode = "identity";
   std::string label = "PU200";
   long long maxEvents = -1;
-  float thetaEdge = 0.0f;         // -e: K6 edge log-odds threshold (chains/hybrid modes)
-  float lambdaLen = 0.0f;         // -L: K6 chain-length prior weight
-  float thetaChain4 = 0.0f;       // -T4: K9 acceptance threshold, chain nLayers <= 4 (hybrid)
-  float thetaChain5 = 0.0f;       // -T5: K9 acceptance threshold, chain nLayers == 5 (hybrid)
-  float thetaChain6 = 0.0f;       // -T6: K9 acceptance threshold, chain nLayers >= 6 (hybrid)
-  float thetaExempt4 = 6.0f;      // -U4: M9 exempt-branch (legacy-scale) threshold, nLayers <= 4
-                                  // (default 6 = the pre-gate r5-winner legacy T4 threshold)
-  float thetaExempt5 = 0.0f;      // -U5: M9 exempt-branch threshold, nLayers == 5
-  float thetaExempt6 = 0.0f;      // -U6: M9 exempt-branch threshold, nLayers >= 6
+  float thetaEdge = 0.0f;     // -e: K6 edge log-odds threshold (chains/hybrid modes)
+  float lambdaLen = 0.0f;     // -L: K6 chain-length prior weight
+  float thetaChain4 = 0.0f;   // -T4: K9 acceptance threshold, chain nLayers <= 4 (hybrid)
+  float thetaChain5 = 0.0f;   // -T5: K9 acceptance threshold, chain nLayers == 5 (hybrid)
+  float thetaChain6 = 0.0f;   // -T6: K9 acceptance threshold, chain nLayers >= 6 (hybrid)
+  float thetaExempt4 = 6.0f;  // -U4: M9 exempt-branch (legacy-scale) threshold, nLayers <= 4
+                              // (default 6 = the pre-gate r5-winner legacy T4 threshold)
+  float thetaExempt5 = 0.0f;  // -U5: M9 exempt-branch threshold, nLayers == 5
+  float thetaExempt6 = 0.0f;  // -U6: M9 exempt-branch threshold, nLayers >= 6
   // a2 (fan-out angle 2): ADDITIONAL gate-scale kill for the EXEMPT branch in -G 5.
   // M9 localized ~85% of the residual fake in the exempt (dca >= -X) 5+ branch, which
   // -G 5 leaves entirely to the legacy -U thresholds -- the gate never touches it. With
@@ -592,8 +592,8 @@ int main(int argc, char** argv) {
   // M9 "K9 claim is SATURATED" finding: acceptance cuts backfill). A POST-claim floor
   // removes an accepted chain TC after arbitration is finished, with no backfill -- the
   // M13 shadow-recon lever (absolute mX floor, jet-blind, no proximity). -1e9 = no-op.
-  float q3Floor5 = -1e9f;   // -Q5: post-claim mX floor, IP-compatible (dca < -X) 5+ chains
-  float q3Floor4 = -1e9f;   // -Q4: post-claim mX floor, IP-compatible (dca < -X) T4 chains
+  float q3Floor5 = -1e9f;  // -Q5: post-claim mX floor, IP-compatible (dca < -X) 5+ chains
+  float q3Floor4 = -1e9f;  // -Q4: post-claim mX floor, IP-compatible (dca < -X) T4 chains
   // ANGLE C1 (M15): PER-CELL acceptance margin for the (nNodes == 2, nLayers == 5) cell --
   // the classic single-shared-MD "T5-shaped" chain. M10 measured that cell alone carries
   // 59.4% of all fake chain TCs, M13 43% of the residual fakes at the w7/j1 anchor, and it
@@ -609,8 +609,8 @@ int main(int argc, char** argv) {
   // cell chain the gate's displaced head still likes, however bad its prompt margin is.
   // -1e9 = off => bit-exact anchor.
   constexpr float kC25Unset = 1e30f;
-  float c25Theta = -1e9f;        // -C25 : cell prompt-margin floor (mP)
-  float c25ThetaD = kC25Unset;   // -C25D: cell displaced-margin floor (mD); unset = follow -C25
+  float c25Theta = -1e9f;       // -C25 : cell prompt-margin floor (mP)
+  float c25ThetaD = kC25Unset;  // -C25D: cell displaced-margin floor (mD); unset = follow -C25
   // ============ FANOUT4 "transition" BAND-AWARE LEVERS (all default = bit-exact no-op) ==
   // Motivation: |eta| in [1.1, 1.7) is the worst band on BOTH axes at once (fake .0765 vs
   // LST .0459, eff .8603 vs .8826). Production LST already ships eta-binned WP tables, so
@@ -647,13 +647,13 @@ int main(int argc, char** argv) {
   //           at risk, for a comparable fake gain. So the restriction buys the displaced
   //           floors back almost for free. 0 = no restriction (bit-exact).
   float zdR5 = 0.f, zdR6 = 0.f, zInLay1 = 0.f;
-  constexpr float kGateKill = 1e9f;    // -G 5: score subtraction for IP chains failing the gate cut
-  constexpr float kNoCutTheta = -1e5f; // -G 5: internal K9 base threshold (live chains always pass;
-                                       // killed (-1e9) and -A 3-demoted (-1e6) chains always fail)
-  float fakeOrderAlpha = 0.0f;    // -B: A8 fake-aware K9 ordering. Claim order key becomes
-                                  // chains.score - alpha * max(0, -gateLogit): chains the
-                                  // chain gate calls fake-suspect claim LATER, thresholds
-                                  // untouched (no cross-scale inversion). 0 = legacy order.
+  constexpr float kGateKill = 1e9f;     // -G 5: score subtraction for IP chains failing the gate cut
+  constexpr float kNoCutTheta = -1e5f;  // -G 5: internal K9 base threshold (live chains always pass;
+                                        // killed (-1e9) and -A 3-demoted (-1e6) chains always fail)
+  float fakeOrderAlpha = 0.0f;          // -B: A8 fake-aware K9 ordering. Claim order key becomes
+                                        // chains.score - alpha * max(0, -gateLogit): chains the
+                                        // chain gate calls fake-suspect claim LATER, thresholds
+                                        // untouched (no cross-scale inversion). 0 = legacy order.
   // OKR (order-key redesign). -B alone builds the K9 ordering penalty from the OLD
   // 2-class chain gate (chain_mlp_weights.h), which was trained on a ~6x smaller
   // claim-reaching population than the one authentic-replacement mode now feeds it.
@@ -683,15 +683,15 @@ int main(int argc, char** argv) {
   //                                     chain it shadows. Banding keeps both.
   // Modes 1..5 need -G 6 (the 3-class head runs only there); modes 7..9 need a trained
   // mf_mlp_weights.h. Without either, the key falls back to mode 0 with a warning.
-  float orderKeySrc = 0.f;        // -BK
-  float orderKeyHinge = 0.f;      // -BT
-  int hitLevelClaim = 0;          // -H: A8 claim universe. 0 = MDs (legacy), 1 = HITS --
-                                  // duplicate MD objects on the same hits make MD-disjoint
-                                  // chains that are hit-identical; only the hit map sees them.
-  float braidFrac = 0.0f;         // -W: A8 braid suppression. A candidate that covers >=
-                                  // braidFrac of an ALREADY-ACCEPTED chain's MDs is killed
-                                  // outright instead of passing the candidate-relative -F
-                                  // test. 0 = off (bit-exact legacy).
+  float orderKeySrc = 0.f;    // -BK
+  float orderKeyHinge = 0.f;  // -BT
+  int hitLevelClaim = 0;      // -H: A8 claim universe. 0 = MDs (legacy), 1 = HITS --
+                              // duplicate MD objects on the same hits make MD-disjoint
+                              // chains that are hit-identical; only the hit map sees them.
+  float braidFrac = 0.0f;     // -W: A8 braid suppression. A candidate that covers >=
+                              // braidFrac of an ALREADY-ACCEPTED chain's MDs is killed
+                              // outright instead of passing the candidate-relative -F
+                              // test. 0 = off (bit-exact legacy).
   // ---- EX_DUPCC (M19 exploit wave): endcap chain-chain + carried-pT3 duplicate cells ----
   // (a) BAND-AWARE BRAID (-WE/-WZ/-WN). The flagship's -W 0.50 is provably inert (a
   //     candidate that passes -F 0.20 / -FC 1 can never cover half of an owner), so the
@@ -708,26 +708,26 @@ int main(int argc, char** argv) {
   //      budget, which is exactly the tolerance that lets every measured chain-chain
   //      duplicate through (RECON-0: overlaps are 1 or 2 hits, never more). -FBC 0 removes
   //      that budget inside the band; -FB tightens the fractional test there.
-  float claimFracAlt = 0.f;       // -FB  <frac>: band maxClaimedFrac. <= 0 = use -F.
-  float claimItemsAlt = -2.f;     // -FBC <n>: band claim budget in MD units. -2 = use -FC.
+  float claimFracAlt = 0.f;    // -FB  <frac>: band maxClaimedFrac. <= 0 = use -F.
+  float claimItemsAlt = -2.f;  // -FBC <n>: band claim budget in MD units. -2 = use -FC.
   // (b) CARRIED-pT3 CROSSCLEAN (-XP3/-XP3Z/-XP3L). The kept baseline type-5 rows are the
   //     only carried rows with outer-tracker hits under -RT5 1, so chain-vs-carried-pT3 is
   //     the whole cross-class half of the OT+OT duplicate cell. Structural, shared-object:
   //     a carried pT3 row is retired when an ACCEPTED chain covers >= -XP3 of its 6 OT hit
   //     rows. No dR / dphi / embedding proximity enters anywhere.
-  float xp3Share = 0.f;           // -XP3 <n>: min shared OT hit rows. 0 = off.
-  float xp3Eta = 0.f;             // -XP3Z <etaMin>: only retire rows with |tc_eta| >= this.
-  float xp3MinLay = 0.f;          // -XP3L <n>: covering chain must have >= n layers.
+  float xp3Share = 0.f;   // -XP3 <n>: min shared OT hit rows. 0 = off.
+  float xp3Eta = 0.f;     // -XP3Z <etaMin>: only retire rows with |tc_eta| >= this.
+  float xp3MinLay = 0.f;  // -XP3L <n>: covering chain must have >= n layers.
   // (c) pT3 <-> CHAIN EXCHANGE (-XT3). 1 = drop the partOfPT3 half of the K9 pixel-consumed
   //     drop (the chains that reuse a pT3's T3 become candidates again); 2 = 1 + the carried
   //     type-5 rows stop PRE-CLAIMING, so those chains can actually win the claim. Meant to
   //     be paired with -XP3 6, which retires the pT3 row the winning chain replaced.
-  float xt3Mode = 0.f;            // -XT3 <0|1|2>
-  int preClaimMode = 0;           // -PU: B1 claim-universe unification. 0 = off (legacy: K9
-                                  // arbitrates chains vs chains only), 1 = pre-claim the kept
-                                  // baseline pixel TCs' OT hits so chains riding on a
-                                  // pixel-delivered track's hits face the same -F test,
-                                  // 2 = 1 + pixel owners also participate in the -W braid test.
+  float xt3Mode = 0.f;   // -XT3 <0|1|2>
+  int preClaimMode = 0;  // -PU: B1 claim-universe unification. 0 = off (legacy: K9
+                         // arbitrates chains vs chains only), 1 = pre-claim the kept
+                         // baseline pixel TCs' OT hits so chains riding on a
+                         // pixel-delivered track's hits face the same -F test,
+                         // 2 = 1 + pixel owners also participate in the -W braid test.
   // B4 (M15 structural): length-normalized claim + de-lengthed ordering. Both default OFF
   // (bit-exact legacy). See Stages.h ArbitrationParams for the claim semantics.
   float claimCountMD = -1.f;      // -FC: absolute claim tolerance in MD units (<0 = off).
@@ -745,28 +745,28 @@ int main(int argc, char** argv) {
   // dropped from the TC output. HIT-STRUCTURE ONLY (no dR / dEta / dPhi / embedding
   // proximity): two nearby but hit-disjoint tracks can never interact, which is the jet
   // safety requirement. All defaults OFF => bit-identical to the pre-M17 binary.
-  float dedupMinShared = -1.f;    // -DD  <n>: min shared OT hits to call two accepted
-                                  // chains copies (<= 0 = off).
-  float dedupShareFrac = 0.f;     // -DDF <f>: additionally require the shared count to be
-                                  // >= f * (hits of the SHORTER chain), so two long chains
-                                  // crossing on a few stray hits are never merged.
-                                  // 0 = off (count test alone).
-  float dedupPix = 0.f;           // -DDP <0|1>: 1 = the pre-claim pixel owners (-PU) join
-                                  // the dedup as un-killable kept entries, so a chain that
-                                  // duplicates a CARRIED pixel TC is dropped too.
-  float sharePassFrac = 0.f;      // -FS <frac>: M17 SUBORDINATE share pass. A second greedy
-                                  // walk over the pass-1 rejects at this looser tolerance,
-                                  // on the pass-1 owner map -- so the anchor accepted set is
-                                  // preserved exactly and nothing is evicted. <= -F = off.
-  float dedupKeyMode = 0.f;       // -DDK <0|1>: keep-best key. 0 = the K9 accepted order
-                                  // (the arbitration order key); 1 = nLayers desc, K9 order
-                                  // breaking ties (keep the LONGEST copy).
-  float orderKeyMode = 0.f;       // -OK: K9 best-first ORDER key shape (thresholds never
-                                  // see it; the M9 cross-scale-inversion rule).
-                                  //   0 = legacy chains.score  (bit-exact)
-                                  //   1 = de-lengthed: score - lambdaLen*nLayers
-                                  //   2 = length-normalized: score / nLayers
-                                  //   3 = mean edge logit
+  float dedupMinShared = -1.f;  // -DD  <n>: min shared OT hits to call two accepted
+                                // chains copies (<= 0 = off).
+  float dedupShareFrac = 0.f;   // -DDF <f>: additionally require the shared count to be
+                                // >= f * (hits of the SHORTER chain), so two long chains
+                                // crossing on a few stray hits are never merged.
+                                // 0 = off (count test alone).
+  float dedupPix = 0.f;         // -DDP <0|1>: 1 = the pre-claim pixel owners (-PU) join
+                                // the dedup as un-killable kept entries, so a chain that
+                                // duplicates a CARRIED pixel TC is dropped too.
+  float sharePassFrac = 0.f;    // -FS <frac>: M17 SUBORDINATE share pass. A second greedy
+                                // walk over the pass-1 rejects at this looser tolerance,
+                                // on the pass-1 owner map -- so the anchor accepted set is
+                                // preserved exactly and nothing is evicted. <= -F = off.
+  float dedupKeyMode = 0.f;     // -DDK <0|1>: keep-best key. 0 = the K9 accepted order
+                                // (the arbitration order key); 1 = nLayers desc, K9 order
+                                // breaking ties (keep the LONGEST copy).
+  float orderKeyMode = 0.f;     // -OK: K9 best-first ORDER key shape (thresholds never
+                                // see it; the M9 cross-scale-inversion rule).
+                                //   0 = legacy chains.score  (bit-exact)
+                                //   1 = de-lengthed: score - lambdaLen*nLayers
+                                //   2 = length-normalized: score / nLayers
+                                //   3 = mean edge logit
   // ANGLE B2 TERMINAL TRIM (Trim.h). Flag-gated, default OFF -> every pre-B2 command line
   // is bit-exact (the trim call is skipped entirely, chains stay K6's output object).
   float trimEnable = 0.f;   // -TR: 0 = off (default), 1 = on
@@ -786,43 +786,43 @@ int main(int argc, char** argv) {
   // that lies on its own fitted trajectory. Flag-gated, default OFF -> every pre-EX
   // command line is bit-exact (extendChains is never called and the free-MD index is
   // never built).
-  float extendMode = 0.f;     // -EX : 0 off, 1 outer end, 2 inner end, 3 both
-  float extendWindow = 0.5f;  // -EXW: xy residual window (combined if -EXR <= 0), cm
-  float extendRz = 0.f;       // -EXR: separate |rz| window, cm. 0 = combined test
-  float extendChi2F = 2.0f;   // -EXF: refit chi2/hit <= f * max(chi2Full, window^2)
-  float extendUniq = 0.f;     // -EXU: runner-up ambiguity margin, cm. 0 = off
-  float extendMaxD = 60.f;    // -EXD: max 3D distance terminal MD -> candidate MD, cm
-  float extendJump = 1.f;     // -EXJ: max md_layer index jump from the terminal layer
-  float extendPerEnd = 1.f;   // -EXN: max MDs appended per chain end
-  float extendMinLay = 4.f;   // -EXL: minimum chain nLayers eligible to extend
-  float extendSeg = 0.f;      // -EXS: 1 = candidate must be LS-linked to the terminal MD
-  float extendMaxChi2 = 0.f;  // -EXC: only extend chains whose own fit chi2/hit is below this
-  float dcaAttachMax = 1.0f;      // -D: M7c IP-compatibility gate (attach eligibility + K7-lite)
-  int k7Lite = 1;                 // -K: M7c K7-lite kinematic dedup on/off (-A 2 only)
-  float k7DR = 0.03f;             // -R: K7-lite dR window
-  float suppDR = 0.05f;           // -S: suppression-guard dR window
+  float extendMode = 0.f;                 // -EX : 0 off, 1 outer end, 2 inner end, 3 both
+  float extendWindow = 0.5f;              // -EXW: xy residual window (combined if -EXR <= 0), cm
+  float extendRz = 0.f;                   // -EXR: separate |rz| window, cm. 0 = combined test
+  float extendChi2F = 2.0f;               // -EXF: refit chi2/hit <= f * max(chi2Full, window^2)
+  float extendUniq = 0.f;                 // -EXU: runner-up ambiguity margin, cm. 0 = off
+  float extendMaxD = 60.f;                // -EXD: max 3D distance terminal MD -> candidate MD, cm
+  float extendJump = 1.f;                 // -EXJ: max md_layer index jump from the terminal layer
+  float extendPerEnd = 1.f;               // -EXN: max MDs appended per chain end
+  float extendMinLay = 4.f;               // -EXL: minimum chain nLayers eligible to extend
+  float extendSeg = 0.f;                  // -EXS: 1 = candidate must be LS-linked to the terminal MD
+  float extendMaxChi2 = 0.f;              // -EXC: only extend chains whose own fit chi2/hit is below this
+  float dcaAttachMax = 1.0f;              // -D: M7c IP-compatibility gate (attach eligibility + K7-lite)
+  int k7Lite = 1;                         // -K: M7c K7-lite kinematic dedup on/off (-A 2 only)
+  float k7DR = 0.03f;                     // -R: K7-lite dR window
+  float suppDR = 0.05f;                   // -S: suppression-guard dR window
   constexpr float kKinPtRatioMax = 2.0f;  // shared pt-ratio window for -S guard and K7-lite
 
   // M16 GENERAL ATTACH DELIVERY (-A 4). All default to the legacy value, so -A 0..3 and
   // every pre-M16 command line are bit-exact.
-  float replT5 = 0.f;              // -RT5: drop all carried type-7 rows (full pT5 replacement)
-  float replT3 = 0.f;              // -RT3: drop all carried type-5 rows (full pT3 replacement)
+  float replT5 = 0.f;  // -RT5: drop all carried type-7 rows (full pT5 replacement)
+  float replT3 = 0.f;  // -RT3: drop all carried type-5 rows (full pT3 replacement)
   // P1 DEPENDENCY AUDIT instrumentation (protoAUDIT only; every default is a no-op).
   // Each flag forces one LST-produced quantity to its POST-DELETION value so the frozen
   // line can be re-scored against the universe that survives the P2.7 deletion.
-  float auZpf = 0.f;   // -ZPF <mask>: bit0 zero t3_partOfPT5, bit1 zero t3_partOfPT3
-  float auZp5 = 0.f;   // -ZP5 <0|1>: kill the whole pT5-side routing (pT5/T5 SoAs deleted)
-  float auZp8 = 0.f;   // -ZP8 <0|1|2>: post-deletion bare-pLS TC universe (see below)
-  float replPls = 0.f;             // -RPS: drop contested carried type-8 rows
-  float thetaAttachT3 = 6.0f;      // -AT3: per-class bare-T3 attach margin (tight by default)
-  float dcaAttach4 = 1e9f;         // -D4: -A 4 attach-eligibility dca gate (default OFF)
-  float seedDupClean = 0.f;        // -RD: seed-family dedup of the attach owners. Plan 11
-                                   // keeps exactly ONE piece of the old crossclean stack --
-                                   // "retain only the upstream pLS seed dup-clean" -- and
-                                   // this is it, expressed inside the contention rule.
-                                   // Sim-blind (>= 2 shared pixel hit rows, the production
-                                   // pixelHitsOverlapAny criterion; pLS_isDuplicate is
-                                   // TRUTH-derived in the ntuple and must never be read).
+  float auZpf = 0.f;           // -ZPF <mask>: bit0 zero t3_partOfPT5, bit1 zero t3_partOfPT3
+  float auZp5 = 0.f;           // -ZP5 <0|1>: kill the whole pT5-side routing (pT5/T5 SoAs deleted)
+  float auZp8 = 0.f;           // -ZP8 <0|1|2>: post-deletion bare-pLS TC universe (see below)
+  float replPls = 0.f;         // -RPS: drop contested carried type-8 rows
+  float thetaAttachT3 = 6.0f;  // -AT3: per-class bare-T3 attach margin (tight by default)
+  float dcaAttach4 = 1e9f;     // -D4: -A 4 attach-eligibility dca gate (default OFF)
+  float seedDupClean = 0.f;    // -RD: seed-family dedup of the attach owners. Plan 11
+                               // keeps exactly ONE piece of the old crossclean stack --
+                               // "retain only the upstream pLS seed dup-clean" -- and
+                               // this is it, expressed inside the contention rule.
+                               // Sim-blind (>= 2 shared pixel hit rows, the production
+                               // pixelHitsOverlapAny criterion; pLS_isDuplicate is
+                               // TRUTH-derived in the ntuple and must never be read).
 
   // ---- SEED CROSSCLEAN (-XC): STRUCTURAL PORT OF LST CrossCleanpLS -------------------
   // (src/alpaka/TrackCandidate.h:327-421.) The kernel is in the P2.7 deletion set, and the
@@ -851,8 +851,8 @@ int main(int argc, char** argv) {
   //
   // -XC is a BITMASK so the two halves can be ablated independently:
   //   bit 0 (1) = pixel-anchored branches, bit 1 (2) = bare-chain branch, 3 = both.
-  float xcMode = 0.f;         // -XC   <mask>: 0 = OFF (default; bit-identical to no port)
-  float xcTheta = 0.f;        // -XCT  <logit>: dedup threshold, bare-chain branch (barrel)
+  float xcMode = 0.f;   // -XC   <mask>: 0 = OFF (default; bit-identical to no port)
+  float xcTheta = 0.f;  // -XCT  <logit>: dedup threshold, bare-chain branch (barrel)
   // LST bins its pLS-embedding working point in |eta| (dnn::plsembdnn::kWP[bin]). The
   // global-threshold scan says the same is needed here: the ENDCAP duplicate rate
   // saturates at LST's own level almost immediately while endcap efficiency -- the one
@@ -861,11 +861,11 @@ int main(int argc, char** argv) {
   // the scoreboard's own regions (|eta| < 1.1 / 1.1-1.7 / > 1.7), on the SEED's |eta|
   // exactly as LST bins on pixelSeeds.eta(). Both default to -XCT, so a single -XCT is
   // still the global threshold and every one-number command line is unchanged.
-  float xcThetaT = 1e9f;      // -XCT2 <logit>: transition bin (1.1 <= |eta| < 1.7)
-  float xcThetaE = 1e9f;      // -XCT3 <logit>: endcap bin     (|eta| >= 1.7)
-  float xcDR2Pix = 1e-6f;     // -XCR2: pixel-anchored dR^2 window (LST 0.000001)
-  float xcDR2Chain = 0.02f;   // -XCW2: bare-chain dR^2 pre-window (LST 0.02)
-  float xcDiag = 0.f;         // -XCD  <0|1>: truth partition of the bare-seed universe
+  float xcThetaT = 1e9f;     // -XCT2 <logit>: transition bin (1.1 <= |eta| < 1.7)
+  float xcThetaE = 1e9f;     // -XCT3 <logit>: endcap bin     (|eta| >= 1.7)
+  float xcDR2Pix = 1e-6f;    // -XCR2: pixel-anchored dR^2 window (LST 0.000001)
+  float xcDR2Chain = 0.02f;  // -XCW2: bare-chain dR^2 pre-window (LST 0.02)
+  float xcDiag = 0.f;        // -XCD  <0|1>: truth partition of the bare-seed universe
   // -XCG: which score the bare-chain branch tests. 0 (default) = the logit of THAT
   // (seed, chain) pair, which is LST's structure exactly -- its T5 arm compares the seed
   // against the T5 in front of it, not against the whole event. 1 = the per-seed best
@@ -896,44 +896,44 @@ int main(int argc, char** argv) {
   // M20 (T3ATTACH-BUILD) CANDIDATE FINDING. See PixelAttachCand.h. Every default here is
   // the FROZEN behaviour (full analytic scan, no audit, stage B tied to -RT3), so any
   // pre-M20 command line is bit-exact.
-  float candMode = 0.f;      // -CF   0 = analytic full scan, 1 = binned prefilter, 2 = map
-  float candAudit = 0.f;     // -CFA  1 = run the analytic scan alongside and count misses
-  float candBinMult = 1.f;   // -CFB  bin width as a multiple of the analytic window
-  float candRtBinW = 8.f;    // -CFR  rt bin width [cm]
-  float candPhiPad = 0.02f;  // -CFP  extra pad on the inserted phi arc [rad]
-  float candMapWin = 0.f;    // -CFW  mode 2: ALSO enforce the analytic windows
-  float candChainToo = 0.f;  // -CFC  apply the candidate finder to CHAIN targets too
+  float candMode = 0.f;        // -CF   0 = analytic full scan, 1 = binned prefilter, 2 = map
+  float candAudit = 0.f;       // -CFA  1 = run the analytic scan alongside and count misses
+  float candBinMult = 1.f;     // -CFB  bin width as a multiple of the analytic window
+  float candRtBinW = 8.f;      // -CFR  rt bin width [cm]
+  float candPhiPad = 0.02f;    // -CFP  extra pad on the inserted phi arc [rad]
+  float candMapWin = 0.f;      // -CFW  mode 2: ALSO enforce the analytic windows
+  float candChainToo = 0.f;    // -CFC  apply the candidate finder to CHAIN targets too
   float t3StageEnable = -1.f;  // -T3E bare-T3 stage B: -1 = follow -RT3 (frozen coupling),
                                //      0 = force off, 1 = force on even with pT3 carried
                                //      (a DIAGNOSTIC: carrying LST's pT3 rows AND
                                //      delivering ours double-counts the class)
-  std::string candMapPath;   // -CFM  candidate-pair file for mode 2
+  std::string candMapPath;     // -CFM  candidate-pair file for mode 2
 
   // M20 pT3-CLASS HIT-OVERLAP CONTENTION (the CrossCleanpT3 analogue). Bare-T3 deliveries
   // are decided post-claim and otherwise never compete for hits with anything; measured
   // consequence is 472 rows/evt vs LST's ~150 and a 5.5x duplicate rate. Default OFF so
   // the frozen line is bit-exact; this is the campaign's PRIMARY tuning axis.
-  float ccMode = 0.f;      // -CC   1 = run the OT-side contention
-  float ccGran = 1.f;      // -CCG  ownership-map granularity: 1 = MD rows (DEFAULT; see
-                           //       the granularity note at the implementation site),
-                           //       0 = outer-tracker HIT rows
-  float ccMinShared = 2.f; // -CCN  kill when the number of SHARED (already-claimed) units
-                           //       REACHES this. A delivery has exactly 3 MDs, so at
-                           //       -CCG 1: 2 = "2 of 3 MDs shared == same track" (the
-                           //       maintainer rule), 1 = any shared MD, 3 = identical
-                           //       MD triple only. At -CCG 0 it counts OT hit rows (of 6).
-  float ccPreclaim = 1.f;  // -CCP  1 = already-delivered TCs pre-claim into the map
-  float ccOrder = 0.f;     // -CCK  keep-best key: 0 attach logit, 1 pLS pt, 2 t3 row
-  float ccRelPls = 1.f;    // -CCR  on revoke: 1 (default) release the delivery's pLS back
-                           //       to the carried universe, 0 keep it retired. Measures the
-                           //       "does the revoked seed come back as a bare-pLS row"
-                           //       fork. NOTE at -RPS 1 the -RPS predicate also fires on
-                           //       plsBestT3Logit >= AT3, which is recorded for every
-                           //       scored pair, so the release is expected to be a no-op
-                           //       there; -CCR is what turns that reading into a number.
-  float rdT3 = -1.f;       // -RDT  stage-B PIXEL-SIDE seed-family dedup: -1 follow -RD
-                           //       (default), 0 off, 1 on. Splitting it from -RD is what
-                           //       lets the campaign measure OT-only vs pixel-assisted.
+  float ccMode = 0.f;       // -CC   1 = run the OT-side contention
+  float ccGran = 1.f;       // -CCG  ownership-map granularity: 1 = MD rows (DEFAULT; see
+                            //       the granularity note at the implementation site),
+                            //       0 = outer-tracker HIT rows
+  float ccMinShared = 2.f;  // -CCN  kill when the number of SHARED (already-claimed) units
+                            //       REACHES this. A delivery has exactly 3 MDs, so at
+                            //       -CCG 1: 2 = "2 of 3 MDs shared == same track" (the
+                            //       maintainer rule), 1 = any shared MD, 3 = identical
+                            //       MD triple only. At -CCG 0 it counts OT hit rows (of 6).
+  float ccPreclaim = 1.f;   // -CCP  1 = already-delivered TCs pre-claim into the map
+  float ccOrder = 0.f;      // -CCK  keep-best key: 0 attach logit, 1 pLS pt, 2 t3 row
+  float ccRelPls = 1.f;     // -CCR  on revoke: 1 (default) release the delivery's pLS back
+                            //       to the carried universe, 0 keep it retired. Measures the
+                            //       "does the revoked seed come back as a bare-pLS row"
+                            //       fork. NOTE at -RPS 1 the -RPS predicate also fires on
+                            //       plsBestT3Logit >= AT3, which is recorded for every
+                            //       scored pair, so the release is expected to be a no-op
+                            //       there; -CCR is what turns that reading into a number.
+  float rdT3 = -1.f;        // -RDT  stage-B PIXEL-SIDE seed-family dedup: -1 follow -RD
+                            //       (default), 0 off, 1 on. Splitting it from -RD is what
+                            //       lets the campaign measure OT-only vs pixel-assisted.
 
   // Pre-scan for the multi-char flags -T4/-T5/-T6 and -U4/-U5/-U6 (getopt cannot
   // express them: "-T4" would parse as -T with value "4"); consume flag+value pairs
@@ -1380,8 +1380,9 @@ int main(int argc, char** argv) {
       return 1;
     }
     if (cm == kCandMap && mode == "pairdump") {
-      std::fprintf(stderr, "Error: -CF 2 (map candidates) is a delivery-path mode; pairdump enumerates the\n"
-                           "       analytic universe by construction. Use -CF 0 or -CF 1 for dumps.\n");
+      std::fprintf(stderr,
+                   "Error: -CF 2 (map candidates) is a delivery-path mode; pairdump enumerates the\n"
+                   "       analytic universe by construction. Use -CF 0 or -CF 1 for dumps.\n");
       return 1;
     }
     if (ccMode >= 0.5f && attachMode != 4) {
@@ -1399,7 +1400,11 @@ int main(int argc, char** argv) {
   const long long nTotal = reader.nEntries();
   const long long nRun = (maxEvents < 0 || maxEvents > nTotal) ? nTotal : maxEvents;
   std::printf("Input: %s (%lld entries), tracking: %s, processing %lld event(s), mode=%s\n",
-              lstPath.c_str(), nTotal, trkPath.c_str(), nRun, mode.c_str());
+              lstPath.c_str(),
+              nTotal,
+              trkPath.c_str(),
+              nRun,
+              mode.c_str());
 
   LSTEventData ev;
   TrkEventData trk;
@@ -1447,12 +1452,20 @@ int main(int argc, char** argv) {
           ++nTrue;
       totEdges += static_cast<long long>(g.edges.size());
       totTrue += nTrue;
-      std::printf("evt %lld (run %u lumi %u event %llu): edges=%zu true=%lld\n", i, ev.run, ev.lumi, ev.evt,
-                  g.edges.size(), nTrue);
+      std::printf("evt %lld (run %u lumi %u event %llu): edges=%zu true=%lld\n",
+                  i,
+                  ev.run,
+                  ev.lumi,
+                  ev.evt,
+                  g.edges.size(),
+                  nTrue);
     }
     dumpWriter.writeAndClose();
-    std::printf("dump summary: %lld events, %lld edges dumped, true fraction=%.4f, wrote %s\n", nRun, totEdges,
-                totEdges > 0 ? static_cast<double>(totTrue) / static_cast<double>(totEdges) : 0.0, outPath.c_str());
+    std::printf("dump summary: %lld events, %lld edges dumped, true fraction=%.4f, wrote %s\n",
+                nRun,
+                totEdges,
+                totEdges > 0 ? static_cast<double>(totTrue) / static_cast<double>(totEdges) : 0.0,
+                outPath.c_str());
     return 0;
   }
 
@@ -1515,8 +1528,8 @@ int main(int argc, char** argv) {
       // per chain; these counters make the per-event funnel visible in the log too.
       {
         const int nT3d = static_cast<int>(ev.t3_lsIdx0.size());
-        const bool havePixFlagsD = static_cast<int>(ev.t3_partOfPT5.size()) == nT3d &&
-                                   static_cast<int>(ev.t3_partOfPT3.size()) == nT3d;
+        const bool havePixFlagsD =
+            static_cast<int>(ev.t3_partOfPT5.size()) == nT3d && static_cast<int>(ev.t3_partOfPT3.size()) == nT3d;
         long long nP5 = 0, nP3 = 0, nStage = 0;
         for (long long c = 0; c < nChains && havePixFlagsD; ++c) {
           bool p5 = false, p3 = false;
@@ -1546,11 +1559,19 @@ int main(int argc, char** argv) {
       const double inferMs = msBetween(t0, t1);
       const double weldMs = msBetween(t1, t2);
       const double featMs = msBetween(t2, t3);
-      std::printf("evt %lld (run %u lumi %u event %llu): chains=%lld true=%lld (%.3f)"
-                  " | infer=%.3f weld=%.3f feat+label=%.3f ms\n",
-                  i, ev.run, ev.lumi, ev.evt, nChains, nTrue,
-                  nChains > 0 ? static_cast<double>(nTrue) / static_cast<double>(nChains) : 0.0, inferMs, weldMs,
-                  featMs);
+      std::printf(
+          "evt %lld (run %u lumi %u event %llu): chains=%lld true=%lld (%.3f)"
+          " | infer=%.3f weld=%.3f feat+label=%.3f ms\n",
+          i,
+          ev.run,
+          ev.lumi,
+          ev.evt,
+          nChains,
+          nTrue,
+          nChains > 0 ? static_cast<double>(nTrue) / static_cast<double>(nChains) : 0.0,
+          inferMs,
+          weldMs,
+          featMs);
       totChains += nChains;
       totTrue += nTrue;
       totInferMs += inferMs;
@@ -1561,19 +1582,29 @@ int main(int argc, char** argv) {
 
     const double nEvD = nRun > 0 ? static_cast<double>(nRun) : 1.0;
     std::printf("chaindump summary: %lld events (thetaEdge=%.3f lambdaLen=%.3f)\n", nRun, thetaEdge, lambdaLen);
-    std::printf("  chains total=%lld mean=%.1f | label 1 total=%lld fraction=%.4f\n", totChains, totChains / nEvD,
-                totTrue, totChains > 0 ? static_cast<double>(totTrue) / static_cast<double>(totChains) : 0.0);
-    std::printf("  M17 staging census: partOfPT5=%lld (%.4f) partOfPT3=%lld (%.4f) | ctl_noatt stage-pass"
-                " (-RT5 1 -RT3 0 => !partOfPT3) = %lld (%.4f)\n",
-                totPixPT5, totChains > 0 ? static_cast<double>(totPixPT5) / static_cast<double>(totChains) : 0.0,
-                totPixPT3, totChains > 0 ? static_cast<double>(totPixPT3) / static_cast<double>(totChains) : 0.0,
-                totStagePass,
-                totChains > 0 ? static_cast<double>(totStagePass) / static_cast<double>(totChains) : 0.0);
+    std::printf("  chains total=%lld mean=%.1f | label 1 total=%lld fraction=%.4f\n",
+                totChains,
+                totChains / nEvD,
+                totTrue,
+                totChains > 0 ? static_cast<double>(totTrue) / static_cast<double>(totChains) : 0.0);
+    std::printf(
+        "  M17 staging census: partOfPT5=%lld (%.4f) partOfPT3=%lld (%.4f) | ctl_noatt stage-pass"
+        " (-RT5 1 -RT3 0 => !partOfPT3) = %lld (%.4f)\n",
+        totPixPT5,
+        totChains > 0 ? static_cast<double>(totPixPT5) / static_cast<double>(totChains) : 0.0,
+        totPixPT3,
+        totChains > 0 ? static_cast<double>(totPixPT3) / static_cast<double>(totChains) : 0.0,
+        totStagePass,
+        totChains > 0 ? static_cast<double>(totStagePass) / static_cast<double>(totChains) : 0.0);
     std::printf("  per-nLayers label balance (all / true / trueFrac):\n");
     for (int b = 0; b <= kMaxLayBin; ++b) {
       if (layAll[b] == 0)
         continue;
-      std::printf("    nLayers%s%2d : %10lld %10lld  %.4f\n", b == kMaxLayBin ? ">=" : " =", b, layAll[b], layTrue[b],
+      std::printf("    nLayers%s%2d : %10lld %10lld  %.4f\n",
+                  b == kMaxLayBin ? ">=" : " =",
+                  b,
+                  layAll[b],
+                  layTrue[b],
                   static_cast<double>(layTrue[b]) / static_cast<double>(layAll[b]));
     }
     // M12: old (>=2/3-MD intersection) vs new (harness coverage > 0.75) label flip matrix.
@@ -1581,14 +1612,21 @@ int main(int argc, char** argv) {
     std::printf("  LABEL FLIP MATRIX (rows = old >=2/3-MD rule, cols = new harness > 0.75 rule):\n");
     std::printf("               new=0        new=1\n");
     for (int o = 0; o < 2; ++o)
-      std::printf("    old=%d  %11lld  %11lld   (%.4f / %.4f of all)\n", o, flip[o][0], flip[o][1],
-                  flipTot > 0 ? flip[o][0] / flipTot : 0.0, flipTot > 0 ? flip[o][1] / flipTot : 0.0);
+      std::printf("    old=%d  %11lld  %11lld   (%.4f / %.4f of all)\n",
+                  o,
+                  flip[o][0],
+                  flip[o][1],
+                  flipTot > 0 ? flip[o][0] / flipTot : 0.0,
+                  flipTot > 0 ? flip[o][1] / flipTot : 0.0);
     std::printf("    demoted (old 1 -> new 0) = %lld (%.4f of old-true); promoted (old 0 -> new 1) = %lld\n",
-                flip[1][0], (flip[1][0] + flip[1][1]) > 0 ? static_cast<double>(flip[1][0]) /
-                                                                static_cast<double>(flip[1][0] + flip[1][1])
-                                                          : 0.0,
+                flip[1][0],
+                (flip[1][0] + flip[1][1]) > 0
+                    ? static_cast<double>(flip[1][0]) / static_cast<double>(flip[1][0] + flip[1][1])
+                    : 0.0,
                 flip[0][1]);
-    std::printf("  time mean/evt infer=%.3f weld=%.3f feat+label=%.3f ms\n", totInferMs / nEvD, totWeldMs / nEvD,
+    std::printf("  time mean/evt infer=%.3f weld=%.3f feat+label=%.3f ms\n",
+                totInferMs / nEvD,
+                totWeldMs / nEvD,
                 totFeatMs / nEvD);
     std::printf("  wrote %s\n", outPath.c_str());
     return 0;
@@ -1642,11 +1680,23 @@ int main(int argc, char** argv) {
           const int mb = study.mdOffsets[k + v], me = study.mdOffsets[k + v + 1];
           chainFitChi2Combined(ev, &study.mdItems[mb], me - mb, &xy[v], &rz[v]);
         }
-        std::fprintf(tf, "%llu %d %d %d %d %d %.8g %.8g %.8g %.8g %.8g %.8g %.4f %.4f %.4f\n",
-                     static_cast<unsigned long long>(ev.evt), c,
-                     chains.offsets[c + 1] - chains.offsets[c], study.nLayers[k], study.nLayers[k + 1],
-                     study.nLayers[k + 2], xy[0], rz[0], xy[1], rz[1], xy[2], rz[2], sl.matchFrac[k],
-                     sl.matchFrac[k + 1], sl.matchFrac[k + 2]);
+        std::fprintf(tf,
+                     "%llu %d %d %d %d %d %.8g %.8g %.8g %.8g %.8g %.8g %.4f %.4f %.4f\n",
+                     static_cast<unsigned long long>(ev.evt),
+                     c,
+                     chains.offsets[c + 1] - chains.offsets[c],
+                     study.nLayers[k],
+                     study.nLayers[k + 1],
+                     study.nLayers[k + 2],
+                     xy[0],
+                     rz[0],
+                     xy[1],
+                     rz[1],
+                     xy[2],
+                     rz[2],
+                     sl.matchFrac[k],
+                     sl.matchFrac[k + 1],
+                     sl.matchFrac[k + 2]);
         ++totCand;
       }
       totChains += chains.offsets.empty() ? 0 : static_cast<long long>(chains.offsets.size()) - 1;
@@ -1654,7 +1704,10 @@ int main(int argc, char** argv) {
         std::printf("trimdump evt %lld: chains=%lld candidates(>=3 nodes)=%lld\n", i, totChains, totCand);
     }
     std::fclose(tf);
-    std::printf("trimdump summary: %lld events, %lld chains, %lld trim candidates -> %s\n", nRun, totChains, totCand,
+    std::printf("trimdump summary: %lld events, %lld chains, %lld trim candidates -> %s\n",
+                nRun,
+                totChains,
+                totCand,
                 outPath.c_str());
     return 0;
   }
@@ -1699,10 +1752,24 @@ int main(int argc, char** argv) {
         " | prefDTanL=%.3f prefDPhi=%.3f attachHead=%s\n"
         "  M16 targets: chains=%s bareT3=%s (-PDT %d) | fake write stride chain=%lld T3=%lld"
         " | kAttachFeat=%d\n",
-        thetaEdge, lambdaLen, thetaChain4, thetaChain5, thetaChain6, maxClaimedFrac,
-        dropPixelConsumed ? "on" : "off", chainGateMode, kWeldSweeps, apre.prefDTanL, apre.prefDPhi,
-        attachHeadAvailable() ? "trained" : "sentinel", doChainTargets ? "on" : "off",
-        doT3Targets ? "on" : "off", pdMode, strideChain, strideT3, kAttachFeat);
+        thetaEdge,
+        lambdaLen,
+        thetaChain4,
+        thetaChain5,
+        thetaChain6,
+        maxClaimedFrac,
+        dropPixelConsumed ? "on" : "off",
+        chainGateMode,
+        kWeldSweeps,
+        apre.prefDTanL,
+        apre.prefDPhi,
+        attachHeadAvailable() ? "trained" : "sentinel",
+        doChainTargets ? "on" : "off",
+        doT3Targets ? "on" : "off",
+        pdMode,
+        strideChain,
+        strideT3,
+        kAttachFeat);
     PairDumpWriter pairWriter(outPath);
 
     // Per-target-kind accounting (index 0 = chain targets, 1 = bare T3 targets).
@@ -1828,10 +1895,10 @@ int main(int argc, char** argv) {
               }
               continue;
             }
-            const bool useGate = chainGateMode == 1 || (chainGateMode == 2 && chains.nLayers[c] <= 4) ||
-                                 (chainGateMode == 3 && chainDca(static_cast<int>(c)) < dcaSplit) ||
-                                 (chainGateMode == 4 &&
-                                  (chains.nLayers[c] <= 4 || chainDca(static_cast<int>(c)) < dcaSplit));
+            const bool useGate =
+                chainGateMode == 1 || (chainGateMode == 2 && chains.nLayers[c] <= 4) ||
+                (chainGateMode == 3 && chainDca(static_cast<int>(c)) < dcaSplit) ||
+                (chainGateMode == 4 && (chains.nLayers[c] <= 4 || chainDca(static_cast<int>(c)) < dcaSplit));
             if (useGate)
               chains.score[c] = gateLogit[c];
             else if (chainGateMode >= 3)
@@ -1885,8 +1952,8 @@ int main(int argc, char** argv) {
         }
         ap.orderKey = &orderKeyVec;
       }
-      ap.braidFrac = braidFrac;                 // A8 -W
-      ap.hitLevelClaim = hitLevelClaim != 0;    // A8 -H
+      ap.braidFrac = braidFrac;               // A8 -W
+      ap.hitLevelClaim = hitLevelClaim != 0;  // A8 -H
       // B1 -PU: pre-claim the kept baseline pixel TCs' outer-tracker hits.
       std::vector<std::vector<int>> pixOwnerHits;
       if (preClaimMode > 0) {
@@ -2037,7 +2104,8 @@ int main(int argc, char** argv) {
           std::fprintf(stderr,
                        "Error: pairdump target ordinal %d outside the local target list"
                        " (nTgt=%d). Enumerator and target list disagree.\n",
-                       pr.targetOrd, nTgt);
+                       pr.targetOrd,
+                       nTgt);
           return 1;
         }
         ++pairBegin[pr.targetOrd + 1];
@@ -2141,8 +2209,7 @@ int main(int argc, char** argv) {
         const auto spanB = pairs.begin() + pairBegin[ord];
         const auto spanE = pairs.begin() + pairBegin[ord + 1];
         for (int p : cand) {
-          const auto it =
-              std::lower_bound(spanB, spanE, p, [](const AttachPair& a, int v) { return a.plsRow < v; });
+          const auto it = std::lower_bound(spanB, spanE, p, [](const AttachPair& a, int v) { return a.plsRow < v; });
           if (it != spanE && it->plsRow == p) {
             survived = true;
             break;
@@ -2175,12 +2242,29 @@ int main(int argc, char** argv) {
           " | CHAIN tgt=%lld pairs=%lld true=%lld (%.4f) proxy=%lld/%lld (%.3f)"
           " | T3 tgt=%lld pairs=%lld true=%lld (%.4f) proxy=%lld/%lld (%.3f)"
           " | enum=%.1f ms label=%.1f ms\n",
-          i, ev.run, ev.lumi, ev.evt, nAcc, nPls, nT3, evBareT3, evTargets[0], evPairs[0], evTrue[0],
-          evPairs[0] > 0 ? static_cast<double>(evTrue[0]) / static_cast<double>(evPairs[0]) : 0.0, evNum[0],
-          evDen[0], evDen[0] > 0 ? static_cast<double>(evNum[0]) / static_cast<double>(evDen[0]) : 0.0,
-          evTargets[1], evPairs[1], evTrue[1],
-          evPairs[1] > 0 ? static_cast<double>(evTrue[1]) / static_cast<double>(evPairs[1]) : 0.0, evNum[1],
-          evDen[1], evDen[1] > 0 ? static_cast<double>(evNum[1]) / static_cast<double>(evDen[1]) : 0.0, enumMs,
+          i,
+          ev.run,
+          ev.lumi,
+          ev.evt,
+          nAcc,
+          nPls,
+          nT3,
+          evBareT3,
+          evTargets[0],
+          evPairs[0],
+          evTrue[0],
+          evPairs[0] > 0 ? static_cast<double>(evTrue[0]) / static_cast<double>(evPairs[0]) : 0.0,
+          evNum[0],
+          evDen[0],
+          evDen[0] > 0 ? static_cast<double>(evNum[0]) / static_cast<double>(evDen[0]) : 0.0,
+          evTargets[1],
+          evPairs[1],
+          evTrue[1],
+          evPairs[1] > 0 ? static_cast<double>(evTrue[1]) / static_cast<double>(evPairs[1]) : 0.0,
+          evNum[1],
+          evDen[1],
+          evDen[1] > 0 ? static_cast<double>(evNum[1]) / static_cast<double>(evDen[1]) : 0.0,
+          enumMs,
           labelMs);
 
       for (int tt = 0; tt < 2; ++tt) {
@@ -2199,16 +2283,25 @@ int main(int argc, char** argv) {
     const double nEvD = nRun > 0 ? static_cast<double>(nRun) : 1.0;
     const char* const kKindName[2] = {"CHAIN (ttype 0, pT5-class)", "BARE T3 (ttype 1, pT3-class)"};
     if (candModeI == kCandBinned)
-      std::printf("pairdump candfind: -CF 1 binned prefilter | targets=%lld examined=%lld (%.4gx of"
-                  " full scan %lld) emitted=%lld | -CFA audit: analytic=%lld MISSING=%lld %s\n",
-                  pdCandStats.nTargets, pdCandStats.nExamined,
-                  pdCandStats.nFullScan > 0
-                      ? static_cast<double>(pdCandStats.nExamined) / static_cast<double>(pdCandStats.nFullScan)
-                      : 0.0,
-                  pdCandStats.nFullScan, pdCandStats.nEmitted, pdCandStats.nAnalytic, pdCandStats.nMissing,
-                  (candAudit >= 0.5f) ? (pdCandStats.nMissing == 0 ? "PASS" : "*** FAIL ***") : "(not run)");
-    std::printf("pairdump summary: %lld events (prefDTanL=%.3f prefDPhi=%.3f, kAttachFeat=%d, -PDT %d)\n", nRun,
-                apre.prefDTanL, apre.prefDPhi, kAttachFeat, pdMode);
+      std::printf(
+          "pairdump candfind: -CF 1 binned prefilter | targets=%lld examined=%lld (%.4gx of"
+          " full scan %lld) emitted=%lld | -CFA audit: analytic=%lld MISSING=%lld %s\n",
+          pdCandStats.nTargets,
+          pdCandStats.nExamined,
+          pdCandStats.nFullScan > 0
+              ? static_cast<double>(pdCandStats.nExamined) / static_cast<double>(pdCandStats.nFullScan)
+              : 0.0,
+          pdCandStats.nFullScan,
+          pdCandStats.nEmitted,
+          pdCandStats.nAnalytic,
+          pdCandStats.nMissing,
+          (candAudit >= 0.5f) ? (pdCandStats.nMissing == 0 ? "PASS" : "*** FAIL ***") : "(not run)");
+    std::printf("pairdump summary: %lld events (prefDTanL=%.3f prefDPhi=%.3f, kAttachFeat=%d, -PDT %d)\n",
+                nRun,
+                apre.prefDTanL,
+                apre.prefDPhi,
+                kAttachFeat,
+                pdMode);
     for (int tt = 0; tt < 2; ++tt) {
       if (totTargets[tt] == 0 && totPairsT[tt] == 0)
         continue;
@@ -2216,21 +2309,31 @@ int main(int argc, char** argv) {
           totProxyDenT[tt] > 0 ? static_cast<double>(totProxyNumT[tt]) / static_cast<double>(totProxyDenT[tt]) : 0.0;
       std::printf("  --- %s ---\n", kKindName[tt]);
       std::printf("    targets total=%lld mean=%.1f | pairs total=%lld mean=%.1f | true=%lld fraction=%.6f\n",
-                  totTargets[tt], totTargets[tt] / nEvD, totPairsT[tt], totPairsT[tt] / nEvD, totTrueT[tt],
+                  totTargets[tt],
+                  totTargets[tt] / nEvD,
+                  totPairsT[tt],
+                  totPairsT[tt] / nEvD,
+                  totTrueT[tt],
                   totPairsT[tt] > 0 ? static_cast<double>(totTrueT[tt]) / static_cast<double>(totPairsT[tt]) : 0.0);
       std::printf("    pairs/target=%.1f | written=%lld (fake stride %lld)\n",
                   totTargets[tt] > 0 ? static_cast<double>(totPairsT[tt]) / static_cast<double>(totTargets[tt]) : 0.0,
-                  totWrittenT[tt], (tt == 0) ? strideChain : strideT3);
+                  totWrittenT[tt],
+                  (tt == 0) ? strideChain : strideT3);
       std::printf("    PREFILTER TRUE-PAIR EFFICIENCY (targets w/ matched pLS anywhere): %lld / %lld = %.4f\n",
-                  totProxyNumT[tt], totProxyDenT[tt], proxyEff);
-      std::printf("    failed true-pair window attribution (per candidate pLS): dTanL-only=%lld dPhi-only=%lld"
-                  " both=%lld\n",
-                  totBindDTanLT[tt], totBindDPhiT[tt], totBindBothT[tt]);
+                  totProxyNumT[tt],
+                  totProxyDenT[tt],
+                  proxyEff);
+      std::printf(
+          "    failed true-pair window attribution (per candidate pLS): dTanL-only=%lld dPhi-only=%lld"
+          " both=%lld\n",
+          totBindDTanLT[tt],
+          totBindDPhiT[tt],
+          totBindBothT[tt]);
       if (proxyEff < 0.97 && totProxyDenT[tt] > 0) {
-        const char* binding =
-            (totBindDTanLT[tt] >= totBindDPhiT[tt] && totBindDTanLT[tt] >= totBindBothT[tt]) ? "prefDTanL"
-            : (totBindDPhiT[tt] >= totBindBothT[tt])                                         ? "prefDPhi"
-                                                                                             : "both windows";
+        const char* binding = (totBindDTanLT[tt] >= totBindDPhiT[tt] && totBindDTanLT[tt] >= totBindBothT[tt])
+                                  ? "prefDTanL"
+                              : (totBindDPhiT[tt] >= totBindBothT[tt]) ? "prefDPhi"
+                                                                       : "both windows";
         std::printf("    NOTE: efficiency < 0.97 -- binding window by failure count: %s\n", binding);
       }
       // Displaced strata, the plan-11 judging requirement: the true-pair POPULATION the
@@ -2243,11 +2346,18 @@ int main(int argc, char** argv) {
         const double eff = proxyDenVxy[tt][b] > 0
                                ? static_cast<double>(proxyNumVxy[tt][b]) / static_cast<double>(proxyDenVxy[tt][b])
                                : 0.0;
-        std::printf("      %-9s %12lld %8.4f | %10lld %10lld %8.4f\n", kVxyName[b], truePairVxy[tt][b], frac,
-                    proxyNumVxy[tt][b], proxyDenVxy[tt][b], eff);
+        std::printf("      %-9s %12lld %8.4f | %10lld %10lld %8.4f\n",
+                    kVxyName[b],
+                    truePairVxy[tt][b],
+                    frac,
+                    proxyNumVxy[tt][b],
+                    proxyDenVxy[tt][b],
+                    eff);
       }
     }
-    std::printf("  enum time total=%.1f ms mean=%.1f ms | label+write mean=%.1f ms\n", totEnumMs, totEnumMs / nEvD,
+    std::printf("  enum time total=%.1f ms mean=%.1f ms | label+write mean=%.1f ms\n",
+                totEnumMs,
+                totEnumMs / nEvD,
                 totLabelMs / nEvD);
     std::printf("  wrote %s\n", outPath.c_str());
     return 0;
@@ -2303,8 +2413,26 @@ int main(int argc, char** argv) {
           " nodes[2/3/4/5+]=%lld/%lld/%lld/%lld"
           " nLayers[<=4/5/6/7/8/9+]=%lld/%lld/%lld/%lld/%lld/%lld"
           " | infer=%.3f ms weld=%.3f ms\n",
-          i, ev.run, ev.lumi, ev.evt, nT3, nEdges, nPass, nChains, nodeHist[0], nodeHist[1], nodeHist[2], nodeHist[3],
-          layHist[0], layHist[1], layHist[2], layHist[3], layHist[4], layHist[5], inferMs, weldMs);
+          i,
+          ev.run,
+          ev.lumi,
+          ev.evt,
+          nT3,
+          nEdges,
+          nPass,
+          nChains,
+          nodeHist[0],
+          nodeHist[1],
+          nodeHist[2],
+          nodeHist[3],
+          layHist[0],
+          layHist[1],
+          layHist[2],
+          layHist[3],
+          layHist[4],
+          layHist[5],
+          inferMs,
+          weldMs);
 
       totT3 += nT3;
       totEdges += nEdges;
@@ -2321,16 +2449,30 @@ int main(int argc, char** argv) {
     const double nEvD = nRun > 0 ? static_cast<double>(nRun) : 1.0;
     std::printf("chains summary: %lld events (thetaEdge=%.3f lambdaLen=%.3f)\n", nRun, thetaEdge, lambdaLen);
     std::printf("  nT3    total=%lld mean=%.1f\n", totT3, totT3 / nEvD);
-    std::printf("  edges  total=%lld mean=%.1f | passing thetaEdge total=%lld mean=%.1f (%.2f%%)\n", totEdges,
-                totEdges / nEvD, totPass, totPass / nEvD,
+    std::printf("  edges  total=%lld mean=%.1f | passing thetaEdge total=%lld mean=%.1f (%.2f%%)\n",
+                totEdges,
+                totEdges / nEvD,
+                totPass,
+                totPass / nEvD,
                 totEdges > 0 ? 100.0 * static_cast<double>(totPass) / static_cast<double>(totEdges) : 0.0);
     std::printf("  chains total=%lld mean=%.1f\n", totChains, totChains / nEvD);
-    std::printf("  chain nodes   [2/3/4/5+]        = %lld/%lld/%lld/%lld\n", nodeHistTot[0], nodeHistTot[1],
-                nodeHistTot[2], nodeHistTot[3]);
-    std::printf("  chain nLayers [<=4/5/6/7/8/9+]  = %lld/%lld/%lld/%lld/%lld/%lld\n", layHistTot[0], layHistTot[1],
-                layHistTot[2], layHistTot[3], layHistTot[4], layHistTot[5]);
-    std::printf("  time infer total=%.3f ms mean=%.3f ms | weld total=%.3f ms mean=%.3f ms\n", totInferMs,
-                totInferMs / nEvD, totWeldMs, totWeldMs / nEvD);
+    std::printf("  chain nodes   [2/3/4/5+]        = %lld/%lld/%lld/%lld\n",
+                nodeHistTot[0],
+                nodeHistTot[1],
+                nodeHistTot[2],
+                nodeHistTot[3]);
+    std::printf("  chain nLayers [<=4/5/6/7/8/9+]  = %lld/%lld/%lld/%lld/%lld/%lld\n",
+                layHistTot[0],
+                layHistTot[1],
+                layHistTot[2],
+                layHistTot[3],
+                layHistTot[4],
+                layHistTot[5]);
+    std::printf("  time infer total=%.3f ms mean=%.3f ms | weld total=%.3f ms mean=%.3f ms\n",
+                totInferMs,
+                totInferMs / nEvD,
+                totWeldMs,
+                totWeldMs / nEvD);
     return 0;
   }
 
@@ -2341,8 +2483,15 @@ int main(int argc, char** argv) {
     std::printf(
         "hybrid mode: thetaEdge=%.3f lambdaLen=%.3f thetaChain4/5/6=%.3f/%.3f/%.3f"
         " maxClaimedFrac=%.3f dropPixelConsumed=%s chainGateMode=%d kWeldSweeps=%d\n",
-        thetaEdge, lambdaLen, thetaChain4, thetaChain5, thetaChain6, maxClaimedFrac,
-        dropPixelConsumed ? "on" : "off", chainGateMode, kWeldSweeps);
+        thetaEdge,
+        lambdaLen,
+        thetaChain4,
+        thetaChain5,
+        thetaChain6,
+        maxClaimedFrac,
+        dropPixelConsumed ? "on" : "off",
+        chainGateMode,
+        kWeldSweeps);
     if (attachMode == 1) {
       AttachParams apDefaults;
       std::printf(
@@ -2351,7 +2500,10 @@ int main(int argc, char** argv) {
           " chains bypass partOfPT5, still respect partOfPT3, become type-7 TCs with"
           " pt = pLS ptIn + the pLS pixel hits prepended, and suppress their pLS's"
           " baseline pT5/pLS rows; pT3 rows untouched)\n",
-          thetaAttach, attachHeadAvailable() ? "trained" : "sentinel", apDefaults.prefDTanL, apDefaults.prefDPhi);
+          thetaAttach,
+          attachHeadAvailable() ? "trained" : "sentinel",
+          apDefaults.prefDTanL,
+          apDefaults.prefDPhi);
     } else if (attachMode == 2) {
       AttachParams apDefaults;
       std::printf(
@@ -2361,12 +2513,20 @@ int main(int argc, char** argv) {
           " post-pass-1 MD map only, becoming type-7 TCs; attached pass-1 chains"
           " upgrade in place to type 7; seed-family suppression drops kept-baseline"
           " pT5/pT3/pLS rows sharing >= 2 pixel hits with any attached pLS)\n",
-          thetaAttach, attachHeadAvailable() ? "trained" : "sentinel", apDefaults.prefDTanL, apDefaults.prefDPhi);
+          thetaAttach,
+          attachHeadAvailable() ? "trained" : "sentinel",
+          apDefaults.prefDTanL,
+          apDefaults.prefDPhi);
       std::printf(
           "attach M7c: dcaMax=%.3f cm (IP gate on attach eligibility + K7-lite),"
           " suppression guard dR<%.3f ptRatio<%.1f, K7-lite=%s (dR<%.3f ptRatio<%.1f,"
           " bare IP-compatible chains vs kept type-7 rows)\n",
-          dcaAttachMax, suppDR, kKinPtRatioMax, k7Lite ? "on" : "off", k7DR, kKinPtRatioMax);
+          dcaAttachMax,
+          suppDR,
+          kKinPtRatioMax,
+          k7Lite ? "on" : "off",
+          k7DR,
+          kKinPtRatioMax);
     } else if (attachMode == 3) {
       AttachParams apDefaults;
       std::printf(
@@ -2377,8 +2537,12 @@ int main(int argc, char** argv) {
           " thetaAttach (pre-contention) are demoted by demotePenalty before K9;"
           " large-DCA chains exempt; no type upgrade, no suppression, no hit-list"
           " change -- TCs stay bare type 4/9)\n",
-          thetaAttach, attachHeadAvailable() ? "trained" : "sentinel", apDefaults.prefDTanL, apDefaults.prefDPhi,
-          dcaSplit, static_cast<double>(demotePenalty));
+          thetaAttach,
+          attachHeadAvailable() ? "trained" : "sentinel",
+          apDefaults.prefDTanL,
+          apDefaults.prefDPhi,
+          dcaSplit,
+          static_cast<double>(demotePenalty));
     } else if (attachMode == 4) {
       AttachParams apDefaults;
       std::printf(
@@ -2392,69 +2556,137 @@ int main(int argc, char** argv) {
           "  attached chains are K9 CLAIM WINNERS upgraded IN PLACE to type-7 TCs (pixel hits"
           " + OT hits, pt = pLS ptIn): mutual hit contention is inherited from the claim, so"
           " a chain that lost the claim can never attach and never delivers\n",
-          thetaAttach, thetaAttachT3, attachHeadAvailable() ? "trained" : "sentinel", apDefaults.prefDTanL,
-          apDefaults.prefDPhi, dcaAttach4, replT5 >= 0.5f ? 1 : 0, replT3 >= 0.5f ? 1 : 0, replPls >= 0.5f ? 1 : 0);
+          thetaAttach,
+          thetaAttachT3,
+          attachHeadAvailable() ? "trained" : "sentinel",
+          apDefaults.prefDTanL,
+          apDefaults.prefDPhi,
+          dcaAttach4,
+          replT5 >= 0.5f ? 1 : 0,
+          replT3 >= 0.5f ? 1 : 0,
+          replPls >= 0.5f ? 1 : 0);
       if (preClaimMode == 0)
-        std::printf("  NOTE: -PU 0 -- the pre-claim is OFF, so the suppression/owner-list ordering"
-                    " has no effect on K9 (the accepted set, and hence the attach universe,"
-                    " is unchanged by the suppression).\n");
+        std::printf(
+            "  NOTE: -PU 0 -- the pre-claim is OFF, so the suppression/owner-list ordering"
+            " has no effect on K9 (the accepted set, and hence the attach universe,"
+            " is unchanged by the suppression).\n");
     }
     if (chainGateMode == 6)
-      std::printf("gate (-G 6, 3-class fake/prompt/displaced, head=%s): dcaSplit=%.3f cm;"
-                  " ordering legacy for ALL (kill-only); IP T4-class killed if mX < %.4g;"
-                  " exempt T4-class killed if mD < %.4g;"
-                  " IP nL=5 killed if mP < %.4g; IP nL>=6 killed if mP < %.4g;"
-                  " exempt 5+ killed if mD < %.4g;"
-                  " OR-rescue mX >= %.4g (IP-5+) / %.4g (exempt-5+); exempt-T4 dca floor Z=%.3f cm;"
-                  " exempt-branch legacy thresholds U4/5/6=%.3f/%.3f/%.3f;"
-                  " post-claim mX floors Q4=%.4g Q5=%.4g;"
-                  " C1 cell (nNodes=2,nLayers=5) kill iff mP < %.4g AND mD < %.4g\n",
-                  chainGate3Available() ? "trained" : "sentinel", dcaSplit, m3Theta4, m3Theta4D, m3Theta5, m3Theta6,
-                  m3ThetaD, m3ThetaRI, m3ThetaR, t4ExemptDcaMin, thetaExempt4, thetaExempt5, thetaExempt6, q3Floor4,
-                  q3Floor5, c25Theta, c25ThetaD);
+      std::printf(
+          "gate (-G 6, 3-class fake/prompt/displaced, head=%s): dcaSplit=%.3f cm;"
+          " ordering legacy for ALL (kill-only); IP T4-class killed if mX < %.4g;"
+          " exempt T4-class killed if mD < %.4g;"
+          " IP nL=5 killed if mP < %.4g; IP nL>=6 killed if mP < %.4g;"
+          " exempt 5+ killed if mD < %.4g;"
+          " OR-rescue mX >= %.4g (IP-5+) / %.4g (exempt-5+); exempt-T4 dca floor Z=%.3f cm;"
+          " exempt-branch legacy thresholds U4/5/6=%.3f/%.3f/%.3f;"
+          " post-claim mX floors Q4=%.4g Q5=%.4g;"
+          " C1 cell (nNodes=2,nLayers=5) kill iff mP < %.4g AND mD < %.4g\n",
+          chainGate3Available() ? "trained" : "sentinel",
+          dcaSplit,
+          m3Theta4,
+          m3Theta4D,
+          m3Theta5,
+          m3Theta6,
+          m3ThetaD,
+          m3ThetaRI,
+          m3ThetaR,
+          t4ExemptDcaMin,
+          thetaExempt4,
+          thetaExempt5,
+          thetaExempt6,
+          q3Floor4,
+          q3Floor5,
+          c25Theta,
+          c25ThetaD);
     else if (chainGateMode == 3)
-      std::printf("gate (-G 3, M9 DCA split): dcaSplit=%.3f cm (gate logit below, legacy score at/above);"
-                  " exempt-branch thresholds U4/5/6=%.3f/%.3f/%.3f (legacy scale)\n",
-                  dcaSplit, thetaExempt4, thetaExempt5, thetaExempt6);
+      std::printf(
+          "gate (-G 3, M9 DCA split): dcaSplit=%.3f cm (gate logit below, legacy score at/above);"
+          " exempt-branch thresholds U4/5/6=%.3f/%.3f/%.3f (legacy scale)\n",
+          dcaSplit,
+          thetaExempt4,
+          thetaExempt5,
+          thetaExempt6);
     else if (chainGateMode == 4)
-      std::printf("gate (-G 4, M9 length+DCA split): dcaSplit=%.3f cm (T4-class always gated;"
-                  " 5+ layers gate logit below dcaSplit, legacy score at/above);"
-                  " exempt-branch thresholds U5/6=%.3f/%.3f (legacy scale)\n",
-                  dcaSplit, thetaExempt5, thetaExempt6);
+      std::printf(
+          "gate (-G 4, M9 length+DCA split): dcaSplit=%.3f cm (T4-class always gated;"
+          " 5+ layers gate logit below dcaSplit, legacy score at/above);"
+          " exempt-branch thresholds U5/6=%.3f/%.3f (legacy scale)\n",
+          dcaSplit,
+          thetaExempt5,
+          thetaExempt6);
     else if (chainGateMode == 5)
-      std::printf("gate (-G 5, M9 order-preserving DCA split): dcaSplit=%.3f cm; ordering legacy for ALL;"
-                  " IP chains killed if gate logit < T4/5/6=%.3f/%.3f/%.3f;"
-                  " exempt thresholds U4/5/6=%.3f/%.3f/%.3f (legacy scale);"
-                  " exempt-T4 dca floor Z=%.3f cm;"
-                  " exempt gate-scale kill V4/5/6=%.3g/%.3g/%.3g\n",
-                  dcaSplit, thetaChain4, thetaChain5, thetaChain6, thetaExempt4, thetaExempt5, thetaExempt6,
-                  t4ExemptDcaMin, thetaVeto4, thetaVeto5, thetaVeto6);
-    if (zdRI != 0.f || zdR != 0.f || zdR5 != 0.f || zdR6 != 0.f || zdM4 != 0.f || zdM4D != 0.f ||
-        zdCP != 0.f || zdCD != 0.f || zdAlpha != 0.f)
-      std::printf("FANOUT4 transition band |eta| in [%.2f, %.2f): dRI=%+.3f dR=%+.3f (dR5=%+.3f"
-                  " dR6=%+.3f) dM4=%+.3f dM4D=%+.3f dCP=%+.3f dCD=%+.3f dAlpha=%+.3f (additive to"
-                  " -MRI/-MR/-M4/-M4D/-C25/-C25D/-B; chain eta = innermost T3 eta = the K10 TC eta;"
-                  " inLay1-only=%s)\n",
-                  zEta1, zEta2, zdRI, zdR, zdR5, zdR6, zdM4, zdM4D, zdCP, zdCD, zdAlpha,
-                  zInLay1 >= 0.5f ? "yes" : "no");
+      std::printf(
+          "gate (-G 5, M9 order-preserving DCA split): dcaSplit=%.3f cm; ordering legacy for ALL;"
+          " IP chains killed if gate logit < T4/5/6=%.3f/%.3f/%.3f;"
+          " exempt thresholds U4/5/6=%.3f/%.3f/%.3f (legacy scale);"
+          " exempt-T4 dca floor Z=%.3f cm;"
+          " exempt gate-scale kill V4/5/6=%.3g/%.3g/%.3g\n",
+          dcaSplit,
+          thetaChain4,
+          thetaChain5,
+          thetaChain6,
+          thetaExempt4,
+          thetaExempt5,
+          thetaExempt6,
+          t4ExemptDcaMin,
+          thetaVeto4,
+          thetaVeto5,
+          thetaVeto6);
+    if (zdRI != 0.f || zdR != 0.f || zdR5 != 0.f || zdR6 != 0.f || zdM4 != 0.f || zdM4D != 0.f || zdCP != 0.f ||
+        zdCD != 0.f || zdAlpha != 0.f)
+      std::printf(
+          "FANOUT4 transition band |eta| in [%.2f, %.2f): dRI=%+.3f dR=%+.3f (dR5=%+.3f"
+          " dR6=%+.3f) dM4=%+.3f dM4D=%+.3f dCP=%+.3f dCD=%+.3f dAlpha=%+.3f (additive to"
+          " -MRI/-MR/-M4/-M4D/-C25/-C25D/-B; chain eta = innermost T3 eta = the K10 TC eta;"
+          " inLay1-only=%s)\n",
+          zEta1,
+          zEta2,
+          zdRI,
+          zdR,
+          zdR5,
+          zdR6,
+          zdM4,
+          zdM4D,
+          zdCP,
+          zdCD,
+          zdAlpha,
+          zInLay1 >= 0.5f ? "yes" : "no");
     if (fakeOrderAlpha > 0.f || braidFrac > 0.f || hitLevelClaim)
-      std::printf("K9 arbitration (A8): claim=%s fakeOrderAlpha=%.2f (order key = score - alpha*max(0,-gateLogit);"
-                  " thresholds still on score) braidFrac=%.2f (kill candidate covering >= braidFrac of an"
-                  " already-accepted chain's claim items)\n",
-                  hitLevelClaim ? "HIT" : "MD", fakeOrderAlpha, braidFrac);
+      std::printf(
+          "K9 arbitration (A8): claim=%s fakeOrderAlpha=%.2f (order key = score - alpha*max(0,-gateLogit);"
+          " thresholds still on score) braidFrac=%.2f (kill candidate covering >= braidFrac of an"
+          " already-accepted chain's claim items)\n",
+          hitLevelClaim ? "HIT" : "MD",
+          fakeOrderAlpha,
+          braidFrac);
     if (claimCountMD >= 0.f || orderKeyMode != 0.f)
       std::printf("K9 arbitration (B4): claimCount=%d %s (units=%s, -F %.2f still %s) orderKeyMode=%d\n",
                   static_cast<int>(std::floor(claimCountMD)) * (hitLevelClaim ? 2 : 1),
-                  claimCountMD >= 0.f ? "ON" : "off", hitLevelClaim ? "HIT" : "MD", maxClaimedFrac,
-                  claimCountExcl >= 0.5f ? "DISABLED" : "OR'd", static_cast<int>(std::lround(orderKeyMode)));
+                  claimCountMD >= 0.f ? "ON" : "off",
+                  hitLevelClaim ? "HIT" : "MD",
+                  maxClaimedFrac,
+                  claimCountExcl >= 0.5f ? "DISABLED" : "OR'd",
+                  static_cast<int>(std::lround(orderKeyMode)));
     if (orderKeySrc != 0.f || orderKeyHinge != 0.f) {
-      static const char* kBkName[12] = {"2class-gate-logit",  "3class-mX-hinge",  "3class-pFake",
-                                        "3class-mX-linear",   "3class-mX-only",   "3class-mX-hinge/nL",
-                                        "nLayers-major",      "matchFrac-hinge",  "matchFrac-only",
-                                        "matchFrac-logit-hinge", "3classB-mX-hinge", "mX-band-major"};
+      static const char* kBkName[12] = {"2class-gate-logit",
+                                        "3class-mX-hinge",
+                                        "3class-pFake",
+                                        "3class-mX-linear",
+                                        "3class-mX-only",
+                                        "3class-mX-hinge/nL",
+                                        "nLayers-major",
+                                        "matchFrac-hinge",
+                                        "matchFrac-only",
+                                        "matchFrac-logit-hinge",
+                                        "3classB-mX-hinge",
+                                        "mX-band-major"};
       const int bk = static_cast<int>(std::lround(orderKeySrc));
-      std::printf("K9 order key (OKR): -BK %d (%s) -BT %.3f alpha=%.2f\n", bk,
-                  (bk >= 0 && bk <= 11) ? kBkName[bk] : "?", orderKeyHinge, fakeOrderAlpha);
+      std::printf("K9 order key (OKR): -BK %d (%s) -BT %.3f alpha=%.2f\n",
+                  bk,
+                  (bk >= 0 && bk <= 11) ? kBkName[bk] : "?",
+                  orderKeyHinge,
+                  fakeOrderAlpha);
     }
     OutputWriter writer(outPath, label);
 
@@ -2494,42 +2726,42 @@ int main(int argc, char** argv) {
     long long totChainTCs = 0, totT5c = 0, totT4c = 0;
     long long totAttached = 0, totPixSuppressed = 0, totPairsPref = 0, totPairsScored = 0;
     long long totPass2Cand = 0, totPass2Acc = 0, totUpgraded = 0;
-    long long totSuppByType[3] = {0, 0, 0};  // {pT5 rows, pT3 rows, pLS rows} (-A 2)
+    long long totSuppByType[3] = {0, 0, 0};                           // {pT5 rows, pT3 rows, pLS rows} (-A 2)
     long long totDcaBlocked = 0, totK7Dropped = 0, totGuardKept = 0;  // M7c (-A 2)
     long long totDemoted = 0, totEvidenceOk = 0;                      // M9 (-A 3)
     // M16 (-A 4 general attach delivery)
     long long totDelivT5 = 0, totDelivT3 = 0, totGaDcaBlocked = 0, totM16ChainOwners = 0;
     long long totGaPairs = 0, totGaScored = 0, totGaChainAtt = 0, totGaT3Att = 0;
     long long totSeedDedup = 0;
-    long long totCCDropped = 0;      // M20 -CC OT-side crossclean ledger
-    long long totSeedDedupT3 = 0;    // M20: the PIXEL-side (-RDT) half, reported apart
-    CandStats candStats;         // M20 candidate-finder volume / superset audit
-    long long totM16Supp[3] = {0, 0, 0};  // {type 7, type 5, type 8} rows retired by attach
-    long long nPostClaimKilled = 0;                                   // M14 (-Q4/-Q5)
-    long long nDedupKilled = 0;                                       // M17 (-DD)
-    long long nXp3Killed = 0;                                         // EX_DUPCC (-XP3)
-    long long nCellSeen = 0, nCellKilled = 0, nCellPreKilled = 0;     // M15 angle C1 (-C25)
-    ArbitrationParams::Stats pixClaimStats;                           // B1 (-PU)
-    long long totPixOwners = 0;                                       // B1 (-PU)
+    long long totCCDropped = 0;                                    // M20 -CC OT-side crossclean ledger
+    long long totSeedDedupT3 = 0;                                  // M20: the PIXEL-side (-RDT) half, reported apart
+    CandStats candStats;                                           // M20 candidate-finder volume / superset audit
+    long long totM16Supp[3] = {0, 0, 0};                           // {type 7, type 5, type 8} rows retired by attach
+    long long nPostClaimKilled = 0;                                // M14 (-Q4/-Q5)
+    long long nDedupKilled = 0;                                    // M17 (-DD)
+    long long nXp3Killed = 0;                                      // EX_DUPCC (-XP3)
+    long long nCellSeen = 0, nCellKilled = 0, nCellPreKilled = 0;  // M15 angle C1 (-C25)
+    ArbitrationParams::Stats pixClaimStats;                        // B1 (-PU)
+    long long totPixOwners = 0;                                    // B1 (-PU)
     // P1 DEPENDENCY AUDIT (-ZP8) accounting.
     long long totZp8Quad = 0, totZp8Carried = 0, totZp8Added = 0, totZp8Blocked = 0;
     // ---- SEED CROSSCLEAN (-XC) ledger ------------------------------------------------
     const int xcBits = (xcMode >= 0.5f) ? static_cast<int>(xcMode + 0.5f) : 0;
     const bool xcPix = (xcBits & 1) != 0;    // pixel-anchored branches (pT5 + pT3 arms)
     const bool xcChain = (xcBits & 2) != 0;  // bare-chain branch (T5 arm, score-substituted)
-    long long totXcPixHit = 0;      // seeds retired: shared pixel hit with a TC's seed
-    long long totXcPixDR = 0;       // seeds retired: dR^2 < -XCR2 of a TC's seed direction
-    long long totXcChainKill = 0;   // seeds retired: bare-chain window + score >= -XCT
-    long long totXcCarried = 0;     // of those, carried type-8 rows newly retired
-    long long totXcZp8 = 0;         // of those, -ZP8 additions newly blocked
+    long long totXcPixHit = 0;               // seeds retired: shared pixel hit with a TC's seed
+    long long totXcPixDR = 0;                // seeds retired: dR^2 < -XCR2 of a TC's seed direction
+    long long totXcChainKill = 0;            // seeds retired: bare-chain window + score >= -XCT
+    long long totXcCarried = 0;              // of those, carried type-8 rows newly retired
+    long long totXcZp8 = 0;                  // of those, -ZP8 additions newly blocked
     // Truth partition of the post-deletion bare-seed universe (-XCD 1). Rows =
     // {A: true match whose sim already has an accepted chain TC, B: true match whose sim
     // has none, C: no true match}; columns = the FATE of the seed, in pipeline order:
     // consumed by a delivery (plsOwned), blocked by the pre-existing -RPS predicate,
     // NEWLY retired by this port, or surviving as a bare type-8 TC row.
     long long xcTruth[3][4] = {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}};
-    TrimStats trimTot;                                                // ANGLE B2 (-TR)
-    ExtendStats exStats;                                              // EXPLOIT (-EX)
+    TrimStats trimTot;    // ANGLE B2 (-TR)
+    ExtendStats exStats;  // EXPLOIT (-EX)
     double totInferMs = 0.0, totWeldMs = 0.0, totArbMs = 0.0, totFillMs = 0.0, totAttachMs = 0.0;
     double totTrimMs = 0.0, extendMs = 0.0;
 
@@ -2558,22 +2790,22 @@ int main(int argc, char** argv) {
     //   "true X"  = X's sim set is non-empty; "same-sim pair" = the two sets intersect.
     const bool attachCM = std::getenv("PROTO_ATTACH_CM") != nullptr;
     // Decision classes (denominator = attach decisions actually taken).
-    long long cmAttSame = 0;      // same-sim attach: the intended outcome
-    long long cmAttCross = 0;     // cross-sim: both sides real, DIFFERENT sims (precision)
-    long long cmAttTgtFakePls = 0;   // real target + fake pLS (precision; dilutes the TC)
-    long long cmAttFakeTgtRealPls = 0;  // fake target eats a real pLS (precision; also
-                                        // suppresses that pLS's own row via contention)
-    long long cmAttFakeBoth = 0;  // fake target + fake pLS (harmless to eff, feeds FR)
+    long long cmAttSame = 0;                    // same-sim attach: the intended outcome
+    long long cmAttCross = 0;                   // cross-sim: both sides real, DIFFERENT sims (precision)
+    long long cmAttTgtFakePls = 0;              // real target + fake pLS (precision; dilutes the TC)
+    long long cmAttFakeTgtRealPls = 0;          // fake target eats a real pLS (precision; also
+                                                // suppresses that pLS's own row via contention)
+    long long cmAttFakeBoth = 0;                // fake target + fake pLS (harmless to eff, feeds FR)
     long long cmAttSameT3 = 0, cmAttBadT3 = 0;  // stage-B split of the same classes
     // Recall classes (denominator = TRUE pairs the machinery could have made).
-    long long cmTruePairPref = 0;     // distinct same-sim pairs present in the PREFILTER
-    long long cmTruePairPoss = 0;     // same-sim (target,pLS) combos that EXIST at all in
-                                      // the bidding universe -- prefilter recall's denom
-    long long cmMissBelowTheta = 0;   // true pair scored BELOW its class margin (head)
-    long long cmMissContention = 0;   // true pair ABOVE margin but the pLS/target went
-                                      // elsewhere (arbitration, not head quality)
-    long long cmMissOther = 0;        // above margin, neither side attached (target lost
-                                      // its own best-pair pick to a different pLS)
+    long long cmTruePairPref = 0;    // distinct same-sim pairs present in the PREFILTER
+    long long cmTruePairPoss = 0;    // same-sim (target,pLS) combos that EXIST at all in
+                                     // the bidding universe -- prefilter recall's denom
+    long long cmMissBelowTheta = 0;  // true pair scored BELOW its class margin (head)
+    long long cmMissContention = 0;  // true pair ABOVE margin but the pLS/target went
+                                     // elsewhere (arbitration, not head quality)
+    long long cmMissOther = 0;       // above margin, neither side attached (target lost
+                                     // its own best-pair pick to a different pLS)
     // TARGET-LEVEL view. The pair-level recall above has a pileup-inflated denominator
     // (one sim reconstructed with N duplicate pixel seeds offers N true pairs, but only
     // ONE can attach by design), so it cannot answer the question the maintainer asked.
@@ -2650,8 +2882,8 @@ int main(int argc, char** argv) {
       if (trimEnable != 0.f) {
         const auto tt0 = std::chrono::steady_clock::now();
         for (int pass = 0; pass < static_cast<int>(trimPasses); ++pass)
-          k6TrimTerminals(ev, scores, lambdaLen, trimFactor, static_cast<int>(trimMinLay), trimAbsChi2, chains,
-                          nullptr, trimTot);
+          k6TrimTerminals(
+              ev, scores, lambdaLen, trimFactor, static_cast<int>(trimMinLay), trimAbsChi2, chains, nullptr, trimTot);
         totTrimMs += msBetween(tt0, std::chrono::steady_clock::now());
       }
 
@@ -2711,157 +2943,156 @@ int main(int argc, char** argv) {
         computeChainFeatures(ev, g, chains, scores, cfHyb);
         runChainInference(cfHyb, gateLogit);
         if (chainGateMode >= 1) {
-        if (chainGateMode == 6) {
-          // ANGLE-1 -G 6: THREE-CLASS gate (fake / prompt-true / displaced-true), the
-          // LST t3dnn/t4dnn shape, with the chain's transverse DCA as a 17th INPUT
-          // instead of only as a hard branch axis. ORDERING STAYS LEGACY for every
-          // chain (the M9 cross-scale-inversion lesson): the gate is a KILL only.
-          // Branch rules (kill => score -= kGateKill, K9 base threshold kNoCutTheta):
-          //   nLayers <= 4  : kill iff mX < -M4                       (T4-class)
-          //   5+, dca <  -X : kill iff mP < -MP (unless mX >= -MR)    (IP-compatible)
-          //   5+, dca >= -X : kill iff mD < -MD (unless mX >= -MR)    (exempt/large-DCA,
-          //                   the M9 residual-fake home)
-          // where mP = promptLogit - fakeLogit, mD = displacedLogit - fakeLogit,
-          // mX = max(promptLogit, displacedLogit) - fakeLogit.
-          // Exempt masks (-> the -U4/-U5/-U6 legacy-scale thresholds) are set exactly as
-          // in -G 5: 5+ chains with dca >= -X, and T4-class chains with
-          // dca >= max(-X, -Z). So -U4 1e9 still closes the exempt-T4 branch (the v1j
-          // shape) and -U4 0 opens it under the 3-class T4 kill.
-          const std::size_t nC = gateLogit.size();
-          std::vector<float> dcaAll(nC);
-          for (std::size_t c = 0; c < nC; ++c)
-            dcaAll[c] = chainDca(static_cast<int>(c));
-          std::vector<float> z3;
-          runChainInference3(cfHyb, dcaAll, z3);
-          exemptMask.assign(nC, 0);
-          m3mX.assign(nC, 0.f);
-          dbgMP.assign(nC, 0.f);
-          dbgMD.assign(nC, 0.f);
-          dbgBr.assign(nC, -1);
-          m3dcaAll = dcaAll;
-          m3z3 = z3;  // OKR: -BK order-key variants read the raw logits
-          // FANOUT4 transition band levers. inBand uses the chain's K10 eta (innermost
-          // member T3), so a chain is tightened in exactly the eta band its TC is counted
-          // in. All deltas default to 0 => the whole block is a no-op.
-          const bool zOn = zEta2 > zEta1 &&
-                           (zdRI != 0.f || zdR != 0.f || zdR5 != 0.f || zdR6 != 0.f || zdM4 != 0.f ||
-                            zdM4D != 0.f || zdCP != 0.f || zdCD != 0.f);
-          zBandChain.assign(nC, 0);
-          for (std::size_t c = 0; c < nC; ++c) {
-            const float* z = &z3[3 * c];
-            const float mP = z[1] - z[0];
-            const float mD = z[2] - z[0];
-            const float mX = std::max(z[1], z[2]) - z[0];
-            m3mX[c] = mX;
-            dbgMP[c] = mP;
-            dbgMD[c] = mD;
-            const int nL = chains.nLayers[c];
-            dbgBr[c] = nL <= 4 ? (dcaAll[c] >= std::max(dcaSplit, t4ExemptDcaMin) ? 1 : 0)
-                               : (dcaAll[c] < dcaSplit ? 2 : 3);
-            // Band membership (also needed by the -ZBA ordering lever, which is live even
-            // when zOn is false because it changes no threshold).
-            bool inZ = false;
-            if (zEta2 > zEta1 && chains.offsets[c + 1] > chains.offsets[c]) {
-              const int t3In = chains.items[chains.offsets[c]];
-              if (t3In >= 0 && t3In < static_cast<int>(ev.t3_eta.size())) {
-                const float ae = std::fabs(ev.t3_eta[t3In]);
-                inZ = ae >= zEta1 && ae < zEta2;
-              }
-            }
-            zBandChain[c] = inZ ? 1 : 0;
-            // -ZIL 1: the kill levers only reach chains starting in layer 1.
-            bool ilOk = true;
-            if (zInLay1 >= 0.5f) {
-              ilOk = false;
-              if (chains.mdOffsets[c + 1] > chains.mdOffsets[c]) {
-                const int m0 = chains.mdItems[chains.mdOffsets[c]];
-                ilOk = m0 >= 0 && m0 < static_cast<int>(ev.md_layer.size()) && ev.md_layer[m0] == 1;
-              }
-            }
-            const bool zz = zOn && inZ && ilOk;
-            const float dRI = zz ? zdRI : 0.f;
-            const float dR = zz ? (zdR + (nL == 5 ? zdR5 : zdR6)) : 0.f;
-            const float d4 = zz ? zdM4 : 0.f;
-            const float d4D = zz ? zdM4D : 0.f;
-            const float dCP = zz ? zdCP : 0.f;
-            const float dCD = zz ? zdCD : 0.f;
-            if (nL <= 4) {
-              if (dcaAll[c] >= std::max(dcaSplit, t4ExemptDcaMin)) {
-                // Exempt (large-DCA) T4-class: displaced-oriented acceptance on mD.
-                if (mD < m3Theta4D + d4D)
-                  chains.score[c] -= kGateKill;
-                exemptMask[c] = 1;
-              } else if (mX < m3Theta4 + d4) {
-                chains.score[c] -= kGateKill;
-              }
-            } else if (dcaAll[c] < dcaSplit) {
-              // IP-compatible 5+: per-length threshold, the -G 6 analogue of -T5/-T6.
-              // M14: the OR-rescue here is -MRI (defaults to -MR); the exempt branch below
-              // keeps -MR, so the two 5+ branches can be cut independently.
-              const float thr = nL >= 6 ? m3Theta6 : m3Theta5;
-              if (mP < thr && mX < m3ThetaRI + dRI)
-                chains.score[c] -= kGateKill;
-            } else {
-              // Exempt (large-DCA) 5+: the M9/M10 residual-fake home. -MD is the -G 6
-              // analogue of -G 5's a2 -V5/-V6 gate-scale kill; -U5/-U6 still apply on
-              // the legacy scale through the exempt mask.
-              if (mD < m3ThetaD && mX < m3ThetaR + dR)
-                chains.score[c] -= kGateKill;
-              exemptMask[c] = 1;
-            }
-            // ANGLE C1 (M15) -C25/-C25D: extra margin for the (nNodes == 2, nLayers == 5)
-            // CELL only, applied on top of whichever branch rule already ran (IP or exempt)
-            // and on the same 3-class margin scale. Displaced head respected: kill only
-            // when BOTH heads fail. Never re-kills an already-killed chain (counters and
-            // the K9 order key stay honest).
-            if (c25Theta > -1e9f && nL == 5 && (chains.offsets[c + 1] - chains.offsets[c]) == 2) {
-              ++nCellSeen;
-              if (chains.score[c] > -0.5f * kGateKill) {
-                if (mP < c25Theta + dCP && mD < c25ThetaD + dCD) {
-                  chains.score[c] -= kGateKill;
-                  ++nCellKilled;
-                }
-              } else {
-                ++nCellPreKilled;
-              }
-            }
-          }
-        } else {
-          if (chainGateMode >= 3)
-            exemptMask.assign(gateLogit.size(), 0);
-          for (std::size_t c = 0; c < gateLogit.size(); ++c) {
-            if (chainGateMode == 5) {
-              // Order-preserving DCA split: chains.score is NEVER rewritten (legacy
-              // ordering for everyone); the gate only KILLS IP-compatible chains whose
-              // logit fails the gate-scale -T threshold. Exempt chains face -U via the
-              // altThreshold mask; K9's base threshold is kNoCutTheta in this mode.
-              // -Z: T4-class chains need dca >= max(dcaSplit, t4ExemptDcaMin) to be
-              // exempt (displaced-oriented length-4 acceptance); otherwise IP path.
+          if (chainGateMode == 6) {
+            // ANGLE-1 -G 6: THREE-CLASS gate (fake / prompt-true / displaced-true), the
+            // LST t3dnn/t4dnn shape, with the chain's transverse DCA as a 17th INPUT
+            // instead of only as a hard branch axis. ORDERING STAYS LEGACY for every
+            // chain (the M9 cross-scale-inversion lesson): the gate is a KILL only.
+            // Branch rules (kill => score -= kGateKill, K9 base threshold kNoCutTheta):
+            //   nLayers <= 4  : kill iff mX < -M4                       (T4-class)
+            //   5+, dca <  -X : kill iff mP < -MP (unless mX >= -MR)    (IP-compatible)
+            //   5+, dca >= -X : kill iff mD < -MD (unless mX >= -MR)    (exempt/large-DCA,
+            //                   the M9 residual-fake home)
+            // where mP = promptLogit - fakeLogit, mD = displacedLogit - fakeLogit,
+            // mX = max(promptLogit, displacedLogit) - fakeLogit.
+            // Exempt masks (-> the -U4/-U5/-U6 legacy-scale thresholds) are set exactly as
+            // in -G 5: 5+ chains with dca >= -X, and T4-class chains with
+            // dca >= max(-X, -Z). So -U4 1e9 still closes the exempt-T4 branch (the v1j
+            // shape) and -U4 0 opens it under the 3-class T4 kill.
+            const std::size_t nC = gateLogit.size();
+            std::vector<float> dcaAll(nC);
+            for (std::size_t c = 0; c < nC; ++c)
+              dcaAll[c] = chainDca(static_cast<int>(c));
+            std::vector<float> z3;
+            runChainInference3(cfHyb, dcaAll, z3);
+            exemptMask.assign(nC, 0);
+            m3mX.assign(nC, 0.f);
+            dbgMP.assign(nC, 0.f);
+            dbgMD.assign(nC, 0.f);
+            dbgBr.assign(nC, -1);
+            m3dcaAll = dcaAll;
+            m3z3 = z3;  // OKR: -BK order-key variants read the raw logits
+            // FANOUT4 transition band levers. inBand uses the chain's K10 eta (innermost
+            // member T3), so a chain is tightened in exactly the eta band its TC is counted
+            // in. All deltas default to 0 => the whole block is a no-op.
+            const bool zOn = zEta2 > zEta1 && (zdRI != 0.f || zdR != 0.f || zdR5 != 0.f || zdR6 != 0.f || zdM4 != 0.f ||
+                                               zdM4D != 0.f || zdCP != 0.f || zdCD != 0.f);
+            zBandChain.assign(nC, 0);
+            for (std::size_t c = 0; c < nC; ++c) {
+              const float* z = &z3[3 * c];
+              const float mP = z[1] - z[0];
+              const float mD = z[2] - z[0];
+              const float mX = std::max(z[1], z[2]) - z[0];
+              m3mX[c] = mX;
+              dbgMP[c] = mP;
+              dbgMD[c] = mD;
               const int nL = chains.nLayers[c];
-              const float exemptFloor = nL <= 4 ? std::max(dcaSplit, t4ExemptDcaMin) : dcaSplit;
-              if (chainDca(static_cast<int>(c)) < exemptFloor) {
-                const float thr = nL >= 6 ? thetaChain6 : (nL == 5 ? thetaChain5 : thetaChain4);
-                if (gateLogit[c] < thr)
+              dbgBr[c] =
+                  nL <= 4 ? (dcaAll[c] >= std::max(dcaSplit, t4ExemptDcaMin) ? 1 : 0) : (dcaAll[c] < dcaSplit ? 2 : 3);
+              // Band membership (also needed by the -ZBA ordering lever, which is live even
+              // when zOn is false because it changes no threshold).
+              bool inZ = false;
+              if (zEta2 > zEta1 && chains.offsets[c + 1] > chains.offsets[c]) {
+                const int t3In = chains.items[chains.offsets[c]];
+                if (t3In >= 0 && t3In < static_cast<int>(ev.t3_eta.size())) {
+                  const float ae = std::fabs(ev.t3_eta[t3In]);
+                  inZ = ae >= zEta1 && ae < zEta2;
+                }
+              }
+              zBandChain[c] = inZ ? 1 : 0;
+              // -ZIL 1: the kill levers only reach chains starting in layer 1.
+              bool ilOk = true;
+              if (zInLay1 >= 0.5f) {
+                ilOk = false;
+                if (chains.mdOffsets[c + 1] > chains.mdOffsets[c]) {
+                  const int m0 = chains.mdItems[chains.mdOffsets[c]];
+                  ilOk = m0 >= 0 && m0 < static_cast<int>(ev.md_layer.size()) && ev.md_layer[m0] == 1;
+                }
+              }
+              const bool zz = zOn && inZ && ilOk;
+              const float dRI = zz ? zdRI : 0.f;
+              const float dR = zz ? (zdR + (nL == 5 ? zdR5 : zdR6)) : 0.f;
+              const float d4 = zz ? zdM4 : 0.f;
+              const float d4D = zz ? zdM4D : 0.f;
+              const float dCP = zz ? zdCP : 0.f;
+              const float dCD = zz ? zdCD : 0.f;
+              if (nL <= 4) {
+                if (dcaAll[c] >= std::max(dcaSplit, t4ExemptDcaMin)) {
+                  // Exempt (large-DCA) T4-class: displaced-oriented acceptance on mD.
+                  if (mD < m3Theta4D + d4D)
+                    chains.score[c] -= kGateKill;
+                  exemptMask[c] = 1;
+                } else if (mX < m3Theta4 + d4) {
+                  chains.score[c] -= kGateKill;
+                }
+              } else if (dcaAll[c] < dcaSplit) {
+                // IP-compatible 5+: per-length threshold, the -G 6 analogue of -T5/-T6.
+                // M14: the OR-rescue here is -MRI (defaults to -MR); the exempt branch below
+                // keeps -MR, so the two 5+ branches can be cut independently.
+                const float thr = nL >= 6 ? m3Theta6 : m3Theta5;
+                if (mP < thr && mX < m3ThetaRI + dRI)
                   chains.score[c] -= kGateKill;
               } else {
-                exemptMask[c] = 1;
-                // a2: optional gate-scale kill on the exempt branch (-V4/-V5/-V6).
-                // Additive to the legacy -U cut; ordering untouched. -1e9 = no-op.
-                const float vthr = nL >= 6 ? thetaVeto6 : (nL == 5 ? thetaVeto5 : thetaVeto4);
-                if (gateLogit[c] < vthr)
+                // Exempt (large-DCA) 5+: the M9/M10 residual-fake home. -MD is the -G 6
+                // analogue of -G 5's a2 -V5/-V6 gate-scale kill; -U5/-U6 still apply on
+                // the legacy scale through the exempt mask.
+                if (mD < m3ThetaD && mX < m3ThetaR + dR)
                   chains.score[c] -= kGateKill;
+                exemptMask[c] = 1;
               }
-              continue;
+              // ANGLE C1 (M15) -C25/-C25D: extra margin for the (nNodes == 2, nLayers == 5)
+              // CELL only, applied on top of whichever branch rule already ran (IP or exempt)
+              // and on the same 3-class margin scale. Displaced head respected: kill only
+              // when BOTH heads fail. Never re-kills an already-killed chain (counters and
+              // the K9 order key stay honest).
+              if (c25Theta > -1e9f && nL == 5 && (chains.offsets[c + 1] - chains.offsets[c]) == 2) {
+                ++nCellSeen;
+                if (chains.score[c] > -0.5f * kGateKill) {
+                  if (mP < c25Theta + dCP && mD < c25ThetaD + dCD) {
+                    chains.score[c] -= kGateKill;
+                    ++nCellKilled;
+                  }
+                } else {
+                  ++nCellPreKilled;
+                }
+              }
             }
-            const bool useGate = chainGateMode == 1 || (chainGateMode == 2 && chains.nLayers[c] <= 4) ||
-                                 (chainGateMode == 3 && chainDca(static_cast<int>(c)) < dcaSplit) ||
-                                 (chainGateMode == 4 &&
-                                  (chains.nLayers[c] <= 4 || chainDca(static_cast<int>(c)) < dcaSplit));
-            if (useGate)
-              chains.score[c] = gateLogit[c];
-            else if (chainGateMode >= 3)
-              exemptMask[c] = 1;
-          }
+          } else {
+            if (chainGateMode >= 3)
+              exemptMask.assign(gateLogit.size(), 0);
+            for (std::size_t c = 0; c < gateLogit.size(); ++c) {
+              if (chainGateMode == 5) {
+                // Order-preserving DCA split: chains.score is NEVER rewritten (legacy
+                // ordering for everyone); the gate only KILLS IP-compatible chains whose
+                // logit fails the gate-scale -T threshold. Exempt chains face -U via the
+                // altThreshold mask; K9's base threshold is kNoCutTheta in this mode.
+                // -Z: T4-class chains need dca >= max(dcaSplit, t4ExemptDcaMin) to be
+                // exempt (displaced-oriented length-4 acceptance); otherwise IP path.
+                const int nL = chains.nLayers[c];
+                const float exemptFloor = nL <= 4 ? std::max(dcaSplit, t4ExemptDcaMin) : dcaSplit;
+                if (chainDca(static_cast<int>(c)) < exemptFloor) {
+                  const float thr = nL >= 6 ? thetaChain6 : (nL == 5 ? thetaChain5 : thetaChain4);
+                  if (gateLogit[c] < thr)
+                    chains.score[c] -= kGateKill;
+                } else {
+                  exemptMask[c] = 1;
+                  // a2: optional gate-scale kill on the exempt branch (-V4/-V5/-V6).
+                  // Additive to the legacy -U cut; ordering untouched. -1e9 = no-op.
+                  const float vthr = nL >= 6 ? thetaVeto6 : (nL == 5 ? thetaVeto5 : thetaVeto4);
+                  if (gateLogit[c] < vthr)
+                    chains.score[c] -= kGateKill;
+                }
+                continue;
+              }
+              const bool useGate =
+                  chainGateMode == 1 || (chainGateMode == 2 && chains.nLayers[c] <= 4) ||
+                  (chainGateMode == 3 && chainDca(static_cast<int>(c)) < dcaSplit) ||
+                  (chainGateMode == 4 && (chains.nLayers[c] <= 4 || chainDca(static_cast<int>(c)) < dcaSplit));
+              if (useGate)
+                chains.score[c] = gateLogit[c];
+              else if (chainGateMode >= 3)
+                exemptMask[c] = 1;
+            }
           }
         }
       }
@@ -3161,9 +3392,8 @@ int main(int argc, char** argv) {
           for (int c = 0; c < n; ++c)
             inner[c] = bkMode == 11
                            ? chains.score[c]
-                           : chains.score[c] - (haveGateKey ? fakeOrderAlpha *
-                                                                  std::max(0.f, orderKeyHinge - gateLogit[c])
-                                                            : 0.f);
+                           : chains.score[c] -
+                                 (haveGateKey ? fakeOrderAlpha * std::max(0.f, orderKeyHinge - gateLogit[c]) : 0.f);
           std::vector<int> idx(n);
           for (int c = 0; c < n; ++c)
             idx[c] = c;
@@ -3231,8 +3461,8 @@ int main(int argc, char** argv) {
             const float w = orderKeyHinge > 0.f ? orderKeyHinge : 1.f;
             int band = static_cast<int>(std::floor(m3mX[c] / w));
             band = std::min(40, std::max(-8, band));
-            orderKeyVec[c] = static_cast<float>(band + 8) * static_cast<float>(n) +
-                             static_cast<float>(n - 1 - bkRank[c]);
+            orderKeyVec[c] =
+                static_cast<float>(band + 8) * static_cast<float>(n) + static_cast<float>(n - 1 - bkRank[c]);
           } else {
             orderKeyVec[c] = base - (wantPenalty ? alphaC * pen : 0.f);
           }
@@ -3266,8 +3496,7 @@ int main(int argc, char** argv) {
         if (claimFracAlt > 0.f)
           ap.maxClaimedFracAlt = claimFracAlt;
         if (claimItemsAlt > -1.5f)
-          ap.maxClaimedItemsAlt =
-              static_cast<int>(std::floor(claimItemsAlt)) * (hitLevelClaim ? 2 : 1);
+          ap.maxClaimedItemsAlt = static_cast<int>(std::floor(claimItemsAlt)) * (hitLevelClaim ? 2 : 1);
       }
 
       // B1 (-PU): CLAIM-UNIVERSE UNIFICATION. The hybrid keeps every baseline pixel TC
@@ -3456,7 +3685,11 @@ int main(int argc, char** argv) {
         nPass1 = accepted.size();
         accepted.insert(accepted.end(), acceptedP2.begin(), acceptedP2.end());
       } else {
-        k9Arbitrate(ev, chains, ap, accepted, attachMode == 1 ? &attachBypass : nullptr,
+        k9Arbitrate(ev,
+                    chains,
+                    ap,
+                    accepted,
+                    attachMode == 1 ? &attachBypass : nullptr,
                     extendMode >= 0.5f ? &k9Owner : nullptr);
         nPass1 = accepted.size();
       }
@@ -3697,8 +3930,7 @@ int main(int argc, char** argv) {
               if (k9Owner[h] != -1)
                 claimedHit[h] = 1;
           } else {
-            const int n = std::min(static_cast<int>(k9Owner.size()),
-                                   static_cast<int>(ev.md_anchorHitIdx.size()));
+            const int n = std::min(static_cast<int>(k9Owner.size()), static_cast<int>(ev.md_anchorHitIdx.size()));
             for (int m = 0; m < n; ++m)
               if (k9Owner[m] != -1) {
                 markHit(ev.md_anchorHitIdx[m]);
@@ -3763,8 +3995,13 @@ int main(int argc, char** argv) {
         labelChains(ev, chains, t3simsDca, clDca);
         for (std::size_t ai = 0; ai < nPass1; ++ai) {
           const int c = accepted[ai];
-          std::fprintf(dcaDump, "%d %.5f %d %.3f %.3f\n", chains.nLayers[c], chainDca(c),
-                       static_cast<int>(clDca.label[c]), clDca.simVxy[c], clDca.simPt[c]);
+          std::fprintf(dcaDump,
+                       "%d %.5f %d %.3f %.3f\n",
+                       chains.nLayers[c],
+                       chainDca(c),
+                       static_cast<int>(clDca.label[c]),
+                       clDca.simVxy[c],
+                       clDca.simPt[c]);
         }
       }
 
@@ -3772,8 +4009,8 @@ int main(int argc, char** argv) {
       // then pixel-consumed drop) so the per-stage attrition is visible per event.
       const long long nChainsIn = chains.offsets.empty() ? 0 : static_cast<long long>(chains.offsets.size()) - 1;
       const int nT3 = static_cast<int>(ev.t3_lsIdx0.size());
-      const bool havePixFlags = static_cast<int>(ev.t3_partOfPT5.size()) == nT3 &&
-                                static_cast<int>(ev.t3_partOfPT3.size()) == nT3;
+      const bool havePixFlags =
+          static_cast<int>(ev.t3_partOfPT5.size()) == nT3 && static_cast<int>(ev.t3_partOfPT3.size()) == nT3;
       long long nAfterTheta = 0, nAfterPixDrop = 0, nPass2Cand = 0;
       for (long long c = 0; c < nChainsIn; ++c) {
         // Mirror of any claim exclusion (M16b leaves this unused at -A 4: every chain
@@ -3876,7 +4113,8 @@ int main(int argc, char** argv) {
             }
             otc.dbgNB = nB;
             otc.dbgNPS = nPS;
-            otc.dbgInLay = chains.mdOffsets[c + 1] > chains.mdOffsets[c] ? ev.md_layer[chains.mdItems[chains.mdOffsets[c]]] : 0;
+            otc.dbgInLay =
+                chains.mdOffsets[c + 1] > chains.mdOffsets[c] ? ev.md_layer[chains.mdItems[chains.mdOffsets[c]]] : 0;
           }
           if (!dbgBr.empty()) {
             otc.dbgBranch = dbgBr[c];
@@ -4297,8 +4535,8 @@ int main(int argc, char** argv) {
           const std::vector<int>& ps = plsSimsCM[pr.plsRow];
           const bool same = !ts.empty() && !ps.empty() && intersects(ts, ps);
           (same ? cmHistSame : cmHistBad)[cmBin(pr.logit)] += 1;
-          const auto ins = bestPerTgt.emplace(tkey(pr.ttype, pr.tgtRow),
-                                              std::make_pair(pr.logit, static_cast<char>(same)));
+          const auto ins =
+              bestPerTgt.emplace(tkey(pr.ttype, pr.tgtRow), std::make_pair(pr.logit, static_cast<char>(same)));
           if (!ins.second && pr.logit > ins.first->second.first)
             ins.first->second = {pr.logit, static_cast<char>(same)};
           if (!same)
@@ -4741,9 +4979,9 @@ int main(int argc, char** argv) {
           for (std::size_t j = 0; j < outTCs.size() && j < outTCChain.size(); ++j) {
             const int c = outTCChain[j];
             if (c < 0)
-              continue;               // a delivered pT3-class row: pixel-anchored, not here
+              continue;  // a delivered pT3-class row: pixel-anchored, not here
             if (outTCs[j].type == 7)
-              continue;               // chain TC WITH a seed: pixel-anchored branch above
+              continue;  // chain TC WITH a seed: pixel-anchored branch above
             const auto f = chainPairs.find(c);
             if (f == chainPairs.end())
               continue;
@@ -5046,8 +5284,13 @@ int main(int argc, char** argv) {
       // -A 4 uses the same per-row verdict channel as M7c, fed by the M16 suppression set.
       const std::vector<char>* rowMaskOut =
           (attachMode == 4) ? &m16RowSuppressed : (attachMode == 2 ? &rowSuppressed : nullptr);
-      writer.fillEventHybrid(ev, trk, outTCs, attachMode == 1 ? &plsSuppressed : nullptr, &nPixSuppressed,
-                             attachMode == 2, (attachMode == 2 || attachMode == 4) ? nSuppByType : nullptr,
+      writer.fillEventHybrid(ev,
+                             trk,
+                             outTCs,
+                             attachMode == 1 ? &plsSuppressed : nullptr,
+                             &nPixSuppressed,
+                             attachMode == 2,
+                             (attachMode == 2 || attachMode == 4) ? nSuppByType : nullptr,
                              rowMaskOut);
       const auto t4 = std::chrono::steady_clock::now();
 
@@ -5071,9 +5314,33 @@ int main(int argc, char** argv) {
             " pixdrop=%lld -> claim=%lld p2=%lld/%lld | chainTC=%zu (T5c=%lld T4c=%lld upg=%lld"
             " attach=%lld pixSupp=%d[%d/%d/%d] dcaBlk=%lld guardKept=%lld k7drop=%lld)"
             " | infer=%.3f weld=%.3f attach=%.3f arb=%.3f fill=%.3f ms\n",
-            i, ev.run, ev.lumi, ev.evt, nPixKept, nChainsIn, nAfterTheta, nAfterPixDrop, nAfterClaim, nPass2Acc,
-            nPass2Cand, chainTCs.size(), nT5c, nT4c, nUpgraded, nAttached, nPixSuppressed, nSuppByType[0],
-            nSuppByType[1], nSuppByType[2], nDcaBlocked, nGuardKept, nK7Dropped, inferMs, weldMs, attachMs, arbMs,
+            i,
+            ev.run,
+            ev.lumi,
+            ev.evt,
+            nPixKept,
+            nChainsIn,
+            nAfterTheta,
+            nAfterPixDrop,
+            nAfterClaim,
+            nPass2Acc,
+            nPass2Cand,
+            chainTCs.size(),
+            nT5c,
+            nT4c,
+            nUpgraded,
+            nAttached,
+            nPixSuppressed,
+            nSuppByType[0],
+            nSuppByType[1],
+            nSuppByType[2],
+            nDcaBlocked,
+            nGuardKept,
+            nK7Dropped,
+            inferMs,
+            weldMs,
+            attachMs,
+            arbMs,
             fillMs);
       } else if (attachMode == 3) {
         // dcaExempt= theta-passing 5+-layer chains exempt from the evidence rule
@@ -5083,8 +5350,26 @@ int main(int argc, char** argv) {
             "evt %lld (run %u lumi %u event %llu): pixKept=%lld chains=%lld -> theta=%lld ->"
             " pixdrop=%lld -> claim=%lld | chainTC=%zu (T5c=%lld T4c=%lld dcaExempt=%lld"
             " evidOk=%lld demoted=%lld) | infer=%.3f weld=%.3f attach=%.3f arb=%.3f fill=%.3f ms\n",
-            i, ev.run, ev.lumi, ev.evt, nPixKept, nChainsIn, nAfterTheta, nAfterPixDrop, nAfterClaim, chainTCs.size(),
-            nT5c, nT4c, nDcaBlocked, nEvidenceOk, nDemoted, inferMs, weldMs, attachMs, arbMs, fillMs);
+            i,
+            ev.run,
+            ev.lumi,
+            ev.evt,
+            nPixKept,
+            nChainsIn,
+            nAfterTheta,
+            nAfterPixDrop,
+            nAfterClaim,
+            chainTCs.size(),
+            nT5c,
+            nT4c,
+            nDcaBlocked,
+            nEvidenceOk,
+            nDemoted,
+            inferMs,
+            weldMs,
+            attachMs,
+            arbMs,
+            fillMs);
       } else if (attachMode == 4) {
         // M16b: claim= ALL chains accepted by K9 (attached chains walk the claim like any
         // other; there are no exclusions). delivT5 = accepted chains UPGRADED in place to
@@ -5096,9 +5381,30 @@ int main(int argc, char** argv) {
             " pixdrop=%lld -> claim=%lld | chainTC=%zu (T5c=%lld T4c=%lld) | upgT5=%lld"
             " delivT3=%lld supp=%d[%d/%d/%d] dcaBlk=%lld"
             " | infer=%.3f weld=%.3f attach=%.3f arb=%.3f fill=%.3f ms\n",
-            i, ev.run, ev.lumi, ev.evt, nPixKept, nChainsIn, nAfterTheta, nAfterPixDrop, nAfterClaim, chainTCs.size(),
-            nT5c, nT4c, nDelivT5, nDelivT3, nPixSuppressed, nSuppByType[0], nSuppByType[1], nSuppByType[2],
-            nGaDcaBlocked, inferMs, weldMs, attachMs, arbMs, fillMs);
+            i,
+            ev.run,
+            ev.lumi,
+            ev.evt,
+            nPixKept,
+            nChainsIn,
+            nAfterTheta,
+            nAfterPixDrop,
+            nAfterClaim,
+            chainTCs.size(),
+            nT5c,
+            nT4c,
+            nDelivT5,
+            nDelivT3,
+            nPixSuppressed,
+            nSuppByType[0],
+            nSuppByType[1],
+            nSuppByType[2],
+            nGaDcaBlocked,
+            inferMs,
+            weldMs,
+            attachMs,
+            arbMs,
+            fillMs);
       } else if (attachMode == 1) {
         // T5c/T4c stay the nLayers-class counts (attached chains are counted inside
         // T5c AND in attach=; their output tc_type is 7). pixSupp = kept-baseline rows
@@ -5107,15 +5413,46 @@ int main(int argc, char** argv) {
             "evt %lld (run %u lumi %u event %llu): pixKept=%lld chains=%lld -> theta=%lld ->"
             " pixdrop=%lld -> claim=%lld | chainTC=%zu (T5c=%lld T4c=%lld attach=%lld pixSupp=%d)"
             " | infer=%.3f weld=%.3f attach=%.3f arb=%.3f fill=%.3f ms\n",
-            i, ev.run, ev.lumi, ev.evt, nPixKept, nChainsIn, nAfterTheta, nAfterPixDrop, nAfterClaim, chainTCs.size(),
-            nT5c, nT4c, nAttached, nPixSuppressed, inferMs, weldMs, attachMs, arbMs, fillMs);
+            i,
+            ev.run,
+            ev.lumi,
+            ev.evt,
+            nPixKept,
+            nChainsIn,
+            nAfterTheta,
+            nAfterPixDrop,
+            nAfterClaim,
+            chainTCs.size(),
+            nT5c,
+            nT4c,
+            nAttached,
+            nPixSuppressed,
+            inferMs,
+            weldMs,
+            attachMs,
+            arbMs,
+            fillMs);
       } else {
         std::printf(
             "evt %lld (run %u lumi %u event %llu): pixKept=%lld chains=%lld -> theta=%lld ->"
             " pixdrop=%lld -> claim=%lld | chainTC=%zu (T5c=%lld T4c=%lld)"
             " | infer=%.3f weld=%.3f arb=%.3f fill=%.3f ms\n",
-            i, ev.run, ev.lumi, ev.evt, nPixKept, nChainsIn, nAfterTheta, nAfterPixDrop, nAfterClaim, chainTCs.size(),
-            nT5c, nT4c, inferMs, weldMs, arbMs, fillMs);
+            i,
+            ev.run,
+            ev.lumi,
+            ev.evt,
+            nPixKept,
+            nChainsIn,
+            nAfterTheta,
+            nAfterPixDrop,
+            nAfterClaim,
+            chainTCs.size(),
+            nT5c,
+            nT4c,
+            inferMs,
+            weldMs,
+            arbMs,
+            fillMs);
       }
 
       totPixKept += nPixKept;
@@ -5165,171 +5502,362 @@ int main(int argc, char** argv) {
       std::fclose(dcaDump);
 
     const double nEvD = nRun > 0 ? static_cast<double>(nRun) : 1.0;
-    std::printf("hybrid summary: %lld events (thetaEdge=%.3f lambdaLen=%.3f thetaChain4/5/6=%.3f/%.3f/%.3f"
-                " maxClaimedFrac=%.3f dropPixelConsumed=%s)\n",
-                nRun, thetaEdge, lambdaLen, thetaChain4, thetaChain5, thetaChain6, maxClaimedFrac,
-                dropPixelConsumed ? "on" : "off");
+    std::printf(
+        "hybrid summary: %lld events (thetaEdge=%.3f lambdaLen=%.3f thetaChain4/5/6=%.3f/%.3f/%.3f"
+        " maxClaimedFrac=%.3f dropPixelConsumed=%s)\n",
+        nRun,
+        thetaEdge,
+        lambdaLen,
+        thetaChain4,
+        thetaChain5,
+        thetaChain6,
+        maxClaimedFrac,
+        dropPixelConsumed ? "on" : "off");
     const long long totAcceptedAll = totAfterClaim + totPass2Acc;
     std::printf("  pixel TCs kept  total=%lld mean=%.1f\n", totPixKept, totPixKept / nEvD);
     if (preClaimMode > 0)
-      std::printf("  B1 claim-univ   mode=%d owners=%lld mean=%.1f | pre-claimed slots=%lld"
-                  " mean=%.1f | killed by pixel: frac=%lld mean=%.1f braid=%lld mean=%.1f\n",
-                  preClaimMode, totPixOwners, totPixOwners / nEvD, pixClaimStats.preClaimedSlots,
-                  pixClaimStats.preClaimedSlots / nEvD, pixClaimStats.killedByPixFrac,
-                  pixClaimStats.killedByPixFrac / nEvD, pixClaimStats.killedByPixBraid,
-                  pixClaimStats.killedByPixBraid / nEvD);
+      std::printf(
+          "  B1 claim-univ   mode=%d owners=%lld mean=%.1f | pre-claimed slots=%lld"
+          " mean=%.1f | killed by pixel: frac=%lld mean=%.1f braid=%lld mean=%.1f\n",
+          preClaimMode,
+          totPixOwners,
+          totPixOwners / nEvD,
+          pixClaimStats.preClaimedSlots,
+          pixClaimStats.preClaimedSlots / nEvD,
+          pixClaimStats.killedByPixFrac,
+          pixClaimStats.killedByPixFrac / nEvD,
+          pixClaimStats.killedByPixBraid,
+          pixClaimStats.killedByPixBraid / nEvD);
     if (attachMode == 2)
-      std::printf("  chain funnel    in=%lld -> theta=%lld -> pixdrop=%lld -> claim(pass1)=%lld"
-                  " | pass2 cand=%lld accepted=%lld\n",
-                  totChainsIn, totAfterTheta, totAfterPixDrop, totAfterClaim, totPass2Cand, totPass2Acc);
+      std::printf(
+          "  chain funnel    in=%lld -> theta=%lld -> pixdrop=%lld -> claim(pass1)=%lld"
+          " | pass2 cand=%lld accepted=%lld\n",
+          totChainsIn,
+          totAfterTheta,
+          totAfterPixDrop,
+          totAfterClaim,
+          totPass2Cand,
+          totPass2Acc);
     else
-      std::printf("  chain funnel    in=%lld -> theta=%lld -> pixdrop=%lld -> claim=%lld\n", totChainsIn, totAfterTheta,
-                  totAfterPixDrop, totAfterClaim);
-    std::printf("  chain TCs       total=%lld mean=%.1f (T5-class=%lld T4-class=%lld; %lld accepted chains"
-                " below 4 layers dropped by K10)\n",
-                totChainTCs, totChainTCs / nEvD, totT5c, totT4c, totAcceptedAll - totChainTCs);
+      std::printf("  chain funnel    in=%lld -> theta=%lld -> pixdrop=%lld -> claim=%lld\n",
+                  totChainsIn,
+                  totAfterTheta,
+                  totAfterPixDrop,
+                  totAfterClaim);
+    std::printf(
+        "  chain TCs       total=%lld mean=%.1f (T5-class=%lld T4-class=%lld; %lld accepted chains"
+        " below 4 layers dropped by K10)\n",
+        totChainTCs,
+        totChainTCs / nEvD,
+        totT5c,
+        totT4c,
+        totAcceptedAll - totChainTCs);
     if (nPostClaimKilled > 0)
       std::printf("  post-claim kill total=%lld mean=%.1f (-Q4 %.4g / -Q5 %.4g on mX; no backfill)\n",
-                  nPostClaimKilled, nPostClaimKilled / nEvD, q3Floor4, q3Floor5);
+                  nPostClaimKilled,
+                  nPostClaimKilled / nEvD,
+                  q3Floor4,
+                  q3Floor5);
     if (dedupMinShared >= 1.f)
-      std::printf("  post-arb dedup  total=%lld mean=%.1f (-DD %d shared hits, -DDF %.2f, -DDP %d,"
-                  " -DDK %d; structural hit overlap only, no backfill)\n",
-                  nDedupKilled, nDedupKilled / nEvD, static_cast<int>(std::floor(dedupMinShared)),
-                  dedupShareFrac, dedupPix >= 0.5f ? 1 : 0, dedupKeyMode >= 0.5f ? 1 : 0);
+      std::printf(
+          "  post-arb dedup  total=%lld mean=%.1f (-DD %d shared hits, -DDF %.2f, -DDP %d,"
+          " -DDK %d; structural hit overlap only, no backfill)\n",
+          nDedupKilled,
+          nDedupKilled / nEvD,
+          static_cast<int>(std::floor(dedupMinShared)),
+          dedupShareFrac,
+          dedupPix >= 0.5f ? 1 : 0,
+          dedupKeyMode >= 0.5f ? 1 : 0);
     if (xp3Share >= 1.f)
-      std::printf("  EX_DUPCC carried-pT3 crossclean retired=%lld (%.1f/evt) (-XP3 %d shared OT hit rows,"
-                  " -XP3Z %.2f, -XP3L %d; shared-object only)\n",
-                  nXp3Killed, nXp3Killed / nEvD, static_cast<int>(std::floor(xp3Share)), xp3Eta,
-                  static_cast<int>(std::floor(xp3MinLay)));
+      std::printf(
+          "  EX_DUPCC carried-pT3 crossclean retired=%lld (%.1f/evt) (-XP3 %d shared OT hit rows,"
+          " -XP3Z %.2f, -XP3L %d; shared-object only)\n",
+          nXp3Killed,
+          nXp3Killed / nEvD,
+          static_cast<int>(std::floor(xp3Share)),
+          xp3Eta,
+          static_cast<int>(std::floor(xp3MinLay)));
     if (braidFracAlt > 0.f || claimFracAlt > 0.f || claimItemsAlt > -1.5f)
-      std::printf("  EX_DUPCC band |eta| >= %.2f and nNodes <= %.4g : braid -WE %.4g (outside: -W %.4g),"
-                  " claim -FB %.4g -FBC %.4g (outside: -F / -FC)\n",
-                  braidAltEta, braidAltMaxNodes, braidFracAlt, braidFrac, claimFracAlt, claimItemsAlt);
+      std::printf(
+          "  EX_DUPCC band |eta| >= %.2f and nNodes <= %.4g : braid -WE %.4g (outside: -W %.4g),"
+          " claim -FB %.4g -FBC %.4g (outside: -F / -FC)\n",
+          braidAltEta,
+          braidAltMaxNodes,
+          braidFracAlt,
+          braidFrac,
+          claimFracAlt,
+          claimItemsAlt);
     if (nCellSeen > 0)
-      std::printf("  C1 cell (2n,5L) seen=%lld mean=%.1f | already killed by branch=%lld (%.1f%%)"
-                  " | killed by -C25 %.4g / -C25D %.4g = %lld (%.1f%% of cell, %.1f%% of branch survivors)\n",
-                  nCellSeen, nCellSeen / nEvD, nCellPreKilled, 100.0 * nCellPreKilled / nCellSeen, c25Theta, c25ThetaD,
-                  nCellKilled, 100.0 * nCellKilled / nCellSeen,
-                  nCellSeen > nCellPreKilled ? 100.0 * nCellKilled / (nCellSeen - nCellPreKilled) : 0.0);
+      std::printf(
+          "  C1 cell (2n,5L) seen=%lld mean=%.1f | already killed by branch=%lld (%.1f%%)"
+          " | killed by -C25 %.4g / -C25D %.4g = %lld (%.1f%% of cell, %.1f%% of branch survivors)\n",
+          nCellSeen,
+          nCellSeen / nEvD,
+          nCellPreKilled,
+          100.0 * nCellPreKilled / nCellSeen,
+          c25Theta,
+          c25ThetaD,
+          nCellKilled,
+          100.0 * nCellKilled / nCellSeen,
+          nCellSeen > nCellPreKilled ? 100.0 * nCellKilled / (nCellSeen - nCellPreKilled) : 0.0);
     if (trimEnable != 0.f)
-      std::printf("  B2 terminal trim examined=%lld (%.1f/evt) trimmed inner=%lld outer=%lld total=%lld"
-                  " (%.1f/evt, %.4f of examined) | -TT %.4g -TL %d -TP %d -TA %.4g | %.3f ms/evt\n",
-                  trimTot.nExamined, trimTot.nExamined / nEvD, trimTot.nTrimInner, trimTot.nTrimOuter,
-                  trimTot.nTrimInner + trimTot.nTrimOuter, (trimTot.nTrimInner + trimTot.nTrimOuter) / nEvD,
-                  trimTot.nExamined > 0 ? static_cast<double>(trimTot.nTrimInner + trimTot.nTrimOuter) /
-                                              static_cast<double>(trimTot.nExamined)
-                                        : 0.0,
-                  trimFactor, static_cast<int>(trimMinLay), static_cast<int>(trimPasses), trimAbsChi2,
-                  totTrimMs / nEvD);
+      std::printf(
+          "  B2 terminal trim examined=%lld (%.1f/evt) trimmed inner=%lld outer=%lld total=%lld"
+          " (%.1f/evt, %.4f of examined) | -TT %.4g -TL %d -TP %d -TA %.4g | %.3f ms/evt\n",
+          trimTot.nExamined,
+          trimTot.nExamined / nEvD,
+          trimTot.nTrimInner,
+          trimTot.nTrimOuter,
+          trimTot.nTrimInner + trimTot.nTrimOuter,
+          (trimTot.nTrimInner + trimTot.nTrimOuter) / nEvD,
+          trimTot.nExamined > 0
+              ? static_cast<double>(trimTot.nTrimInner + trimTot.nTrimOuter) / static_cast<double>(trimTot.nExamined)
+              : 0.0,
+          trimFactor,
+          static_cast<int>(trimMinLay),
+          static_cast<int>(trimPasses),
+          trimAbsChi2,
+          totTrimMs / nEvD);
     if (extendMode >= 0.5f)
-      std::printf("  EX chain extend chains=%lld (%.1f/evt, noFit=%lld) cand=%lld | extended chains=%lld"
-                  " (%.1f/evt, %.4f of examined) outer=%lld inner=%lld | chi2-rejected=%lld"
-                  " uniq-rejected=%lld fit-rejected=%lld | -EX %d -EXW %.4g -EXR %.4g -EXF %.4g -EXU %.4g -EXD %.4g"
-                  " -EXJ %d -EXN %d -EXL %d -EXS %d -EXC %.4g | %.3f ms/evt\n",
-                  exStats.nChains, exStats.nChains / nEvD, exStats.nNoFit, exStats.nCand,
-                  exStats.nExtChains, exStats.nExtChains / nEvD,
-                  exStats.nChains > 0 ? static_cast<double>(exStats.nExtChains) /
-                                            static_cast<double>(exStats.nChains)
-                                      : 0.0,
-                  exStats.nExtOuter, exStats.nExtInner, exStats.nRejChi2, exStats.nRejUniq, exStats.nRejFit,
-                  static_cast<int>(extendMode + 0.5f), extendWindow, extendRz, extendChi2F,
-                  extendUniq, extendMaxD, static_cast<int>(extendJump + 0.5f),
-                  static_cast<int>(extendPerEnd + 0.5f), std::max(4, static_cast<int>(extendMinLay + 0.5f)),
-                  static_cast<int>(extendSeg + 0.5f), extendMaxChi2, extendMs / nEvD);
+      std::printf(
+          "  EX chain extend chains=%lld (%.1f/evt, noFit=%lld) cand=%lld | extended chains=%lld"
+          " (%.1f/evt, %.4f of examined) outer=%lld inner=%lld | chi2-rejected=%lld"
+          " uniq-rejected=%lld fit-rejected=%lld | -EX %d -EXW %.4g -EXR %.4g -EXF %.4g -EXU %.4g -EXD %.4g"
+          " -EXJ %d -EXN %d -EXL %d -EXS %d -EXC %.4g | %.3f ms/evt\n",
+          exStats.nChains,
+          exStats.nChains / nEvD,
+          exStats.nNoFit,
+          exStats.nCand,
+          exStats.nExtChains,
+          exStats.nExtChains / nEvD,
+          exStats.nChains > 0 ? static_cast<double>(exStats.nExtChains) / static_cast<double>(exStats.nChains) : 0.0,
+          exStats.nExtOuter,
+          exStats.nExtInner,
+          exStats.nRejChi2,
+          exStats.nRejUniq,
+          exStats.nRejFit,
+          static_cast<int>(extendMode + 0.5f),
+          extendWindow,
+          extendRz,
+          extendChi2F,
+          extendUniq,
+          extendMaxD,
+          static_cast<int>(extendJump + 0.5f),
+          static_cast<int>(extendPerEnd + 0.5f),
+          std::max(4, static_cast<int>(extendMinLay + 0.5f)),
+          static_cast<int>(extendSeg + 0.5f),
+          extendMaxChi2,
+          extendMs / nEvD);
     if (attachMode) {
-      std::printf("  K8 attach       attached=%lld mean=%.1f | baseline pixel rows suppressed=%lld mean=%.1f"
-                  " | pairs prefiltered=%lld scored=%lld (thetaAttach=%.3f head=%s)\n",
-                  totAttached, totAttached / nEvD, totPixSuppressed, totPixSuppressed / nEvD, totPairsPref,
-                  totPairsScored, thetaAttach, attachHeadAvailable() ? "trained" : "sentinel");
+      std::printf(
+          "  K8 attach       attached=%lld mean=%.1f | baseline pixel rows suppressed=%lld mean=%.1f"
+          " | pairs prefiltered=%lld scored=%lld (thetaAttach=%.3f head=%s)\n",
+          totAttached,
+          totAttached / nEvD,
+          totPixSuppressed,
+          totPixSuppressed / nEvD,
+          totPairsPref,
+          totPairsScored,
+          thetaAttach,
+          attachHeadAvailable() ? "trained" : "sentinel");
       if (attachMode == 3)
-        std::printf("  M9 evidence     dca-exempt=%lld mean=%.1f (dcaSplit=%.2f) | evidence-ok=%lld mean=%.1f"
-                    " | demoted=%lld mean=%.1f (penalty=%g)\n",
-                    totDcaBlocked, totDcaBlocked / nEvD, dcaSplit, totEvidenceOk, totEvidenceOk / nEvD, totDemoted,
-                    totDemoted / nEvD, static_cast<double>(demotePenalty));
+        std::printf(
+            "  M9 evidence     dca-exempt=%lld mean=%.1f (dcaSplit=%.2f) | evidence-ok=%lld mean=%.1f"
+            " | demoted=%lld mean=%.1f (penalty=%g)\n",
+            totDcaBlocked,
+            totDcaBlocked / nEvD,
+            dcaSplit,
+            totEvidenceOk,
+            totEvidenceOk / nEvD,
+            totDemoted,
+            totDemoted / nEvD,
+            static_cast<double>(demotePenalty));
       if (attachMode == 2) {
-        std::printf("  M7b breakdown   pass1 upgrades=%lld mean=%.1f | pass2 TCs=%lld mean=%.1f"
-                    " | suppressed rows by type pT5=%lld pT3=%lld pLS=%lld\n",
-                    totUpgraded, totUpgraded / nEvD, totPass2Acc, totPass2Acc / nEvD, totSuppByType[0],
-                    totSuppByType[1], totSuppByType[2]);
-        std::printf("  M7c breakdown   dca-blocked chains=%lld mean=%.1f (dcaMax=%.2f) | guard-kept rows=%lld"
-                    " mean=%.1f (dR<%.3f) | K7-lite drops=%lld mean=%.1f (%s, dR<%.3f)\n",
-                    totDcaBlocked, totDcaBlocked / nEvD, dcaAttachMax, totGuardKept, totGuardKept / nEvD, suppDR,
-                    totK7Dropped, totK7Dropped / nEvD, k7Lite ? "on" : "off", k7DR);
+        std::printf(
+            "  M7b breakdown   pass1 upgrades=%lld mean=%.1f | pass2 TCs=%lld mean=%.1f"
+            " | suppressed rows by type pT5=%lld pT3=%lld pLS=%lld\n",
+            totUpgraded,
+            totUpgraded / nEvD,
+            totPass2Acc,
+            totPass2Acc / nEvD,
+            totSuppByType[0],
+            totSuppByType[1],
+            totSuppByType[2]);
+        std::printf(
+            "  M7c breakdown   dca-blocked chains=%lld mean=%.1f (dcaMax=%.2f) | guard-kept rows=%lld"
+            " mean=%.1f (dR<%.3f) | K7-lite drops=%lld mean=%.1f (%s, dR<%.3f)\n",
+            totDcaBlocked,
+            totDcaBlocked / nEvD,
+            dcaAttachMax,
+            totGuardKept,
+            totGuardKept / nEvD,
+            suppDR,
+            totK7Dropped,
+            totK7Dropped / nEvD,
+            k7Lite ? "on" : "off",
+            k7DR);
       }
       if (attachMode == 4) {
-        std::printf("  M16 attach      pairs=%lld mean=%.0f scored=%lld | chain-attached=%lld mean=%.1f"
-                    " | T3-attached=%lld mean=%.1f | dca-blocked=%lld (-D4 %.4g)"
-                    " | seed-family dedup revoked=%lld mean=%.1f (-RD %d)\n",
-                    totGaPairs, totGaPairs / nEvD, totGaScored, totGaChainAtt, totGaChainAtt / nEvD, totGaT3Att,
-                    totGaT3Att / nEvD, totGaDcaBlocked, dcaAttach4, totSeedDedup, totSeedDedup / nEvD,
-                    seedDupClean >= 0.5f ? 1 : 0);
-        std::printf("  M16 delivery    type-7 in-place upgrades of accepted chains=%lld mean=%.1f"
-                    " (of %lld accepted chain TCs) | extra type-5 TCs=%lld mean=%.1f\n",
-                    totDelivT5, totDelivT5 / nEvD, totChainTCs, totDelivT3, totDelivT3 / nEvD);
-        std::printf("  M16 suppression carried rows retired: pT5=%lld pT3=%lld pLS=%lld (total=%lld mean=%.1f)"
-                    " | -RT5=%d -RT3=%d -RPS=%d -a=%.3f -AT3=%.3f\n",
-                    totM16Supp[0], totM16Supp[1], totM16Supp[2], totM16Supp[0] + totM16Supp[1] + totM16Supp[2],
-                    (totM16Supp[0] + totM16Supp[1] + totM16Supp[2]) / nEvD, replT5 >= 0.5f ? 1 : 0,
-                    replT3 >= 0.5f ? 1 : 0, replPls >= 0.5f ? 1 : 0, thetaAttach, thetaAttachT3);
+        std::printf(
+            "  M16 attach      pairs=%lld mean=%.0f scored=%lld | chain-attached=%lld mean=%.1f"
+            " | T3-attached=%lld mean=%.1f | dca-blocked=%lld (-D4 %.4g)"
+            " | seed-family dedup revoked=%lld mean=%.1f (-RD %d)\n",
+            totGaPairs,
+            totGaPairs / nEvD,
+            totGaScored,
+            totGaChainAtt,
+            totGaChainAtt / nEvD,
+            totGaT3Att,
+            totGaT3Att / nEvD,
+            totGaDcaBlocked,
+            dcaAttach4,
+            totSeedDedup,
+            totSeedDedup / nEvD,
+            seedDupClean >= 0.5f ? 1 : 0);
+        std::printf(
+            "  M16 delivery    type-7 in-place upgrades of accepted chains=%lld mean=%.1f"
+            " (of %lld accepted chain TCs) | extra type-5 TCs=%lld mean=%.1f\n",
+            totDelivT5,
+            totDelivT5 / nEvD,
+            totChainTCs,
+            totDelivT3,
+            totDelivT3 / nEvD);
+        std::printf(
+            "  M16 suppression carried rows retired: pT5=%lld pT3=%lld pLS=%lld (total=%lld mean=%.1f)"
+            " | -RT5=%d -RT3=%d -RPS=%d -a=%.3f -AT3=%.3f\n",
+            totM16Supp[0],
+            totM16Supp[1],
+            totM16Supp[2],
+            totM16Supp[0] + totM16Supp[1] + totM16Supp[2],
+            (totM16Supp[0] + totM16Supp[1] + totM16Supp[2]) / nEvD,
+            replT5 >= 0.5f ? 1 : 0,
+            replT3 >= 0.5f ? 1 : 0,
+            replPls >= 0.5f ? 1 : 0,
+            thetaAttach,
+            thetaAttachT3);
         if (auZp8 >= 0.5f)
-          std::printf("  AUDIT -ZP8 %d   quad pLS=%lld mean=%.1f | already delivered=%lld mean=%.1f"
-                      " | blocked by our contention=%lld mean=%.1f | ADDED type-8 TCs=%lld mean=%.1f\n",
-                      static_cast<int>(auZp8 + 0.5f), totZp8Quad, totZp8Quad / nEvD, totZp8Carried,
-                      totZp8Carried / nEvD, totZp8Blocked, totZp8Blocked / nEvD, totZp8Added, totZp8Added / nEvD);
+          std::printf(
+              "  AUDIT -ZP8 %d   quad pLS=%lld mean=%.1f | already delivered=%lld mean=%.1f"
+              " | blocked by our contention=%lld mean=%.1f | ADDED type-8 TCs=%lld mean=%.1f\n",
+              static_cast<int>(auZp8 + 0.5f),
+              totZp8Quad,
+              totZp8Quad / nEvD,
+              totZp8Carried,
+              totZp8Carried / nEvD,
+              totZp8Blocked,
+              totZp8Blocked / nEvD,
+              totZp8Added,
+              totZp8Added / nEvD);
         if (xcBits != 0) {
           const long long tot = totXcPixHit + totXcPixDR + totXcChainKill;
-          std::printf("  XC etabins      -XCT %.4g (|eta|<1.1) -XCT2 %.4g (1.1-1.7) -XCT3 %.4g (>1.7)"
-                      " | score source -XCG %d (%s)\n",
-                      xcTheta, xcThetaT, xcThetaE, xcGlobalScore >= 0.5f ? 1 : 0,
-                      xcGlobalScore >= 0.5f ? "per-seed best over any chain" : "this (seed,chain) pair");
-          std::printf("  XC crossclean   -XC %d (pix=%d chain=%d) -XCT %.4g -XCR2 %.4g -XCW2 %.4g"
-                      " | seeds retired=%lld mean=%.1f [pixHit=%lld/%.1f pixDR=%lld/%.1f chain=%lld/%.1f]"
-                      " | carried type-8 rows killed=%lld mean=%.1f | -ZP8 additions blocked=%lld mean=%.1f\n",
-                      xcBits, xcPix ? 1 : 0, xcChain ? 1 : 0, xcTheta, xcDR2Pix, xcDR2Chain, tot, tot / nEvD,
-                      totXcPixHit, totXcPixHit / nEvD, totXcPixDR, totXcPixDR / nEvD, totXcChainKill,
-                      totXcChainKill / nEvD, totXcCarried, totXcCarried / nEvD, totXcZp8, totXcZp8 / nEvD);
+          std::printf(
+              "  XC etabins      -XCT %.4g (|eta|<1.1) -XCT2 %.4g (1.1-1.7) -XCT3 %.4g (>1.7)"
+              " | score source -XCG %d (%s)\n",
+              xcTheta,
+              xcThetaT,
+              xcThetaE,
+              xcGlobalScore >= 0.5f ? 1 : 0,
+              xcGlobalScore >= 0.5f ? "per-seed best over any chain" : "this (seed,chain) pair");
+          std::printf(
+              "  XC crossclean   -XC %d (pix=%d chain=%d) -XCT %.4g -XCR2 %.4g -XCW2 %.4g"
+              " | seeds retired=%lld mean=%.1f [pixHit=%lld/%.1f pixDR=%lld/%.1f chain=%lld/%.1f]"
+              " | carried type-8 rows killed=%lld mean=%.1f | -ZP8 additions blocked=%lld mean=%.1f\n",
+              xcBits,
+              xcPix ? 1 : 0,
+              xcChain ? 1 : 0,
+              xcTheta,
+              xcDR2Pix,
+              xcDR2Chain,
+              tot,
+              tot / nEvD,
+              totXcPixHit,
+              totXcPixHit / nEvD,
+              totXcPixDR,
+              totXcPixDR / nEvD,
+              totXcChainKill,
+              totXcChainKill / nEvD,
+              totXcCarried,
+              totXcCarried / nEvD,
+              totXcZp8,
+              totXcZp8 / nEvD);
         }
         if (xcDiag >= 0.5f) {
-          static const char* kCls[3] = {"A true, sim has chain TC", "B true, sim has NO chain TC",
-                                        "C no true match         "};
-          std::printf("  XC truth        post-deletion bare-seed universe (isQuad && isDupAlgPass2==0),"
-                      " per event over %.0f events\n", nEvD);
-          std::printf("  XC truth        %-28s %10s %10s %10s %10s %10s\n", "class", "N", "consumed", "RPSblock",
-                      "XCretire", "survive");
+          static const char* kCls[3] = {
+              "A true, sim has chain TC", "B true, sim has NO chain TC", "C no true match         "};
+          std::printf(
+              "  XC truth        post-deletion bare-seed universe (isQuad && isDupAlgPass2==0),"
+              " per event over %.0f events\n",
+              nEvD);
+          std::printf("  XC truth        %-28s %10s %10s %10s %10s %10s\n",
+                      "class",
+                      "N",
+                      "consumed",
+                      "RPSblock",
+                      "XCretire",
+                      "survive");
           for (int c = 0; c < 3; ++c) {
             const long long n = xcTruth[c][0] + xcTruth[c][1] + xcTruth[c][2] + xcTruth[c][3];
-            std::printf("  XC truth        %-28s %10.1f %10.1f %10.1f %10.1f %10.1f\n", kCls[c], n / nEvD,
-                        xcTruth[c][0] / nEvD, xcTruth[c][1] / nEvD, xcTruth[c][2] / nEvD, xcTruth[c][3] / nEvD);
+            std::printf("  XC truth        %-28s %10.1f %10.1f %10.1f %10.1f %10.1f\n",
+                        kCls[c],
+                        n / nEvD,
+                        xcTruth[c][0] / nEvD,
+                        xcTruth[c][1] / nEvD,
+                        xcTruth[c][2] / nEvD,
+                        xcTruth[c][3] / nEvD);
           }
         }
         // ---- M20 CANDIDATE FINDER (-CF) + SUPERSET AUDIT (-CFA) ---------------------
         if (candModeI != kCandAnalytic) {
           const char* cfName = (candModeI == kCandBinned) ? "binned prefilter" : "map candidates";
-          std::printf("  M20 candfind    -CF %d (%s) | targets=%lld (%.0f/evt) full-scan pairs=%lld"
-                      " (%.3g/evt) | examined=%lld (%.3g/evt, %.4gx of full scan)"
-                      " | emitted=%lld (%.3g/evt) | build=%.3f ms/evt\n",
-                      candModeI, cfName, candStats.nTargets, candStats.nTargets / nEvD, candStats.nFullScan,
-                      candStats.nFullScan / nEvD, candStats.nExamined, candStats.nExamined / nEvD,
-                      candStats.nFullScan > 0
-                          ? static_cast<double>(candStats.nExamined) / static_cast<double>(candStats.nFullScan)
-                          : 0.0,
-                      candStats.nEmitted, candStats.nEmitted / nEvD, totCandBuildMs / nEvD);
+          std::printf(
+              "  M20 candfind    -CF %d (%s) | targets=%lld (%.0f/evt) full-scan pairs=%lld"
+              " (%.3g/evt) | examined=%lld (%.3g/evt, %.4gx of full scan)"
+              " | emitted=%lld (%.3g/evt) | build=%.3f ms/evt\n",
+              candModeI,
+              cfName,
+              candStats.nTargets,
+              candStats.nTargets / nEvD,
+              candStats.nFullScan,
+              candStats.nFullScan / nEvD,
+              candStats.nExamined,
+              candStats.nExamined / nEvD,
+              candStats.nFullScan > 0
+                  ? static_cast<double>(candStats.nExamined) / static_cast<double>(candStats.nFullScan)
+                  : 0.0,
+              candStats.nEmitted,
+              candStats.nEmitted / nEvD,
+              totCandBuildMs / nEvD);
           if (candModeI == kCandBinned)
-            std::printf("  M20 candbins    rt %d x %.1f cm | tanLambda %d x %.4g (|t| <= %.4g)"
-                        " | phi %d x %.4g rad | pad %.4g | wild seeds=%d wild targets=%lld\n",
-                        candIdx.nRt, candIdx.rtW, candIdx.nTan, candIdx.tanW, candIdx.tanClamp, candIdx.nPhi,
-                        candIdx.phiW, candPhiPad, static_cast<int>(candIdx.wildPls.size()),
-                        candStats.nWildTargets);
+            std::printf(
+                "  M20 candbins    rt %d x %.1f cm | tanLambda %d x %.4g (|t| <= %.4g)"
+                " | phi %d x %.4g rad | pad %.4g | wild seeds=%d wild targets=%lld\n",
+                candIdx.nRt,
+                candIdx.rtW,
+                candIdx.nTan,
+                candIdx.tanW,
+                candIdx.tanClamp,
+                candIdx.nPhi,
+                candIdx.phiW,
+                candPhiPad,
+                static_cast<int>(candIdx.wildPls.size()),
+                candStats.nWildTargets);
           if (candModeI == kCandMap)
-            std::printf("  M20 candmap     file=%s | events missing=%lld | bare targets with no"
-                        " candidate=%lld | analytic windows %s (-CFW %d)\n",
-                        candMapPath.c_str(), candStats.nMapEventsMissing, candStats.nMapTargetsEmpty,
-                        candMapWin >= 0.5f ? "ENFORCED" : "features only", candMapWin >= 0.5f ? 1 : 0);
+            std::printf(
+                "  M20 candmap     file=%s | events missing=%lld | bare targets with no"
+                " candidate=%lld | analytic windows %s (-CFW %d)\n",
+                candMapPath.c_str(),
+                candStats.nMapEventsMissing,
+                candStats.nMapTargetsEmpty,
+                candMapWin >= 0.5f ? "ENFORCED" : "features only",
+                candMapWin >= 0.5f ? 1 : 0);
           if (candAudit >= 0.5f)
-            std::printf("  M20 SUPERSET AUDIT (-CFA 1): analytic-accepted pairs=%lld (%.3g/evt)"
-                        " | MISSING FROM THE CANDIDATE SET=%lld  ==> %s\n",
-                        candStats.nAnalytic, candStats.nAnalytic / nEvD, candStats.nMissing,
-                        candStats.nMissing == 0 ? "PASS (exact superset)" : "*** FAIL ***");
+            std::printf(
+                "  M20 SUPERSET AUDIT (-CFA 1): analytic-accepted pairs=%lld (%.3g/evt)"
+                " | MISSING FROM THE CANDIDATE SET=%lld  ==> %s\n",
+                candStats.nAnalytic,
+                candStats.nAnalytic / nEvD,
+                candStats.nMissing,
+                candStats.nMissing == 0 ? "PASS (exact superset)" : "*** FAIL ***");
         }
         // ---- M20 pT3-CLASS HIT-OVERLAP CONTENTION (-CC) -----------------------------
         // ---- M20 pT3-CLASS DEDUP LEDGER: the two stages reported SEPARATELY -----------
@@ -5338,67 +5866,121 @@ int main(int argc, char** argv) {
         // OT SIDE     = the -CC ownership-map contention over what the pixel side left.
         // Reported apart because the maintainer question is exactly which of the two is
         // carrying the work, and whether the OT side alone suffices.
-        std::printf("  M20 pT3 dedup   PIXEL side (-RDT %s): revoked=%lld (%.1f/evt)"
-                    " | OT side (-CC %d -CCG %s -CCN %d -CCP %d -CCK %d -CCR %d):"
-                    " revoked=%lld (%.1f/evt)"
-                    " | DELIVERED=%lld (%.1f/evt)  [LST pT3 reference ~150/evt]\n",
-                    (rdT3 < -0.5f) ? (seedDupClean >= 0.5f ? "follow -RD =1" : "follow -RD =0")
-                                   : (rdT3 >= 0.5f ? "1" : "0"),
-                    totSeedDedupT3, totSeedDedupT3 / nEvD, ccMode >= 0.5f ? 1 : 0,
-                    ccGran >= 0.5f ? "MD" : "hit", std::max(1, static_cast<int>(ccMinShared + 0.5f)),
-                    ccPreclaim >= 0.5f ? 1 : 0, static_cast<int>(ccOrder + 0.5f),
-                    ccRelPls >= 0.5f ? 1 : 0, totCCDropped,
-                    totCCDropped / nEvD, totDelivT3, totDelivT3 / nEvD);
+        std::printf(
+            "  M20 pT3 dedup   PIXEL side (-RDT %s): revoked=%lld (%.1f/evt)"
+            " | OT side (-CC %d -CCG %s -CCN %d -CCP %d -CCK %d -CCR %d):"
+            " revoked=%lld (%.1f/evt)"
+            " | DELIVERED=%lld (%.1f/evt)  [LST pT3 reference ~150/evt]\n",
+            (rdT3 < -0.5f) ? (seedDupClean >= 0.5f ? "follow -RD =1" : "follow -RD =0") : (rdT3 >= 0.5f ? "1" : "0"),
+            totSeedDedupT3,
+            totSeedDedupT3 / nEvD,
+            ccMode >= 0.5f ? 1 : 0,
+            ccGran >= 0.5f ? "MD" : "hit",
+            std::max(1, static_cast<int>(ccMinShared + 0.5f)),
+            ccPreclaim >= 0.5f ? 1 : 0,
+            static_cast<int>(ccOrder + 0.5f),
+            ccRelPls >= 0.5f ? 1 : 0,
+            totCCDropped,
+            totCCDropped / nEvD,
+            totDelivT3,
+            totDelivT3 / nEvD);
         std::printf("  M20 stageB      %s | pT3-class candidates before any dedup=%lld (%.1f/evt)\n",
-                    doT3Stage ? "ON" : "off", totSeedDedupT3 + totCCDropped + totDelivT3,
+                    doT3Stage ? "ON" : "off",
+                    totSeedDedupT3 + totCCDropped + totDelivT3,
                     (totSeedDedupT3 + totCCDropped + totDelivT3) / nEvD);
       }
       // M16b: totDelivT5 are IN-PLACE upgrades already counted inside totChainTCs, so only
       // the stage-B type-5 TCs are additive at -A 4.
       const long long extraDeliv = (attachMode == 4) ? totDelivT3 : (totDelivT5 + totDelivT3);
-      std::printf("  output TCs/evt  mean=%.1f (pixel kept %.1f - suppressed %.1f + chain %.1f - k7 %.1f"
-                  " + attach deliveries %.1f)\n",
-                  (totPixKept - totPixSuppressed + totChainTCs - totK7Dropped + extraDeliv) / nEvD,
-                  totPixKept / nEvD, totPixSuppressed / nEvD, totChainTCs / nEvD, totK7Dropped / nEvD,
-                  extraDeliv / nEvD);
-      std::printf("  time mean/evt   infer=%.3f weld=%.3f attach=%.3f arb+asm=%.3f fill=%.3f ms\n", totInferMs / nEvD,
-                  totWeldMs / nEvD, totAttachMs / nEvD, totArbMs / nEvD, totFillMs / nEvD);
+      std::printf(
+          "  output TCs/evt  mean=%.1f (pixel kept %.1f - suppressed %.1f + chain %.1f - k7 %.1f"
+          " + attach deliveries %.1f)\n",
+          (totPixKept - totPixSuppressed + totChainTCs - totK7Dropped + extraDeliv) / nEvD,
+          totPixKept / nEvD,
+          totPixSuppressed / nEvD,
+          totChainTCs / nEvD,
+          totK7Dropped / nEvD,
+          extraDeliv / nEvD);
+      std::printf("  time mean/evt   infer=%.3f weld=%.3f attach=%.3f arb+asm=%.3f fill=%.3f ms\n",
+                  totInferMs / nEvD,
+                  totWeldMs / nEvD,
+                  totAttachMs / nEvD,
+                  totArbMs / nEvD,
+                  totFillMs / nEvD);
       // ---- ATTACH CONFUSION MATRIX report (PROTO_ATTACH_CM) -------------------------
       if (attachCM) {
         const long long attTot = cmAttSame + cmAttCross + cmAttTgtFakePls + cmAttFakeTgtRealPls + cmAttFakeBoth;
         const double attD = attTot > 0 ? static_cast<double>(attTot) : 1.0;
         const long long trueTot = cmAttSame + cmMissBelowTheta + cmMissContention + cmMissOther;
         const double trueD = trueTot > 0 ? static_cast<double>(trueTot) : 1.0;
-        std::printf("[ATTACHCM] a=%.4g AT3=%.4g RPS=%d RT3=%d over %lld events\n", thetaAttach, thetaAttachT3,
-                    replPls >= 0.5f ? 1 : 0, replT3 >= 0.5f ? 1 : 0, nRun);
-        std::printf("[ATTACHCM] DECISIONS n=%lld (%.2f/evt) | same_sim=%lld (%.4f) cross_sim=%lld (%.4f)"
-                    " true_tgt_fake_pls=%lld (%.4f) fake_tgt_real_pls=%lld (%.4f) fake_both=%lld (%.4f)\n",
-                    attTot, attTot / nEvD, cmAttSame, cmAttSame / attD, cmAttCross, cmAttCross / attD,
-                    cmAttTgtFakePls, cmAttTgtFakePls / attD, cmAttFakeTgtRealPls, cmAttFakeTgtRealPls / attD,
-                    cmAttFakeBoth, cmAttFakeBoth / attD);
+        std::printf("[ATTACHCM] a=%.4g AT3=%.4g RPS=%d RT3=%d over %lld events\n",
+                    thetaAttach,
+                    thetaAttachT3,
+                    replPls >= 0.5f ? 1 : 0,
+                    replT3 >= 0.5f ? 1 : 0,
+                    nRun);
+        std::printf(
+            "[ATTACHCM] DECISIONS n=%lld (%.2f/evt) | same_sim=%lld (%.4f) cross_sim=%lld (%.4f)"
+            " true_tgt_fake_pls=%lld (%.4f) fake_tgt_real_pls=%lld (%.4f) fake_both=%lld (%.4f)\n",
+            attTot,
+            attTot / nEvD,
+            cmAttSame,
+            cmAttSame / attD,
+            cmAttCross,
+            cmAttCross / attD,
+            cmAttTgtFakePls,
+            cmAttTgtFakePls / attD,
+            cmAttFakeTgtRealPls,
+            cmAttFakeTgtRealPls / attD,
+            cmAttFakeBoth,
+            cmAttFakeBoth / attD);
         std::printf("[ATTACHCM] PRECISION same_sim/attaches=%.4f | stage-B(T3) same=%lld bad=%lld\n",
-                    cmAttSame / attD, cmAttSameT3, cmAttBadT3);
-        std::printf("[ATTACHCM] RECALL true pairs in prefilter=%lld (%.2f/evt) | attached=%lld (%.4f)"
-                    " missed_below_theta=%lld (%.4f) missed_contention=%lld (%.4f) missed_other=%lld (%.4f)\n",
-                    cmTruePairPref, cmTruePairPref / nEvD, cmAttSame, cmAttSame / trueD, cmMissBelowTheta,
-                    cmMissBelowTheta / trueD, cmMissContention, cmMissContention / trueD, cmMissOther,
-                    cmMissOther / trueD);
-        std::printf("[ATTACHCM] PREFILTER true pairs possible=%lld (%.2f/evt) kept=%lld -> window recall=%.4f\n",
-                    cmTruePairPoss, cmTruePairPoss / nEvD, cmTruePairPref,
-                    cmTruePairPoss > 0 ? static_cast<double>(cmTruePairPref) / static_cast<double>(cmTruePairPoss)
-                                       : 0.0);
+                    cmAttSame / attD,
+                    cmAttSameT3,
+                    cmAttBadT3);
+        std::printf(
+            "[ATTACHCM] RECALL true pairs in prefilter=%lld (%.2f/evt) | attached=%lld (%.4f)"
+            " missed_below_theta=%lld (%.4f) missed_contention=%lld (%.4f) missed_other=%lld (%.4f)\n",
+            cmTruePairPref,
+            cmTruePairPref / nEvD,
+            cmAttSame,
+            cmAttSame / trueD,
+            cmMissBelowTheta,
+            cmMissBelowTheta / trueD,
+            cmMissContention,
+            cmMissContention / trueD,
+            cmMissOther,
+            cmMissOther / trueD);
+        std::printf(
+            "[ATTACHCM] PREFILTER true pairs possible=%lld (%.2f/evt) kept=%lld -> window recall=%.4f\n",
+            cmTruePairPoss,
+            cmTruePairPoss / nEvD,
+            cmTruePairPref,
+            cmTruePairPoss > 0 ? static_cast<double>(cmTruePairPref) / static_cast<double>(cmTruePairPoss) : 0.0);
         const double hadD = cmTgtHadTrue > 0 ? static_cast<double>(cmTgtHadTrue) : 1.0;
-        std::printf("[ATTACHCM] TARGETS with a true pLS available=%lld (%.2f/evt) | got_right=%lld (%.4f)"
-                    " got_wrong=%lld (%.4f) got_none=%lld (%.4f)\n",
-                    cmTgtHadTrue, cmTgtHadTrue / nEvD, cmTgtGotRight, cmTgtGotRight / hadD, cmTgtGotWrong,
-                    cmTgtGotWrong / hadD, cmTgtGotNone, cmTgtGotNone / hadD);
-        std::printf("[ATTACHCM] TARGETS with NO true pLS available=%lld (%.2f/evt) | attached anyway=%lld (%.4f)\n",
-                    cmTgtNoTrue, cmTgtNoTrue / nEvD, cmTgtNoTrueAttached,
-                    cmTgtNoTrue > 0 ? static_cast<double>(cmTgtNoTrueAttached) / static_cast<double>(cmTgtNoTrue)
-                                    : 0.0);
-        std::printf("[ATTACHCM] SUPPRESSED type-8 rows: real_pLS=%lld (of which owner shares the sim=%lld)"
-                    " fake_pLS=%lld\n",
-                    cmSuppRealPls, cmSuppRealPlsSameSimOwner, cmSuppFakePls);
+        std::printf(
+            "[ATTACHCM] TARGETS with a true pLS available=%lld (%.2f/evt) | got_right=%lld (%.4f)"
+            " got_wrong=%lld (%.4f) got_none=%lld (%.4f)\n",
+            cmTgtHadTrue,
+            cmTgtHadTrue / nEvD,
+            cmTgtGotRight,
+            cmTgtGotRight / hadD,
+            cmTgtGotWrong,
+            cmTgtGotWrong / hadD,
+            cmTgtGotNone,
+            cmTgtGotNone / hadD);
+        std::printf(
+            "[ATTACHCM] TARGETS with NO true pLS available=%lld (%.2f/evt) | attached anyway=%lld (%.4f)\n",
+            cmTgtNoTrue,
+            cmTgtNoTrue / nEvD,
+            cmTgtNoTrueAttached,
+            cmTgtNoTrue > 0 ? static_cast<double>(cmTgtNoTrueAttached) / static_cast<double>(cmTgtNoTrue) : 0.0);
+        std::printf(
+            "[ATTACHCM] SUPPRESSED type-8 rows: real_pLS=%lld (of which owner shares the sim=%lld)"
+            " fake_pLS=%lld\n",
+            cmSuppRealPls,
+            cmSuppRealPlsSameSimOwner,
+            cmSuppFakePls);
         // The threshold frontier: for every candidate cut t, what the BEST-pair-per-target
         // population looks like at or above t. This is what picks the -a scan points.
         std::printf("[ATTACHCM] BEST-PER-TARGET frontier (cut : n_attachable same cross/fake precision)\n");
@@ -5411,8 +5993,13 @@ int main(int argc, char** argv) {
           if (cs + cb == 0)
             continue;
           const float cut = kCMLo + b * kCMW;
-          std::printf("[ATTACHCM]   cut %+7.2f : n=%-9lld same=%-9lld bad=%-9lld prec=%.4f (%.2f/evt)\n", cut, cs + cb,
-                      cs, cb, static_cast<double>(cs) / static_cast<double>(cs + cb), (cs + cb) / nEvD);
+          std::printf("[ATTACHCM]   cut %+7.2f : n=%-9lld same=%-9lld bad=%-9lld prec=%.4f (%.2f/evt)\n",
+                      cut,
+                      cs + cb,
+                      cs,
+                      cb,
+                      static_cast<double>(cs) / static_cast<double>(cs + cb),
+                      (cs + cb) / nEvD);
         }
         std::printf("[ATTACHCM] ALL-PAIR logit histogram (bin_lo same bad)\n");
         for (int b = 0; b < kCMBins; ++b) {
@@ -5422,10 +6009,15 @@ int main(int argc, char** argv) {
         }
       }
     } else {
-      std::printf("  output TCs/evt  mean=%.1f (pixel %.1f + chain %.1f)\n", (totPixKept + totChainTCs) / nEvD,
-                  totPixKept / nEvD, totChainTCs / nEvD);
-      std::printf("  time mean/evt   infer=%.3f weld=%.3f arb+asm=%.3f fill=%.3f ms\n", totInferMs / nEvD,
-                  totWeldMs / nEvD, totArbMs / nEvD, totFillMs / nEvD);
+      std::printf("  output TCs/evt  mean=%.1f (pixel %.1f + chain %.1f)\n",
+                  (totPixKept + totChainTCs) / nEvD,
+                  totPixKept / nEvD,
+                  totChainTCs / nEvD);
+      std::printf("  time mean/evt   infer=%.3f weld=%.3f arb+asm=%.3f fill=%.3f ms\n",
+                  totInferMs / nEvD,
+                  totWeldMs / nEvD,
+                  totArbMs / nEvD,
+                  totFillMs / nEvD);
     }
     std::printf("  wrote %s\n", outPath.c_str());
     return 0;
@@ -5540,7 +6132,18 @@ int main(int argc, char** argv) {
       std::printf(
           "evt %lld (run %u lumi %u event %llu): nT3=%lld edges=%lld true=%lld chains=%lld"
           " (sim=%lld pileup=%lld none=%lld) | weld=%.3f ms\n",
-          i, ev.run, ev.lumi, ev.evt, nT3, nEdges, nTrue, nChains, nSimChains, nPileupChains, nNoneChains, weldMs);
+          i,
+          ev.run,
+          ev.lumi,
+          ev.evt,
+          nT3,
+          nEdges,
+          nTrue,
+          nChains,
+          nSimChains,
+          nPileupChains,
+          nNoneChains,
+          weldMs);
 
       totT3 += nT3;
       totEdges += nEdges;
@@ -5554,10 +6157,19 @@ int main(int argc, char** argv) {
 
     const double nEvD = nRun > 0 ? static_cast<double>(nRun) : 1.0;
     std::printf("oracle summary: %lld events (lambdaLen=%.3f)\n", nRun, lambdaLen);
-    std::printf("  nT3 total=%lld mean=%.1f | edges total=%lld mean=%.1f | true edges total=%lld mean=%.1f\n", totT3,
-                totT3 / nEvD, totEdges, totEdges / nEvD, totTrue, totTrue / nEvD);
-    std::printf("  chains total=%lld mean=%.1f : accepted-sim=%lld pileup-sim=%lld unmatched=%lld\n", totChains,
-                totChains / nEvD, totChainsSim, totChainsPileup, totChainsNone);
+    std::printf("  nT3 total=%lld mean=%.1f | edges total=%lld mean=%.1f | true edges total=%lld mean=%.1f\n",
+                totT3,
+                totT3 / nEvD,
+                totEdges,
+                totEdges / nEvD,
+                totTrue,
+                totTrue / nEvD);
+    std::printf("  chains total=%lld mean=%.1f : accepted-sim=%lld pileup-sim=%lld unmatched=%lld\n",
+                totChains,
+                totChains / nEvD,
+                totChainsSim,
+                totChainsPileup,
+                totChainsNone);
     std::printf("  weld time total=%.3f ms mean=%.3f ms\n", totWeldMs, totWeldMs / nEvD);
 
     // The ceiling table. Percentages are relative to the formable row of each column.
@@ -5566,18 +6178,33 @@ int main(int argc, char** argv) {
     std::printf(" columns overlap: disp includes vDisp)\n");
     std::printf("  %-26s %16s %16s %16s\n", "", "prompt(vxy<1)", "disp(vxy>=1)", "vDisp(vxy>=5)");
     std::printf("  %-26s %16lld %16lld %16lld\n", "formable (>=1 true edge)", formable[0], formable[1], formable[2]);
-    std::printf("  %-26s %8lld (%4.1f%%) %8lld (%4.1f%%) %8lld (%4.1f%%)\n", "oracle chained (>=2 T3)", chained[0],
-                pct(chained[0], formable[0]), chained[1], pct(chained[1], formable[1]), chained[2],
+    std::printf("  %-26s %8lld (%4.1f%%) %8lld (%4.1f%%) %8lld (%4.1f%%)\n",
+                "oracle chained (>=2 T3)",
+                chained[0],
+                pct(chained[0], formable[0]),
+                chained[1],
+                pct(chained[1], formable[1]),
+                chained[2],
                 pct(chained[2], formable[2]));
-    static const char* layRow[5] = {"  max nLayers <= 4", "  max nLayers = 5", "  max nLayers = 6",
-                                    "  max nLayers = 7", "  max nLayers >= 8"};
+    static const char* layRow[5] = {
+        "  max nLayers <= 4", "  max nLayers = 5", "  max nLayers = 6", "  max nLayers = 7", "  max nLayers >= 8"};
     for (int b = 0; b < 5; ++b)
       std::printf("  %-26s %16lld %16lld %16lld\n", layRow[b], layHist[0][b], layHist[1][b], layHist[2][b]);
-    std::printf("  %-26s %8lld (%4.1f%%) %8lld (%4.1f%%) %8lld (%4.1f%%)\n", "baseline: any TC", baseAny[0],
-                pct(baseAny[0], formable[0]), baseAny[1], pct(baseAny[1], formable[1]), baseAny[2],
+    std::printf("  %-26s %8lld (%4.1f%%) %8lld (%4.1f%%) %8lld (%4.1f%%)\n",
+                "baseline: any TC",
+                baseAny[0],
+                pct(baseAny[0], formable[0]),
+                baseAny[1],
+                pct(baseAny[1], formable[1]),
+                baseAny[2],
                 pct(baseAny[2], formable[2]));
-    std::printf("  %-26s %8lld (%4.1f%%) %8lld (%4.1f%%) %8lld (%4.1f%%)\n", "baseline: T5/T4-type TC", baseT5T4[0],
-                pct(baseT5T4[0], formable[0]), baseT5T4[1], pct(baseT5T4[1], formable[1]), baseT5T4[2],
+    std::printf("  %-26s %8lld (%4.1f%%) %8lld (%4.1f%%) %8lld (%4.1f%%)\n",
+                "baseline: T5/T4-type TC",
+                baseT5T4[0],
+                pct(baseT5T4[0], formable[0]),
+                baseT5T4[1],
+                pct(baseT5T4[1], formable[1]),
+                baseT5T4[2],
                 pct(baseT5T4[2], formable[2]));
     return 0;
   }
@@ -5623,8 +6250,19 @@ int main(int argc, char** argv) {
         "evt %lld (run %u lumi %u event %llu): nT3=%lld"
         " E1 exact=%lld emitted=%lld | E2 exact=%lld emitted=%lld suppressedAsE1=%lld"
         " | edges=%lld | k1=%.3f ms k2=%.3f ms\n",
-        i, ev.run, ev.lumi, ev.evt, nT3, g.e1CountExact, e1Emitted, g.e2CountExact, e2Emitted, e2Suppressed, nEdges,
-        k1Ms, k2Ms);
+        i,
+        ev.run,
+        ev.lumi,
+        ev.evt,
+        nT3,
+        g.e1CountExact,
+        e1Emitted,
+        g.e2CountExact,
+        e2Emitted,
+        e2Suppressed,
+        nEdges,
+        k1Ms,
+        k2Ms);
     if (e1Emitted != g.e1CountExact)
       std::fprintf(stderr, "WARNING: evt %lld E1 emitted (%lld) != exact (%lld)\n", i, e1Emitted, g.e1CountExact);
 
@@ -5646,12 +6284,15 @@ int main(int argc, char** argv) {
   const double nEvD = nRun > 0 ? static_cast<double>(nRun) : 1.0;
   std::printf("graph summary: %lld events\n", nRun);
   std::printf("  nT3 total=%lld\n", totT3);
-  std::printf("  E1 exact=%lld emitted=%lld%s\n", totE1Exact, totE1Emitted,
-              totE1Exact == totE1Emitted ? "" : "  [MISMATCH]");
+  std::printf(
+      "  E1 exact=%lld emitted=%lld%s\n", totE1Exact, totE1Emitted, totE1Exact == totE1Emitted ? "" : "  [MISMATCH]");
   std::printf("  E2 exact=%lld emitted=%lld suppressedAsE1=%lld\n", totE2Exact, totE2Emitted, totE2Suppressed);
-  std::printf("  edges/event min=%lld mean=%.1f max=%lld\n", nRun > 0 ? minEdges : 0, totEdges / nEvD,
-              nRun > 0 ? maxEdges : 0);
-  std::printf("  time k1 total=%.3f ms mean=%.3f ms | k2 total=%.3f ms mean=%.3f ms\n", totK1Ms, totK1Ms / nEvD,
-              totK2Ms, totK2Ms / nEvD);
+  std::printf(
+      "  edges/event min=%lld mean=%.1f max=%lld\n", nRun > 0 ? minEdges : 0, totEdges / nEvD, nRun > 0 ? maxEdges : 0);
+  std::printf("  time k1 total=%.3f ms mean=%.3f ms | k2 total=%.3f ms mean=%.3f ms\n",
+              totK1Ms,
+              totK1Ms / nEvD,
+              totK2Ms,
+              totK2Ms / nEvD);
   return 0;
 }

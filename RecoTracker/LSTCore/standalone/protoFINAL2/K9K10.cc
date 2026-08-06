@@ -14,39 +14,39 @@
 
 namespace {
 
-// One-time warning helper for missing pixel-consumption flags (fields are filled by the
-// reader only when the input ntuple carries the t3_partOfPT* branches).
-void warnNoPixFlags() {
-  static bool warned = false;
-  if (!warned) {
-    std::fprintf(stderr,
-                 "k9Arbitrate: dropPixelConsumed requested but t3_partOfPT5/PT3 not "
-                 "filled for this event; no chains dropped\n");
-    warned = true;
+  // One-time warning helper for missing pixel-consumption flags (fields are filled by the
+  // reader only when the input ntuple carries the t3_partOfPT* branches).
+  void warnNoPixFlags() {
+    static bool warned = false;
+    if (!warned) {
+      std::fprintf(stderr,
+                   "k9Arbitrate: dropPixelConsumed requested but t3_partOfPT5/PT3 not "
+                   "filled for this event; no chains dropped\n");
+      warned = true;
+    }
   }
-}
 
-// B4: the claim-tolerance predicate. maxClaimedItems < 0 reproduces the legacy
-// fractional test EXACTLY (same float comparison, same operand order).
-inline bool claimOk(const ArbitrationParams& params, int nClaimed, float frac, bool strict = true) {
-  if (params.maxClaimedItems < 0)
-    return !(frac > params.maxClaimedFrac);
-  if (params.claimCountExclusive && strict)
-    return nClaimed <= params.maxClaimedItems;
-  return (nClaimed <= params.maxClaimedItems) || !(frac > params.maxClaimedFrac);
-}
+  // B4: the claim-tolerance predicate. maxClaimedItems < 0 reproduces the legacy
+  // fractional test EXACTLY (same float comparison, same operand order).
+  inline bool claimOk(const ArbitrationParams& params, int nClaimed, float frac, bool strict = true) {
+    if (params.maxClaimedItems < 0)
+      return !(frac > params.maxClaimedFrac);
+    if (params.claimCountExclusive && strict)
+      return nClaimed <= params.maxClaimedItems;
+    return (nClaimed <= params.maxClaimedItems) || !(frac > params.maxClaimedFrac);
+  }
 
-// EX_DUPCC: the same predicate with the tolerance pair passed explicitly, so a candidate in
-// the -WZ/-WN band can be priced differently from the rest. Identical operand order and
-// float comparisons to claimOk above; claimOk(p,...) == claimOkV(p.maxClaimedItems,
-// p.maxClaimedFrac, p.claimCountExclusive, ...) exactly.
-inline bool claimOkV(int maxItems, float maxFrac, bool excl, int nClaimed, float frac, bool strict) {
-  if (maxItems < 0)
-    return !(frac > maxFrac);
-  if (excl && strict)
-    return nClaimed <= maxItems;
-  return (nClaimed <= maxItems) || !(frac > maxFrac);
-}
+  // EX_DUPCC: the same predicate with the tolerance pair passed explicitly, so a candidate in
+  // the -WZ/-WN band can be priced differently from the rest. Identical operand order and
+  // float comparisons to claimOk above; claimOk(p,...) == claimOkV(p.maxClaimedItems,
+  // p.maxClaimedFrac, p.claimCountExclusive, ...) exactly.
+  inline bool claimOkV(int maxItems, float maxFrac, bool excl, int nClaimed, float frac, bool strict) {
+    if (maxItems < 0)
+      return !(frac > maxFrac);
+    if (excl && strict)
+      return nClaimed <= maxItems;
+    return (nClaimed <= maxItems) || !(frac > maxFrac);
+  }
 
 }  // namespace
 
@@ -63,8 +63,8 @@ void k9Arbitrate(const LSTEventData& ev,
 
   // Pixel-consumption flags are optional input (reader fills them only from ntuples that
   // carry the branches). Guard sizes so a missing fill degrades loudly, not silently UB.
-  const bool havePixFlags = static_cast<int>(ev.t3_partOfPT5.size()) == nT3 &&
-                            static_cast<int>(ev.t3_partOfPT3.size()) == nT3;
+  const bool havePixFlags =
+      static_cast<int>(ev.t3_partOfPT5.size()) == nT3 && static_cast<int>(ev.t3_partOfPT3.size()) == nT3;
   if (params.dropPixelConsumed && !havePixFlags && nChains > 0)
     warnNoPixFlags();
 
@@ -82,8 +82,8 @@ void k9Arbitrate(const LSTEventData& ev,
     if (params.dropPixelConsumed && havePixFlags) {
       // K8 attach bypass (M7): an attached chain skips the partOfPT5 half of the drop
       // (it replaces the baseline pT5 delivery) but still respects partOfPT3.
-      const bool bypassPT5 = bypassPT5Drop != nullptr && c < static_cast<int>(bypassPT5Drop->size()) &&
-                             (*bypassPT5Drop)[c] != 0;
+      const bool bypassPT5 =
+          bypassPT5Drop != nullptr && c < static_cast<int>(bypassPT5Drop->size()) && (*bypassPT5Drop)[c] != 0;
       bool consumed = false;
       for (int k = chains.offsets[c]; k < chains.offsets[c + 1] && !consumed; ++k) {
         const int t3 = chains.items[k];
@@ -131,8 +131,7 @@ void k9Arbitrate(const LSTEventData& ev,
   //    same hits -- the genuine chain-chain braid population.
   // B1 (-PU): pixel owners = the kept baseline pixel TCs' OT hit lists. Empty/nullptr =
   // legacy (every expression below collapses to the pre-B1 code path bit-exactly).
-  const std::vector<std::vector<int>>* pixOwn =
-      (params.preClaimMode > 0) ? params.preClaimOwners : nullptr;
+  const std::vector<std::vector<int>>* pixOwn = (params.preClaimMode > 0) ? params.preClaimOwners : nullptr;
   const int nPix = (pixOwn != nullptr) ? static_cast<int>(pixOwn->size()) : 0;
 
   std::vector<int> chainKeyOff, chainKeyItems;  // -H 1 only: per-chain deduped hit list
@@ -231,86 +230,84 @@ void k9Arbitrate(const LSTEventData& ev,
   shareParams.maxClaimedFrac = params.sharePassFrac;
 
   for (int pass = 0; pass < (sharePass ? 2 : 1); ++pass) {
-  const ArbitrationParams& pp = (pass == 0) ? params : shareParams;
-  const std::vector<int>& walk = (pass == 0) ? order : deferred;
-  for (int c : walk) {
-    const int b = keyOff[c];
-    const int e = keyOff[c + 1];
-    const int total = e - b;
-    int nClaimed = 0;
-    int nPixClaimed = 0;
-    for (int k = b; k < e; ++k) {
-      const int o = owner[keyItems[k]];
-      nClaimed += (o != -1) ? 1 : 0;
-      nPixClaimed += (o <= -2) ? 1 : 0;
-    }
-    // total >= 4 for any welded chain (2 T3s sharing an LS); guard div anyway.
-    const float frac = (total > 0) ? static_cast<float>(nClaimed) / static_cast<float>(total) : 0.f;
-    // COMPOSED (B1 x B4): the pixel-unified claim count feeds the B4 tolerance predicate.
-    // With -FC off this is bit-identical to B1's `frac > maxClaimedFrac` test.
-    // DUPCUT (-FCE): a chain flagged in strictExemptMask keeps the legacy loosen-only
-    // tolerance; everyone else obeys claimCountExclusive. nullptr = all strict (legacy).
-    // COMPOSED with the M17 (-FS) share pass: the tolerance object is the per-pass one
-    // (pp), the exempt mask is a per-chain property and is therefore pass-invariant.
-    const bool strictClaim = params.strictExemptMask == nullptr ||
-                             c >= static_cast<int>(params.strictExemptMask->size()) ||
-                             (*params.strictExemptMask)[c] == 0;
-    // EX_DUPCC: band membership is needed for both the claim tolerance and the braid.
-    const bool altBraidBand = params.braidAltMask != nullptr &&
-                              c < static_cast<int>(params.braidAltMask->size()) &&
-                              (*params.braidAltMask)[c] != 0;
-    const int cItems = (altBraidBand && params.maxClaimedItemsAlt != -2) ? params.maxClaimedItemsAlt
-                                                                        : pp.maxClaimedItems;
-    const float cFrac = (altBraidBand && params.maxClaimedFracAlt > 0.f) ? params.maxClaimedFracAlt
-                                                                        : pp.maxClaimedFrac;
-    if (!claimOkV(cItems, cFrac, pp.claimCountExclusive, nClaimed, frac, strictClaim)) {
-      if (params.stats != nullptr && nPixClaimed > 0)
-        ++params.stats->killedByPixFrac;
-      if (pass == 0 && sharePass)
-        deferred.push_back(c);
-      continue;
-    }
-    // EX_DUPCC: the effective owner-relative fraction is per-candidate. A candidate in the
-    // alt band (-WZ/-WN geometry mask) uses braidFracAlt; everyone else uses braidFrac.
-    // A 0 fraction disables the test for that candidate only.
-    const float bFrac =
-        (altBraidBand && params.braidFracAlt > 0.f) ? params.braidFracAlt : params.braidFrac;
-    if (braid && bFrac > 0.f && nClaimed > 0 && !(params.strictExemptBraid && !strictClaim)) {
-      // Owner-relative overlap: does this candidate swallow >= braidFrac of any single
-      // already-accepted owner? If so it is a welder-braid sibling, not a new track.
-      touched.clear();
+    const ArbitrationParams& pp = (pass == 0) ? params : shareParams;
+    const std::vector<int>& walk = (pass == 0) ? order : deferred;
+    for (int c : walk) {
+      const int b = keyOff[c];
+      const int e = keyOff[c + 1];
+      const int total = e - b;
+      int nClaimed = 0;
+      int nPixClaimed = 0;
       for (int k = b; k < e; ++k) {
         const int o = owner[keyItems[k]];
-        if (o == -1)
-          continue;
-        if (o <= -2 && !pixBraid)
-          continue;
-        const int slot = (o >= 0) ? o : (nChains + (-o - 2));
-        if (cnt[slot] == 0)
-          touched.push_back(slot);
-        ++cnt[slot];
+        nClaimed += (o != -1) ? 1 : 0;
+        nPixClaimed += (o <= -2) ? 1 : 0;
       }
-      bool killed = false, killedByPix = false;
-      for (int slot : touched) {
-        const int oTot = (slot < nChains) ? (keyOff[slot + 1] - keyOff[slot]) : ownedPix[slot - nChains];
-        if (oTot > 0 && static_cast<float>(cnt[slot]) >= bFrac * static_cast<float>(oTot)) {
-          killed = true;
-          killedByPix = killedByPix || (slot >= nChains);
-        }
-        cnt[slot] = 0;
-      }
-      if (killed) {
-        if (params.stats != nullptr && killedByPix)
-          ++params.stats->killedByPixBraid;
-        // A braid kill is a duplicate verdict, not a claim-budget verdict: it would fire
-        // identically in the share pass, so such a candidate is never deferred.
+      // total >= 4 for any welded chain (2 T3s sharing an LS); guard div anyway.
+      const float frac = (total > 0) ? static_cast<float>(nClaimed) / static_cast<float>(total) : 0.f;
+      // COMPOSED (B1 x B4): the pixel-unified claim count feeds the B4 tolerance predicate.
+      // With -FC off this is bit-identical to B1's `frac > maxClaimedFrac` test.
+      // DUPCUT (-FCE): a chain flagged in strictExemptMask keeps the legacy loosen-only
+      // tolerance; everyone else obeys claimCountExclusive. nullptr = all strict (legacy).
+      // COMPOSED with the M17 (-FS) share pass: the tolerance object is the per-pass one
+      // (pp), the exempt mask is a per-chain property and is therefore pass-invariant.
+      const bool strictClaim = params.strictExemptMask == nullptr ||
+                               c >= static_cast<int>(params.strictExemptMask->size()) ||
+                               (*params.strictExemptMask)[c] == 0;
+      // EX_DUPCC: band membership is needed for both the claim tolerance and the braid.
+      const bool altBraidBand = params.braidAltMask != nullptr && c < static_cast<int>(params.braidAltMask->size()) &&
+                                (*params.braidAltMask)[c] != 0;
+      const int cItems =
+          (altBraidBand && params.maxClaimedItemsAlt != -2) ? params.maxClaimedItemsAlt : pp.maxClaimedItems;
+      const float cFrac =
+          (altBraidBand && params.maxClaimedFracAlt > 0.f) ? params.maxClaimedFracAlt : pp.maxClaimedFrac;
+      if (!claimOkV(cItems, cFrac, pp.claimCountExclusive, nClaimed, frac, strictClaim)) {
+        if (params.stats != nullptr && nPixClaimed > 0)
+          ++params.stats->killedByPixFrac;
+        if (pass == 0 && sharePass)
+          deferred.push_back(c);
         continue;
       }
+      // EX_DUPCC: the effective owner-relative fraction is per-candidate. A candidate in the
+      // alt band (-WZ/-WN geometry mask) uses braidFracAlt; everyone else uses braidFrac.
+      // A 0 fraction disables the test for that candidate only.
+      const float bFrac = (altBraidBand && params.braidFracAlt > 0.f) ? params.braidFracAlt : params.braidFrac;
+      if (braid && bFrac > 0.f && nClaimed > 0 && !(params.strictExemptBraid && !strictClaim)) {
+        // Owner-relative overlap: does this candidate swallow >= braidFrac of any single
+        // already-accepted owner? If so it is a welder-braid sibling, not a new track.
+        touched.clear();
+        for (int k = b; k < e; ++k) {
+          const int o = owner[keyItems[k]];
+          if (o == -1)
+            continue;
+          if (o <= -2 && !pixBraid)
+            continue;
+          const int slot = (o >= 0) ? o : (nChains + (-o - 2));
+          if (cnt[slot] == 0)
+            touched.push_back(slot);
+          ++cnt[slot];
+        }
+        bool killed = false, killedByPix = false;
+        for (int slot : touched) {
+          const int oTot = (slot < nChains) ? (keyOff[slot + 1] - keyOff[slot]) : ownedPix[slot - nChains];
+          if (oTot > 0 && static_cast<float>(cnt[slot]) >= bFrac * static_cast<float>(oTot)) {
+            killed = true;
+            killedByPix = killedByPix || (slot >= nChains);
+          }
+          cnt[slot] = 0;
+        }
+        if (killed) {
+          if (params.stats != nullptr && killedByPix)
+            ++params.stats->killedByPixBraid;
+          // A braid kill is a duplicate verdict, not a claim-budget verdict: it would fire
+          // identically in the share pass, so such a candidate is never deferred.
+          continue;
+        }
+      }
+      for (int k = b; k < e; ++k)
+        owner[keyItems[k]] = c;
+      acceptedChains.push_back(c);
     }
-    for (int k = b; k < e; ++k)
-      owner[keyItems[k]] = c;
-    acceptedChains.push_back(c);
-  }
   }
 
   // Read-only export of the final claim map (EXPLOIT chain extension). No decision above
@@ -332,8 +329,8 @@ void k9ArbitrateTwoPass(const LSTEventData& ev,
   const int nChains = static_cast<int>(chains.score.size());
   const int nMD = static_cast<int>(ev.md_anchorHitIdx.size());
   const int nT3 = static_cast<int>(ev.t3_lsIdx0.size());
-  const bool havePixFlags = static_cast<int>(ev.t3_partOfPT5.size()) == nT3 &&
-                            static_cast<int>(ev.t3_partOfPT3.size()) == nT3;
+  const bool havePixFlags =
+      static_cast<int>(ev.t3_partOfPT5.size()) == nT3 && static_cast<int>(ev.t3_partOfPT3.size()) == nT3;
   // Without the pixel drop nothing was pixdropped, so pass 2 has no candidates.
   if (!params.dropPixelConsumed || !havePixFlags)
     return;

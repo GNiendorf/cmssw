@@ -330,9 +330,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
           if (j == i)
             continue;
           ChainOrderKeyRec const b = recs[j];
-          bool const bFirst = (b.key != a.key)
-                                  ? (b.key > a.key)
-                                  : ((b.stable != a.stable) ? (b.stable < a.stable) : (b.chain < a.chain));
+          bool const bFirst = (b.key != a.key) ? (b.key > a.key)
+                                               : ((b.stable != a.stable) ? (b.stable < a.stable) : (b.chain < a.chain));
           rank += bFirst ? 1u : 0u;
         }
         order[rank] = a.chain;
@@ -688,11 +687,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
   // picked that pLS, with the EARLIER position keeping an exact tie. An argmax has no order, so it
   // is a plain atomicMax over the packed (logit, ~position) key.
   struct ChainAttachArgmax {
-    ALPAKA_FN_ACC void operator()(Acc1D const& acc,
-                                  int32_t const* tgtPls,
-                                  float const* tgtLogit,
-                                  uint32_t nTargets,
-                                  uint64_t* plsKey) const {
+    ALPAKA_FN_ACC void operator()(
+        Acc1D const& acc, int32_t const* tgtPls, float const* tgtLogit, uint32_t nTargets, uint64_t* plsKey) const {
       for (uint32_t pos : cms::alpakatools::uniform_elements(acc, nTargets)) {
         int32_t const p = tgtPls[pos];
         if (p < 0)

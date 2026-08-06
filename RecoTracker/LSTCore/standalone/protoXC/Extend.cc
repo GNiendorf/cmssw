@@ -11,135 +11,135 @@
 
 namespace {
 
-constexpr int kMaxLayer = 12;   // md_layer is 1-6 barrel, 7-11 endcap
-constexpr int kPhiBins = 64;    // free-MD index granularity
-constexpr double kPi = 3.14159265358979323846;
+  constexpr int kMaxLayer = 12;  // md_layer is 1-6 barrel, 7-11 endcap
+  constexpr int kPhiBins = 64;   // free-MD index granularity
+  constexpr double kPi = 3.14159265358979323846;
 
-// Chain fit parameters over the chain's MD anchor hits. The arithmetic is the VERBATIM
-// ChainFeatures.cc / Trim.cc pair (Kasa algebraic circle in mean-centred coordinates,
-// straight z vs cumulative xy chord length), only kept instead of thrown away so a new
-// point can be tested against it without refitting.
-struct ChainFit {
-  bool ok = false;
-  double cx = 0, cy = 0, R = 0;  // circle centre in ABSOLUTE coordinates, radius
-  double a = 0, b = 0;           // z = a + b * s
-  double sLast = 0;              // cumulative chord of the outermost MD (s of MD0 == 0)
-  double xIn = 0, yIn = 0, zIn = 0;
-  double xOut = 0, yOut = 0, zOut = 0;
-  double chi2 = 0;               // combined chi2/hit, identical to chainFitChi2Combined
-};
+  // Chain fit parameters over the chain's MD anchor hits. The arithmetic is the VERBATIM
+  // ChainFeatures.cc / Trim.cc pair (Kasa algebraic circle in mean-centred coordinates,
+  // straight z vs cumulative xy chord length), only kept instead of thrown away so a new
+  // point can be tested against it without refitting.
+  struct ChainFit {
+    bool ok = false;
+    double cx = 0, cy = 0, R = 0;  // circle centre in ABSOLUTE coordinates, radius
+    double a = 0, b = 0;           // z = a + b * s
+    double sLast = 0;              // cumulative chord of the outermost MD (s of MD0 == 0)
+    double xIn = 0, yIn = 0, zIn = 0;
+    double xOut = 0, yOut = 0, zOut = 0;
+    double chi2 = 0;  // combined chi2/hit, identical to chainFitChi2Combined
+  };
 
-bool buildChainFit(const LSTEventData& ev, const int* mdItems, int nMD, ChainFit& f) {
-  if (nMD < 3)
-    return false;
-  static thread_local std::vector<double> hx, hy, hz, sArc;
-  hx.resize(nMD);
-  hy.resize(nMD);
-  hz.resize(nMD);
-  for (int k = 0; k < nMD; ++k) {
-    const int md = mdItems[k];
-    hx[k] = ev.md_anchor_x[md];
-    hy[k] = ev.md_anchor_y[md];
-    hz[k] = ev.md_anchor_z[md];
+  bool buildChainFit(const LSTEventData& ev, const int* mdItems, int nMD, ChainFit& f) {
+    if (nMD < 3)
+      return false;
+    static thread_local std::vector<double> hx, hy, hz, sArc;
+    hx.resize(nMD);
+    hy.resize(nMD);
+    hz.resize(nMD);
+    for (int k = 0; k < nMD; ++k) {
+      const int md = mdItems[k];
+      hx[k] = ev.md_anchor_x[md];
+      hy[k] = ev.md_anchor_y[md];
+      hz[k] = ev.md_anchor_z[md];
+    }
+
+    // --- xy: Kasa algebraic circle fit (same guards as chainFitChi2Combined) -----------
+    double xbar = 0.0, ybar = 0.0;
+    for (int k = 0; k < nMD; ++k) {
+      xbar += hx[k];
+      ybar += hy[k];
+    }
+    xbar /= nMD;
+    ybar /= nMD;
+    double Suu = 0.0, Svv = 0.0, Suv = 0.0, Suw = 0.0, Svw = 0.0, Sw = 0.0;
+    for (int k = 0; k < nMD; ++k) {
+      const double u = hx[k] - xbar, v = hy[k] - ybar;
+      const double w = u * u + v * v;
+      Suu += u * u;
+      Svv += v * v;
+      Suv += u * v;
+      Suw += u * w;
+      Svw += v * w;
+      Sw += w;
+    }
+    const double det = Suu * Svv - Suv * Suv;
+    const double scale = Suu + Svv;
+    if (!(det > 1e-12 * scale * scale))
+      return false;
+    const double uc = (Svv * (0.5 * Suw) - Suv * (0.5 * Svw)) / det;
+    const double vc = (Suu * (0.5 * Svw) - Suv * (0.5 * Suw)) / det;
+    const double R = std::sqrt(std::max(uc * uc + vc * vc + Sw / nMD, 0.0));
+    double xyChi2 = 0.0;
+    for (int k = 0; k < nMD; ++k) {
+      const double du = (hx[k] - xbar) - uc, dv = (hy[k] - ybar) - vc;
+      const double resid = std::sqrt(du * du + dv * dv) - R;
+      xyChi2 += resid * resid;
+    }
+    xyChi2 /= nMD;
+
+    // --- rz: straight-line z vs cumulative xy chord length -----------------------------
+    sArc.resize(nMD);
+    double s = 0.0;
+    sArc[0] = 0.0;
+    for (int k = 1; k < nMD; ++k) {
+      const double dx = hx[k] - hx[k - 1], dy = hy[k] - hy[k - 1];
+      s += std::sqrt(dx * dx + dy * dy);
+      sArc[k] = s;
+    }
+    double sbar = 0.0, zbar = 0.0;
+    for (int k = 0; k < nMD; ++k) {
+      sbar += sArc[k];
+      zbar += hz[k];
+    }
+    sbar /= nMD;
+    zbar /= nMD;
+    double Sss = 0.0, Ssz = 0.0;
+    for (int k = 0; k < nMD; ++k) {
+      const double ds = sArc[k] - sbar;
+      Sss += ds * ds;
+      Ssz += ds * (hz[k] - zbar);
+    }
+    if (!(Sss > 1e-12))
+      return false;
+    const double bb = Ssz / Sss;
+    const double aa = zbar - bb * sbar;
+    double rzChi2 = 0.0;
+    for (int k = 0; k < nMD; ++k) {
+      const double r = hz[k] - aa - bb * sArc[k];
+      rzChi2 += r * r;
+    }
+    rzChi2 /= nMD;
+
+    f.ok = true;
+    f.cx = xbar + uc;
+    f.cy = ybar + vc;
+    f.R = R;
+    f.a = aa;
+    f.b = bb;
+    f.sLast = sArc[nMD - 1];
+    f.xIn = hx[0];
+    f.yIn = hy[0];
+    f.zIn = hz[0];
+    f.xOut = hx[nMD - 1];
+    f.yOut = hy[nMD - 1];
+    f.zOut = hz[nMD - 1];
+    f.chi2 = xyChi2 + rzChi2;
+    return true;
   }
 
-  // --- xy: Kasa algebraic circle fit (same guards as chainFitChi2Combined) -----------
-  double xbar = 0.0, ybar = 0.0;
-  for (int k = 0; k < nMD; ++k) {
-    xbar += hx[k];
-    ybar += hy[k];
+  inline double dist3(double x0, double y0, double z0, double x1, double y1, double z1) {
+    const double dx = x1 - x0, dy = y1 - y0, dz = z1 - z0;
+    return std::sqrt(dx * dx + dy * dy + dz * dz);
   }
-  xbar /= nMD;
-  ybar /= nMD;
-  double Suu = 0.0, Svv = 0.0, Suv = 0.0, Suw = 0.0, Svw = 0.0, Sw = 0.0;
-  for (int k = 0; k < nMD; ++k) {
-    const double u = hx[k] - xbar, v = hy[k] - ybar;
-    const double w = u * u + v * v;
-    Suu += u * u;
-    Svv += v * v;
-    Suv += u * v;
-    Suw += u * w;
-    Svw += v * w;
-    Sw += w;
-  }
-  const double det = Suu * Svv - Suv * Suv;
-  const double scale = Suu + Svv;
-  if (!(det > 1e-12 * scale * scale))
-    return false;
-  const double uc = (Svv * (0.5 * Suw) - Suv * (0.5 * Svw)) / det;
-  const double vc = (Suu * (0.5 * Svw) - Suv * (0.5 * Suw)) / det;
-  const double R = std::sqrt(std::max(uc * uc + vc * vc + Sw / nMD, 0.0));
-  double xyChi2 = 0.0;
-  for (int k = 0; k < nMD; ++k) {
-    const double du = (hx[k] - xbar) - uc, dv = (hy[k] - ybar) - vc;
-    const double resid = std::sqrt(du * du + dv * dv) - R;
-    xyChi2 += resid * resid;
-  }
-  xyChi2 /= nMD;
 
-  // --- rz: straight-line z vs cumulative xy chord length -----------------------------
-  sArc.resize(nMD);
-  double s = 0.0;
-  sArc[0] = 0.0;
-  for (int k = 1; k < nMD; ++k) {
-    const double dx = hx[k] - hx[k - 1], dy = hy[k] - hy[k - 1];
-    s += std::sqrt(dx * dx + dy * dy);
-    sArc[k] = s;
+  inline int phiBin(double phi) {
+    int b = static_cast<int>((phi + kPi) * (kPhiBins / (2.0 * kPi)));
+    if (b < 0)
+      b = 0;
+    if (b >= kPhiBins)
+      b = kPhiBins - 1;
+    return b;
   }
-  double sbar = 0.0, zbar = 0.0;
-  for (int k = 0; k < nMD; ++k) {
-    sbar += sArc[k];
-    zbar += hz[k];
-  }
-  sbar /= nMD;
-  zbar /= nMD;
-  double Sss = 0.0, Ssz = 0.0;
-  for (int k = 0; k < nMD; ++k) {
-    const double ds = sArc[k] - sbar;
-    Sss += ds * ds;
-    Ssz += ds * (hz[k] - zbar);
-  }
-  if (!(Sss > 1e-12))
-    return false;
-  const double bb = Ssz / Sss;
-  const double aa = zbar - bb * sbar;
-  double rzChi2 = 0.0;
-  for (int k = 0; k < nMD; ++k) {
-    const double r = hz[k] - aa - bb * sArc[k];
-    rzChi2 += r * r;
-  }
-  rzChi2 /= nMD;
-
-  f.ok = true;
-  f.cx = xbar + uc;
-  f.cy = ybar + vc;
-  f.R = R;
-  f.a = aa;
-  f.b = bb;
-  f.sLast = sArc[nMD - 1];
-  f.xIn = hx[0];
-  f.yIn = hy[0];
-  f.zIn = hz[0];
-  f.xOut = hx[nMD - 1];
-  f.yOut = hy[nMD - 1];
-  f.zOut = hz[nMD - 1];
-  f.chi2 = xyChi2 + rzChi2;
-  return true;
-}
-
-inline double dist3(double x0, double y0, double z0, double x1, double y1, double z1) {
-  const double dx = x1 - x0, dy = y1 - y0, dz = z1 - z0;
-  return std::sqrt(dx * dx + dy * dy + dz * dz);
-}
-
-inline int phiBin(double phi) {
-  int b = static_cast<int>((phi + kPi) * (kPhiBins / (2.0 * kPi)));
-  if (b < 0)
-    b = 0;
-  if (b >= kPhiBins)
-    b = kPhiBins - 1;
-  return b;
-}
 
 }  // namespace
 
@@ -373,8 +373,7 @@ void extendChains(const LSTEventData& ev,
 
         // Ambiguity guard (-EXU): if a runner-up free MD fits nearly as well, the winner
         // is a coin flip. Refuse rather than guess.
-        if (p.uniqMargin > 0.f && secondRes < 1e29 &&
-            (secondRes - bestRes) < static_cast<double>(p.uniqMargin)) {
+        if (p.uniqMargin > 0.f && secondRes < 1e29 && (secondRes - bestRes) < static_cast<double>(p.uniqMargin)) {
           ++st.nRejUniq;
           break;
         }

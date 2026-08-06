@@ -8,34 +8,34 @@
 
 namespace {
 
-constexpr float kNegInf = -std::numeric_limits<float>::infinity();
+  constexpr float kNegInf = -std::numeric_limits<float>::infinity();
 
-// Shared contention core. `best*` are per-TARGET-position picks already thresholded;
-// this resolves the ONE-pLS-ONE-OWNER rule: higher logit wins, tie keeps the earlier
-// target position (deterministic, identical convention to k8AttachPixels).
-void resolveContention(std::vector<int>& tgtPls, std::vector<float>& tgtLogit) {
-  std::unordered_map<int, int> owner;  // pLS row -> target position currently holding it
-  owner.reserve(tgtPls.size() * 2 + 1);
-  for (int pos = 0; pos < static_cast<int>(tgtPls.size()); ++pos) {
-    const int p = tgtPls[pos];
-    if (p < 0)
-      continue;
-    auto it = owner.find(p);
-    if (it == owner.end()) {
-      owner.emplace(p, pos);
-      continue;
-    }
-    const int prev = it->second;
-    if (tgtLogit[pos] > tgtLogit[prev]) {
-      tgtPls[prev] = -1;
-      tgtLogit[prev] = kNegInf;
-      it->second = pos;
-    } else {
-      tgtPls[pos] = -1;
-      tgtLogit[pos] = kNegInf;
+  // Shared contention core. `best*` are per-TARGET-position picks already thresholded;
+  // this resolves the ONE-pLS-ONE-OWNER rule: higher logit wins, tie keeps the earlier
+  // target position (deterministic, identical convention to k8AttachPixels).
+  void resolveContention(std::vector<int>& tgtPls, std::vector<float>& tgtLogit) {
+    std::unordered_map<int, int> owner;  // pLS row -> target position currently holding it
+    owner.reserve(tgtPls.size() * 2 + 1);
+    for (int pos = 0; pos < static_cast<int>(tgtPls.size()); ++pos) {
+      const int p = tgtPls[pos];
+      if (p < 0)
+        continue;
+      auto it = owner.find(p);
+      if (it == owner.end()) {
+        owner.emplace(p, pos);
+        continue;
+      }
+      const int prev = it->second;
+      if (tgtLogit[pos] > tgtLogit[prev]) {
+        tgtPls[prev] = -1;
+        tgtLogit[prev] = kNegInf;
+        it->second = pos;
+      } else {
+        tgtPls[pos] = -1;
+        tgtLogit[pos] = kNegInf;
+      }
     }
   }
-}
 
 }  // namespace
 

@@ -323,8 +323,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
   // being staged in a vector, and the rz arc length is recomputed per pass in the same order the
   // reference accumulates it, so every partial sum is bit-identical.
   template <typename TAcc>
-  ALPAKA_FN_ACC ALPAKA_FN_INLINE double chainFitChi2Combined(
-      TAcc const& acc, MiniDoubletsConst mds, uint32_t const* mdList, int nMD) {
+  ALPAKA_FN_ACC ALPAKA_FN_INLINE double chainFitChi2Combined(TAcc const& acc,
+                                                             MiniDoubletsConst mds,
+                                                             uint32_t const* mdList,
+                                                             int nMD) {
     if (nMD < 1)
       return 0.0;
 
@@ -371,10 +373,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         if (k > 0) {
           // The reference stages the anchor hits into a double array BEFORE differencing, so the
           // subtraction is a double subtraction; doing it in float first would round.
-          double const dx = static_cast<double>(mds.anchorX()[mdList[k]]) -
-                            static_cast<double>(mds.anchorX()[mdList[k - 1]]);
-          double const dy = static_cast<double>(mds.anchorY()[mdList[k]]) -
-                            static_cast<double>(mds.anchorY()[mdList[k - 1]]);
+          double const dx =
+              static_cast<double>(mds.anchorX()[mdList[k]]) - static_cast<double>(mds.anchorX()[mdList[k - 1]]);
+          double const dy =
+              static_cast<double>(mds.anchorY()[mdList[k]]) - static_cast<double>(mds.anchorY()[mdList[k - 1]]);
           s += alpaka::math::sqrt(acc, dx * dx + dy * dy);
         }
         sbar += s;
@@ -388,10 +390,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         if (k > 0) {
           // The reference stages the anchor hits into a double array BEFORE differencing, so the
           // subtraction is a double subtraction; doing it in float first would round.
-          double const dx = static_cast<double>(mds.anchorX()[mdList[k]]) -
-                            static_cast<double>(mds.anchorX()[mdList[k - 1]]);
-          double const dy = static_cast<double>(mds.anchorY()[mdList[k]]) -
-                            static_cast<double>(mds.anchorY()[mdList[k - 1]]);
+          double const dx =
+              static_cast<double>(mds.anchorX()[mdList[k]]) - static_cast<double>(mds.anchorX()[mdList[k - 1]]);
+          double const dy =
+              static_cast<double>(mds.anchorY()[mdList[k]]) - static_cast<double>(mds.anchorY()[mdList[k - 1]]);
           s += alpaka::math::sqrt(acc, dx * dx + dy * dy);
         }
         double const ds = s - sbar;
@@ -405,10 +407,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         s = 0.0;
         for (int k = 0; k < nMD; ++k) {
           if (k > 0) {
-            double const dx = static_cast<double>(mds.anchorX()[mdList[k]]) -
-                              static_cast<double>(mds.anchorX()[mdList[k - 1]]);
-            double const dy = static_cast<double>(mds.anchorY()[mdList[k]]) -
-                              static_cast<double>(mds.anchorY()[mdList[k - 1]]);
+            double const dx =
+                static_cast<double>(mds.anchorX()[mdList[k]]) - static_cast<double>(mds.anchorX()[mdList[k - 1]]);
+            double const dy =
+                static_cast<double>(mds.anchorY()[mdList[k]]) - static_cast<double>(mds.anchorY()[mdList[k - 1]]);
             s += alpaka::math::sqrt(acc, dx * dx + dy * dy);
           }
           double const r = mds.anchorZ()[mdList[k]] - a - b * s;

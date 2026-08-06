@@ -131,10 +131,7 @@ struct ChainFeatures {
 // Requires chains.edgeOffsets/edgeItems (the K6 weld-edge CSR): the edge aggregates and
 // junction degrees must reflect the edges K6 actually welded, not a recomputed guess
 // (parallel E1/E2 edges between the same node pair would be ambiguous).
-void computeChainFeatures(const LSTEventData& ev,
-                          const ChainGraph& g,
-                          const Chains& chains,
-                          const EdgeScores& scores,
-                          ChainFeatures& out);
+void computeChainFeatures(
+    const LSTEventData& ev, const ChainGraph& g, const Chains& chains, const EdgeScores& scores, ChainFeatures& out);
 
 #endif

@@ -150,11 +150,8 @@ void labelChains(const LSTEventData& ev, const Chains& chains, const T3SimSets& 
 // -------------------------------------------------------------------------------------
 // M12 label retarget: harness coverage rule (see Labels.h for the rationale).
 
-void labelChainsHarness(const LSTEventData& ev,
-                        const TrkEventData& trk,
-                        const Chains& chains,
-                        const T3SimSets& t3sims,
-                        ChainLabels& out) {
+void labelChainsHarness(
+    const LSTEventData& ev, const TrkEventData& trk, const Chains& chains, const T3SimSets& t3sims, ChainLabels& out) {
   // Old rule first: it fills label/simIdx/simPt/simVxy, which we then move to labelOld
   // and overwrite with the harness result.
   labelChains(ev, chains, t3sims, out);

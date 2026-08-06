@@ -68,10 +68,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     unsigned int nTotalSegments_;
     unsigned int pixelSize_;
     uint16_t pixelModuleIndex_;
-    unsigned int nChainNodes_ = 0;   // dense triplet-node count (K0)
-    unsigned int nChainE1Edges_ = 0; // exact MD-keyed edge count (K1b)
-    unsigned int nChainE2Edges_ = 0; // exact LS-keyed edge count (K1b)
-    unsigned int nChainCount_ = 0;   // welded chain count (K6d)
+    unsigned int nChainNodes_ = 0;        // dense triplet-node count (K0)
+    unsigned int nChainE1Edges_ = 0;      // exact MD-keyed edge count (K1b)
+    unsigned int nChainE2Edges_ = 0;      // exact LS-keyed edge count (K1b)
+    unsigned int nChainCount_ = 0;        // welded chain count (K6d)
     unsigned int nChainWeldedNodes_ = 0;  // total member nodes over all chains (K6d)
     // Frozen chain-tracking configuration. P2.3 will fill this from the producer parameter set;
 
@@ -291,8 +291,6 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     unsigned int getNumberOfTripletsByLayerBarrel(unsigned int layer);
     unsigned int getNumberOfTripletsByLayerEndcap(unsigned int layer);
 
-
-
     int getNumberOfTrackCandidates();
     int getNumberOfPT5TrackCandidates();
     int getNumberOfPT3TrackCandidates();
@@ -300,7 +298,6 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     int getNumberOfPixelTrackCandidates();
     int getNumberOfT5TrackCandidates();
     int getNumberOfT4TrackCandidates();
-
 
     double getMemoryAllocatedMB() const { return memoryAllocatedMB_; }
 

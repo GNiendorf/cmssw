@@ -43,11 +43,8 @@ struct TrimStats {
 // Combined chain fit chi2/hit over an MD list: xy Kasa circle chi2/hit + rz line chi2/hit,
 // both in cm^2, both with the exact ChainFeatures.cc guards (degenerate -> 0 contribution).
 // Optional split outputs for the offline TT study.
-double chainFitChi2Combined(const LSTEventData& ev,
-                            const int* mdItems,
-                            int nMD,
-                            double* xyOut = nullptr,
-                            double* rzOut = nullptr);
+double chainFitChi2Combined(
+    const LSTEventData& ev, const int* mdItems, int nMD, double* xyOut = nullptr, double* rzOut = nullptr);
 
 // In-place terminal trim (contract above). `action` (optional, resized to nChains) records
 // 0 = untouched, 1 = innermost dropped, 2 = outermost dropped.

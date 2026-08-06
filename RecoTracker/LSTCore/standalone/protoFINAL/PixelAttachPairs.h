@@ -76,11 +76,7 @@ bool k8ProbePairWindows(const LSTEventData& ev,
                         float& absDPhi);
 
 // M16: the same probe for a BARE T3 target (identical windows, T3 target geometry).
-bool k8ProbePairWindowsT3(const LSTEventData& ev,
-                          int t3Row,
-                          const AttachParams& params,
-                          int plsRow,
-                          float& absDTanL,
-                          float& absDPhi);
+bool k8ProbePairWindowsT3(
+    const LSTEventData& ev, int t3Row, const AttachParams& params, int plsRow, float& absDTanL, float& absDPhi);
 
 #endif

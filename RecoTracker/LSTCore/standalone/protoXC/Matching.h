@@ -11,22 +11,25 @@
 
 namespace proto {
 
-// Mirror of lst::HitType (interface/Common.h). Values must match the production enum
-// because see_hitType stores them numerically.
-enum class HitType : short { Pixel = 0, Phase2OT = 4 };  // implementer: verify values against LSTCore and fix if they differ
+  // Mirror of lst::HitType (interface/Common.h). Values must match the production enum
+  // because see_hitType stores them numerically.
+  enum class HitType : short {
+    Pixel = 0,
+    Phase2OT = 4
+  };  // implementer: verify values against LSTCore and fix if they differ
 
-// Returns (matched full-sim rows sorted by fraction desc, fractions), keeping matches with
-// fraction strictly > matchfrac. pmatched (optional) receives the max fraction regardless
-// of threshold.
-std::tuple<std::vector<int>, std::vector<float>> matchedSimTrkIdxsAndFracs(
-    std::vector<unsigned int> const& hitidxs,
-    std::vector<HitType> const& hittypes,
-    std::vector<int> const& trk_simhit_simTrkIdx,
-    std::vector<std::vector<int>> const& trk_ph2_simHitIdx,
-    std::vector<std::vector<int>> const& trk_pix_simHitIdx,
-    bool verbose = false,
-    float matchfrac = 0.75,
-    float* pmatched = nullptr);
+  // Returns (matched full-sim rows sorted by fraction desc, fractions), keeping matches with
+  // fraction strictly > matchfrac. pmatched (optional) receives the max fraction regardless
+  // of threshold.
+  std::tuple<std::vector<int>, std::vector<float>> matchedSimTrkIdxsAndFracs(
+      std::vector<unsigned int> const& hitidxs,
+      std::vector<HitType> const& hittypes,
+      std::vector<int> const& trk_simhit_simTrkIdx,
+      std::vector<std::vector<int>> const& trk_ph2_simHitIdx,
+      std::vector<std::vector<int>> const& trk_pix_simHitIdx,
+      bool verbose = false,
+      float matchfrac = 0.75,
+      float* pmatched = nullptr);
 
 }  // namespace proto
 

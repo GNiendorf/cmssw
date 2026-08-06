@@ -32,8 +32,8 @@ enum OutDeliv : int {
 // A prototype track candidate with its full hit list, for exact hit-level matching.
 struct OutTC {
   float pt = 0, eta = 0, phi = 0;
-  int type = 4;    // LSTObjType convention: 7=pT5, 5=pT3, 4=T5, 8=pLS, 9=T4
-  int nhitOT = 0;  // number of OT hits (tc_nhitOT; harness reads it unconditionally)
+  int type = 4;             // LSTObjType convention: 7=pT5, 5=pT3, 4=T5, 8=pLS, 9=T4
+  int nhitOT = 0;           // number of OT hits (tc_nhitOT; harness reads it unconditionally)
   int deliv = kDelivChain;  // M16 provenance; default keeps every legacy caller at 1
   // FANOUT4 "transition" DIAGNOSTICS (harness-invisible extras, like tc_isChain).
   // Filled only by the hybrid -G 6 path; carried baseline rows keep the sentinels.

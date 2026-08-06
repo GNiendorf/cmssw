@@ -348,14 +348,8 @@ namespace lst {
     ModuleMetaData mmd;
 
     loadCentroidsFromFile(moduleMetaDataFilePath, mmd, nModules);
-    return constructModuleCollection(mmd,
-                                     nModules,
-                                     nLowerModules,
-                                     nPixels,
-                                     pixelMapping,
-                                     endcapGeometry,
-                                     tiltedGeometry,
-                                     moduleConnectionMap);
+    return constructModuleCollection(
+        mmd, nModules, nLowerModules, nPixels, pixelMapping, endcapGeometry, tiltedGeometry, moduleConnectionMap);
   }
 
 }  // namespace lst

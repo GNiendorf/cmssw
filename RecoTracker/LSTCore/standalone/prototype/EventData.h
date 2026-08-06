@@ -123,9 +123,9 @@ struct LSTEventData {
   // Therefore the hit branches (not the T3 route) are the exact mapping and are used.
   // pT3_otHitIndices matched the T3 route exactly (pT3 is never extended).
   // Type-8 (bare pLS) TCs have NO outer-tracker hits, so they contribute nothing.
-  std::vector<int> pT5_t5Idx;                       // per pT5 row -> t5 row
-  std::vector<std::vector<int>> t5_hitIndices;      // per t5 row -> 2*nLayers ph2 rows
-  std::vector<std::vector<int>> pT3_otHitIndices;   // per pT3 row -> 6 ph2 rows
+  std::vector<int> pT5_t5Idx;                      // per pT5 row -> t5 row
+  std::vector<std::vector<int>> t5_hitIndices;     // per t5 row -> 2*nLayers ph2 rows
+  std::vector<std::vector<int>> pT3_otHitIndices;  // per pT3 row -> 6 ph2 rows
 };
 
 // Aligned tracking-ntuple truth for exact hit-level sim matching (plan 10.4).

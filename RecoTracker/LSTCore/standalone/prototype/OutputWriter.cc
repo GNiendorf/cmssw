@@ -8,18 +8,18 @@
 #include "TTree.h"
 
 namespace {
-constexpr float kMatchFrac = 0.75f;
+  constexpr float kMatchFrac = 0.75f;
 
-// DUPCUT diagnostics: per-TC outer-tracker hit rows, written only when the
-// PROTO_DUMP_TCHITS environment variable is set to a non-zero value. Off by
-// default, so every run without it is bit-identical to the legacy writer.
-bool dumpTcHits() {
-  static const bool on = [] {
-    const char* v = std::getenv("PROTO_DUMP_TCHITS");
-    return v != nullptr && v[0] != '\0' && v[0] != '0';
-  }();
-  return on;
-}
+  // DUPCUT diagnostics: per-TC outer-tracker hit rows, written only when the
+  // PROTO_DUMP_TCHITS environment variable is set to a non-zero value. Off by
+  // default, so every run without it is bit-identical to the legacy writer.
+  bool dumpTcHits() {
+    static const bool on = [] {
+      const char* v = std::getenv("PROTO_DUMP_TCHITS");
+      return v != nullptr && v[0] != '\0' && v[0] != '0';
+    }();
+    return on;
+  }
 }  // namespace
 
 class OutputWriterImpl {
@@ -111,13 +111,8 @@ public:
     for (size_t tc_idx = 0; tc_idx < tcs.size(); ++tc_idx) {
       const OutTC& tc = tcs[tc_idx];
 
-      auto [simidx, simidxfrac] = proto::matchedSimTrkIdxsAndFracs(tc.hitIdxs,
-                                                                   tc.hitTypes,
-                                                                   trk.simhit_simTrkIdx,
-                                                                   trk.ph2_simHitIdx,
-                                                                   trk.pix_simHitIdx,
-                                                                   false,
-                                                                   kMatchFrac);
+      auto [simidx, simidxfrac] = proto::matchedSimTrkIdxsAndFracs(
+          tc.hitIdxs, tc.hitTypes, trk.simhit_simTrkIdx, trk.ph2_simHitIdx, trk.pix_simHitIdx, false, kMatchFrac);
       // matchedSimTrkIdxsAndFracs already keeps only fractions strictly > kMatchFrac
       int isFake = simidx.size() == 0;
 
@@ -295,13 +290,8 @@ public:
 
     // 2) Chain TCs: match from their (all-Phase2OT) hit lists with the ported matcher.
     for (const OutTC& tc : chainTCs) {
-      auto [simidx, simidxfrac] = proto::matchedSimTrkIdxsAndFracs(tc.hitIdxs,
-                                                                   tc.hitTypes,
-                                                                   trk.simhit_simTrkIdx,
-                                                                   trk.ph2_simHitIdx,
-                                                                   trk.pix_simHitIdx,
-                                                                   false,
-                                                                   kMatchFrac);
+      auto [simidx, simidxfrac] = proto::matchedSimTrkIdxsAndFracs(
+          tc.hitIdxs, tc.hitTypes, trk.simhit_simTrkIdx, trk.ph2_simHitIdx, trk.pix_simHitIdx, false, kMatchFrac);
       tc_pt_.push_back(tc.pt);
       tc_eta_.push_back(tc.eta);
       tc_phi_.push_back(tc.phi);
@@ -473,8 +463,8 @@ private:
     tc_dbgMD_.push_back(t.dbgMDm);
     tc_dbgDca_.push_back(t.dbgDca);
   }
-  std::vector<int> tc_isChain_;                     // OutDeliv: 0 carried, 1 chain,
-                                                    // 2 attach-pT5, 3 attach-pT3 (M16)
+  std::vector<int> tc_isChain_;  // OutDeliv: 0 carried, 1 chain,
+                                 // 2 attach-pT5, 3 attach-pT3 (M16)
   unsigned int run_ = 0, lumi_ = 0;
   unsigned long long evt_ = 0;
 };

@@ -15,9 +15,6 @@
 #include "Stages.h"
 
 // Fills out.logOdds for every edge from the already-computed features.
-void runEdgeInference(const ChainGraph& g,
-                      const NodeFeatures& nf,
-                      const EdgeFeatures& ef,
-                      EdgeScores& out);
+void runEdgeInference(const ChainGraph& g, const NodeFeatures& nf, const EdgeFeatures& ef, EdgeScores& out);
 
 #endif

@@ -21,77 +21,81 @@
 
 namespace {
 
-template <typename T>
-void bindVec(TTree* tree, const char* name, std::vector<T>*& ptr) {
-  tree->SetBranchStatus(name, 1);
-  if (tree->SetBranchAddress(name, &ptr) < 0)
-    throw std::runtime_error(std::string("NtupleReader: missing/mistyped branch ") + name);
-}
-
-// P1 RE-BASELINE: same as bindVec but tolerates absence, so protoBASE can still read
-// ntuples generated before the isDup instrument existed. Returns false if the branch is
-// not there; the field then stays empty and every consumer must test size().
-template <typename T>
-bool bindVecOptional(TTree* tree, const char* name, std::vector<T>*& ptr) {
-  if (tree->GetBranch(name) == nullptr)
-    return false;
-  tree->SetBranchStatus(name, 1);
-  return tree->SetBranchAddress(name, &ptr) >= 0;
-}
-
-template <typename T>
-void bindScalar(TTree* tree, const char* name, T& value) {
-  tree->SetBranchStatus(name, 1);
-  if (tree->SetBranchAddress(name, &value) < 0)
-    throw std::runtime_error(std::string("NtupleReader: missing/mistyped branch ") + name);
-}
-
-// trkSamplePath is a single file or a directory (all *.root inside, alphabetical),
-// matching the standalone looper's input rule.
-std::vector<std::string> resolveTrkFiles(const std::string& path) {
-  namespace fs = std::filesystem;
-  std::vector<std::string> files;
-  if (fs::is_directory(path)) {
-    for (auto const& entry : fs::directory_iterator(path)) {
-      if (entry.path().extension() == ".root")
-        files.push_back(entry.path().string());
-    }
-    std::sort(files.begin(), files.end());
-  } else {
-    files.push_back(path);
+  template <typename T>
+  void bindVec(TTree* tree, const char* name, std::vector<T>*& ptr) {
+    tree->SetBranchStatus(name, 1);
+    if (tree->SetBranchAddress(name, &ptr) < 0)
+      throw std::runtime_error(std::string("NtupleReader: missing/mistyped branch ") + name);
   }
-  if (files.empty())
-    throw std::runtime_error("NtupleReader: no .root files found at " + path);
-  return files;
-}
+
+  // P1 RE-BASELINE: same as bindVec but tolerates absence, so protoBASE can still read
+  // ntuples generated before the isDup instrument existed. Returns false if the branch is
+  // not there; the field then stays empty and every consumer must test size().
+  template <typename T>
+  bool bindVecOptional(TTree* tree, const char* name, std::vector<T>*& ptr) {
+    if (tree->GetBranch(name) == nullptr)
+      return false;
+    tree->SetBranchStatus(name, 1);
+    return tree->SetBranchAddress(name, &ptr) >= 0;
+  }
+
+  template <typename T>
+  void bindScalar(TTree* tree, const char* name, T& value) {
+    tree->SetBranchStatus(name, 1);
+    if (tree->SetBranchAddress(name, &value) < 0)
+      throw std::runtime_error(std::string("NtupleReader: missing/mistyped branch ") + name);
+  }
+
+  // trkSamplePath is a single file or a directory (all *.root inside, alphabetical),
+  // matching the standalone looper's input rule.
+  std::vector<std::string> resolveTrkFiles(const std::string& path) {
+    namespace fs = std::filesystem;
+    std::vector<std::string> files;
+    if (fs::is_directory(path)) {
+      for (auto const& entry : fs::directory_iterator(path)) {
+        if (entry.path().extension() == ".root")
+          files.push_back(entry.path().string());
+      }
+      std::sort(files.begin(), files.end());
+    } else {
+      files.push_back(path);
+    }
+    if (files.empty())
+      throw std::runtime_error("NtupleReader: no .root files found at " + path);
+    return files;
+  }
 
 }  // namespace
 
 // X-macro branch lists; branch name == struct field name.
-#define LST_VF(X)                                                                                            \
-  X(sim_pt) X(sim_eta) X(sim_phi) X(sim_pca_dxy) X(sim_pca_dz) X(sim_vx) X(sim_vy) X(sim_vz)                 \
-  X(tc_pt) X(tc_eta) X(tc_phi)                                                                               \
-  X(md_anchor_x) X(md_anchor_y) X(md_anchor_z) X(md_other_x) X(md_other_y) X(md_other_z) X(md_dphichange)    \
-  X(t3_pt) X(t3_eta) X(t3_phi) X(t3_radius) X(t3_centerX) X(t3_centerY) X(t3_betaIn)                         \
-  X(t3_fakeScore) X(t3_promptScore) X(t3_displacedScore) X(t3_pMatched)                                      \
-  X(pLS_pt) X(pLS_ptErr) X(pLS_eta) X(pLS_etaErr) X(pLS_phi) X(pLS_px) X(pLS_py) X(pLS_pz)                   \
-  X(pLS_circleCenterX) X(pLS_circleCenterY) X(pLS_circleRadius) X(pLS_deltaPhi)                              \
-  X(pLS_hit0_x) X(pLS_hit0_y) X(pLS_hit0_z)
+#define LST_VF(X)                                                                                                    \
+  X(sim_pt)                                                                                                          \
+  X(sim_eta)                                                                                                         \
+  X(sim_phi)                                                                                                         \
+  X(sim_pca_dxy)                                                                                                     \
+  X(sim_pca_dz)                                                                                                      \
+  X(sim_vx)                                                                                                          \
+  X(sim_vy) X(sim_vz) X(tc_pt) X(tc_eta) X(tc_phi) X(md_anchor_x) X(md_anchor_y) X(md_anchor_z) X(md_other_x)        \
+      X(md_other_y) X(md_other_z) X(md_dphichange) X(t3_pt) X(t3_eta) X(t3_phi) X(t3_radius) X(t3_centerX)           \
+          X(t3_centerY) X(t3_betaIn) X(t3_fakeScore) X(t3_promptScore) X(t3_displacedScore) X(t3_pMatched) X(pLS_pt) \
+              X(pLS_ptErr) X(pLS_eta) X(pLS_etaErr) X(pLS_phi) X(pLS_px) X(pLS_py) X(pLS_pz) X(pLS_circleCenterX)    \
+                  X(pLS_circleCenterY) X(pLS_circleRadius) X(pLS_deltaPhi) X(pLS_hit0_x) X(pLS_hit0_y) X(pLS_hit0_z)
 
-#define LST_VI(X)                                                                \
-  X(sim_q) X(sim_pdgId)                                                          \
-  X(tc_type) X(tc_isFake) X(tc_isDuplicate) X(tc_nhitOT) X(sim_tcIdx)            \
-  X(tc_pt5Idx) X(tc_pt3Idx) X(tc_plsIdx)                                         \
-  X(md_anchorHitIdx) X(md_otherHitIdx) X(md_type) X(md_layer) X(md_detId)        \
-  X(ls_mdIdx0) X(ls_mdIdx1) X(t3_lsIdx0) X(t3_lsIdx1)                            \
-  X(pLS_charge) X(pLS_nhit) X(pLS_seedIdx) X(pLS_isFake) X(pLS_isDuplicate)      \
-  X(pT5_plsIdx) X(pT3_plsIdx) X(pT5_t5Idx)
+#define LST_VI(X)                                                                                                 \
+  X(sim_q)                                                                                                        \
+  X(sim_pdgId)                                                                                                    \
+  X(tc_type)                                                                                                      \
+  X(tc_isFake)                                                                                                    \
+  X(tc_isDuplicate)                                                                                               \
+  X(tc_nhitOT)                                                                                                    \
+  X(sim_tcIdx) X(tc_pt5Idx) X(tc_pt3Idx) X(tc_plsIdx) X(md_anchorHitIdx) X(md_otherHitIdx) X(md_type) X(md_layer) \
+      X(md_detId) X(ls_mdIdx0) X(ls_mdIdx1) X(t3_lsIdx0) X(t3_lsIdx1) X(pLS_charge) X(pLS_nhit) X(pLS_seedIdx)    \
+          X(pLS_isFake) X(pLS_isDuplicate) X(pT5_plsIdx) X(pT3_plsIdx) X(pT5_t5Idx)
 
 #define LST_VB(X) X(md_isPLS) X(ls_isPLS) X(pLS_isQuad) X(t3_partOfPT5) X(t3_partOfPT3)
 
 #define LST_VVI(X) \
-  X(t3_matched_simIdx) X(pLS_simIdxAll) X(md_simIdxAll) X(tc_simIdxAll) \
-  X(t5_hitIndices) X(pT3_otHitIndices)
+  X(t3_matched_simIdx) X(pLS_simIdxAll) X(md_simIdxAll) X(tc_simIdxAll) X(t5_hitIndices) X(pT3_otHitIndices)
 
 #define LST_VVF(X) X(md_simIdxAllFrac) X(tc_simIdxAllFrac)
 
@@ -223,8 +227,8 @@ private:
     bindScalar(lstTree_, "run", evBuf_.run);
     bindScalar(lstTree_, "lumi", evBuf_.lumi);
     bindScalar(lstTree_, "evt", evBuf_.evt);
-#define BIND(f)          \
-  p_##f##_ = &evBuf_.f;  \
+#define BIND(f)         \
+  p_##f##_ = &evBuf_.f; \
   bindVec(lstTree_, #f, p_##f##_);
     LST_VF(BIND)
     LST_VI(BIND)
@@ -276,8 +280,8 @@ private:
     if (!trkTree_)
       throw std::runtime_error("NtupleReader: no trackingNtuple/tree in " + trkFiles_[fileIdx]);
     trkTree_->SetBranchStatus("*", 0);
-#define BIND(f)            \
-  tp_##f##_ = &trkBuf_.f;  \
+#define BIND(f)           \
+  tp_##f##_ = &trkBuf_.f; \
   bindVec(trkTree_, #f, tp_##f##_);
     TRK_VI(BIND)
     TRK_VF(BIND)
@@ -357,8 +361,6 @@ NtupleReader::~NtupleReader() = default;
 
 long long NtupleReader::nEntries() const { return impl_->nEntries(); }
 
-bool NtupleReader::loadEntry(long long i, LSTEventData& ev, TrkEventData& trk) {
-  return impl_->loadEntry(i, ev, trk);
-}
+bool NtupleReader::loadEntry(long long i, LSTEventData& ev, TrkEventData& trk) { return impl_->loadEntry(i, ev, trk); }
 
 const ModuleTable& NtupleReader::moduleTable() const { return impl_->moduleTable(); }

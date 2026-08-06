@@ -18,44 +18,41 @@
 
 namespace {
 
-template <int IN_FEATURES, int OUT_FEATURES>
-inline void linear_layer(const float (&input)[IN_FEATURES],
-                         float (&output)[OUT_FEATURES],
-                         const float (&weights)[IN_FEATURES][OUT_FEATURES],
-                         const float (&biases)[OUT_FEATURES]) {
-  EDGEMLP_UNROLL_LOOP
-  for (int i = 0; i < OUT_FEATURES; ++i) {
-    output[i] = biases[i];
+  template <int IN_FEATURES, int OUT_FEATURES>
+  inline void linear_layer(const float (&input)[IN_FEATURES],
+                           float (&output)[OUT_FEATURES],
+                           const float (&weights)[IN_FEATURES][OUT_FEATURES],
+                           const float (&biases)[OUT_FEATURES]) {
     EDGEMLP_UNROLL_LOOP
-    for (int j = 0; j < IN_FEATURES; ++j) {
-      output[i] += input[j] * weights[j][i];
+    for (int i = 0; i < OUT_FEATURES; ++i) {
+      output[i] = biases[i];
+      EDGEMLP_UNROLL_LOOP
+      for (int j = 0; j < IN_FEATURES; ++j) {
+        output[i] += input[j] * weights[j][i];
+      }
     }
   }
-}
 
-template <int FEATURES>
-inline void relu_activation(float (&input)[FEATURES]) {
-  EDGEMLP_UNROLL_LOOP
-  for (int col = 0; col < FEATURES; ++col) {
-    input[col] = (input[col] > 0.f) ? input[col] : 0.f;
+  template <int FEATURES>
+  inline void relu_activation(float (&input)[FEATURES]) {
+    EDGEMLP_UNROLL_LOOP
+    for (int col = 0; col < FEATURES; ++col) {
+      input[col] = (input[col] > 0.f) ? input[col] : 0.f;
+    }
   }
-}
 
-// Per-input preprocessing baked into the generated header (order matters, see there):
-// optional log10(1+x) -> clip -> standardize. All conditioning is a no-op for v1.
-inline float preprocess(float x, int i) {
-  if (edgemlp::kLog10p1[i])
-    x = std::log10(1.f + x);
-  x = std::min(std::max(x, edgemlp::kClipLo[i]), edgemlp::kClipHi[i]);
-  return (x - edgemlp::kFeatMean[i]) / edgemlp::kFeatStd[i];
-}
+  // Per-input preprocessing baked into the generated header (order matters, see there):
+  // optional log10(1+x) -> clip -> standardize. All conditioning is a no-op for v1.
+  inline float preprocess(float x, int i) {
+    if (edgemlp::kLog10p1[i])
+      x = std::log10(1.f + x);
+    x = std::min(std::max(x, edgemlp::kClipLo[i]), edgemlp::kClipHi[i]);
+    return (x - edgemlp::kFeatMean[i]) / edgemlp::kFeatStd[i];
+  }
 
 }  // namespace
 
-void runEdgeInference(const ChainGraph& g,
-                      const NodeFeatures& nf,
-                      const EdgeFeatures& ef,
-                      EdgeScores& out) {
+void runEdgeInference(const ChainGraph& g, const NodeFeatures& nf, const EdgeFeatures& ef, EdgeScores& out) {
   static_assert(edgemlp::kInput == 2 * kNodeFeat + kEdgeFeat,
                 "edge_mlp_weights.h input size does not match Features.h layout");
 

@@ -34,89 +34,86 @@ const char* const kChainFeatNames[kChainFeat] = {"nNodes",
 
 namespace {
 
-constexpr float kEps = 1e-9f;
+  constexpr float kEps = 1e-9f;
 
-// Non-finite t3_radius (degenerate ntuple circle fit) -> large finite stand-in;
-// identical to the Features.cc convention so member kappaSigned matches node f[0].
-inline float cleanRadius(float r) { return std::isfinite(r) ? r : 1e12f; }
+  // Non-finite t3_radius (degenerate ntuple circle fit) -> large finite stand-in;
+  // identical to the Features.cc convention so member kappaSigned matches node f[0].
+  inline float cleanRadius(float r) { return std::isfinite(r) ? r : 1e12f; }
 
-// Contract: no NaN/Inf may reach the output (same pass as Features.cc).
-void sanitize(std::vector<float>& v) {
-  for (float& x : v) {
-    if (std::isnan(x))
-      x = 0.f;
-    else if (std::isinf(x))
-      x = (x > 0.f) ? 1e12f : -1e12f;
+  // Contract: no NaN/Inf may reach the output (same pass as Features.cc).
+  void sanitize(std::vector<float>& v) {
+    for (float& x : v) {
+      if (std::isnan(x))
+        x = 0.f;
+      else if (std::isinf(x))
+        x = (x > 0.f) ? 1e12f : -1e12f;
+    }
   }
-}
 
-// rotSign of a T3 exactly as Features.cc node f[0]: sign of z of cross(c01, c12) over
-// the three MD anchor hits; collinear (cross == 0) counts as +1.
-inline float t3RotSign(const LSTEventData& ev, int t) {
-  const int m0 = ev.t3_md0[t], m1 = ev.t3_md1[t], m2 = ev.t3_md2[t];
-  const float c01x = ev.md_anchor_x[m1] - ev.md_anchor_x[m0];
-  const float c01y = ev.md_anchor_y[m1] - ev.md_anchor_y[m0];
-  const float c12x = ev.md_anchor_x[m2] - ev.md_anchor_x[m1];
-  const float c12y = ev.md_anchor_y[m2] - ev.md_anchor_y[m1];
-  const float cross = c01x * c12y - c01y * c12x;
-  return (cross >= 0.f) ? 1.f : -1.f;
-}
+  // rotSign of a T3 exactly as Features.cc node f[0]: sign of z of cross(c01, c12) over
+  // the three MD anchor hits; collinear (cross == 0) counts as +1.
+  inline float t3RotSign(const LSTEventData& ev, int t) {
+    const int m0 = ev.t3_md0[t], m1 = ev.t3_md1[t], m2 = ev.t3_md2[t];
+    const float c01x = ev.md_anchor_x[m1] - ev.md_anchor_x[m0];
+    const float c01y = ev.md_anchor_y[m1] - ev.md_anchor_y[m0];
+    const float c12x = ev.md_anchor_x[m2] - ev.md_anchor_x[m1];
+    const float c12y = ev.md_anchor_y[m2] - ev.md_anchor_y[m1];
+    const float cross = c01x * c12y - c01y * c12x;
+    return (cross >= 0.f) ? 1.f : -1.f;
+  }
 
-// a2 feature 19 helper: Kasa algebraic circle fit over n <= 6 anchor hits, returning
-// chi2/hit = sum (dist - R)^2 / n in cm^2. Numerically IDENTICAL to the full-chain fit
-// block below (same centering, same normal equations, same degeneracy guard), just over
-// a sub-list. Degenerate (n < 3 or collinear) -> 0, matching the feature-5 convention.
-inline double kasaChi2PerHit(const double* x, const double* y, int n) {
-  if (n < 3)
-    return 0.0;
-  double xbar = 0.0, ybar = 0.0;
-  for (int k = 0; k < n; ++k) {
-    xbar += x[k];
-    ybar += y[k];
+  // a2 feature 19 helper: Kasa algebraic circle fit over n <= 6 anchor hits, returning
+  // chi2/hit = sum (dist - R)^2 / n in cm^2. Numerically IDENTICAL to the full-chain fit
+  // block below (same centering, same normal equations, same degeneracy guard), just over
+  // a sub-list. Degenerate (n < 3 or collinear) -> 0, matching the feature-5 convention.
+  inline double kasaChi2PerHit(const double* x, const double* y, int n) {
+    if (n < 3)
+      return 0.0;
+    double xbar = 0.0, ybar = 0.0;
+    for (int k = 0; k < n; ++k) {
+      xbar += x[k];
+      ybar += y[k];
+    }
+    xbar /= n;
+    ybar /= n;
+    double Suu = 0.0, Svv = 0.0, Suv = 0.0, Suw = 0.0, Svw = 0.0, Sw = 0.0;
+    for (int k = 0; k < n; ++k) {
+      const double u = x[k] - xbar, v = y[k] - ybar;
+      const double w = u * u + v * v;
+      Suu += u * u;
+      Svv += v * v;
+      Suv += u * v;
+      Suw += u * w;
+      Svw += v * w;
+      Sw += w;
+    }
+    const double det = Suu * Svv - Suv * Suv;
+    const double scale = Suu + Svv;
+    if (!(det > 1e-12 * scale * scale))
+      return 0.0;
+    const double uc = (Svv * (0.5 * Suw) - Suv * (0.5 * Svw)) / det;
+    const double vc = (Suu * (0.5 * Svw) - Suv * (0.5 * Suw)) / det;
+    const double R = std::sqrt(std::max(uc * uc + vc * vc + Sw / n, 0.0));
+    double chi2 = 0.0;
+    for (int k = 0; k < n; ++k) {
+      const double du = (x[k] - xbar) - uc, dv = (y[k] - ybar) - vc;
+      const double resid = std::sqrt(du * du + dv * dv) - R;
+      chi2 += resid * resid;
+    }
+    return chi2 / n;
   }
-  xbar /= n;
-  ybar /= n;
-  double Suu = 0.0, Svv = 0.0, Suv = 0.0, Suw = 0.0, Svw = 0.0, Sw = 0.0;
-  for (int k = 0; k < n; ++k) {
-    const double u = x[k] - xbar, v = y[k] - ybar;
-    const double w = u * u + v * v;
-    Suu += u * u;
-    Svv += v * v;
-    Suv += u * v;
-    Suw += u * w;
-    Svw += v * w;
-    Sw += w;
-  }
-  const double det = Suu * Svv - Suv * Suv;
-  const double scale = Suu + Svv;
-  if (!(det > 1e-12 * scale * scale))
-    return 0.0;
-  const double uc = (Svv * (0.5 * Suw) - Suv * (0.5 * Svw)) / det;
-  const double vc = (Suu * (0.5 * Svw) - Suv * (0.5 * Suw)) / det;
-  const double R = std::sqrt(std::max(uc * uc + vc * vc + Sw / n, 0.0));
-  double chi2 = 0.0;
-  for (int k = 0; k < n; ++k) {
-    const double du = (x[k] - xbar) - uc, dv = (y[k] - ybar) - vc;
-    const double resid = std::sqrt(du * du + dv * dv) - R;
-    chi2 += resid * resid;
-  }
-  return chi2 / n;
-}
 
-// LOWER median (sorted element (n-1)/2) -- the K10 convention. Mutates v.
-inline float lowerMedian(std::vector<float>& v) {
-  const std::size_t mid = (v.size() - 1) / 2;
-  std::nth_element(v.begin(), v.begin() + mid, v.end());
-  return v[mid];
-}
+  // LOWER median (sorted element (n-1)/2) -- the K10 convention. Mutates v.
+  inline float lowerMedian(std::vector<float>& v) {
+    const std::size_t mid = (v.size() - 1) / 2;
+    std::nth_element(v.begin(), v.begin() + mid, v.end());
+    return v[mid];
+  }
 
 }  // namespace
 
-void computeChainFeatures(const LSTEventData& ev,
-                          const ChainGraph& g,
-                          const Chains& chains,
-                          const EdgeScores& scores,
-                          ChainFeatures& out) {
+void computeChainFeatures(
+    const LSTEventData& ev, const ChainGraph& g, const Chains& chains, const EdgeScores& scores, ChainFeatures& out) {
   const int nChains = chains.offsets.empty() ? 0 : static_cast<int>(chains.offsets.size()) - 1;
   out.f.assign(static_cast<std::size_t>(nChains) * kChainFeat, 0.f);
 
@@ -287,7 +284,8 @@ void computeChainFeatures(const LSTEventData& ev,
     const float ptEst = lowerMedian(scratch);
 
     const long long totPairs = static_cast<long long>(nNodes) * (nNodes - 1) / 2;
-    const long long eqPairs = static_cast<long long>(nPos) * (nPos - 1) / 2 + static_cast<long long>(nNeg) * (nNeg - 1) / 2;
+    const long long eqPairs =
+        static_cast<long long>(nPos) * (nPos - 1) / 2 + static_cast<long long>(nNeg) * (nNeg - 1) / 2;
     const float chargeConsistency = totPairs > 0 ? static_cast<float>(eqPairs) / static_cast<float>(totPairs) : 1.f;
 
     // --- 10-13: MD-set detector-category aggregates --------------------------------
@@ -331,8 +329,7 @@ void computeChainFeatures(const LSTEventData& ev,
       int bmd[6];
       for (int k = ib; k + 1 < ie; ++k) {
         const int ti = chains.items[k], to = chains.items[k + 1];
-        const int src[6] = {ev.t3_md0[ti], ev.t3_md1[ti], ev.t3_md2[ti],
-                            ev.t3_md0[to], ev.t3_md1[to], ev.t3_md2[to]};
+        const int src[6] = {ev.t3_md0[ti], ev.t3_md1[ti], ev.t3_md2[ti], ev.t3_md0[to], ev.t3_md1[to], ev.t3_md2[to]};
         int n = 0;
         for (int q = 0; q < 6; ++q) {
           bool dup = false;

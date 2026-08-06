@@ -290,8 +290,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
   // The run- and backend-invariant identity of a chain node, see ChainNodesSoA.h. The six hit rows
   // of the node's three MDs are folded in a fixed positional order, so no two nodes with different
   // hit content can alias through a coincidental permutation.
-  ALPAKA_FN_ACC ALPAKA_FN_INLINE uint32_t chainNodeStableId(
-      MiniDoubletsConst mds, uint32_t md0, uint32_t md1, uint32_t md2) {
+  ALPAKA_FN_ACC ALPAKA_FN_INLINE uint32_t chainNodeStableId(MiniDoubletsConst mds,
+                                                            uint32_t md0,
+                                                            uint32_t md1,
+                                                            uint32_t md2) {
     uint32_t s = 0x9e3779b9u;
     uint32_t const h[6] = {static_cast<uint32_t>(mds.anchorHitIndices()[md0]),
                            static_cast<uint32_t>(mds.outerHitIndices()[md0]),

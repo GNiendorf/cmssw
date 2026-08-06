@@ -83,8 +83,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
 
   // rotSign of a triplet exactly as the node feature f[0] and prototype/ChainFeatures.cc
   // t3RotSign: sign of the z component of cross(c01, c12); collinear counts as +1.
-  ALPAKA_FN_ACC ALPAKA_FN_INLINE float chainT3RotSign(
-      TripletsConst triplets, SegmentsConst segments, MiniDoubletsConst mds, uint32_t t3) {
+  ALPAKA_FN_ACC ALPAKA_FN_INLINE float chainT3RotSign(TripletsConst triplets,
+                                                      SegmentsConst segments,
+                                                      MiniDoubletsConst mds,
+                                                      uint32_t t3) {
     unsigned int m0, m1, m2;
     chainNodeMDs(triplets, segments, t3, m0, m1, m2);
     float const c01x = mds.anchorX()[m1] - mds.anchorX()[m0];
@@ -98,10 +100,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
   // Kasa algebraic circle fit over n <= 6 anchor hits, chi2/hit in cm^2 (prototype/ChainFeatures.cc
   // kasaChi2PerHit; feature 19's per-bridge fit). Numerically identical to the full-chain block.
   template <typename TAcc>
-  ALPAKA_FN_ACC ALPAKA_FN_INLINE double chainKasaChi2PerHit(TAcc const& acc,
-                                                            double const* x,
-                                                            double const* y,
-                                                            int n) {
+  ALPAKA_FN_ACC ALPAKA_FN_INLINE double chainKasaChi2PerHit(TAcc const& acc, double const* x, double const* y, int n) {
     if (n < 3)
       return 0.0;
     double xbar = 0.0, ybar = 0.0;
@@ -226,14 +225,14 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
             fitChi2PerHit = chi2 / nMD;
             double crossSum = 0.0;
             for (int k = 0; k + 2 < nMD; ++k) {
-              double const ax = static_cast<double>(mds.anchorX()[mdList[k + 1]]) -
-                                static_cast<double>(mds.anchorX()[mdList[k]]);
-              double const ay = static_cast<double>(mds.anchorY()[mdList[k + 1]]) -
-                                static_cast<double>(mds.anchorY()[mdList[k]]);
-              double const bx = static_cast<double>(mds.anchorX()[mdList[k + 2]]) -
-                                static_cast<double>(mds.anchorX()[mdList[k + 1]]);
-              double const by = static_cast<double>(mds.anchorY()[mdList[k + 2]]) -
-                                static_cast<double>(mds.anchorY()[mdList[k + 1]]);
+              double const ax =
+                  static_cast<double>(mds.anchorX()[mdList[k + 1]]) - static_cast<double>(mds.anchorX()[mdList[k]]);
+              double const ay =
+                  static_cast<double>(mds.anchorY()[mdList[k + 1]]) - static_cast<double>(mds.anchorY()[mdList[k]]);
+              double const bx =
+                  static_cast<double>(mds.anchorX()[mdList[k + 2]]) - static_cast<double>(mds.anchorX()[mdList[k + 1]]);
+              double const by =
+                  static_cast<double>(mds.anchorY()[mdList[k + 2]]) - static_cast<double>(mds.anchorY()[mdList[k + 1]]);
               crossSum += ax * by - ay * bx;
             }
             double const rotSign = (crossSum >= 0.0) ? 1.0 : -1.0;
@@ -242,8 +241,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
             // prototype/PixelAttach.cc k8ChainDcaXY reuses this exact fit (same accumulation
             // order, same guard) and only adds the absolute centre and the origin distance.
             double const cx = xbar + uc, cy = ybar + vc;
-            dcaXY = static_cast<float>(
-                alpaka::math::abs(acc, alpaka::math::sqrt(acc, cx * cx + cy * cy) - R));
+            dcaXY = static_cast<float>(alpaka::math::abs(acc, alpaka::math::sqrt(acc, cx * cx + cy * cy) - R));
           }
         }
         if (!circleOk) {
@@ -256,8 +254,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
             double const x1 = mds.anchorX()[mdList[0]], y1 = mds.anchorY()[mdList[0]];
             double const x2 = mds.anchorX()[mdList[nMD - 1]], y2 = mds.anchorY()[mdList[nMD - 1]];
             double const len = alpaka::math::sqrt(acc, (x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1));
-            dcaXY = (len < 1e-9) ? 1e9f
-                                 : static_cast<float>(alpaka::math::abs(acc, x1 * y2 - x2 * y1) / len);
+            dcaXY = (len < 1e-9) ? 1e9f : static_cast<float>(alpaka::math::abs(acc, x1 * y2 - x2 * y1) / len);
           }
         }
 
@@ -267,10 +264,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
           double s = 0.0, sbar = 0.0, zbar = 0.0;
           for (int k = 0; k < nMD; ++k) {
             if (k > 0) {
-              double const dx = static_cast<double>(mds.anchorX()[mdList[k]]) -
-                              static_cast<double>(mds.anchorX()[mdList[k - 1]]);
-              double const dy = static_cast<double>(mds.anchorY()[mdList[k]]) -
-                              static_cast<double>(mds.anchorY()[mdList[k - 1]]);
+              double const dx =
+                  static_cast<double>(mds.anchorX()[mdList[k]]) - static_cast<double>(mds.anchorX()[mdList[k - 1]]);
+              double const dy =
+                  static_cast<double>(mds.anchorY()[mdList[k]]) - static_cast<double>(mds.anchorY()[mdList[k - 1]]);
               s += alpaka::math::sqrt(acc, dx * dx + dy * dy);
             }
             sbar += s;
@@ -282,10 +279,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
           s = 0.0;
           for (int k = 0; k < nMD; ++k) {
             if (k > 0) {
-              double const dx = static_cast<double>(mds.anchorX()[mdList[k]]) -
-                              static_cast<double>(mds.anchorX()[mdList[k - 1]]);
-              double const dy = static_cast<double>(mds.anchorY()[mdList[k]]) -
-                              static_cast<double>(mds.anchorY()[mdList[k - 1]]);
+              double const dx =
+                  static_cast<double>(mds.anchorX()[mdList[k]]) - static_cast<double>(mds.anchorX()[mdList[k - 1]]);
+              double const dy =
+                  static_cast<double>(mds.anchorY()[mdList[k]]) - static_cast<double>(mds.anchorY()[mdList[k - 1]]);
               s += alpaka::math::sqrt(acc, dx * dx + dy * dy);
             }
             double const ds = s - sbar;
@@ -299,10 +296,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
             s = 0.0;
             for (int k = 0; k < nMD; ++k) {
               if (k > 0) {
-                double const dx = static_cast<double>(mds.anchorX()[mdList[k]]) -
-                              static_cast<double>(mds.anchorX()[mdList[k - 1]]);
-                double const dy = static_cast<double>(mds.anchorY()[mdList[k]]) -
-                              static_cast<double>(mds.anchorY()[mdList[k - 1]]);
+                double const dx =
+                    static_cast<double>(mds.anchorX()[mdList[k]]) - static_cast<double>(mds.anchorX()[mdList[k - 1]]);
+                double const dy =
+                    static_cast<double>(mds.anchorY()[mdList[k]]) - static_cast<double>(mds.anchorY()[mdList[k - 1]]);
                 s += alpaka::math::sqrt(acc, dx * dx + dy * dy);
               }
               double const r = mds.anchorZ()[mdList[k]] - a - b * s;
@@ -385,8 +382,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         long long const totPairs = static_cast<long long>(nNodes) * (nNodes - 1) / 2;
         long long const eqPairs =
             static_cast<long long>(nPos) * (nPos - 1) / 2 + static_cast<long long>(nNeg) * (nNeg - 1) / 2;
-        float const chargeConsistency =
-            totPairs > 0 ? static_cast<float>(eqPairs) / static_cast<float>(totPairs) : 1.f;
+        float const chargeConsistency = totPairs > 0 ? static_cast<float>(eqPairs) / static_cast<float>(totPairs) : 1.f;
 
         // --- 10-13: MD-set detector-category aggregates --------------------------------------
         int const innermostLayer = chainMdLayer(modules, mds, mdList[0]);
@@ -578,8 +574,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         int const nL = chains.nLayers()[c];
         uint32_t const off = chains.nodeOffset()[c];
 
-        int8_t const branch = nL <= 4 ? (dca >= chainMaxf(cfg.dcaSplit, cfg.t4ExemptDcaMin) ? 1 : 0)
-                                      : (dca < cfg.dcaSplit ? 2 : 3);
+        int8_t const branch =
+            nL <= 4 ? (dca >= chainMaxf(cfg.dcaSplit, cfg.t4ExemptDcaMin) ? 1 : 0) : (dca < cfg.dcaSplit ? 2 : 3);
         chains.branch()[c] = branch;
 
         // Band membership on the chain's K10 eta (the innermost member T3), so a chain is

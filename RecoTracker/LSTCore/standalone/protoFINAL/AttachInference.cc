@@ -26,37 +26,37 @@
 
 namespace {
 
-template <int IN_FEATURES, int OUT_FEATURES>
-inline void linear_layer(const float (&input)[IN_FEATURES],
-                         float (&output)[OUT_FEATURES],
-                         const float (&weights)[IN_FEATURES][OUT_FEATURES],
-                         const float (&biases)[OUT_FEATURES]) {
-  ATTACHMLP_UNROLL_LOOP
-  for (int i = 0; i < OUT_FEATURES; ++i) {
-    output[i] = biases[i];
+  template <int IN_FEATURES, int OUT_FEATURES>
+  inline void linear_layer(const float (&input)[IN_FEATURES],
+                           float (&output)[OUT_FEATURES],
+                           const float (&weights)[IN_FEATURES][OUT_FEATURES],
+                           const float (&biases)[OUT_FEATURES]) {
     ATTACHMLP_UNROLL_LOOP
-    for (int j = 0; j < IN_FEATURES; ++j) {
-      output[i] += input[j] * weights[j][i];
+    for (int i = 0; i < OUT_FEATURES; ++i) {
+      output[i] = biases[i];
+      ATTACHMLP_UNROLL_LOOP
+      for (int j = 0; j < IN_FEATURES; ++j) {
+        output[i] += input[j] * weights[j][i];
+      }
     }
   }
-}
 
-template <int FEATURES>
-inline void relu_activation(float (&input)[FEATURES]) {
-  ATTACHMLP_UNROLL_LOOP
-  for (int col = 0; col < FEATURES; ++col) {
-    input[col] = (input[col] > 0.f) ? input[col] : 0.f;
+  template <int FEATURES>
+  inline void relu_activation(float (&input)[FEATURES]) {
+    ATTACHMLP_UNROLL_LOOP
+    for (int col = 0; col < FEATURES; ++col) {
+      input[col] = (input[col] > 0.f) ? input[col] : 0.f;
+    }
   }
-}
 
-// Per-input preprocessing baked into the generated header: optional log10(1+x) ->
-// clip -> standardize (same contract as chainmlp).
-inline float preprocess(float x, int i) {
-  if (attachmlp::kLog10p1[i])
-    x = std::log10(1.f + x);
-  x = std::min(std::max(x, attachmlp::kClipLo[i]), attachmlp::kClipHi[i]);
-  return (x - attachmlp::kFeatMean[i]) / attachmlp::kFeatStd[i];
-}
+  // Per-input preprocessing baked into the generated header: optional log10(1+x) ->
+  // clip -> standardize (same contract as chainmlp).
+  inline float preprocess(float x, int i) {
+    if (attachmlp::kLog10p1[i])
+      x = std::log10(1.f + x);
+    x = std::min(std::max(x, attachmlp::kClipLo[i]), attachmlp::kClipHi[i]);
+    return (x - attachmlp::kFeatMean[i]) / attachmlp::kFeatStd[i];
+  }
 
 }  // namespace
 
@@ -69,8 +69,7 @@ float attachLogit(const float* f) {
   // leading kInput features verbatim -- bit-identical to pre-M16 scoring. A head trained
   // on the general layout has kInput == kAttachFeat and consumes targetType too. Only an
   // OVER-long head (kInput > kAttachFeat) is a real contract violation.
-  static_assert(attachmlp::kInput <= kAttachFeat,
-                "attach_mlp_weights.h input size exceeds the PixelAttach.h layout");
+  static_assert(attachmlp::kInput <= kAttachFeat, "attach_mlp_weights.h input size exceeds the PixelAttach.h layout");
 
   float x[attachmlp::kInput];
   ATTACHMLP_UNROLL_LOOP

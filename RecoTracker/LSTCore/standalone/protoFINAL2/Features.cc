@@ -5,36 +5,36 @@
 
 namespace {
 
-constexpr float kEps = 1e-9f;
-constexpr float kPi = 3.14159265358979323846f;
+  constexpr float kEps = 1e-9f;
+  constexpr float kPi = 3.14159265358979323846f;
 
-// Wrap an angle difference into [-pi, pi].
-inline float wrapPhi(float d) {
-  while (d > kPi)
-    d -= 2.f * kPi;
-  while (d < -kPi)
-    d += 2.f * kPi;
-  return d;
-}
-
-// deltaPhi(a, b) = a - b wrapped into [-pi, pi].
-inline float deltaPhi(float a, float b) { return wrapPhi(a - b); }
-
-// t3_radius straight from the ntuple can be Inf/NaN for a degenerate circle fit;
-// map to a large finite stand-in so no downstream feature goes non-finite.
-inline float cleanRadius(float r) { return std::isfinite(r) ? r : 1e12f; }
-
-// The epsilon guards keep all arithmetic finite for finite inputs; this pass only
-// fires if the ntuple itself carries non-finite values (contract: no NaN/Inf may
-// reach the output). NaN -> 0, +/-Inf -> +/-1e12.
-void sanitize(std::vector<float>& v) {
-  for (float& x : v) {
-    if (std::isnan(x))
-      x = 0.f;
-    else if (std::isinf(x))
-      x = (x > 0.f) ? 1e12f : -1e12f;
+  // Wrap an angle difference into [-pi, pi].
+  inline float wrapPhi(float d) {
+    while (d > kPi)
+      d -= 2.f * kPi;
+    while (d < -kPi)
+      d += 2.f * kPi;
+    return d;
   }
-}
+
+  // deltaPhi(a, b) = a - b wrapped into [-pi, pi].
+  inline float deltaPhi(float a, float b) { return wrapPhi(a - b); }
+
+  // t3_radius straight from the ntuple can be Inf/NaN for a degenerate circle fit;
+  // map to a large finite stand-in so no downstream feature goes non-finite.
+  inline float cleanRadius(float r) { return std::isfinite(r) ? r : 1e12f; }
+
+  // The epsilon guards keep all arithmetic finite for finite inputs; this pass only
+  // fires if the ntuple itself carries non-finite values (contract: no NaN/Inf may
+  // reach the output). NaN -> 0, +/-Inf -> +/-1e12.
+  void sanitize(std::vector<float>& v) {
+    for (float& x : v) {
+      if (std::isnan(x))
+        x = 0.f;
+      else if (std::isinf(x))
+        x = (x > 0.f) ? 1e12f : -1e12f;
+    }
+  }
 
 }  // namespace
 

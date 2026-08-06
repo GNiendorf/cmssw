@@ -175,8 +175,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
   // inputs with a copy. phiMask is the 16-bit phi-cell set this copy of the record was scattered
   // under, which is what makes the multi-cell duplicate suppression in K8b exact.
   struct AttachPlsPre {
-    uint32_t row;  // the pLS row this record belongs to
-    float xs[7];   // head inputs 0..6, preprocessed (attachStdz<0..6>)
+    uint32_t row;       // the pLS row this record belongs to
+    float xs[7];        // head inputs 0..6, preprocessed (attachStdz<0..6>)
     float tanLambda;    // pz / max(pt, eps)
     float kappaSigned;  // rotSign / max(circleRadius, eps)
     float rotSign;      // -charge
@@ -297,13 +297,11 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     return static_cast<uint32_t>((rb * kAttachTanLBins + tb) * kAttachPhiBins + pb);
   }
 
-  static constexpr uint32_t kAttachCells =
-      static_cast<uint32_t>(kAttachRBins) * kAttachTanLBins * kAttachPhiBins;
+  static constexpr uint32_t kAttachCells = static_cast<uint32_t>(kAttachRBins) * kAttachTanLBins * kAttachPhiBins;
 
   // The phi-cell set of one pLS fits in a 16-bit word (kAttachPhiBins == 16); this is its mask.
   static_assert(kAttachPhiBins <= 16, "the phi-cell set is carried in a uint16_t");
-  static constexpr uint32_t kAttachPhiCellMask = (kAttachPhiBins >= 32) ? 0xFFFFFFFFu
-                                                                       : ((1u << kAttachPhiBins) - 1u);
+  static constexpr uint32_t kAttachPhiCellMask = (kAttachPhiBins >= 32) ? 0xFFFFFFFFu : ((1u << kAttachPhiBins) - 1u);
 
   // How many surviving pairs the host backends evaluate through the r2 head at a time. 24 hidden
   // units x 16 lanes is 384 accumulators, which the AVX-512 register file plus L1 absorbs; the
@@ -314,8 +312,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
   // holds no target. Building a MASK rather than emitting intervals removes the arc / fallback
   // overlap for free, so the count pass and the scatter pass agree by construction.
   template <typename TAcc>
-  ALPAKA_FN_ACC ALPAKA_FN_INLINE uint32_t attachPhiCellMask(
-      TAcc const& acc, AttachPlsPre const& pls, float rLo, float rHi, float pad) {
+  ALPAKA_FN_ACC ALPAKA_FN_INLINE uint32_t
+  attachPhiCellMask(TAcc const& acc, AttachPlsPre const& pls, float rLo, float rHi, float pad) {
     uint32_t mask = 0u;
     if (!(rHi >= rLo))
       return 0u;
@@ -543,9 +541,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         o.rotSign = (o.fitKappa >= 0.f) ? 1.f : -1.f;
         o.xs[0] = attachStdz<7>(acc, o.fitKappa);
         o.xs[1] = attachStdz<8>(acc, o.tanLambda);
-        o.xs[2] = attachStdz<9>(acc, chains.features()[c][10]);   // innermostLayer
-        o.xs[3] = attachStdz<10>(acc, chains.features()[c][1]);   // nLayers
-        o.xs[4] = attachStdz<11>(acc, chains.gateLogit2()[c]);    // chain gate logit
+        o.xs[2] = attachStdz<9>(acc, chains.features()[c][10]);  // innermostLayer
+        o.xs[3] = attachStdz<10>(acc, chains.features()[c][1]);  // nLayers
+        o.xs[4] = attachStdz<11>(acc, chains.gateLogit2()[c]);   // chain gate logit
         out[t] = o;
       }
     }
@@ -555,11 +553,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
   // K8a-1. The measured radial hull of the targets per r bin. Storing the raw bit patterns of the
   // non-negative floats makes the integer atomicMin / atomicMax an exact float min / max.
   struct ChainAttachGridBounds {
-    ALPAKA_FN_ACC void operator()(Acc1D const& acc,
-                                  AttachTargetPre const* tgt,
-                                  uint32_t nTargets,
-                                  uint32_t* rMinBits,
-                                  uint32_t* rMaxBits) const {
+    ALPAKA_FN_ACC void operator()(
+        Acc1D const& acc, AttachTargetPre const* tgt, uint32_t nTargets, uint32_t* rMinBits, uint32_t* rMaxBits) const {
       for (uint32_t t : cms::alpakatools::uniform_elements(acc, nTargets)) {
         float const rt = tgt[t].rtInner;
         int const rb = attachRBin(rt);
@@ -649,38 +644,38 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                                       ChainConfig const& cfg,
                                                       float* xOut,
                                                       int xStride) {
-      float const absDTanL = attachFabs(dTanL);
-      if (absDTanL >= cfg.attachPrefDTanL)
-        return false;
-      float const dPhi = chainWrapPhi(attachPhiDirAt(acc, pls, cp.rtInner) - cp.chordPhi);
-      if (!(attachFabs(dPhi) < cfg.attachPrefDPhi))
-        return false;
+    float const absDTanL = attachFabs(dTanL);
+    if (absDTanL >= cfg.attachPrefDTanL)
+      return false;
+    float const dPhi = chainWrapPhi(attachPhiDirAt(acc, pls, cp.rtInner) - cp.chordPhi);
+    if (!(attachFabs(dPhi) < cfg.attachPrefDPhi))
+      return false;
 
-      float const chargeAgree = (pls.rotSign == cp.rotSign) ? 1.f : 0.f;
-      float const dKappa = pls.kappaSigned - cp.fitKappa;
-      float centerDist = 0.f;
-      if (cp.centerValid) {
-        float const dcx = pls.cx - cp.centerX, dcy = pls.cy - cp.centerY;
-        centerDist = alpaka::math::sqrt(acc, dcx * dcx + dcy * dcy);
-      }
-      float const zResid = pls.hit0z + pls.tanLambda * (cp.rtInner - pls.rt0) - cp.zInner;
+    float const chargeAgree = (pls.rotSign == cp.rotSign) ? 1.f : 0.f;
+    float const dKappa = pls.kappaSigned - cp.fitKappa;
+    float centerDist = 0.f;
+    if (cp.centerValid) {
+      float const dcx = pls.cx - cp.centerX, dcy = pls.cy - cp.centerY;
+      centerDist = alpaka::math::sqrt(acc, dcx * dcx + dcy * dcy);
+    }
+    float const zResid = pls.hit0z + pls.tanLambda * (cp.rtInner - pls.rt0) - cp.zInner;
 
-      // 0..6 per-pLS and 7..11 per-target: hoisted into the pre-records, copied here.
-      CMS_UNROLL_LOOP
-      for (int i = 0; i < 7; ++i)
-        xOut[i * xStride] = pls.xs[i];
-      CMS_UNROLL_LOOP
-      for (int i = 0; i < 5; ++i)
-        xOut[(7 + i) * xStride] = cp.xs[i];
-      xOut[12 * xStride] = attachStdz<12>(acc, chargeAgree);
-      xOut[13 * xStride] = attachStdz<13>(acc, dKappa);
-      xOut[14 * xStride] = attachStdz<14>(acc, dTanL);
-      xOut[15 * xStride] = attachStdz<15>(acc, dPhi);
-      xOut[16 * xStride] = attachStdz<16>(acc, centerDist);
-      xOut[17 * xStride] = attachStdz<17>(acc, zResid);
-      // targetType: chain target (-RT3 0, so the bare-T3 kind does not exist)
-      xOut[18 * xStride] = attachStdz<18>(acc, 0.f);
-      return true;
+    // 0..6 per-pLS and 7..11 per-target: hoisted into the pre-records, copied here.
+    CMS_UNROLL_LOOP
+    for (int i = 0; i < 7; ++i)
+      xOut[i * xStride] = pls.xs[i];
+    CMS_UNROLL_LOOP
+    for (int i = 0; i < 5; ++i)
+      xOut[(7 + i) * xStride] = cp.xs[i];
+    xOut[12 * xStride] = attachStdz<12>(acc, chargeAgree);
+    xOut[13 * xStride] = attachStdz<13>(acc, dKappa);
+    xOut[14 * xStride] = attachStdz<14>(acc, dTanL);
+    xOut[15 * xStride] = attachStdz<15>(acc, dPhi);
+    xOut[16 * xStride] = attachStdz<16>(acc, centerDist);
+    xOut[17 * xStride] = attachStdz<17>(acc, zResid);
+    // targetType: chain target (-RT3 0, so the bare-T3 kind does not exist)
+    xOut[18 * xStride] = attachStdz<18>(acc, 0.f);
+    return true;
   }
 
   // The r2 pair head's linear layer, unbatched. Mathematically and BIT-EXACTLY the shared

@@ -80,17 +80,17 @@ struct CandStats;
 
 struct AttachParams {
   // Prefilter windows (loose, efficiency-first; measured before tightening):
-  float prefDPhi = 0.4f;        // |dPhiAtInnermost| window
-  float prefDTanL = 0.6f;       // |dTanLambda| window
-  float thetaAttach = 0.f;      // pair-head logit threshold to attach
-  bool suppressPixel = true;    // suppress baseline pT5/pLS TCs of the attached pLS
+  float prefDPhi = 0.4f;      // |dPhiAtInnermost| window
+  float prefDTanL = 0.6f;     // |dTanLambda| window
+  float thetaAttach = 0.f;    // pair-head logit threshold to attach
+  bool suppressPixel = true;  // suppress baseline pT5/pLS TCs of the attached pLS
   // ---- M20 candidate finding (all defaults == the frozen behaviour) -------------------
-  int candMode = 0;              // AttachCandMode: 0 analytic full scan, 1 binned, 2 map
-  bool candAudit = false;        // -CFA: run the analytic scan alongside, count misses
-  bool candMapWindows = false;   // -CFW: mode 2 only, ALSO enforce the analytic windows
-  bool candChainToo = false;     // -CFC: apply the candidate finder to CHAIN targets too
-                                 //       (default: chain targets keep the frozen full
-                                 //       scan, so the frozen pT5 line cannot be perturbed)
+  int candMode = 0;                    // AttachCandMode: 0 analytic full scan, 1 binned, 2 map
+  bool candAudit = false;              // -CFA: run the analytic scan alongside, count misses
+  bool candMapWindows = false;         // -CFW: mode 2 only, ALSO enforce the analytic windows
+  bool candChainToo = false;           // -CFC: apply the candidate finder to CHAIN targets too
+                                       //       (default: chain targets keep the frozen full
+                                       //       scan, so the frozen pT5 line cannot be perturbed)
   const PlsCandIndex* cand = nullptr;  // built per event by the caller when candMode != 0
   CandStats* candStats = nullptr;      // optional volume / audit counters
 };

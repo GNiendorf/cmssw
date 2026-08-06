@@ -94,12 +94,8 @@ void buildNodeStableIds(const LSTEventData& ev, std::vector<uint32_t>& out);
 
 constexpr int kWeldSweeps = 3;
 
-void k6WeldChains(const LSTEventData& ev,
-                  const ChainGraph& g,
-                  const EdgeScores& s,
-                  float thetaEdge,
-                  float lambdaLen,
-                  Chains& out);
+void k6WeldChains(
+    const LSTEventData& ev, const ChainGraph& g, const EdgeScores& s, float thetaEdge, float lambdaLen, Chains& out);
 
 // ---------------------------------------------------------------------------------------
 // K9 (prototype v1): score-ordered hit-claim arbitration over chains (plan section 3 K9,
@@ -117,20 +113,20 @@ void k6WeldChains(const LSTEventData& ev,
 struct ArbitrationParams {
   // Per-length chain-score acceptance thresholds (plan 10.5: LST tunes T4s and T5s very
   // differently, so acceptance is per chain nLayers at minimum).
-  float thetaChain4 = 0.f;     // nLayers <= 4 (T4-class)
-  float thetaChain5 = 0.f;     // nLayers == 5 (T5-class)
-  float thetaChain6 = 0.f;     // nLayers >= 6
+  float thetaChain4 = 0.f;  // nLayers <= 4 (T4-class)
+  float thetaChain5 = 0.f;  // nLayers == 5 (T5-class)
+  float thetaChain6 = 0.f;  // nLayers >= 6
   // M9 (-G 3/-G 4 -U4/-U5/-U6): the DCA-split gate scores chains on TWO scales -- gate
   // logit for IP-compatible chains, legacy sum-logit for dca-exempt ones -- so ONE
   // threshold set cannot serve both (a gate-scale T4=2 is nearly a no-op on the legacy
   // scale: the m9_v1 exempt-T4 fake flood). Chains flagged in altThreshold use the
   // thetaAlt* set (legacy scale); everyone else uses thetaChain*. nullptr = legacy
   // behavior, bit-exact for -G 0/1/2 and every pre-M9 caller.
-  float thetaAlt4 = 0.f;       // exempt nLayers <= 4
-  float thetaAlt5 = 0.f;       // exempt nLayers == 5
-  float thetaAlt6 = 0.f;       // exempt nLayers >= 6
+  float thetaAlt4 = 0.f;                            // exempt nLayers <= 4
+  float thetaAlt5 = 0.f;                            // exempt nLayers == 5
+  float thetaAlt6 = 0.f;                            // exempt nLayers >= 6
   const std::vector<char>* altThreshold = nullptr;  // per-chain: 1 = use thetaAlt*
-  float maxClaimedFrac = 0.3f; // max fraction of already-claimed MDs tolerated
+  float maxClaimedFrac = 0.3f;                      // max fraction of already-claimed MDs tolerated
   // B4 (-FC / -FCX): LENGTH-NORMALIZED claim tolerance. The fractional test is
   // length-monotone in the WRONG direction for short displaced chains: at F=0.3 a 5-MD
   // chain dies at 2 shared MDs (0.4 > 0.3) while a 7-MD chain survives 2 -- the M10
@@ -229,15 +225,13 @@ struct ArbitrationParams {
   int preClaimMode = 0;
   // Optional diagnostics sink (B1): filled by k9Arbitrate, never read by it. nullptr = off.
   struct Stats {
-    long long preClaimedSlots = 0;  // universe slots owned by pixel owners at walk start
-    long long killedByPixFrac = 0;  // candidates failing maxClaimedFrac WITH >=1 pixel slot
-    long long killedByPixBraid = 0; // candidates braid-killed by a PIXEL owner (mode 2)
+    long long preClaimedSlots = 0;   // universe slots owned by pixel owners at walk start
+    long long killedByPixFrac = 0;   // candidates failing maxClaimedFrac WITH >=1 pixel slot
+    long long killedByPixBraid = 0;  // candidates braid-killed by a PIXEL owner (mode 2)
   };
   Stats* stats = nullptr;
 
-  float thetaFor(int nLayers) const {
-    return nLayers >= 6 ? thetaChain6 : (nLayers == 5 ? thetaChain5 : thetaChain4);
-  }
+  float thetaFor(int nLayers) const { return nLayers >= 6 ? thetaChain6 : (nLayers == 5 ? thetaChain5 : thetaChain4); }
   float thetaForChain(int chain, int nLayers) const {
     if (altThreshold != nullptr && chain < static_cast<int>(altThreshold->size()) && (*altThreshold)[chain])
       return nLayers >= 6 ? thetaAlt6 : (nLayers == 5 ? thetaAlt5 : thetaAlt4);

@@ -531,10 +531,7 @@ void LSTEvent::createTriplets() {
                     1e6;
         memoryAllocatedMB_ += mb;
         lstWarning(std::format(
-            "[MEM] ChainIncidence: {} dense MD keys + {} dense LS keys allocated ({:.1f} MB)",
-            nMDKeys,
-            nLSKeys,
-            mb));
+            "[MEM] ChainIncidence: {} dense MD keys + {} dense LS keys allocated ({:.1f} MB)", nMDKeys, nLSKeys, mb));
       }
     }
   }
@@ -778,8 +775,8 @@ void LSTEvent::chainIncidenceStatistics() {
     unsigned int maxDegIn = 0, maxDegOut = 0;
     bool monotonic = true;
     for (unsigned int k = 0; k < nKeys; ++k) {
-      monotonic = monotonic && outOff[k + 1] >= outOff[k] && inOff[k + 1] >= inOff[k] &&
-                  prodPrefix[k + 1] >= prodPrefix[k];
+      monotonic =
+          monotonic && outOff[k + 1] >= outOff[k] && inOff[k + 1] >= inOff[k] && prodPrefix[k + 1] >= prodPrefix[k];
       unsigned int const degOut = outOff[k + 1] - outOff[k];
       unsigned int const degIn = inOff[k + 1] - inOff[k];
       edges += static_cast<unsigned long long>(degIn) * degOut;
@@ -810,24 +807,23 @@ void LSTEvent::chainIncidenceStatistics() {
     }
 
     bool const degreeOk = (outOff[nKeys] == nChainNodes_) && (inOff[nKeys] == nChainNodes_);
-    bool const permutationOk =
-        !duplicated && !outOfBounds && coveredOut == nChainNodes_ && coveredIn == nChainNodes_;
-    lstWarning(std::format(
-        "[CHAIN] {}: keys={} used={} sumDegOut={} sumDegIn={} nT3={} maxDegIn={} maxDegOut={} "
-        "E={} prefixE={} degreeSum={} monotonic={} permutation={}",
-        name,
-        nKeys,
-        nonEmptyKeys,
-        outOff[nKeys],
-        inOff[nKeys],
-        nChainNodes_,
-        maxDegIn,
-        maxDegOut,
-        edges,
-        prodPrefix[nKeys],
-        degreeOk ? "ok" : "FAIL",
-        monotonic ? "ok" : "FAIL",
-        permutationOk ? "ok" : "FAIL"));
+    bool const permutationOk = !duplicated && !outOfBounds && coveredOut == nChainNodes_ && coveredIn == nChainNodes_;
+    lstWarning(
+        std::format("[CHAIN] {}: keys={} used={} sumDegOut={} sumDegIn={} nT3={} maxDegIn={} maxDegOut={} "
+                    "E={} prefixE={} degreeSum={} monotonic={} permutation={}",
+                    name,
+                    nKeys,
+                    nonEmptyKeys,
+                    outOff[nKeys],
+                    inOff[nKeys],
+                    nChainNodes_,
+                    maxDegIn,
+                    maxDegOut,
+                    edges,
+                    prodPrefix[nKeys],
+                    degreeOk ? "ok" : "FAIL",
+                    monotonic ? "ok" : "FAIL",
+                    permutationOk ? "ok" : "FAIL"));
     if (edges != prodPrefix[nKeys])
       lstWarning(std::format("[CHAIN] {}: EDGE PREFIX MISMATCH", name));
     return static_cast<unsigned int>(edges);
@@ -919,14 +915,15 @@ void LSTEvent::buildChainEdges() {
   auto const t3 = stamp();
   if (timing) {
     auto ms = [](auto a, auto b) { return std::chrono::duration<double, std::milli>(b - a).count(); };
-    lstWarning(std::format("[CHAIN TIMING] nodes={} edges={} | K3 nodeFeatures {:.3f} ms | "
-                           "K2 buildEdges {:.3f} ms | K5 edgeInference {:.3f} ms | total {:.3f} ms",
-                           nChainNodes_,
-                           nEdges,
-                           ms(t0, t1),
-                           ms(t1, t2),
-                           ms(t2, t3),
-                           ms(t0, t3)));
+    lstWarning(
+        std::format("[CHAIN TIMING] nodes={} edges={} | K3 nodeFeatures {:.3f} ms | "
+                    "K2 buildEdges {:.3f} ms | K5 edgeInference {:.3f} ms | total {:.3f} ms",
+                    nChainNodes_,
+                    nEdges,
+                    ms(t0, t1),
+                    ms(t1, t2),
+                    ms(t2, t3),
+                    ms(t0, t3)));
   }
 
   if (wantFeat) {
@@ -1216,10 +1213,8 @@ void LSTEvent::buildChains() {
     double mb =
         (alpaka::getExtentProduct(chainsDC_->buffer()) + alpaka::getExtentProduct(chainItemsDC_->buffer())) / 1e6;
     memoryAllocatedMB_ += mb;
-    lstWarning(std::format("[MEM] Chains: {} chains / {} member nodes allocated ({:.1f} MB)",
-                           nChainCount_,
-                           nChainWeldedNodes_,
-                           mb));
+    lstWarning(std::format(
+        "[MEM] Chains: {} chains / {} member nodes allocated ({:.1f} MB)", nChainCount_, nChainWeldedNodes_, mb));
   }
 
   auto const t2 = stamp();
@@ -1292,18 +1287,19 @@ void LSTEvent::buildChains() {
   auto const t6 = stamp();
   if (timing) {
     auto ms = [](auto a, auto b) { return std::chrono::duration<double, std::milli>(b - a).count(); };
-    lstWarning(std::format("[CHAIN TIMING] chains={} weldedNodes={} | K6ab weld {:.3f} ms | "
-                           "K6cd count+prefix {:.3f} ms | K6e emit {:.3f} ms | K6f trim {:.3f} ms | "
-                           "K7a features {:.3f} ms | K7bc gate {:.3f} ms | total {:.3f} ms",
-                           nChainCount_,
-                           nChainWeldedNodes_,
-                           ms(t0, t1),
-                           ms(t1, t2),
-                           ms(t2, t3),
-                           ms(t3, t4),
-                           ms(t4, t5),
-                           ms(t5, t6),
-                           ms(t0, t6)));
+    lstWarning(
+        std::format("[CHAIN TIMING] chains={} weldedNodes={} | K6ab weld {:.3f} ms | "
+                    "K6cd count+prefix {:.3f} ms | K6e emit {:.3f} ms | K6f trim {:.3f} ms | "
+                    "K7a features {:.3f} ms | K7bc gate {:.3f} ms | total {:.3f} ms",
+                    nChainCount_,
+                    nChainWeldedNodes_,
+                    ms(t0, t1),
+                    ms(t1, t2),
+                    ms(t2, t3),
+                    ms(t3, t4),
+                    ms(t4, t5),
+                    ms(t5, t6),
+                    ms(t0, t6)));
   }
 
   dumpChains();
@@ -1422,8 +1418,8 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
     auto nClaimed_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, nChainCount_);
     auto state_buf = cms::alpakatools::make_device_buffer<uint8_t[]>(queue_, nChainCount_);
     auto part_buf = cms::alpakatools::make_device_buffer<uint8_t[]>(queue_, nChainCount_);
-    alpaka::memset(queue_, owner_buf, 0xFF);    // chainarb::kFree everywhere
-    alpaka::memset(queue_, minPos_buf, 0xFF);   // chainpar::kNoPos everywhere
+    alpaka::memset(queue_, owner_buf, 0xFF);   // chainarb::kFree everywhere
+    alpaka::memset(queue_, minPos_buf, 0xFF);  // chainpar::kNoPos everywhere
 
     alpaka::exec<Acc1D>(queue_,
                         chainScan_workDiv,
@@ -1531,8 +1527,13 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
   // Stage B: the bare-T3 attach. After stage A's contention and -RD dedup are final (its scorer
   // honours the live ownership), before the extension (its inputs are extension-invariant) and
   // long before the retirement.
-  attachBareT3(nHits, accepted_buf.data(), plsPre_buf.data(), plsOwned_buf.data(), plsBestT3_buf.data(),
-               rdHashKey_buf.data(), rdHashVal_buf.data());
+  attachBareT3(nHits,
+               accepted_buf.data(),
+               plsPre_buf.data(),
+               plsOwned_buf.data(),
+               plsBestT3_buf.data(),
+               rdHashKey_buf.data(),
+               rdHashVal_buf.data());
   auto const t3b = stamp();
 
   // EX: chain extension at assembly. Needs the claimed-hit map and the MD -> outgoing-LineSegment
@@ -1810,37 +1811,37 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
     alpaka::memcpy(queue_, nTC_h, cms::alpakatools::make_device_view(queue_, chainsDC_->view().nChainTCs()));
     alpaka::wait(queue_);
     uint32_t const* s = stats_h.data();
-    lstWarning(std::format(
-        "[CHAIN K9] accepted={} chainTCs={} | TC slot fallbacks={} overflow={} | tieK9order={} | "
-        "R3 claimRounds={} claimStuck={} capHit={}",
-        *nAcc_h.data(),
-        *nTC_h.data(),
-        s[7],
-        s[8],
-        s[9],
-        s[11],
-        s[12],
-        s[13]));
+    lstWarning(
+        std::format("[CHAIN K9] accepted={} chainTCs={} | TC slot fallbacks={} overflow={} | tieK9order={} | "
+                    "R3 claimRounds={} claimStuck={} capHit={}",
+                    *nAcc_h.data(),
+                    *nTC_h.data(),
+                    s[7],
+                    s[8],
+                    s[9],
+                    s[11],
+                    s[12],
+                    s[13]));
     if (timing) {
       auto ms = [](auto a, auto b) { return std::chrono::duration<double, std::milli>(b - a).count(); };
-      lstWarning(std::format("[CHAIN TIMING] compact {:.3f} ms | K9 prep {:.3f} ms | K9 claim {:.3f} ms | "
-                             "K8 attach {:.3f} ms | K10 rows {:.3f} ms | "
-                             "K10 emit {:.3f} ms | T3CC {:.3f} ms | XC {:.3f} ms | suppress {:.3f} ms | "
-                             "total {:.3f} ms",
-                             ms(t0, t1),
-                             ms(t1, t2),
-                             ms(t2, t3),
-                             ms(t3, t3b),
-                             ms(t4, t4b),
-                             ms(t4b, t4c),
-                             ms(t4c, t4d),
-                             ms(t4d, t4e),
-                             ms(t4e, t5),
-                             ms(t0, t5)));
+      lstWarning(
+          std::format("[CHAIN TIMING] compact {:.3f} ms | K9 prep {:.3f} ms | K9 claim {:.3f} ms | "
+                      "K8 attach {:.3f} ms | K10 rows {:.3f} ms | "
+                      "K10 emit {:.3f} ms | T3CC {:.3f} ms | XC {:.3f} ms | suppress {:.3f} ms | "
+                      "total {:.3f} ms",
+                      ms(t0, t1),
+                      ms(t1, t2),
+                      ms(t2, t3),
+                      ms(t3, t3b),
+                      ms(t4, t4b),
+                      ms(t4b, t4c),
+                      ms(t4c, t4d),
+                      ms(t4d, t4e),
+                      ms(t4e, t5),
+                      ms(t0, t5)));
       lstWarning(std::format("[CHAIN K8] {}", attachSummary_));
     }
   }
-
 }
 
 void LSTEvent::attachPixels(unsigned int nHits,
@@ -2175,7 +2176,6 @@ void LSTEvent::attachPixels(unsigned int nHits,
 
   attachGridAudit(nTargets, plsPre, tgtPre_buf.data(), offsets_buf.data(), items_buf.data());
 
-
   if (timing || objectsStatistics_) {
     auto stats_h = cms::alpakatools::make_host_buffer<uint32_t[]>(queue_, chainattach::kStats);
     alpaka::memcpy(queue_, stats_h, stats_buf);
@@ -2242,16 +2242,17 @@ void LSTEvent::attachGridAudit(unsigned int nTargets,
   alpaka::wait(queue_);
   uint32_t const* a = audit_h.data();
   static std::atomic<uint32_t> auditEvt{0};
-  lstWarning(std::format("[CHAIN K8 AUDIT] evt={} targets={} pLS={} exactPairs={} gridCand={} "
-                         "gridPass={} MISSING={} supersetHolds={}",
-                         auditEvt.fetch_add(1),
-                         nTargets,
-                         pixelSize_,
-                         a[0],
-                         a[1],
-                         a[2],
-                         a[3],
-                         a[3] == 0u ? "YES" : "NO"));
+  lstWarning(
+      std::format("[CHAIN K8 AUDIT] evt={} targets={} pLS={} exactPairs={} gridCand={} "
+                  "gridPass={} MISSING={} supersetHolds={}",
+                  auditEvt.fetch_add(1),
+                  nTargets,
+                  pixelSize_,
+                  a[0],
+                  a[1],
+                  a[2],
+                  a[3],
+                  a[3] == 0u ? "YES" : "NO"));
 }
 
 void LSTEvent::attachBareT3(unsigned int nHits,
@@ -2450,13 +2451,8 @@ void LSTEvent::attachBareT3(unsigned int nHits,
                         nBare,
                         plsKey_buf.data(),
                         bareT3Keep_->data());
-    alpaka::exec<Acc1D>(queue_,
-                        chainScan_workDiv,
-                        ChainSegPrefix{},
-                        bareT3Keep_->data(),
-                        ownOffs_buf.data(),
-                        nOwners_buf.data(),
-                        nBare);
+    alpaka::exec<Acc1D>(
+        queue_, chainScan_workDiv, ChainSegPrefix{}, bareT3Keep_->data(), ownOffs_buf.data(), nOwners_buf.data(), nBare);
     alpaka::exec<Acc1D>(queue_,
                         chainFlat_workDiv,
                         ChainCompactSelect{},
@@ -2555,16 +2551,17 @@ void LSTEvent::attachBareT3(unsigned int nHits,
     alpaka::wait(queue_);
     uint32_t const* a = auditH.data();
     static std::atomic<uint32_t> t3AuditEvt{0};
-    lstWarning(std::format("[CHAIN K8B AUDIT] evt={} bareT3={} pLS={} exactPairs={} gridCand={} "
-                           "gridPass={} MISSING={} supersetHolds={}",
-                           t3AuditEvt.fetch_add(1),
-                           nBare,
-                           nPls,
-                           a[0],
-                           a[1],
-                           a[2],
-                           a[3],
-                           a[3] == 0u ? "YES" : "NO"));
+    lstWarning(
+        std::format("[CHAIN K8B AUDIT] evt={} bareT3={} pLS={} exactPairs={} gridCand={} "
+                    "gridPass={} MISSING={} supersetHolds={}",
+                    t3AuditEvt.fetch_add(1),
+                    nBare,
+                    nPls,
+                    a[0],
+                    a[1],
+                    a[2],
+                    a[3],
+                    a[3] == 0u ? "YES" : "NO"));
   }
   alpaka::wait(queue_);  // the grid / scratch buffers above die with this scope
 }
@@ -2825,12 +2822,11 @@ void LSTEvent::createTrackCandidates(bool no_pls_dupclean, bool tc_pls_triplets)
                  alpaka::getExtentProduct(trackCandidatesExtendedDC_->buffer())) /
                 1e6;
     memoryAllocatedMB_ += mb;
-    lstWarning(std::format(
-        "[MEM] TrackCandidates: {} allocated ({:.1f} MB) [dynamic: {} pLS + {} chain headroom]",
-        nTotal,
-        mb,
-        *nSurvivingTCs_host.data(),
-        nChainCount_ + kChainBareT3TCHeadroom));
+    lstWarning(std::format("[MEM] TrackCandidates: {} allocated ({:.1f} MB) [dynamic: {} pLS + {} chain headroom]",
+                           nTotal,
+                           mb,
+                           *nSurvivingTCs_host.data(),
+                           nChainCount_ + kChainBareT3TCHeadroom));
   }
 
   // CrossCleanpLS is DELETED (it read the T5 / pT5 / pT3 rows the chain pipeline replaces). The
@@ -3285,10 +3281,6 @@ typename TSoA::ConstView LSTEvent::getTriplets(bool sync) {
 }
 template TripletsConst LSTEvent::getTriplets<TripletsSoA>(bool);
 template TripletsOccupancyConst LSTEvent::getTriplets<TripletsOccupancySoA>(bool);
-
-
-
-
 
 template <typename TDev>
 TrackCandidatesBaseConst LSTEvent::getTrackCandidatesBase(bool sync) {

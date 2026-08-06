@@ -12,51 +12,51 @@
 
 namespace {
 
-// Ordered feature names; MUST stay in sync with the index comments in Features.h.
-const char* const kNodeFeatNames[kNodeFeat] = {"kappaSigned",
-                                               "log10R",
-                                               "tanLambda",
-                                               "chordEta",
-                                               "dphi01",
-                                               "dz01",
-                                               "dz12",
-                                               "drt01",
-                                               "drt12",
-                                               "innermostLayer",
-                                               "nBarrel",
-                                               "nPS",
-                                               "fakeScoreT3"};
+  // Ordered feature names; MUST stay in sync with the index comments in Features.h.
+  const char* const kNodeFeatNames[kNodeFeat] = {"kappaSigned",
+                                                 "log10R",
+                                                 "tanLambda",
+                                                 "chordEta",
+                                                 "dphi01",
+                                                 "dz01",
+                                                 "dz12",
+                                                 "drt01",
+                                                 "drt12",
+                                                 "innermostLayer",
+                                                 "nBarrel",
+                                                 "nPS",
+                                                 "fakeScoreT3"};
 
-const char* const kEdgeFeatNames[kEdgeFeat] = {"etype",
-                                               "dKappa",
-                                               "dKappaRel",
-                                               "chargeAgree",
-                                               "dTanLambda",
-                                               "kinkPhi",
-                                               "kinkTheta",
-                                               "centerDist",
-                                               "centerDistRel",
-                                               "sharedLayer",
-                                               "sharedIsPS",
-                                               "sharedIsBarrel",
-                                               "degIn",
-                                               "degOut"};
+  const char* const kEdgeFeatNames[kEdgeFeat] = {"etype",
+                                                 "dKappa",
+                                                 "dKappaRel",
+                                                 "chargeAgree",
+                                                 "dTanLambda",
+                                                 "kinkPhi",
+                                                 "kinkTheta",
+                                                 "centerDist",
+                                                 "centerDistRel",
+                                                 "sharedLayer",
+                                                 "sharedIsPS",
+                                                 "sharedIsBarrel",
+                                                 "degIn",
+                                                 "degOut"};
 
-std::string buildFeatureSpec() {
-  std::string spec = "ni:";
-  for (int i = 0; i < kNodeFeat; ++i) {
-    if (i > 0)
-      spec += ",";
-    spec += kNodeFeatNames[i];
+  std::string buildFeatureSpec() {
+    std::string spec = "ni:";
+    for (int i = 0; i < kNodeFeat; ++i) {
+      if (i > 0)
+        spec += ",";
+      spec += kNodeFeatNames[i];
+    }
+    spec += ";ef:";
+    for (int i = 0; i < kEdgeFeat; ++i) {
+      if (i > 0)
+        spec += ",";
+      spec += kEdgeFeatNames[i];
+    }
+    return spec;
   }
-  spec += ";ef:";
-  for (int i = 0; i < kEdgeFeat; ++i) {
-    if (i > 0)
-      spec += ",";
-    spec += kEdgeFeatNames[i];
-  }
-  return spec;
-}
 
 }  // namespace
 

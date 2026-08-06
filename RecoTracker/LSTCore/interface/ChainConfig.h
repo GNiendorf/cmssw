@@ -34,13 +34,13 @@ namespace lst {
 
     // -G 6 three-class margin kills. mP = zPrompt - zFake, mD = zDisp - zFake,
     // mX = max(zPrompt, zDisp) - zFake.
-    float m3Theta4 = 4.f;      // -M4  : T4-class IP    kill iff mX < m3Theta4
-    float m3Theta4D = -1.2f;   // -M4D : T4-class exempt kill iff mD < m3Theta4D
-    float m3Theta5 = 1e9f;     // -M5  : IP nLayers == 5 kill iff mP < m3Theta5 (inert at 1e9)
-    float m3Theta6 = 1e9f;     // -M6  : IP nLayers >= 6 kill iff mP < m3Theta6 (inert at 1e9)
-    float m3ThetaD = 1e9f;     // -MD  : exempt 5+       kill iff mD < m3ThetaD (inert at 1e9)
-    float m3ThetaRI = -0.5f;   // -MRI : IP-5+     OR-rescue floor on mX
-    float m3ThetaR = -1.8f;    // -MR  : exempt-5+ OR-rescue floor on mX (endcap + no-member fallback)
+    float m3Theta4 = 4.f;     // -M4  : T4-class IP    kill iff mX < m3Theta4
+    float m3Theta4D = -1.2f;  // -M4D : T4-class exempt kill iff mD < m3Theta4D
+    float m3Theta5 = 1e9f;    // -M5  : IP nLayers == 5 kill iff mP < m3Theta5 (inert at 1e9)
+    float m3Theta6 = 1e9f;    // -M6  : IP nLayers >= 6 kill iff mP < m3Theta6 (inert at 1e9)
+    float m3ThetaD = 1e9f;    // -MD  : exempt 5+       kill iff mD < m3ThetaD (inert at 1e9)
+    float m3ThetaRI = -0.5f;  // -MRI : IP-5+     OR-rescue floor on mX
+    float m3ThetaR = -1.8f;   // -MR  : exempt-5+ OR-rescue floor on mX (endcap + no-member fallback)
     // -MRB / -MRT: band split of the exempt-5+ OR-rescue floor. Band on |eta| of the innermost
     // member T3 (the K10 TC eta), boundaries zEta1 / zEta2. Winner: barrel and transition
     // tightened to -1.2, endcap stays at the global -MR. Resolved values only -- the prototype's
@@ -54,16 +54,16 @@ namespace lst {
 
     // Transition-band levers. The band is keyed on |eta| of the chain's INNERMOST member T3
     // (the same quantity K10 gives the TC), and the deltas are ADDITIVE to the thresholds above.
-    float zEta1 = 1.1f;    // -ZE1
-    float zEta2 = 1.7f;    // -ZE2
-    float zdM4 = -0.5f;    // -ZM4  : added to -M4
-    float zdM4D = 1.2f;    // -ZM4D : added to -M4D
-    float zdRI = 0.f;      // -ZRI  : added to -MRI
-    float zdR = 0.f;       // -ZR   : added to -MR
-    float zdR5 = 0.f;      // -ZR5  : added to -ZR for exempt nLayers == 5
-    float zdR6 = 0.f;      // -ZR6  : added to -ZR for exempt nLayers >= 6
-    float zdCP = 0.f;      // -ZCP  : added to -C25
-    float zdCD = 0.f;      // -ZCD  : added to -C25D
+    float zEta1 = 1.1f;      // -ZE1
+    float zEta2 = 1.7f;      // -ZE2
+    float zdM4 = -0.5f;      // -ZM4  : added to -M4
+    float zdM4D = 1.2f;      // -ZM4D : added to -M4D
+    float zdRI = 0.f;        // -ZRI  : added to -MRI
+    float zdR = 0.f;         // -ZR   : added to -MR
+    float zdR5 = 0.f;        // -ZR5  : added to -ZR for exempt nLayers == 5
+    float zdR6 = 0.f;        // -ZR6  : added to -ZR for exempt nLayers >= 6
+    float zdCP = 0.f;        // -ZCP  : added to -C25
+    float zdCD = 0.f;        // -ZCD  : added to -C25D
     bool zInLayer1 = false;  // -ZIL : restrict every band lever to chains starting in layer 1
 
     // Reference-implementation constant, not a flag: the score subtraction that marks a killed
@@ -82,7 +82,6 @@ namespace lst {
     float thetaExempt4 = 0.f;
     float thetaExempt5 = 0.f;
     float thetaExempt6 = 0.f;
-
 
     // -B 10 / -BK 1 / -BT 5: the K9 best-first ORDER key. Never a threshold (M9 lesson):
     //   orderKey = score - orderAlpha * max(0, orderHinge - marginX)
@@ -128,9 +127,9 @@ namespace lst {
     // different working point per band. All three are RESOLVED values (no follow-the-barrel
     // sentinel survives the port). plsBestChainLogit stays UNBANDED: it is recorded for every
     // scored pair BEFORE the threshold (invariant I4).
-    float attachTheta = 5.0f;    // -a   delivery margin, |eta| < 1.1
-    float attachThetaT = 5.0f;   // -a2  delivery margin, 1.1 <= |eta| < 1.7
-    float attachThetaE = 6.0f;   // -a3  delivery margin, |eta| >= 1.7
+    float attachTheta = 5.0f;   // -a   delivery margin, |eta| < 1.1
+    float attachThetaT = 5.0f;  // -a2  delivery margin, 1.1 <= |eta| < 1.7
+    float attachThetaE = 6.0f;  // -a3  delivery margin, |eta| >= 1.7
     // -AT3 6.0: the bare-T3 (stage B) delivery margin, GLOBAL -- no eta bands. Also the T3-side
     // retirement bar of the -RPS predicate (-RPST was measured as a dead end and is deleted; the
     // bar is hardcoded to this value).
@@ -168,10 +167,10 @@ namespace lst {
     // banded xcTheta -- the substitution for LST's deleted pLS/T5 embedding test. -XC4 is folded
     // in unconditionally (4-layer accepted chains join the scored-pair stream, score-only);
     // -XC4T / -XCD / -XCG 1 are dead ends and are not ported.
-    float xcTheta = 3.75f;   // |seed eta| < 1.1
-    float xcThetaT = 3.5f;   // 1.1 <= |seed eta| < 1.7
-    float xcThetaE = 3.75f;  // |seed eta| >= 1.7
-    float xcDR2Pix = 1e-6f;  // LST TrackCandidate.h pT5/pT3 arm window, verbatim
+    float xcTheta = 3.75f;     // |seed eta| < 1.1
+    float xcThetaT = 3.5f;     // 1.1 <= |seed eta| < 1.7
+    float xcThetaE = 3.75f;    // |seed eta| >= 1.7
+    float xcDR2Pix = 1e-6f;    // LST TrackCandidate.h pT5/pT3 arm window, verbatim
     float xcDR2Chain = 0.02f;  // LST TrackCandidate.h T5 arm window, verbatim
     // -RPS 1: also retire a carried bare-pLS (type 8) row whose seed had a scored pair above its
     // class RETIREMENT bar but lost the contention. -RD 1: seed-family dedup of the attach owners,
@@ -189,8 +188,8 @@ namespace lst {
 
     // True iff any band delta is live; reproduces the reference's `zOn` short-circuit exactly.
     constexpr bool etaBandActive() const {
-      return zEta2 > zEta1 && (zdRI != 0.f || zdR != 0.f || zdR5 != 0.f || zdR6 != 0.f || zdM4 != 0.f ||
-                               zdM4D != 0.f || zdCP != 0.f || zdCD != 0.f);
+      return zEta2 > zEta1 && (zdRI != 0.f || zdR != 0.f || zdR5 != 0.f || zdR6 != 0.f || zdM4 != 0.f || zdM4D != 0.f ||
+                               zdCP != 0.f || zdCD != 0.f);
     }
   };
 
@@ -225,11 +224,11 @@ namespace lst {
   // The r axis uses fixed bins ONLY as a bucketing device: the phi interval a pLS occupies in bin
   // j is computed against the MEASURED [min, max] innermost radius of the targets that landed in
   // bin j, so the bin edges never enter the superset argument.
-  static constexpr int kAttachRBins = 9;          // 8 x 16 cm over [0, 128) plus one overflow bin
+  static constexpr int kAttachRBins = 9;  // 8 x 16 cm over [0, 128) plus one overflow bin
   static constexpr float kAttachRBinWidth = 16.f;
-  static constexpr int kAttachTanLBins = 100;     // 0.6-wide, covering [-30, 30]
+  static constexpr int kAttachTanLBins = 100;  // 0.6-wide, covering [-30, 30]
   static constexpr float kAttachTanLLo = -30.f;
-  static constexpr int kAttachPhiBins = 16;       // 2 pi / 16 = 0.3927 rad
+  static constexpr int kAttachPhiBins = 16;  // 2 pi / 16 = 0.3927 rad
   // Absolute pad added to every grid phi interval. It covers the fast-atan2 approximation used in
   // the grid build (measured max error < 3e-6 rad) plus float rounding, with >4 decades of margin.
   static constexpr float kAttachPhiPad = 1e-3f;

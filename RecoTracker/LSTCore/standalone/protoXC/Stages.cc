@@ -5,31 +5,31 @@
 
 namespace {
 
-// One CSR: count per key -> exclusive prefix (in place, into offsets) -> scatter with a
-// cursor copy. Mirrors the planned count/prefix/scatter kernel structure (plan section 3
-// minimal-pass pipeline); no sorting, every item lands exactly once.
-void buildCsr(int nKeys, int nItems, const std::vector<int>& key, std::vector<int>& offsets, std::vector<int>& items) {
-  offsets.assign(nKeys + 1, 0);
-  for (int t = 0; t < nItems; ++t)
-    ++offsets[key[t]];
-  int running = 0;
-  for (int k = 0; k <= nKeys; ++k) {
-    int c = offsets[k];
-    offsets[k] = running;
-    running += c;
+  // One CSR: count per key -> exclusive prefix (in place, into offsets) -> scatter with a
+  // cursor copy. Mirrors the planned count/prefix/scatter kernel structure (plan section 3
+  // minimal-pass pipeline); no sorting, every item lands exactly once.
+  void buildCsr(int nKeys, int nItems, const std::vector<int>& key, std::vector<int>& offsets, std::vector<int>& items) {
+    offsets.assign(nKeys + 1, 0);
+    for (int t = 0; t < nItems; ++t)
+      ++offsets[key[t]];
+    int running = 0;
+    for (int k = 0; k <= nKeys; ++k) {
+      int c = offsets[k];
+      offsets[k] = running;
+      running += c;
+    }
+    items.resize(nItems);
+    std::vector<int> cursor(offsets.begin(), offsets.begin() + nKeys);
+    for (int t = 0; t < nItems; ++t)
+      items[cursor[key[t]]++] = t;
   }
-  items.resize(nItems);
-  std::vector<int> cursor(offsets.begin(), offsets.begin() + nKeys);
-  for (int t = 0; t < nItems; ++t)
-    items[cursor[key[t]]++] = t;
-}
 
-void checkCount(const char* label, long long emitted, long long expected) {
-  if (emitted != expected) {
-    std::fprintf(stderr, "k2BuildEdges: %s emitted %lld != exact %lld\n", label, emitted, expected);
-    std::abort();
+  void checkCount(const char* label, long long emitted, long long expected) {
+    if (emitted != expected) {
+      std::fprintf(stderr, "k2BuildEdges: %s emitted %lld != exact %lld\n", label, emitted, expected);
+      std::abort();
+    }
   }
-}
 
 }  // namespace
 
