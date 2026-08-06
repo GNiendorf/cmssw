@@ -212,3 +212,82 @@ The OFF no-op gate is retired (OFF path no longer exists).
     missing 23 events, so ~2% sample delta is expected on top of port fidelity).
 (c) timing: lst_cpu then lst_cuda, -i PU200 -n 200 -v 1 -w 0 -s 1, sequential; report the new
     Hits/MD/LS/T3/Graph/pLS/Chain/TC/Reset table.
+
+## M7 -- PHASE 3 RESULTS
+(a) CPU-vs-CUDA (PU200 n25 s1): nTC 48341 vs 48338 (-3 rows, 0.006%; T5 -2, pT3 -4, pT5 +2,
+    pLS +1). Within the accepted ULP-drift precedent (P2.5: GPU TC identity floor is set by
+    upstream float instability).
+(b) PHYSICS -- integrated stripped build, PU200RelVal:
+  * n1000 vs prototype CHAINFINAL2 977 reference (compare_ab, port2_ref/p5_rv1000_vsCF2.txt):
+    EVERY metric within +-0.0001-0.0014: eff .8097 vs .8096, dup .0481 vs .0481
+    (dupB .0230/.0231, dupT .0168/.0169, dupE .0710/.0710), fake .0464 vs .0464 (all bands
+    +-0.0001), nhitOT identical to 0.001; vxy/dxy displaced bands within 0.0014. The 0.002
+    deviation gate passes everywhere DESPITE the event-set caveat (1000 vs 977 events).
+    The port is numerically exact for practical purposes.
+  * n300 vs the M0 LST baseline on the same events (port2_ref/p5_rv300_vsLST.txt): eff +0.0001
+    overall (.8136 = LST); displaced eff vxy[1,5) +0.025, [5,10) +0.062, [10,30) +0.072,
+    dxy[1,5) +0.046; dup -0.0027 overall (BELOW LST), dupE -0.0132 below, dupB +0.0140 (the
+    known barrel residual); fake +0.0012; nhitOT barrel -0.20. The CHAINFINAL2 headline profile,
+    reproduced by the integrated tree. (dxy[10,30) -0.021 on tiny stats -- same small-sample bin
+    the prototype rounds also saw move.)
+(c) PLOTS: performance/p5_final_compare_528840D-PU200_fc6ae0D-PU200/ (mtv/var 172 plots:
+    eff vs pt/eta/vxy/dxy, dup vs eta, fake vs eta, per-band variants), LSTbaseline vs
+    ChainIntegrated on the same 300 events.
+STANDING CAVEATS (state with any headline): the attach head is BORROWED (trained on chain
+pairs); -T3F/-RPSA/-a are thresholds on its logits; a retrain re-derives the values though the
+mechanisms survive. Nothing tested on cube/jet samples. No timing claims beyond the tables below.
+
+(c) TIMING (PU200, -n 200 -v 1 -w 0 -s 1, sequential, quiet box; new stage columns; ms/evt avg):
+  CPU 1-stream:  Hits 14.7 | MD 91.2 | LS 74.1 | T3 63.7 | Graph 27.7 | pLS 312.8 | Chain 131.0
+                 | TC 41.0 | Reset 0.4 | Total 756.6
+  GPU 1-stream:  Hits 0.6 | MD 0.2 | LS 0.2 | T3 0.6 | Graph 1.4 | pLS 0.2 | Chain 25.4
+                 | TC 0.1 | Reset 0.0 | Total 28.8
+  (Graph = chain incidence+edges+weld+gate, re-attributed out of T3; Chain = arbitrateChains =
+  K9+attach stage A/B+CC+XC+emission+retirement, re-attributed out of TC. The GPU Chain column is
+  dominated by the known serial/single-thread kernels; finer attribution via LST_CHAIN_TIMING.)
+  Full tables: port2_ref/p6_timing_{cpu,gpu}_s1.log (gitignored; kept on disk).
+
+DONE. Final tree state: chain path is the only track builder; 4 builder headers + 5 weight/embed
+headers + 12 collection headers deleted; master switch gone; harness chain-native.
+
+## M7 -- PHASE 3 RESULTS
+(a) CUDA: clean -mCG build; PU200 n25 s1 CPU 48341 vs CUDA 48338 rows (3-row / 0.006% drift,
+    T5 -2 pT3 -4 pT5 +2 pLS +1; within the accepted ULP/reordering precedent).
+(b) PHYSICS -- the parity gate is CLOSED:
+    * Integrated (PU200RelVal ALL-1000, -s 32) vs prototype CHAINFINAL2 977 reference
+      (port2_ref/p5_rv1000_vsCF2.txt): eff .8097 vs .8096; dup .0481 vs .0481
+      (B .0230/.0231, T .0168/.0169, E .0710/.0710); fake .0464 vs .0464 (all bands);
+      nhitOT identical to 0.001. EVERY band within +-0.0001 -- gate was 0.002 -- despite the
+      1000-vs-977 event-set caveat (the 977 ntuple is missing 23 events).
+    * Integrated (FIRST-300) vs the M0 LST baseline on the same events
+      (port2_ref/p5_rv300_vsLST.txt): eff pt>0.9 .8136 vs .8136 (+0.0001); displaced eff
+      vxy[1,5) +.025, [5,10) +.062, [10,30) +.072, dxy[1,5) +.046; dup .0486 vs .0513
+      (BELOW LST; dupE -.013 below, dupB +.014 above -- the known residual);
+      fake +.0012; nhitOT barrel -0.20. Reproduces the CHAINFINAL2 headline profile.
+      (dxy[10,30) -.021 on tiny stats -- the known extreme-dxy bin, note not new.)
+    * Standing caveat restated with the headline: the attach head is BORROWED (trained on chain
+      pairs); -T3F/-RPSA/-a are thresholds on its logits; a retrain re-derives the values.
+      Nothing tested on cube/jet samples.
+(c) PLOTS: performance/p5_final_compare_528840D-PU200_fc6ae0D-PU200/ (LSTbaseline vs
+    ChainIntegrated, 300 events, full mtv set: eff vs pt/eta/vxy/dxy, dup vs eta, fake vs eta,
+    + num/den/ratio). Log: port2_ref/p5_plots.log.
+(d) TIMING (PU200 n200 s1 -w 0, sequential): logs port2_ref/p6_timing_{cpu,gpu}_s1.log.
+
+## M7 -- PHASE 3 RESULTS
+(a) CPU vs CUDA (PU200 n25 s1): nTC 48341 vs 48338 (-3 rows, 0.006%; T5 -2, pT3 -4, pT5 +2,
+    pLS +1). Within the accepted ULP-drift precedent (P2.5: GPU identity floor set by upstream).
+(b) PHYSICS -- port parity vs prototype CHAINFINAL2 (977 ref), integrated build on PU200RelVal
+    ALL-1000 events (port2_ref/p5_rv1000_vsCF2.txt): EVERY band within +-0.0001 (gate 0.002):
+    eff .8097/.8096, effB .9259/.9257, effT .8796/.8797, effE .7448/.7446;
+    dup .0481/.0481 (B .0230/.0231, T .0168/.0169, E .0710/.0710);
+    fake .0464/.0464 (B .0488/.0487, T .0531/.0531, E .0431/.0431); nhitOT identical to 0.001.
+    The 1000-vs-977 event-set caveat proved immaterial. NO band deviation to explain.
+(c) PHYSICS -- vs the M0 LST baseline, SAME first-300 events (p5_rv300_vsLST.txt):
+    eff(pt>0.9) .8136 vs .8136 (+0.0001); dup .0486 vs .0513 (-0.0027, BELOW LST;
+    dupB +0.0140 = the known barrel residual, dupE -0.0132 below LST);
+    fake .0466 vs .0455 (+0.0012); displaced eff: vxy[1,5) +0.025, [5,10) +0.062,
+    [10,30) +0.072, dxy[1,5) +0.046; dxy[10,30) -0.021 (tiny-denominator bin, the known
+    extreme-dxy trade); nhitOT barrel -0.20 hits. This IS the CHAINFINAL2 headline profile.
+    CAVEAT (headline rule): the attach head is BORROWED (trained on chain pairs); -T3F/-RPSA/-a
+    are thresholds on its logits; a retrain re-derives values, mechanisms survive. Nothing
+    tested on cube/jet samples.
