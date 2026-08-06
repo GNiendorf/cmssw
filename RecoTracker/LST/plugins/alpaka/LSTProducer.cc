@@ -164,8 +164,11 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
             ->setComment("-M4 / -M4D: T4-class kills on the 3-class mX and mD margins.");
         gateDesc.add<std::vector<double>>("rescue", {-0.5, -1.8})
             ->setComment("-MRI / -MR: mX OR-rescue floors for the IP and exempt 5+ branches.");
-        gateDesc.add<std::vector<double>>("rescueBand", {-1.2, -1.2})
-            ->setComment("-MRB / -MRT: barrel / transition band split of the exempt-5+ -MR floor.");
+        gateDesc.add<std::vector<double>>("rescueBand", {-1.8, -1.8})
+            ->setComment(
+                "-MRB / -MRT: barrel / transition band split of the exempt-5+ -MR floor. Both sit at "
+                "the global -MR: the tightened -1.2 bars spent ~45 of the 77 displaced sims the "
+                "barrel-dup round cost, and bought fake rate only.");
         gateDesc.add<std::vector<double>>("thetaExempt", {0.0, 0.0, 0.0})
             ->setComment("-U4 / -U5 / -U6: per-length acceptance thresholds of the exempt branch.");
         gateDesc.add<std::vector<double>>("cell25", {0.0, -2.0})

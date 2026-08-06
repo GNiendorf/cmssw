@@ -42,11 +42,18 @@ namespace lst {
     float m3ThetaRI = -0.5f;  // -MRI : IP-5+     OR-rescue floor on mX
     float m3ThetaR = -1.8f;   // -MR  : exempt-5+ OR-rescue floor on mX (endcap + no-member fallback)
     // -MRB / -MRT: band split of the exempt-5+ OR-rescue floor. Band on |eta| of the innermost
-    // member T3 (the K10 TC eta), boundaries zEta1 / zEta2. Winner: barrel and transition
-    // tightened to -1.2, endcap stays at the global -MR. Resolved values only -- the prototype's
+    // member T3 (the K10 TC eta), boundaries zEta1 / zEta2. Resolved values only -- the prototype's
     // kMrUnset sentinel is resolved on the host and never reaches a kernel.
-    float m3ThetaRB = -1.2f;
-    float m3ThetaRT = -1.2f;
+    //
+    // BOTH BANDS ARE BACK AT THE GLOBAL -MR (maintainer, 2026-08-06). The tightened -1.2 bars were
+    // the largest single consumer of the displaced advantage: ~45 of the 77 distinct DISP1 sims the
+    // barrel-dup round spent (displaced ledger in PLAN_lst_redesign_t3_onward.md), because the
+    // exempt (large-DCA) branch they cut is exactly the branch that carries displaced tracks. What
+    // they bought was FAKE rate only (fakB -.0057, fakT -.0055), which is the lowest-priority
+    // metric, so the trade is being unwound. The band machinery stays in place -- setting these two
+    // fields is all it takes to put the bars back.
+    float m3ThetaRB = -1.8f;
+    float m3ThetaRT = -1.8f;
     // -C25 0.0 / -C25D -2.0 : the (nNodes == 2, nLayers == 5) cell rule; kills only when BOTH
     // margins fail, and never re-kills an already-killed chain.
     float c25Theta = 0.f;
