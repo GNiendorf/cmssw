@@ -2998,3 +2998,34 @@ displaced couplings expected noise - extension hits enter the CC claim map and t
 definition), but the removal does NOT depend on those numbers. Frees ~1.4 ms GPU (EXwalk 1.0
 + EXadj 0.38) and a whole stage of code. The earlier "-EX removal A/B, maintainer decides on
 the numbers" framing in this plan is SUPERSEDED - it is a deletion order.
+
+## 2026-08-05 overnight -- DIRECTIVE: KERNEL COUNT AND GPU TIME ARE THE ONLY PRIORITY
+Maintainer framing: "our algo is 4x more complicated than LST and worse timing by a factor of
+3-4x. This needs to be solved before anything else." Measured comparison, for the record:
+  chain kernels 73 (was 86) vs the DELETED LST post-T3 set = 25 structs (10 builders +
+  ~15 crossclean/dedup/adders) => ~3x. Retained shared base = 18 kernels either way.
+  GPU 1-stream: Chain 9.3 ms/evt (total 12.7). LST's replaced stages on the same GPU: NOT YET
+  MEASURED (clean-master baseline still owed) - the "3-4x worse" is the maintainer's estimate.
+TARGETS: chain kernels ~32 ("bare minimum acceptable", i.e. half of the collapse agent's
+projected 64); GPU Chain into the O(few ms) band per the earlier 9.3 -> ~4.5 structural list.
+ALLOWED THIS ROUND (structure only, physics untouched):
+  - the extension stage DELETION (already ordered separately; frees EXwalk 1.14 + EXadj 0.36
+    GPU and 4+ kernels)
+  - CCS second-grid-walk fold into stage-A scoring (atomicMax during scoring, delete the pass)
+  - the stashed parallel-CAS XC anchor-hit insert (gate then land, ~0.85 ms)
+  - emit/T3CC/XC/suppress fusion; extension-free K10 path
+  - K0/K1 incidence host-sync elimination (device prefix + one deferred sync)
+  - pLS-side grid built ONCE and shared by stage A and stage B
+  - launch-count reduction / cascade fusion generally; dead code and dead config
+  - unifying stage A and stage B attach paths into one implementation
+FORBIDDEN THIS ROUND (maintainer explicit): NO pre-NN cuts or prefilter tightening, NO half
+precision, NO tensor cores, NO threshold/ordering/tie-break changes, NO feature or MLP
+accumulation changes. The ONLY physics-affecting change permitted is the extension removal.
+ALSO MANDATED: identify kernels/stages that "don't carry their weight in physics performance"
+- measure each candidate's physics contribution against its kernel+ms cost and PRESENT the
+list (trim -TR/-TT, -CCS, -XC4, the 4-layer arm, etc). Extensions are the only pre-approved
+deletion; everything else on that list is presented, not acted on.
+EXECUTION: coordinator (me) does this work directly after the collapse agent finishes, with
+minimal agents (only where genuinely parallelizable and non-timing-contaminating). Compiler-
+only checks per step, bit-identity gate + one timing pair at checkpoints. Commit per step,
+push to fork.
