@@ -34,7 +34,7 @@
 //   ChainExtendSerial                      ChainExtendReach + ChainExtendRound x2 + finisher
 //   ChainAssignTCRows                      ChainRowFlags + prefix + ChainRowAssign
 //   ChainAttachSelectTargets               ChainTargetFlags + prefix + ChainTargetScatter
-//   ChainAttachContend                     ChainAttachArgmax / Resolve / OwnerFlags / RDRank /
+//   ChainAttachContend                     ChainAttachArgmax / Resolve / OwnerScatter /
 //                                          ChainAttachSeedDedup / ChainAttachPublish
 //   ChainSuppressCarriedTCs                ChainTCKeepSuppress + prefix + gather/scatter
 //
@@ -1144,46 +1144,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     }
   };
 
-  // The -RD visiting order, (attachLogit descending, chain row ascending). Identical argument to
-  // ChainClaimRank: the comparator is a strict total order over distinct chain rows, so the
-  // reference's selection sort and this rank count produce the same permutation.
-  //
-  // stats[9] ("tieRD") is REDEFINED here relative to the serial kernel: the serial form counts the
-  // equal-logit comparisons its selection sort happens to make, which is a property of the sort's
-  // trajectory rather than of the data. This counts the ordered pairs of owners that carry exactly
-  // equal logits, which is the quantity the census was always trying to report. It is a printout
-  // only; nothing reads it.
-  struct ChainAttachRDRank {
-    ALPAKA_FN_ACC void operator()(Acc1D const& acc,
-                                  ChainsConst chains,
-                                  uint32_t const* ownersIn,
-                                  uint32_t const* nOwnersPtr,
-                                  uint32_t nBound,
-                                  uint32_t* ownersOut,
-                                  uint32_t* stats) const {
-      uint32_t const n = *nOwnersPtr;
-      for (uint32_t i : cms::alpakatools::uniform_elements(acc, nBound)) {
-        if (i >= n)
-          continue;
-        uint32_t const a = ownersIn[i];
-        float const la = chains.attachLogit()[a];
-        uint32_t rank = 0u, ties = 0u;
-        for (uint32_t j = 0; j < n; ++j) {
-          if (j == i)
-            continue;
-          uint32_t const b = ownersIn[j];
-          float const lb = chains.attachLogit()[b];
-          bool const bFirst = (lb != la) ? (lb > la) : (b < a);
-          rank += bFirst ? 1u : 0u;
-          if (lb == la && j > i)
-            ++ties;
-        }
-        ownersOut[rank] = a;
-        if (ties)
-          alpaka::atomicAdd(acc, &stats[9], ties, alpaka::hierarchy::Blocks{});
-      }
-    }
-  };
+  // (The -RD rank kernel is gone: per the zero-sorts directive the dedup walk visits owners in
+  // the gather's ascending-position order -- simp change 3, NONEXACT, n300-gated. The serial
+  // walk below consumes the gathered list directly.)
 
   // The pLS's DISTINCT pixel hit indices, staged so the serial dedup walk below touches a compact
   // array instead of chasing the hits SoA. Keyed by owner slot, not by pLS row.

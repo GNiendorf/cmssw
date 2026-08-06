@@ -1177,41 +1177,13 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
           order[nOwners++] = targets[pos];
 
       if (cfg.attachSeedDedup && nOwners > 0) {
-        // Selection pass: (logit desc, chain row asc). `order` starts chain-row ascending because
-        // the K9 accepted order is not, so the second key is applied explicitly. The reference gets
-        // the same sequence from std::sort over the same strict total order.
-        //
-        // P2.5 classification: the chain row IS a volatile numbering, so an exact attachLogit tie
-        // here is decided by a run-dependent quantity. stats[9] ("tieRD" in the [CHAIN K8] line)
-        // counts every such tie comparison: 4 over 20 CUDA events, none on 18 of the 20, i.e.
-        // ~0.2 per event against ~1.6e5 comparisons. It is exercised, but the fix was MEASURED and
-        // is not free: substituting chains.stableKey() for the row here costs ~0.7 ms/event on
-        // CUDA, because this kernel runs single-threaded on the device and the compiler speculates
-        // the extra global load on every one of the O(nOwners^2) comparisons, tie or not. Under the
-        // "no timing spent on determinism" rule that buys back nothing measurable -- the GPU
-        // run-to-run TC identity is the same either way (99.67% vs 99.68%, both set by LST's own
-        // upstream pT3 instability) -- so the volatile key stays and the residual is accepted and
-        // recorded here. The stableKey column exists; swapping it in is a one-line change if the
-        // trade is ever judged worthwhile.
-        // The incumbent's logit is a loop invariant between swaps and is carried in a register,
-        // which is why the comparison is cheaper here than the two loads the reference does.
-        for (uint32_t i = 0; i < nOwners; ++i) {
-          uint32_t best = i;
-          float lb = chains.attachLogit()[order[best]];
-          for (uint32_t j = i + 1; j < nOwners; ++j) {
-            float const lj = chains.attachLogit()[order[j]];
-            bool const jFirst = (lj != lb) ? (lj > lb) : (order[j] < order[best]);
-            if (lj == lb)
-              ++stats[9];  // tie census; this kernel is once_per_grid, so no atomic is needed
-            if (jFirst) {
-              best = j;
-              lb = lj;
-            }
-          }
-          uint32_t const tmp = order[i];
-          order[i] = order[best];
-          order[best] = tmp;
-        }
+        // -RD visiting order: ASCENDING POSITION -- the K9 accepted order the gather above
+        // produced -- with NO sort. The reference visited (logit desc, chain row asc); per the
+        // maintainer's zero-sorts directive the ordering machinery is deleted, on the strength of
+        // the measured order-nulls of this family (a05 M13, t3attach R4) and gated NONEXACT on
+        // the n300 scoreboard (simp change 3). This also retires the volatile-row tie residual
+        // the old selection pass carried (its stats[9] tie census goes with it; the field reads
+        // 0 now), and the ~0.2 equal-logit ties/event it counted.
 
         // hit2kept: an open-addressed (pixel hit index -> kept pLS row) multimap. The reference's
         // std::unordered_map is keyed on the TRACKING-NTUPLE hit index, not on the hits-SoA row --

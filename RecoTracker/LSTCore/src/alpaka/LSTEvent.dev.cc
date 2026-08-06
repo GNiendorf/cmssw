@@ -2347,14 +2347,14 @@ void LSTEvent::attachPixels(unsigned int nHits,
                         chainConfig_);
   } else {
     // P2.6a. The one-pLS-one-owner rule is an argmax, so it becomes a packed atomicMax; the -RD
-    // visiting order is a rank count instead of the reference's O(n^2) selection sort (7-10 ms per
-    // event on the device, all of it one thread chasing a global load per comparison). Only the
-    // hash-table walk itself stays sequential -- see ChainAttachSeedDedup.
+    // visiting order is the gathered ascending-position (K9 accepted) order -- zero sorts, simp
+    // change 3, replacing the reference's O(n^2) selection sort (7-10 ms per event on the device,
+    // all of it one thread chasing a global load per comparison). Only the hash-table walk itself
+    // stays sequential -- see ChainAttachSeedDedup.
     auto plsKey_buf = cms::alpakatools::make_device_buffer<uint64_t[]>(queue_, nPls);
     auto ownKeep_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, nTargets);
     auto ownOffs_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, nTargets + 1u);
     auto nOwners_buf = cms::alpakatools::make_device_buffer<uint32_t>(queue_);
-    auto orderRanked_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, nTargets);
     auto ownerHits_buf =
         cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, size_t{nTargets} * kMaxPLSHitsInHitsSoA);
     auto ownerNHits_buf = cms::alpakatools::make_device_buffer<uint8_t[]>(queue_, nTargets);
@@ -2396,22 +2396,15 @@ void LSTEvent::attachPixels(unsigned int nHits,
                           ownOffs_buf.data(),
                           nTargets,
                           order_buf.data());
-      alpaka::exec<Acc1D>(queue_,
-                          chainFlat_workDiv,
-                          ChainAttachRDRank{},
-                          chainsDC_->const_view(),
-                          order_buf.data(),
-                          nOwners_buf.data(),
-                          nTargets,
-                          orderRanked_buf.data(),
-                          stats_buf.data());
+      // Zero-sorts (simp change 3): the -RD walk visits the gathered ascending-position (K9
+      // accepted) order directly; the rank kernel is gone.
       alpaka::exec<Acc1D>(queue_,
                           chainFlat_workDiv,
                           ChainAttachOwnerHits{},
                           lstInputDC_->const_view().pixelSeeds(),
                           lstInputDC_->const_view().hits(),
                           chainsDC_->const_view(),
-                          orderRanked_buf.data(),
+                          order_buf.data(),
                           nOwners_buf.data(),
                           nTargets,
                           nHits,
@@ -2422,7 +2415,7 @@ void LSTEvent::attachPixels(unsigned int nHits,
                           serial_workDiv,
                           ChainAttachSeedDedup{},
                           chainsDC_->view(),
-                          orderRanked_buf.data(),
+                          order_buf.data(),
                           nOwners_buf.data(),
                           ownerHits_buf.data(),
                           ownerNHits_buf.data(),
@@ -2710,16 +2703,16 @@ void LSTEvent::attachBareT3(unsigned int nHits,
   // K8B-c: contention + the stage-B half of the -RD seed dedup, against the hash table stage A
   // left behind (so a seed already delivering a pT5-class object blocks its siblings here). The
   // winners publish straight into the LIVE plsOwned (invariant I1). Same decomposition as stage
-  // A's T7 (argmax key + rank count + serial hash residue), one form on both backends; keep[]
-  // survives in bareT3Keep_ because after the dedup revocations it flags exactly the DELIVERIES,
-  // which is what the -CC sweep's gather in arbitrateChains reads.
+  // A's T7 (argmax key + serial hash residue in the gathered ascending-T3-row order -- zero
+  // sorts, simp change 3), one form on both backends; keep[] survives in bareT3Keep_ because
+  // after the dedup revocations it flags exactly the DELIVERIES, which is what the -CC sweep's
+  // gather in arbitrateChains reads.
   bareT3Keep_.emplace(cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, nBare));
   {
     auto plsKey_buf = cms::alpakatools::make_device_buffer<uint64_t[]>(queue_, nPls);
     auto ownOffs_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, nBare + 1u);
     auto nOwners_buf = cms::alpakatools::make_device_buffer<uint32_t>(queue_);
     auto owners_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, nBare);
-    auto orderRanked_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, nBare);
     auto ownerPls_buf = cms::alpakatools::make_device_buffer<int32_t[]>(queue_, nBare);
     auto ownerHits_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, size_t{nBare} * kMaxPLSHitsInHitsSoA);
     auto ownerNHits_buf = cms::alpakatools::make_device_buffer<uint8_t[]>(queue_, nBare);
@@ -2755,23 +2748,21 @@ void LSTEvent::attachBareT3(unsigned int nHits,
                         owners_buf.data());
     alpaka::exec<Acc1D>(queue_,
                         chainFlat_workDiv,
-                        ChainAttachT3Rank{},
+                        ChainAttachT3StageOwners{},
                         lstInputDC_->const_view().pixelSeeds(),
                         lstInputDC_->const_view().hits(),
                         bareT3TgtPls_->data(),
-                        bareT3TgtLogit_->data(),
                         owners_buf.data(),
                         nOwners_buf.data(),
                         nBare,
                         nHits,
-                        orderRanked_buf.data(),
                         ownerPls_buf.data(),
                         ownerHits_buf.data(),
                         ownerNHits_buf.data());
     alpaka::exec<Acc1D>(queue_,
                         serial_workDiv,
                         ChainAttachT3Dedup{},
-                        orderRanked_buf.data(),
+                        owners_buf.data(),
                         nOwners_buf.data(),
                         ownerPls_buf.data(),
                         ownerHits_buf.data(),

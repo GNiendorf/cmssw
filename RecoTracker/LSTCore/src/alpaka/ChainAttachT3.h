@@ -388,21 +388,20 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     }
   };
 
-  // K8B-c2. The (logit desc, position asc) visiting order as a rank count (the ChainClaimRank
-  // argument: strict total order over distinct positions, so the rank IS the sorted slot), plus
-  // the staging of each owner's pLS row and DISTINCT pixel hit rows at its ranked slot, so the
-  // serial walk below touches compact arrays only (the ChainAttachOwnerHits idiom).
-  struct ChainAttachT3Rank {
+  // K8B-c2. Stage each owner's pLS row and DISTINCT pixel hit rows at its gather slot, so the
+  // serial walk below touches compact arrays only (the ChainAttachOwnerHits idiom). The visiting
+  // order IS the gather order -- ascending position == ascending T3 row -- per the zero-sorts
+  // directive (the old (logit desc, pos asc) rank count is gone; simp change 3, NONEXACT,
+  // n300-gated).
+  struct ChainAttachT3StageOwners {
     ALPAKA_FN_ACC void operator()(Acc1D const& acc,
                                   PixelSeedsConst pixelSeeds,
                                   HitsBaseConst hitsBase,
                                   int32_t const* tgtPls,
-                                  float const* tgtLogit,
                                   uint32_t const* ownersIn,
                                   uint32_t const* nOwnersPtr,
                                   uint32_t nBound,
                                   uint32_t nHits,
-                                  uint32_t* orderOut,
                                   int32_t* ownerPls,
                                   uint32_t* ownerHits,
                                   uint8_t* ownerNHits) const {
@@ -411,19 +410,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         if (i >= n)
           continue;
         uint32_t const a = ownersIn[i];
-        float const la = tgtLogit[a];
-        uint32_t rank = 0u;
-        for (uint32_t j = 0; j < n; ++j) {
-          if (j == i)
-            continue;
-          uint32_t const b = ownersIn[j];
-          float const lb = tgtLogit[b];
-          bool const bFirst = (lb != la) ? (lb > la) : (b < a);
-          rank += bFirst ? 1u : 0u;
-        }
-        orderOut[rank] = a;
         int32_t const p = tgtPls[a];
-        ownerPls[rank] = p;
+        ownerPls[i] = p;
         int nh = 0;
         if (p >= 0) {
           uint32_t const first = pixelSeeds.firstHit()[p];
@@ -435,16 +423,16 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
               continue;
             if (hitsBase.detid()[h] != kPixelModuleId)
               continue;
-            ownerHits[static_cast<size_t>(rank) * kMaxPLSHitsInHitsSoA + nh] = hitsBase.idxs()[h];
+            ownerHits[static_cast<size_t>(i) * kMaxPLSHitsInHitsSoA + nh] = hitsBase.idxs()[h];
             ++nh;
           }
         }
-        ownerNHits[rank] = static_cast<uint8_t>(nh);
+        ownerNHits[i] = static_cast<uint8_t>(nh);
       }
     }
   };
 
-  // K8B-c3, the serial residue: the -RDT hash walk in ranked order against the table stage A
+  // K8B-c3, the serial residue: the -RDT hash walk in gather (ascending T3 row) order against the table stage A
   // left behind, then the publish of the surviving owners into the LIVE plsOwned (invariant I1
   // -- a stage-B owner is visible to the -XC anchor set and to the carried-row retirement, and
   // the -CC sweep can still release it, -CCR 2). keep[] is maintained through the revocations:
