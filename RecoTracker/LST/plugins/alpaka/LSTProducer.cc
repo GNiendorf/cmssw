@@ -91,14 +91,6 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     c.attachSuppressBarePLS = a.getParameter<bool>("suppressBarePLS");
     c.attachSeedDedup = a.getParameter<bool>("seedDedup");
     c.attachDcaMax = a.getParameter<double>("dcaMax");
-
-    auto const& e = ps.getParameter<edm::ParameterSet>("extension");
-    c.extendMode = e.getParameter<int32_t>("mode");
-    c.extendWindow = e.getParameter<double>("window");
-    c.extendRzWindow = e.getParameter<double>("rzWindow");
-    c.extendChi2Factor = e.getParameter<double>("chi2Factor");
-    c.extendMaxDist = e.getParameter<double>("maxDist");
-    c.extendMinLayers = e.getParameter<int32_t>("minLayers");
     return c;
   }
 
@@ -220,15 +212,6 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
         attachDesc.add<double>("dcaMax", 1e9)
             ->setComment("-D4: attach-eligibility dcaXY gate, cm. 1e9 = off, which is the freeze.");
         chainDesc.add<edm::ParameterSetDescription>("attach", attachDesc);
-
-        edm::ParameterSetDescription extDesc;
-        extDesc.add<int32_t>("mode", 1)->setComment("-EX: 0 off, 1 outer end, 2 inner end, 3 both.");
-        extDesc.add<double>("window", 0.25)->setComment("-EXW: xy circle-residual window, cm.");
-        extDesc.add<double>("rzWindow", 4.0)->setComment("-EXR: separate |rz| residual window, cm.");
-        extDesc.add<double>("chi2Factor", 2.0)->setComment("-EXF: refit chi2/hit growth an extension may cause.");
-        extDesc.add<double>("maxDist", 60.0)->setComment("-EXD: max 3D terminal-to-candidate distance, cm.");
-        extDesc.add<int32_t>("minLayers", 4)->setComment("-EXL: chains below this many layers are never extended.");
-        chainDesc.add<edm::ParameterSetDescription>("extension", extDesc);
       }
       desc.add<edm::ParameterSetDescription>("chainTracking", chainDesc)
           ->setComment("Chain-tracking configuration (the only track-building path).");

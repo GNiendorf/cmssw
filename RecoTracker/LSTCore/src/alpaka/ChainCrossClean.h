@@ -43,6 +43,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     // seeds x <= 4 hits, so 16k slots never exceed a quarter load. Power of two: masked probe.
     constexpr uint32_t kHitHashSlots = 16384u;
     constexpr uint32_t kHitHashEmpty = 0xFFFFFFFFu;
+    // Probe-length stop for the concurrent insert below. It stands in for the serial form's running
+    // load-factor test: at a quarter load the expected probe is ~1.3 slots, so it can only fire if
+    // the table is far outside its design point, and it is counted rather than silently ignored.
+    constexpr uint32_t kHitHashMaxProbe = 64u;
     ALPAKA_FN_ACC ALPAKA_FN_INLINE uint32_t hitHash(uint32_t key) {
       uint32_t h = key * 2654435761u;
       h ^= h >> 15;
@@ -71,22 +75,27 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     }
   };
 
-  // Serial insert of every anchor's pixel hit indices into the presence set (a few thousand
-  // insertions; parallel insertion would need CAS loops for no measurable gain).
+  // Concurrent insert of every anchor's pixel hit indices into the presence set, one thread per
+  // anchor on every backend. The table is a SET WITH NO DELETIONS, so any interleaving of
+  // linear-probe CAS inserts leaves the same MEMBERSHIP: a probe either claims an empty slot for its
+  // key or discovers that key already in the table. Only the slot LAYOUT can differ from a serial
+  // insert, and no reader ever observes it -- the lookups probe to the first empty slot in a later
+  // launch, after every insert has retired -- so the outputs are bit-identical. The serial form this
+  // replaces was a single device thread chasing a few thousand dependent global accesses.
   struct ChainXcAnchorHits {
     ALPAKA_FN_ACC void operator()(Acc1D const& acc,
                                   PixelSeedsConst pixelSeeds,
                                   HitsBaseConst hitsBase,
                                   uint32_t const* anchorPls,
                                   uint32_t const* nAnchors,
+                                  uint32_t nAnchorBound,
                                   uint32_t nHits,
                                   uint32_t* hashKey,
                                   uint32_t* stats) const {
-      if (!cms::alpakatools::once_per_grid(acc))
-        return;
       uint32_t const n = *nAnchors;
-      uint32_t nIns = 0;
-      for (uint32_t i = 0; i < n; ++i) {
+      for (uint32_t i : cms::alpakatools::uniform_elements(acc, nAnchorBound)) {
+        if (i >= n)
+          continue;
         uint32_t const p = anchorPls[i];
         uint32_t const first = pixelSeeds.firstHit()[p];
         uint32_t const nSeedHits = static_cast<uint32_t>(pixelSeeds.nHits()[p]);
@@ -98,22 +107,15 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
           if (hitsBase.detid()[h] != kPixelModuleId)
             continue;
           uint32_t const g = hitsBase.idxs()[h];
-          if (nIns + 1u >= chainxc::kHitHashSlots / 2u) {
-            ++stats[0];  // overflow census; never reached at PU200
-            return;
-          }
           uint32_t slot = chainxc::hitHash(g);
-          bool present = false;
-          while (hashKey[slot] != chainxc::kHitHashEmpty) {
-            if (hashKey[slot] == g) {
-              present = true;
-              break;
-            }
+          for (uint32_t probe = 0; probe < chainxc::kHitHashMaxProbe; ++probe) {
+            uint32_t const prev = alpaka::atomicCas(
+                acc, &hashKey[slot], chainxc::kHitHashEmpty, g, alpaka::hierarchy::Blocks{});
+            if (prev == chainxc::kHitHashEmpty || prev == g)
+              break;  // claimed the slot, or this key is already present
             slot = (slot + 1u) & (chainxc::kHitHashSlots - 1u);
-          }
-          if (!present) {
-            hashKey[slot] = g;
-            ++nIns;
+            if (probe + 1u == chainxc::kHitHashMaxProbe)
+              alpaka::atomicAdd(acc, &stats[0], 1u, alpaka::hierarchy::Blocks{});  // never at PU200
           }
         }
       }

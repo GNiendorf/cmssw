@@ -120,21 +120,6 @@ namespace lst {
     bool replacePT3 = true;
 
     // ------------------------------------------------------------------------------------------
-    // P2.3 -- chain extension at assembly (-EX family, prototype/Extend.h).
-    // ------------------------------------------------------------------------------------------
-    int extendMode = 1;             // -EX  : 0 off, 1 outer end only, 2 inner only, 3 both
-    float extendWindow = 0.25f;     // -EXW : xy (circle) residual window, cm
-    float extendRzWindow = 4.f;     // -EXR : separate |rz| window, cm; > 0 splits the test (CHAINFINAL2)
-    float extendChi2Factor = 2.f;   // -EXF : refit chi2/hit <= factor * max(chi2Full, window^2)
-    float extendUniqMargin = 0.f;   // -EXU : runner-up ambiguity guard, cm; 0 = off
-    float extendMaxDist = 60.f;     // -EXD : max 3D distance terminal MD -> candidate MD, cm
-    int extendMaxJump = 1;          // -EXJ : max md layer jump from the terminal layer
-    int extendMaxPerEnd = 1;        // -EXN : max MDs appended per chain end
-    int extendMinLayers = 4;        // -EXL : chains below this many layers are never touched
-    float extendMaxChi2 = 0.f;      // -EXC : own-fit-quality guard, cm^2; 0 = off
-    bool extendSegLinked = true;    // -EXS : candidate must be LineSegment-linked to the terminal
-
-    // ------------------------------------------------------------------------------------------
     // P2.4 -- pixel attach (-A 4, the general pLS -> outer-tracker attach as the DELIVERY path).
     // ------------------------------------------------------------------------------------------
     // -a 5.0 / -a2 5.0 / -a3 6.0 (CHAINFINAL2): the pair-head logit an (accepted chain, pLS) pair
