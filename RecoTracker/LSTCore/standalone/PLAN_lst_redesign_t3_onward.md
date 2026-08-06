@@ -3188,3 +3188,37 @@ NEXT-ROUND SEED (maintainer: "one thing of many for the general agents to look i
 this stays a good lead"): why the matching requirement alone is sufficient, whether the pixel-
 anchored arms' dR^2 (-XCR2 1e-6) deserve the same treatment, and whether the same logic applies
 anywhere else a geometric window shadows a learned score.
+
+## 2026-08-06 -- NEXT-ROUND SEED (maintainer): HARVEST LST'S pT3/pT5 MATCHING FEATURES
+Maintainer: "one possible avenue ... LST's pT3 and pT5 attaching and what variables go into that,
+maybe there is something there that could boost our performance ... years have been spent
+engineering those features ... a few good chi-squared variables and a ton of other features, some
+go into the pT3 dnn others don't." Explicitly TIME-BOXED: "I don't want agents wasting too much
+time looking at LST" - harvest the variable list, do NOT re-derive LST's algorithm.
+
+VERIFIED against master b42d8f97ad5 (the code is deleted from our tree but recoverable with
+`git show master:RecoTracker/LSTCore/src/alpaka/{NeuralNetwork,PixelTriplet,PixelQuintuplet}.h`):
+  pT3 DNN, 7 inputs: rPhiChiSquared | tripletRadius | pixelRadius | pixelRadiusError |
+                     rzChiSquared | |pixelEta| (normalised) | pixelPt
+                     ... and the acceptance is ADDITIONALLY WP-binned in (pt, eta).
+  pT3 cuts also use: rPhiChiSquaredInwards, betaIn/betaOut/dBeta, centerX/centerY, dPhiCut,
+                     zLo/zHi, rtLo/rtHi.
+  pT5 dominated by:  rPhiChiSquared (56 uses), rzChiSquared, rPhiChiSquaredInwards,
+                     pixelRadius vs quintupletRadius, centerX/centerY.
+
+WHY THIS IS A REAL LEAD, against our 19-feature attach head (port2_ref/specs/SPEC_T3E_CC.md 2.3):
+ 1. LST feeds |eta| AND pt to the head and bins the WP in eta on top. OUR ATTACH HEAD HAS NEITHER -
+    D3 traced its ~4.6-unit logit drift across eta to exactly this (no eta input at all).
+ 2. LST compares radii as a PULL: pixelRadius vs tripletRadius TOGETHER WITH pixelRadiusError.
+    We use no radius error anywhere in the pair features - that error term is the engineering.
+ 3. LST carries TWO independent chi2 directions (rPhi = bend/circle, rz = longitudinal) PLUS an
+    INWARDS variant (the outer object propagated back through the pixel hits). We have angular and
+    curvature residuals but nothing chi2-shaped and nothing inwards-propagated.
+FEASIBILITY: every one of these is computable at OUR attach-scoring time from objects that survive
+the P2.7 strip - the pLS carries its own radius/ptErr, the T3 and the chain carry their circle+rz
+fits - so adopting features reintroduces NO deleted machinery (no pixel maps, no T5 fit).
+PRIORITY NOTE (same maintainer conversation): a NEW trained component must either bring a big win
+or REMOVE at least as much machinery as it adds (D3's separate retirement head bought only ~half
+of its own result over the free window fix). Feature engineering + retraining of the EXISTING
+attach head adds no component and, per D3, should pay TWICE: the residual barrel duplicates and
+the wrong-seed conversions that made lowering -a cost displaced efficiency share that root cause.
