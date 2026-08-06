@@ -2893,3 +2893,28 @@ threshold in this ledger after any retrain.
 Also queued: the dxy[10,30) band deficit (-.0225 vs LST) predates all of this (inherited
 at CHAINFINAL, untouched by 15+7 agents, tracks never formed upstream - cube-round
 territory, a08_ref).
+
+## 2026-08-05 -- QUEUED NEXT (maintainer directive): MASSIVE SIMPLIFICATION PASS
+Immediately after the integration agent delivers (post-strip physics + plots + 1-stream
+CPU/GPU timing) and the maintainer reviews them: a large simplification pass with
+NEGLIGIBLE physics change (bit-identity or measured-noise-level shifts only). Scope:
+1. COLLAPSE THE SERIAL/PARALLEL DUAL KERNELS (the big one; maintainer explicitly angry
+   at the duplication). ChainParallel.h holds ~30 parallel decompositions whose serial
+   twins live in ChainArbitrate/ChainAttach/etc (P2 parity scaffolding that was never
+   consolidated). Plan: run the parallel decomposition on ALL backends and delete serial
+   twins wherever CPU timing does not materially regress (A/B per stage); keep truly
+   order-dependent greedy sweeps as ONE shared single-thread kernel; use the existing
+   if-constexpr single-thread idiom inside ONE struct for any residue where CPU genuinely
+   wants a different loop shape. Target: ~85 kernel structs -> ~55-60, and elimination of
+   the duplicate-implementation bug class (the -RPSA three-copies lesson).
+2. Dead-flag and dead-code removal: -a4 family remnants, diagnostic-only paths, inert
+   sentinels, measurement scaffolding (audit kernels stay, behind their env gates).
+3. Config surface prune: ChainConfig fields that no longer vary (hardcoded winner
+   semantics like -CCR 2, -CCN 1, -CCG MD already hardcoded at port - verify none leak).
+4. Earlier removal candidates from the roadmap: extension (-EX) and trim (-TR) A/B as
+   removal candidates (measured before, deferred).
+5. The write-side: OutputWriter/write_lst_ntuple chain branches - prune what nothing reads.
+Discipline: every step gated (bit-identity where the change claims none; frozen-300
+scoreboard where noise-level claimed), timing A/B per consolidation, commit per step,
+push to fork. THEN: timing/memory fan-outs on the consolidated tree, head-retrain round,
+cube/jet samples.
