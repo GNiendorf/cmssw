@@ -3290,3 +3290,34 @@ baseline entry, runs strictly sequential):
                  objects than master, which is round 2's R5 direction.
   Artifacts: win_ref/{win_rv1000.root,win_rv1000_hists.root,win_vs_master_1000.json,
              timing_gpu.log,timing_cpu.log}.
+
+================================================================================================
+STANDING SCOPE RULE: NO CHANGES WHOSE BENEFIT ALSO ACCRUES TO LST MASTER (maintainer, 2026-08-06)
+================================================================================================
+
+A change is NOT a deliverable of this project if LST master would gain from it as much as we do,
+however large the number attached to it. The pLS SIDE is the specific case called out: pixel-seed
+cleaning, pLS dedup, and pLS admission all sit UPSTREAM of everything the chain redesign replaced,
+so a fix there moves BOTH sides of the comparison and closes none of the gap we are measured on.
+
+Test to apply before spending time, and before presenting any result: is the population being
+acted on one WE create -- chain TCs, the -ZP8 post-deletion additions, attach conversions,
+retirement of seeds against OUR chains -- or one LST hands us unchanged? If the latter, stop, say
+so, and move on.
+
+WHAT TRIGGERED IT: round 2's R4 delivered an endcap bare-seed "helix-identity" dedup measured on a
+real 977-event A/B at dup overall .0485 -> .0356, dup endcap .0709 -> .0473, barrel/transition
+exactly untouched, eff -.0003, track length +.047, displaced bands bit-identical except vxy[1,5)
+-.0007. Its own caveat was the disqualifier: 97% of the endcap bare-seed duplicate rows it cleaned
+are LST-CARRIED type-8 rows, i.e. the cell is LST's own pLS admission, not anything the chain
+redesign introduced. REJECTED ON SCOPE, not on quality. Recorded here so it is not re-proposed:
+the write-up and the implementation both survive in standalone/r4_ref/RECOMMENDATION.md if the
+scope ever changes (e.g. if it is ever offered upstream to LST as a separate contribution).
+
+WHAT STAYS IN SCOPE from that same agent's work, because the recon generalizes to cells we DO own:
+a circular dR window is the wrong shape for a "same track" test -- the polar angle is the helix
+invariant and the azimuth is not, so same-track pairs are FARTHER apart in phi than random
+neighbours (median |dPhi| .022 vs .013 while |dEta| is .00093 vs .0128). Purity at equal reach:
+.12-.20 for a circular dR^2 window vs .91 for (tight eta AND loose phi AND same charge AND
+|ln ptRatio| bounded). This is the same effect as the maintainer's own win from DELETING the
+-XCW2 0.02 centroid window, and it applies to any same-track predicate anywhere in OUR pipeline.
