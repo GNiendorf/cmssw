@@ -3537,3 +3537,133 @@ ROUND-TWO TARGET LIST, all measured or read from source, none attempted:
  * The unexplained GPU TC +0.2 ms above.
  * T5's in-binary dummy-allocation experiment, the only design that can separate allocation cost
    from code layout.
+
+## 2026-08-07 -- GPU ROUND 2 SHIPPED: 5.8 -> 4.2 ms/evt, FASTER THAN LST MASTER ON BOTH BACKENDS
+
+Commit `d3e8e612fac` (pushed to `fork` only). Five agents (U1-U5), shared log
+`standalone/FINDINGS_GPU2.md`, all measurement through the single-slot broker. FOUR changes shipped;
+each was measured in its own slot AND gated CPU bit-identical before it was allowed near the merge.
+
+WHAT SHIPPED
+ * U3 multi-block scan family, 17 launch sites: 5.8 -> 4.7 alone, kernel count 0, +2 launches. TWO
+   defects not one -- the block-wide exclusive scan at 15 small sites (0.700 -> 0.337) and a NEW
+   multi-block tiled K1b (0.795 -> 0.045), which was 87% of the incidence stage. The boundary is
+   nKeys = 1024: below it the cost is the fixed tail, above it the stride dominates. Coalescing
+   WITHOUT more blocks is a net LOSS (nTiles=1 reads 0.928 vs the original 0.795) -- the win is the
+   block count, not the access pattern.
+ * U1 stage-B contend parallelised: 5.8 -> 5.2 alone, kernel -1, no new buffer/struct/kernel.
+   contend 0.878 -> 0.313. The stage-A recipe does NOT transfer (76% of stage-B owners are flagged
+   vs stage A's 4 of 716); what pays is that a partner belonging to the ALREADY-FINAL stage A cannot
+   be revoked, retiring 58% with no table access, plus packing each survivor's whole partner list
+   into the existing 32-bit word (2x13-bit idx + 2-bit count + 4 flags).
+ * U4 one union-hull grid for both attach stages: 5.8 -> 5.7 alone, kernel -1. A DELETION: stage B's
+   entire second grid goes, with 3 launches, 5 memsets, 6 device allocations, one mid-stream
+   device->host drain and ~8 MB of scattered 96-byte writes. The hulls are 9 r-bin pairs with only
+   bins 1-4 occupied and stage A's is a STRICT SUBSET of stage B's on every event, so the union IS
+   stage B's grid. Superset audit MISSING=0 on 5/5 events, both stages.
+ * U5 five deletions: no measurable ms (all six GPU arms read 5.8; its own in-slot repeat proves the
+   -0.0013 on ROUNDS is noise). Code only, taken on the standing rule that code and kernel count are
+   real costs: AttachTargetPre::tcEta/tcPhi plus the three SoA views they were the only user of;
+   claimFlags' two stores (member KEPT, mid-layout); ChainBuildEdges' dead once_per_grid;
+   ChainEdgesSoA::nE1Exact/nE2Exact COLUMNS (last two members, so free by construction); kStats fix.
+ * SUBSUMED, not rejected: U2's K0+K1 three-phase scan (5.8 -> 5.0) attacks the same Graph column by
+   the same mechanism; U3's is multi-block so by the condition the two agreed IN ADVANCE U3's stays.
+   U2's ten-step decomposition is why U3's change targets K1b at all -- before it, the round's map
+   put the cost on K0.
+
+MEASURED ON THE MERGED TREE (200 evt, interleaved twice, both passes reproducing)
+  GPU s=1: 5.8 -> 4.2. Graph 1.4 -> 0.6, Chain 2.2 -> 1.5, T3 0.6 -> 0.5, LST columns unmoved.
+  vs LST master b42d8f97ad5, lst_timing's stream configs, Total ms:
+    GPU  s=1 4.2/4.5   s=2 5.3/5.9   s=4 7.6/8.6   s=6 10.5/11.5   s=8 15.7/15.7 (TIED)
+    CPU  s=1 751.6/762.4  s=4 757.7/769.0  s=16 765.0/778.4  s=32 770.7/783.6  s=64 853.0/861.0
+  Per-event wall at each side's optimum: GPU 1.8 (s=6) vs 2.0 (s=8); CPU 20.1 vs 20.2 (s=64).
+  LIKE-FOR-LIKE on the replaced work (master T5+T4+pT5+pT3+TC vs our Graph+Chain+TC), CPU:
+    s=1 206.4 -> 195.6 | s=4 207.1 -> 196.3 | s=16 208.4 -> 199.0 | s=32 209.7 -> 200.5 |
+    s=64 225.8 -> 219.8. Cheaper at every stream count, by 6-11 ms, NARROWING as streams rise.
+  Kernel count -2, host syncs -1. Across both GPU rounds: 10.3 -> 4.2 ms/evt (2.4x).
+
+PHYSICS: UNCHANGED, AND NOT MERELY WITHIN NOISE. At 1000 events every one of the 28 compare_ab
+metrics is +0.0000 against the round-2 shipped build, with n TC equal to the unit (2052480). CPU
+bit-identity 35/35 / 0 differ over 100 events. Artifacts in `standalone/merge_ref/`.
+
+THE HONEST LIMITS, recorded so nobody has to rediscover them
+ * THE CHAIN BLOCK SCALES WORSE WITH STREAMS THAN THE STAGES IT REPLACED. Chain 1.5 -> 2.0 -> 3.1 ->
+   4.5 -> 7.9 across s=1..8, half our GPU total at s=8, which is exactly why the 0.3-1.0 ms lead
+   erodes to ZERO there; the CPU like-for-like margin narrows the same way (10.8 -> 6.0). This round's
+   wins were about FILLING THE MACHINE, and work that already saturates at s=1 has no headroom left
+   when streams multiply. ROUND 3's TIMING TARGET IS STREAM SCALING, NOT SINGLE-STREAM COST.
+ * NO CPU TOTAL IS QUOTABLE BETTER THAN ~+/-45 ms BETWEEN TWO BINARIES, and the mechanism is now
+   settled: LAYOUT, NOT ALLOCATION -- the question round 1 closed as unanswerable. Four independent
+   witnesses: U5A3's palindrome (V1 313.6 | V2 358.0 | V2b 357.7 | V1b 314.3) where V1->V2 only
+   REMOVES two POD floats and cannot allocate; U5A1's baseline arm at 314.2 against U5A2's at 357.3
+   with a runtime-inert knob between them; U3D1; and U1_AB2, whose patch adds ZERO device buffers by
+   grep. The CPU pLS column takes discrete per-binary levels (~307, ~312-315, ~320, ~326-332, ~357).
+   THE PRACTICAL RULE: **check the pLS column before trusting any CPU total.** In the round-2 merge
+   comparison pLS differs by only 1.7 ms (313.8 vs 315.5) and MD by 0.3, so that pair IS in the same
+   layout regime and its ~10 ms margin is readable. Five stream rows are NOT five witnesses -- layout
+   bias is a property of the binary pair and applies identically at every stream count.
+ * U3's SHIPPED FORM BORROWS a dead moduleNodeOffsets_buf instead of allocating a 6 kB buffer. That
+   variant was measured only INSIDE this merge, never in isolation; the measured-form patch is
+   `u3_ref/U3_shipform_to_measuredform.patch` (43 lines) if anyone needs the exact measured binary.
+ * TWO MERGE CONFLICTS WERE SEMANTIC, and this is the transferable warning. U1 and U5 BOTH claimed
+   stats slot 12 of a buffer with two writers (postStats_buf, written by the -CC sweep AND by
+   ChainTCKeepSuppress), so taking either side verbatim would have RECREATED the exact double-writer
+   defect U5 was fixing, one slot over. The -CC alarm now lives at 21, kStats = 22. Separately, U5's
+   exported patch changed ChainAttachTargetPre's signature WITHOUT its call site (it deliberately
+   excludes LSTEvent.dev.cc, which in its tree holds unshipped scaffolding) and left its own slot fix
+   half-done (the alarm moved to a slot nothing printed, so slot 6 still printed as `ccOverflow` at
+   ~700/event). Both completed during the merge. LESSON: an exported patch that changes a signature
+   or a slot map must be checked against its call sites and readers, not trusted to be self-contained.
+ * CANCELLED UNRUN at the 3-hour mark and recorded as UNTESTED, not as negative results: U1_CPU1 (the
+   only arm holding the library FIXED while changing which code runs -- whether the executed path
+   adds anything on top of the layout effect is still OPEN); U2D1 (the FP64 ablation ceiling, so
+   fit-sharing is dead on the storage arithmetic and the nN<3 exit, NOT on measurement); U3D2 (the
+   allocation-vs-layout isolation, since answered by U5A3); U4M2 (the aux-append parallelisation,
+   designed and syntax-checked but never built -- write-up in `u4_ref/U4_aux_append_UNMEASURED.md`).
+
+METHOD RESULTS THAT OUTLIVE THIS ROUND
+ * GATE RULE (U2, now rule 6 in the FINDINGS_GPU2.md header): segments get their in-module index from
+   an atomicAdd cursor, so the dense SEGMENT key space PERMUTES between GPU runs -- the baseline
+   differs from ITSELF on 10/10 events on exactly lsOut/lsIn/lsProd/t3Idx. A GPU-vs-GPU comparison of
+   anything keyed by a segment or triplet index is therefore MEANINGLESS; MD-keyed arrays and
+   permutation-invariant reductions (totals, counts, E1/E2) are stable and are far sharper than the
+   TC-level diff. This is the array-level analogue of round 1's TC floor, and it says WHICH arrays.
+ * PORTABILITY RULE (U5, from its own declined result): a launch-shape win whose mechanism is a
+   HARDWARE RATIO is not portable; one whose mechanism is "we only used 3% of the machine" is. U5's
+   2048x32 block size bought 1.85x on two kernels ONLY because both run their Kasa fit entirely in
+   FP64 and this L40 has 2 FP64 units/SM against 128 FP32 (1/64 rate). DECLINED ON PORTABILITY, not
+   overlooked -- do not re-measure it. Test any future launch-shape patch by naming the mechanism and
+   asking whether it survives a different FP64 ratio, SM count and warp size.
+ * `nLowerModules()` IS 13200, not 40000 (U2). The bad figure was in the memory file (since
+   corrected; it is NOT in CLAUDE.md -- checked) and it cost real work in round 1 -- it made a 0.042 ms kernel look like the biggest fixed cost
+   on the GPU map. It cannot exceed 32767 by type: (nModules-1)/2 with both uint16_t.
+ * A SINGLE CPU A/B PAIR IS WORTHLESS (U2): its own alternation read 757.5 / 775.0 / 756.5 / 757.2,
+   with the outlier's entire +17.5 ms landing on an UNTOUCHED stage in the SAME binary.
+ * cmp_types.py's "TOUCHES STABLE TYPES -> NOT admissible" verdict fires on the BASELINE AGAINST
+   ITSELF at the same magnitude. Quote the floor, never the verdict.
+ * INSTRUMENT BEFORE DESIGNING, twice validated: U1's iteration 1 measured its own residue at 2.7
+   us/owner, WORSE per owner than the baseline's 0.96, and without that number it would have shipped
+   half the win; U2's ten-step decomposition moved the target from K0 (0.042 ms) to K1b (87%).
+ * ALPAKA INSTANTIATES A KERNEL PER ARGUMENT PACK (U1): a default argument or a bare `nullptr` at one
+   call site silently forks one kernel into TWO ptxas entries. That is how a kernel-count -1 becomes
+   a +1 -- and it is how U1 found the baseline was ALREADY carrying a duplicate ChainAttachOwnerHits.
+ * A `-fsyntax-only` pre-flight costs one minute and saved a 30-minute slot (U1).
+ * POPULATION FACT WITH CONSEQUENCES (U2): weldedNodes/chains = 13017/5403 = 2.41 NODES PER CHAIN, so
+   MOST objects this pipeline calls a "chain" are TWO-NODE WELDS and trim's `if (nN < 3) continue;`
+   declines to fit the majority outright (exact fraction NOT counted -- the slot was cancelled -- and
+   it CANNOT be inferred from the mean: with E[nN]=2.41 the nN>=3 share is bounded only to ~5-70%).
+   A 2-node chain has ONE weld edge, so features 2-4 and 18 (edge-logit sum/min/mean/std) are
+   DEGENERATE on the majority of the population, it has at most 6 MDs, and its circle fit has ~6
+   points. THIS BEARS DIRECTLY ON THE QUEUED MLP-MERGE PASS: any pass that treats chain features as
+   describing a long path is describing a minority of chains.
+ * FIT SHARING (U2, retracted then re-scoped): there are TWO chain-level fits, not three --
+   chainKasaChi2PerHit is a PER-BRIDGE fit over <=6 locally staged points, max-reduced into feature
+   19, unshareable by construction. K7a does duplicate BOTH halves of K6f's fit. But sharing needs
+   9-14 doubles per chain (~389-605 KB/event) and has NO free home: mid-layout ChainsSoA columns cost
+   the ~1 ms of ChainsSoA.h:98-103, a separate buffer is the ~6% CPU per-event allocation, and
+   mdScratch is live because trim builds its inner-dropped variant there. Dead on arithmetic.
+ * FP32 FOR THE CHAIN FIT: parked as a fully documented proposal at [U2 14:30], DECLINED FOR COST not
+   correctness. ~0.19 ms (an ESTIMATE nobody ablated) for the only change in the round needing a
+   physics validation cycle instead of a bit-identity gate, perturbing a fit whose features feed a
+   trained gate MLP whose bars were fitted against FP64 -- and a precision cut in a fit feeding a cut
+   hurts the MARGINAL cases, which are the displaced ones that are this project's whole advantage.
