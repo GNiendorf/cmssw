@@ -20,6 +20,7 @@
 #include "Triplet.h"
 
 #include <atomic>
+#include <bit>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -41,6 +42,26 @@ namespace {
   bool chainTimingEnabled() {
     static bool const enabled = (std::getenv("LST_CHAIN_TIMING") != nullptr);
     return enabled;
+  }
+
+  // U3 attribution instrument for the single-block scan family, LST_CHAIN_TIMING only. It drains
+  // the queue on BOTH sides of the launch so that the printed number is that launch and nothing
+  // else; it is therefore attribution only and never a headline number, and with the flag unset it
+  // compiles to exactly the launch it replaces. The label is the source line, which is a stable
+  // identity across two binaries as long as this file itself is not edited between them.
+  template <typename TQueue, typename TWorkDiv, typename TKernel, typename... TArgs>
+  void chainScanTimed(
+      bool timing, int line, TQueue& queue, TWorkDiv const& workDiv, TKernel const& kernel, TArgs&&... args) {
+    if (!timing) {
+      alpaka::exec<Acc1D>(queue, workDiv, kernel, std::forward<TArgs>(args)...);
+      return;
+    }
+    alpaka::wait(queue);
+    auto const t0 = std::chrono::steady_clock::now();
+    alpaka::exec<Acc1D>(queue, workDiv, kernel, std::forward<TArgs>(args)...);
+    alpaka::wait(queue);
+    double const ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+    lstWarning(std::format("[CHAIN SCAN] L{} {:.4f} ms", line, ms));
   }
 
   // P1 RE-BASELINE INSTRUMENT, default OFF (LST_DUP_SNAPSHOTS; the standalone driver sets it
@@ -67,6 +88,44 @@ namespace {
     return n;
   }
 
+  // How many DEVICE threads share one pLS in the K8a grid count / scatter passes. The natural
+  // element of both is a (pLS, r bin) PAIR -- see the launch-shape note on ChainAttachGridCount --
+  // so kAttachRBins gives each pair its own thread and 1 restores the serial-over-r form the host
+  // backends use. LST_U4_GRIDR is the measurement override; it changes no result.
+  uint32_t chainAttachGridRSlices() {
+    static uint32_t const n = []() {
+      char const* s = std::getenv("LST_U4_GRIDR");
+      if (s == nullptr)
+        return static_cast<uint32_t>(kAttachRBins);
+      int const v = std::atoi(s);
+      return (v > 0) ? static_cast<uint32_t>(v) : 1u;
+    }();
+    return n;
+  }
+
+  // Prints the per-r-bin radial hull each attach stage measures from its own target set, so the
+  // two stages' hulls can be compared before anything is merged. Off unless LST_U4_HULL is set.
+  bool chainAttachHullDump() {
+    static bool const enabled = (std::getenv("LST_U4_HULL") != nullptr);
+    return enabled;
+  }
+
+  // Tile count of the multi-block K1b scan (ChainPrefixIncidenceTiled). The shipped value is the
+  // constant; LST_CHAIN_SCAN_TILES is a tuning override that exists so that ONE measurement slot can
+  // sweep it, including nTiles = 1 (one block, but with coalesced loads and no serial tail -- the
+  // direct test of whether one block is enough). It changes NOTHING about the result: every tiling
+  // partitions the same keys in the same order and sums the same addends.
+  uint32_t chainScanTiles() {
+    static uint32_t const n = []() {
+      char const* s = std::getenv("LST_CHAIN_SCAN_TILES");
+      if (s == nullptr)
+        return kChainScanTilesDefault;
+      int const v = std::atoi(s);
+      return (v > 0 && static_cast<uint32_t>(v) <= kChainScanTilesMax) ? static_cast<uint32_t>(v)
+                                                                      : kChainScanTilesDefault;
+    }();
+    return n;
+  }
 
   // Copies one single-byte device SoA column into a host vector. The wait is required because
   // the very next kernel in the queue is the one that overwrites the column.
@@ -496,7 +555,7 @@ void LSTEvent::createTriplets() {
     auto chainKeyTotals_buf_h = cms::alpakatools::make_host_buffer<uint32_t[]>(queue_, 2u);
     auto chainKeyTotals_buf_d = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, 2u);
     {
-      alpaka::exec<Acc1D>(queue_,
+      chainScanTimed(chainTimingEnabled(), __LINE__, queue_,
                           cms::alpakatools::make_workdiv<Acc1D>(1, kChainScanBlockThreads),
                           ChainPrefixKeyModules{},
                           modules_.const_view().modules(),
@@ -680,7 +739,7 @@ void LSTEvent::buildChainIncidence(uint32_t const* chainMdKeyBias, uint32_t cons
 
   auto const chainScan_workDiv = cms::alpakatools::make_workdiv<Acc1D>(1, kChainScanBlockThreads);
 
-  alpaka::exec<Acc1D>(queue_,
+  chainScanTimed(timing, __LINE__, queue_,
                       chainScan_workDiv,
                       ChainPrefixTripletModules{},
                       modules_.const_view().modules(),
@@ -718,8 +777,26 @@ void LSTEvent::buildChainIncidence(uint32_t const* chainMdKeyBias, uint32_t cons
   unsigned int const nMDKeys = chainMdIncidenceDC_->view().metadata().size() - 1;
   unsigned int const nLSKeys = chainLsIncidenceDC_->view().metadata().size() - 1;
 
-  alpaka::exec<Acc1D>(queue_, chainScan_workDiv, ChainPrefixIncidence{}, chainMdIncidenceDC_->view(), nMDKeys);
-  alpaka::exec<Acc1D>(queue_, chainScan_workDiv, ChainPrefixIncidence{}, chainLsIncidenceDC_->view(), nLSKeys);
+  // K1b is the multi-block tiled scan: nTiles blocks x 256 threads, two passes over the same kernel
+  // struct. Both incidence instances share one tileSums scratch because their four launches are
+  // queue-ordered.
+  //
+  // THE SCRATCH IS BORROWED, NOT ALLOCATED, and that is deliberate. moduleNodeOffsets_buf is
+  // nLowerModules + 1 = 13201 words and is DEAD from here on: ChainPrefixTripletModules wrote it and
+  // ChainScatterTripletModules, enqueued two launches above, is its only reader -- and the queue is
+  // ordered, so the scatter has finished before phase 0 starts. 3 * nTiles <= 1536 words fit inside
+  // it many times over. An earlier revision of this code used a persistent 6 kB device buffer of its
+  // own instead, and THAT COST +43 ms/event ON THE CPU BACKEND, all of it in the pLS stage, which
+  // this code does not touch (measured, palindrome-clean, broker tag U3D1; the same signature as
+  // round 1's unresolved [T3 10:20] / [T5 ~11:00] item). So: no new buffer, per FINDINGS_GPU2.md's
+  // standing rule -- persistent member for a compile-time size, or borrow one that is already dead.
+  uint32_t const nTiles = std::max(1u, std::min(chainScanTiles(), (nLowerModules_ + 1u) / 3u));
+  auto const chainTile_workDiv = cms::alpakatools::make_workdiv<Acc1D>(nTiles, kChainScanTileThreads);
+  uint32_t* const chainTileSums = moduleNodeOffsets_buf.data();
+  chainScanTimed(timing, __LINE__, queue_, chainTile_workDiv, ChainPrefixIncidenceTiled{}, chainMdIncidenceDC_->view(), nMDKeys, chainTileSums, nTiles, 0u);
+  chainScanTimed(timing, __LINE__, queue_, chainTile_workDiv, ChainPrefixIncidenceTiled{}, chainMdIncidenceDC_->view(), nMDKeys, chainTileSums, nTiles, 1u);
+  chainScanTimed(timing, __LINE__, queue_, chainTile_workDiv, ChainPrefixIncidenceTiled{}, chainLsIncidenceDC_->view(), nLSKeys, chainTileSums, nTiles, 0u);
+  chainScanTimed(timing, __LINE__, queue_, chainTile_workDiv, ChainPrefixIncidenceTiled{}, chainLsIncidenceDC_->view(), nLSKeys, chainTileSums, nTiles, 1u);
 
   // The K1a tallies are now captured in the offset columns; reuse them as the K1c write cursors.
   resetChainIncidenceCounts();
@@ -1199,7 +1276,7 @@ void LSTEvent::buildChains() {
                       inWeld_buf.data(),
                       headNodeCount_buf.data());
 
-  alpaka::exec<Acc1D>(queue_,
+  chainScanTimed(timing, __LINE__, queue_,
                       chainScan_workDiv,
                       ChainPrefixChains{},
                       nChainNodes_,
@@ -1356,7 +1433,7 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
                         keep_buf.data(),
                         nIn,
                         chainConfig_);
-    alpaka::exec<Acc1D>(
+    chainScanTimed(timing, __LINE__,
         queue_, chainScan_workDiv, ChainSegPrefix{}, keep_buf.data(), offs_buf.data(), total_buf.data(), nIn);
     alpaka::exec<Acc1D>(queue_,
                         chainFlat_workDiv,
@@ -1440,7 +1517,7 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
     alpaka::memset(queue_, minPos_buf, 0xFF);  // chainpar::kNoPos everywhere
     k9a = stamp();
 
-    alpaka::exec<Acc1D>(queue_,
+    chainScanTimed(timing, __LINE__, queue_,
                         chainScan_workDiv,
                         ChainSegPrefix{},
                         candKeep_buf.data(),
@@ -1485,7 +1562,7 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
                           owner_buf.data(),
                           nHits);
     k9e = stamp();
-    alpaka::exec<Acc1D>(queue_,
+    chainScanTimed(timing, __LINE__, queue_,
                         chainScan_workDiv,
                         ChainClaimRounds{},
                         chainsDC_->view(),
@@ -1556,6 +1633,11 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
                         pixelSize_,
                         chainConfig_);
 
+  // The stage-B TARGET UNIVERSE first: it depends only on the K9 accepted array, and the ONE
+  // grid both attach stages share needs both target sets to form its union hull. Stage B's
+  // SCORING still runs after stage A, because that is what honours the live ownership.
+  prepareBareT3Targets(accepted_buf.data());
+
   attachPixels(nHits,
                accepted_buf.data(),
                plsPre_buf.data(),
@@ -1567,16 +1649,28 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
                xcCursor_buf.data(),
                kXcPairCap);
 
+  // DEGENERATE PATH: attachPixels builds the shared grid, but it bails out before that when no
+  // 5+ layer chain target was accepted (or there is no pLS). Stage B still has its own targets on
+  // that path, so it gets the grid from its own hull alone -- same code, one target set.
+  if (!attachGridOffs_.has_value() && nBareT3_ > 0 && bareT3TgtPre_.has_value())
+    buildAttachGrid(plsPre_buf.data(), bareT3TgtPre_->data(), nBareT3_, nullptr, 0u);
+
   // Stage B: the bare-T3 attach. After stage A's contention and -RD dedup are final (its scorer
   // honours the live ownership), before the extension (its inputs are extension-invariant) and
   // long before the retirement.
   attachBareT3(nHits,
-               accepted_buf.data(),
                plsPre_buf.data(),
                plsOwned_buf.data(),
                plsBestT3_buf.data(),
                rdHashKey_buf.data(),
                rdHashVal_buf.data());
+  // The shared grid has no reader left (the -CC sweep reads only the bareT3* owner arrays), so its
+  // ~10 MB items payload goes back to the caching allocator here -- the same point in the event at
+  // which the two per-stage grids used to be freed.
+  attachGridOffs_.reset();
+  attachGridItems_.reset();
+  attachGridEntries_ = 0;
+  bareT3TgtPre_.reset();
   auto const t3b = stamp();
 
   // EX: chain extension at assembly. Needs the claimed-hit map and the MD -> outgoing-LineSegment
@@ -1597,7 +1691,7 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
                         accepted_buf.data(),
                         nChainCount_,
                         rowKeep_buf.data());
-    alpaka::exec<Acc1D>(queue_,
+    chainScanTimed(timing, __LINE__, queue_,
                         chainScan_workDiv,
                         ChainSegPrefix{},
                         rowKeep_buf.data(),
@@ -1674,7 +1768,7 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
     auto ccOwners_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, nBareT3_);
     auto ccRecs_buf = cms::alpakatools::make_device_buffer<ChainT3CCRec[]>(queue_, nBareT3_);
     auto ccRow_buf = cms::alpakatools::make_device_buffer<int32_t[]>(queue_, nBareT3_);
-    alpaka::exec<Acc1D>(queue_,
+    chainScanTimed(timing, __LINE__, queue_,
                         chainScan_workDiv,
                         ChainSegPrefix{},
                         bareT3Keep_->data(),
@@ -1872,7 +1966,7 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
                           postStats_buf.data(),
                           chainConfig_);
     }
-    alpaka::exec<Acc1D>(
+    chainScanTimed(timing, __LINE__,
         queue_, chainScan_workDiv, ChainSegPrefix{}, keep_buf.data(), offs_buf.data(), total_buf.data(), nIn);
     alpaka::exec<Acc1D>(queue_,
                         chainFlat_workDiv,
@@ -1944,7 +2038,11 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
                       ms(t0, t5)));
       lstWarning(std::format(
           "[CHAIN T4] nCand={} nChains={} nAllocTC={} nBareT3={} nDeliv={} "
-          "ccOverflow={} | "
+          // Completes U5's slot-6 fix, which its exported patch left half-done: slot 6 is the
+          // RETIREMENT CENSUS (one atomicAdd per -RPS/-XC retired row), which is all it ever
+          // counted, and the -CC sweep's must-be-zero TC-row alarm now has slot 21 to itself.
+          // Printing only slot 6 as "ccOverflow" is what made the alarm unreadable at ~700/event.
+          "rpsRetired={} ccOverflow={} | "
           "K9: alloc+memset {:.3f} prefix {:.3f} scatter {:.3f} RANK {:.3f} preclaim {:.3f} ROUNDS {:.3f} | "
           "T3CC: prefix {:.3f} PREP {:.3f} SWEEP+EMIT {:.3f} (emit={} ccRevoked={})",
           nCandDiag,
@@ -1953,6 +2051,7 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
           nBareT3_,
           nDelivDiag,
           post_h.data()[6],
+          post_h.data()[21],
           ms(t2, k9a),
           ms(k9a, k9b),
           ms(k9b, k9c),
@@ -2018,7 +2117,7 @@ void LSTEvent::attachPixels(unsigned int nHits,
                         nChainCount_,
                         tgtKeep_buf.data(),
                         chainConfig_);
-    alpaka::exec<Acc1D>(queue_,
+    chainScanTimed(timing, __LINE__, queue_,
                         chainScan_workDiv,
                         ChainSegPrefix{},
                         tgtKeep_buf.data(),
@@ -2035,6 +2134,7 @@ void LSTEvent::attachPixels(unsigned int nHits,
                         targets_buf.data(),
                         nullptr);  // the prefix above already published the count
   }
+  auto const a0b = stamp();
   // A15 -XC4: the aux 4-layer accepted targets, appended after the stage-A list. They
   // are score-only (never delivered) but they join the GRID BOUNDS so the measured radial hull
   // covers them -- the superset argument transfers, and the stage-A scored-pair set is unchanged
@@ -2048,6 +2148,7 @@ void LSTEvent::attachPixels(unsigned int nHits,
                       nTargets_buf_d.data(),
                       targets_buf.data(),
                       nTgtAll_buf_d.data());
+  auto const a0c = stamp();
   auto nTargets_buf_h = cms::alpakatools::make_host_buffer<uint32_t>(queue_);
   auto nTgtAll_buf_h = cms::alpakatools::make_host_buffer<uint32_t>(queue_);
   alpaka::memcpy(queue_, nTargets_buf_h, nTargets_buf_d);
@@ -2057,15 +2158,16 @@ void LSTEvent::attachPixels(unsigned int nHits,
   uint32_t const nTgtAll = *nTgtAll_buf_h.data();
   if (nTargets == 0 || pixelSize_ == 0)
     return;
+  auto const a0d = stamp();
 
   auto tgtPre_buf = cms::alpakatools::make_device_buffer<AttachTargetPre[]>(queue_, nTgtAll);
   alpaka::exec<Acc1D>(queue_,
                       chainFlat_workDiv,
                       ChainAttachTargetPre{},
+                      // U5 dropped segments / triplets / nodes from this kernel with the tcEta /
+                      // tcPhi block; they had no other use in it. Its exported patch carried the
+                      // signature change but not this call site.
                       miniDoubletsDC_->const_view().miniDoublets(),
-                      segmentsDC_->const_view().segments(),
-                      tripletsDC_->const_view().triplets(),
-                      chainNodesDC_->const_view(),
                       chainItemsDC_->const_view(),
                       chainsDC_->const_view(),
                       targets_buf.data(),
@@ -2073,56 +2175,18 @@ void LSTEvent::attachPixels(unsigned int nHits,
                       tgtPre_buf.data());
   auto const a1 = stamp();
 
-  // K8a: the grid. Count / prefix / scatter, no sort anywhere (maintainer policy). The bounds run
-  // over ALL targets (stage-A 5+ plus the aux 4-layer list).
-  auto rMin_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, kAttachRBins);
-  auto rMax_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, kAttachRBins);
-  alpaka::memset(queue_, rMin_buf, 0xFF);  // 0xFFFFFFFF = "no target in this bin"
-  alpaka::memset(queue_, rMax_buf, 0x00);
-  alpaka::exec<Acc1D>(
-      queue_, chainFlat_workDiv, ChainAttachGridBounds{}, tgtPre_buf.data(), nTgtAll, rMin_buf.data(), rMax_buf.data());
-
-  auto masks_buf = cms::alpakatools::make_device_buffer<uint16_t[]>(queue_, size_t{nPls} * kAttachRBins);
-  auto counts_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, kAttachCells);
-  auto offsets_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, kAttachCells + 1u);
-  auto cursor_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, kAttachCells);
-  alpaka::memset(queue_, masks_buf, 0x00);
-  alpaka::memset(queue_, counts_buf, 0x00);
-  alpaka::memset(queue_, cursor_buf, 0x00);
-  alpaka::exec<Acc1D>(queue_,
-                      chainFlat_workDiv,
-                      ChainAttachGridCount{},
-                      plsPre,
-                      pixelSize_,
-                      rMin_buf.data(),
-                      rMax_buf.data(),
-                      masks_buf.data(),
-                      counts_buf.data(),
-                      chainConfig_);
-  auto nEntries_buf_d = cms::alpakatools::make_device_buffer<uint32_t>(queue_);
-  alpaka::exec<Acc1D>(queue_,
-                      chainScan_workDiv,
-                      ChainSegPrefix{},
-                      counts_buf.data(),
-                      offsets_buf.data(),
-                      nEntries_buf_d.data(),
-                      kAttachCells);
-  auto nEntries_buf_h = cms::alpakatools::make_host_buffer<uint32_t>(queue_);
-  alpaka::memcpy(queue_, nEntries_buf_h, nEntries_buf_d);
-  alpaka::wait(queue_);  // the grid payload size
-  uint32_t const nEntries = std::max(1u, *nEntries_buf_h.data());
-
-  auto items_buf = cms::alpakatools::make_device_buffer<AttachPlsPre[]>(queue_, nEntries);
-  alpaka::exec<Acc1D>(queue_,
-                      chainFlat_workDiv,
-                      ChainAttachGridScatter{},
-                      plsPre,
-                      pixelSize_,
-                      masks_buf.data(),
-                      offsets_buf.data(),
-                      cursor_buf.data(),
-                      items_buf.data(),
-                      chainConfig_);
+  // K8a: THE ONE GRID, over the UNION of this stage's hull (all targets, 5+ plus the aux 4-layer
+  // list) and the bare-T3 hull. Built here so both stages share it -- see buildAttachGrid.
+  buildAttachGrid(plsPre,
+                  tgtPre_buf.data(),
+                  nTgtAll,
+                  bareT3TgtPre_.has_value() ? bareT3TgtPre_->data() : nullptr,
+                  bareT3TgtPre_.has_value() ? nBareT3_ : 0u);
+  if (!attachGridOffs_.has_value())
+    return;
+  uint32_t const nEntries = attachGridEntries_;
+  auto& offsets_buf = *attachGridOffs_;
+  auto& items_buf = *attachGridItems_;
   auto const a2 = stamp();
 
   // K8b: candidate iteration, the exact analytic predicate, the 19 features and the r2 head.
@@ -2228,7 +2292,7 @@ void LSTEvent::attachPixels(unsigned int nHits,
                         ownKeep_buf.data());
     a3rd = stamp();
     if (chainConfig_.attachSeedDedup) {
-      alpaka::exec<Acc1D>(queue_,
+      chainScanTimed(timing, __LINE__, queue_,
                           chainScan_workDiv,
                           ChainSegPrefix{},
                           ownKeep_buf.data(),
@@ -2252,7 +2316,7 @@ void LSTEvent::attachPixels(unsigned int nHits,
                           lstInputDC_->const_view().pixelSeeds(),
                           lstInputDC_->const_view().hits(),
                           chainsDC_->const_view(),
-                          nullptr,  // stage A: the grant lives on the chain row
+                          static_cast<int32_t const*>(nullptr),  // stage A: the grant is on the chain row
                           order_buf.data(),
                           nOwners_buf.data(),
                           nTargets,
@@ -2263,7 +2327,8 @@ void LSTEvent::attachPixels(unsigned int nHits,
                           hashKey,  // stage A builds the -RD table here, concurrently
                           hashVal,
                           hashOwner,
-                          stats_buf.data());
+                          stats_buf.data(),
+                          chainattach::kSeedOwnerStageA);
       a3ow = stamp();
       alpaka::exec<Acc1D>(queue_,
                           chainFlat_workDiv,
@@ -2276,7 +2341,8 @@ void LSTEvent::attachPixels(unsigned int nHits,
                           hashOwner,
                           nTargets,
                           ownCont,
-                          stats_buf.data());
+                          stats_buf.data(),
+                          chainattach::kSeedOwnerStageA);
       a3cf = stamp();
       alpaka::exec<Acc1D>(queue_,
                           serial_workDiv,
@@ -2313,7 +2379,8 @@ void LSTEvent::attachPixels(unsigned int nHits,
                         chainFlat_workDiv,
                         ChainAttachPublish{},
                         chainsDC_->const_view(),
-                        targets_buf.data(),
+                        static_cast<uint32_t const*>(targets_buf.data()),
+                        static_cast<int32_t const*>(nullptr),  // stage A: the grant lives on the chain row
                         nTargets,
                         plsOwned,
                         stats_buf.data());
@@ -2331,8 +2398,10 @@ void LSTEvent::attachPixels(unsigned int nHits,
     attachSummary_ = std::format(
         "targets={} (+{} aux4L) pLS={} gridEntries={} cand={} dup={} scored={} picks={} attached={} "
         "rdRevoked={} xcOverflow={} hashOverflow={} tieRD={} rdCont={} rdMaxEnt={} "
-        "rdAuditBad={} | pre {:.3f} ms | "
-        "grid {:.3f} ms | score {:.3f} ms | contend {:.3f} ms | RDdedup {:.3f} ms "
+        "rdAuditBad={} | pre {:.3f} ms (p1tgtlist {:.3f} p2aux1thr {:.3f} p3drain {:.3f} "
+        "p4tgtpre {:.3f}) | bpre {:.3f} ms | "
+        "grid {:.3f} ms ({}) "
+        "| score {:.3f} ms | contend {:.3f} ms | RDdedup {:.3f} ms "
         "(gather+table {:.3f} prefilter {:.3f} greedy {:.3f} publish {:.3f})",
         nTargets,
         nTgtAll - nTargets,
@@ -2351,7 +2420,13 @@ void LSTEvent::attachPixels(unsigned int nHits,
         st[14],
         st[15],
         ms(a0, a1),
-        ms(a1, a2),
+        ms(a0, a0b),
+        ms(a0b, a0c),
+        ms(a0c, a0d),
+        ms(a0d, a1),
+        bareT3PreMs_,
+        attachGridMs_,
+        attachGridSummary_,
         ms(a2, a3),
         ms(a3, a3rd),
         ms(a3rd, a3b),
@@ -2408,44 +2483,23 @@ void LSTEvent::attachGridAudit(unsigned int nTargets,
                   a[3] == 0u ? "YES" : "NO"));
 }
 
-void LSTEvent::attachBareT3(unsigned int nHits,
-                            uint32_t const* accepted,
-                            AttachPlsPre const* plsPre,
-                            uint8_t* plsOwned,
-                            uint32_t* plsBestT3,
-                            uint32_t* hashKey,
-                            int32_t* hashVal) {
-  // Stage B of the general attach (src/alpaka/ChainAttachT3.h), production form: the bare-T3
-  // universe through the -T3F gate, its own grid, scoring against the LIVE ownership array, the
-  // stage-B contention and the -RDT dedup (against the -RD table stage A left in hashKey/Val).
-  // The surviving owner arrays are kept in the bareT3* members for the -CC sweep + emission that
-  // runs after the chain rows are emitted. LST_CHAIN_T3_AUDIT still enables the grid-superset
-  // audit on the bare-T3 geometry.
-  attachT3Summary_.clear();
+// The stage-B TARGET UNIVERSE ONLY (the old K8B-0a/0b prologue of attachBareT3). It is called
+// BEFORE stage A because the shared grid's hull needs both target sets; nothing in it reads a
+// stage-A result -- ChainAttachT3MarkConsumed / ChainAttachT3Keep depend on the K9 accepted array,
+// the chain items and the node features, all final before the attach block starts.
+void LSTEvent::prepareBareT3Targets(uint32_t const* accepted) {
   nBareT3_ = 0;
   bareT3Targets_.reset();
-  bareT3TgtPls_.reset();
-  bareT3TgtLogit_.reset();
-  bareT3Keep_.reset();
+  bareT3TgtPre_.reset();
+  bareT3PreMs_ = 0.;
   if (nChainNodes_ == 0 || pixelSize_ == 0 || !chainsDC_.has_value() || !chainNodesDC_.has_value() ||
       !chainItemsDC_.has_value() || !tripletsDC_.has_value() || !segmentsDC_.has_value())
     return;
 
-  float const theta = chainConfig_.attachThetaT3;  // -AT3, GLOBAL (no eta bands)
-  ChainConfig const& cfgT3 = chainConfig_;
-
   bool const timing = chainTimingEnabled();
-  auto stamp = [&]() {
-    if (timing)
-      alpaka::wait(queue_);
-    return std::chrono::steady_clock::now();
-  };
-  auto const b0 = stamp();
-
-  auto const serial_workDiv = cms::alpakatools::make_workdiv<Acc1D>(1, 1);
+  auto const b0 = std::chrono::steady_clock::now();
   auto const chainFlat_workDiv = cms::alpakatools::make_workdiv<Acc1D>(max_blocks, 256);
   auto const chainScan_workDiv = cms::alpakatools::make_workdiv<Acc1D>(1, kChainScanBlockThreads);
-  uint32_t const nPls = pixelSize_;
   uint32_t const nNodes = nChainNodes_;
 
   // K8B-0a/b: the bare-T3 universe = every triplet no K9-ACCEPTED chain consumed.
@@ -2469,11 +2523,11 @@ void LSTEvent::attachBareT3(unsigned int nHits,
                       chainConfig_.t3FakeMax,  // -T3F target admission
                       keep_buf.data(),
                       nNodes);
-  alpaka::exec<Acc1D>(
+  chainScanTimed(timing, __LINE__,
       queue_, chainScan_workDiv, ChainSegPrefix{}, keep_buf.data(), offs_buf.data(), nBare_d.data(), nNodes);
   auto nBare_h = cms::alpakatools::make_host_buffer<uint32_t>(queue_);
   alpaka::memcpy(queue_, nBare_h, nBare_d);
-  alpaka::wait(queue_);
+  alpaka::wait(queue_);  // the target count sizes the two buffers below
   uint32_t const nBare = *nBare_h.data();
   if (nBare == 0)
     return;
@@ -2500,51 +2554,187 @@ void LSTEvent::attachBareT3(unsigned int nHits,
                       targets_buf.data(),
                       nBare,
                       tgt_buf.data());
-  auto const b1 = stamp();
+  bareT3Targets_.emplace(std::move(targets_buf));
+  bareT3TgtPre_.emplace(std::move(tgt_buf));
+  nBareT3_ = nBare;
+  if (timing) {
+    alpaka::wait(queue_);
+    bareT3PreMs_ = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - b0).count();
+  }
+}
 
-  // K8a on the bare-T3 target hull -- a SECOND, independent grid. The chain grid is untouched.
+// THE ONE K8a GRID. Count / prefix / scatter, no sort anywhere (maintainer policy), over the UNION
+// of the two stages' per-r-bin radial hulls -- see the argument on ChainAttachGridBounds and on the
+// members in LSTEvent.h. It used to exist TWICE, once per stage, over the same plsPre with the same
+// ChainConfig and the same cell layout.
+void LSTEvent::buildAttachGrid(AttachPlsPre const* plsPre,
+                               AttachTargetPre const* tgtA,
+                               uint32_t nA,
+                               AttachTargetPre const* tgtB,
+                               uint32_t nB) {
+  attachGridOffs_.reset();
+  attachGridItems_.reset();
+  attachGridEntries_ = 0;
+  attachGridSummary_.clear();
+  attachGridMs_ = 0.;
+  uint32_t const nPls = std::max(1u, pixelSize_);
+  if (pixelSize_ == 0 || (nA + nB) == 0)
+    return;
+
+  bool const timing = chainTimingEnabled();
+  auto stamp = [&]() {
+    if (timing)
+      alpaka::wait(queue_);
+    return std::chrono::steady_clock::now();
+  };
+  auto const g0 = stamp();
+  auto const chainFlat_workDiv = cms::alpakatools::make_workdiv<Acc1D>(max_blocks, 256);
+  auto const chainScan_workDiv = cms::alpakatools::make_workdiv<Acc1D>(1, kChainScanBlockThreads);
+  // The (pLS, r bin) element count of the count / scatter passes, and the launch sized to it.
+  uint32_t const gridR = cms::alpakatools::requires_single_thread_per_block_v<Acc1D> ? 1u : chainAttachGridRSlices();
+  auto const attachGrid_workDiv =
+      cms::alpakatools::make_workdiv<Acc1D>(std::max<uint32_t>(max_blocks, (nPls * gridR + 255u) / 256u), 256);
+
   auto rMin_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, kAttachRBins);
   auto rMax_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, kAttachRBins);
-  alpaka::memset(queue_, rMin_buf, 0xFF);
+  alpaka::memset(queue_, rMin_buf, 0xFF);  // 0xFFFFFFFF = "no target in this bin"
   alpaka::memset(queue_, rMax_buf, 0x00);
-  alpaka::exec<Acc1D>(
-      queue_, chainFlat_workDiv, ChainAttachGridBounds{}, tgt_buf.data(), nBare, rMin_buf.data(), rMax_buf.data());
+  alpaka::exec<Acc1D>(queue_,
+                      chainFlat_workDiv,
+                      ChainAttachGridBounds{},
+                      tgtA,
+                      nA,
+                      tgtB,
+                      nB,
+                      rMin_buf.data(),
+                      rMax_buf.data());
 
   auto masks_buf = cms::alpakatools::make_device_buffer<uint16_t[]>(queue_, size_t{nPls} * kAttachRBins);
   auto counts_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, kAttachCells);
-  auto goffs_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, kAttachCells + 1u);
+  auto offsets_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, kAttachCells + 1u);
   auto cursor_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, kAttachCells);
   alpaka::memset(queue_, masks_buf, 0x00);
   alpaka::memset(queue_, counts_buf, 0x00);
   alpaka::memset(queue_, cursor_buf, 0x00);
+  auto const g1 = stamp();
   alpaka::exec<Acc1D>(queue_,
-                      chainFlat_workDiv,
+                      attachGrid_workDiv,
                       ChainAttachGridCount{},
                       plsPre,
-                      nPls,
+                      pixelSize_,
                       rMin_buf.data(),
                       rMax_buf.data(),
                       masks_buf.data(),
                       counts_buf.data(),
-                      cfgT3);
-  auto nEnt_d = cms::alpakatools::make_device_buffer<uint32_t>(queue_);
-  alpaka::exec<Acc1D>(
-      queue_, chainScan_workDiv, ChainSegPrefix{}, counts_buf.data(), goffs_buf.data(), nEnt_d.data(), kAttachCells);
-  auto nEnt_h = cms::alpakatools::make_host_buffer<uint32_t>(queue_);
-  alpaka::memcpy(queue_, nEnt_h, nEnt_d);
-  alpaka::wait(queue_);
-  uint32_t const nEntries = std::max(1u, *nEnt_h.data());
+                      gridR,
+                      chainConfig_);
+  auto const g2 = stamp();
+  auto nEntries_buf_d = cms::alpakatools::make_device_buffer<uint32_t>(queue_);
+  // U3's per-launch scan instrument covers this call too: with both stages on one grid this is the
+  // ONE surviving grid prefix, so it must appear in the [CHAIN SCAN] table like the other 16 sites.
+  chainScanTimed(timing,
+                 __LINE__,
+                 queue_,
+                 chainScan_workDiv,
+                 ChainSegPrefix{},
+                 counts_buf.data(),
+                 offsets_buf.data(),
+                 nEntries_buf_d.data(),
+                 kAttachCells);
+  auto const g3 = stamp();
+  auto nEntries_buf_h = cms::alpakatools::make_host_buffer<uint32_t>(queue_);
+  alpaka::memcpy(queue_, nEntries_buf_h, nEntries_buf_d);
+  // The union hull rides down on the SAME drain when the dump is on, so the census costs no extra
+  // sync (see chainAttachHullDump).
+  bool const hullDump = chainAttachHullDump();
+  auto rMin_h = cms::alpakatools::make_host_buffer<uint32_t[]>(queue_, kAttachRBins);
+  auto rMax_h = cms::alpakatools::make_host_buffer<uint32_t[]>(queue_, kAttachRBins);
+  if (hullDump) {
+    alpaka::memcpy(queue_, rMin_h, rMin_buf);
+    alpaka::memcpy(queue_, rMax_h, rMax_buf);
+  }
+  alpaka::wait(queue_);  // the grid payload size
+  uint32_t const nEntries = std::max(1u, *nEntries_buf_h.data());
+  if (hullDump) {
+    std::string h;
+    for (int rb = 0; rb < kAttachRBins; ++rb)
+      h += (rMin_h.data()[rb] == 0xFFFFFFFFu) ? std::format(" {}:empty", rb)
+                                              : std::format(" {}:[{:.2f},{:.2f}]",
+                                                            rb,
+                                                            std::bit_cast<float>(rMin_h.data()[rb]),
+                                                            std::bit_cast<float>(rMax_h.data()[rb]));
+    lstWarning(std::format("[U4 HULL U] nA={} nB={} nPls={} entries={} hull{}", nA, nB, pixelSize_, nEntries, h));
+  }
+  auto const g4 = stamp();
+
   auto items_buf = cms::alpakatools::make_device_buffer<AttachPlsPre[]>(queue_, nEntries);
   alpaka::exec<Acc1D>(queue_,
-                      chainFlat_workDiv,
+                      attachGrid_workDiv,
                       ChainAttachGridScatter{},
                       plsPre,
-                      nPls,
+                      pixelSize_,
                       masks_buf.data(),
-                      goffs_buf.data(),
+                      offsets_buf.data(),
                       cursor_buf.data(),
                       items_buf.data(),
-                      cfgT3);
+                      gridR,
+                      chainConfig_);
+  auto const g5 = stamp();
+  attachGridOffs_.emplace(std::move(offsets_buf));
+  attachGridItems_.emplace(std::move(items_buf));
+  attachGridEntries_ = nEntries;
+  if (timing || objectsStatistics_) {
+    auto ms = [](auto a, auto b) { return std::chrono::duration<double, std::milli>(b - a).count(); };
+    attachGridMs_ = ms(g0, g5);
+    attachGridSummary_ = std::format(
+        "g1bounds {:.3f} g2count {:.3f} g3prefix {:.3f} g4drain {:.3f} g5scatter {:.3f}",
+        ms(g0, g1),
+        ms(g1, g2),
+        ms(g2, g3),
+        ms(g3, g4),
+        ms(g4, g5));
+  }
+}
+
+void LSTEvent::attachBareT3(unsigned int nHits,
+                            AttachPlsPre const* plsPre,
+                            uint8_t* plsOwned,
+                            uint32_t* plsBestT3,
+                            uint32_t* hashKey,
+                            int32_t* hashVal) {
+  // Stage B of the general attach (src/alpaka/ChainAttachT3.h), production form: scoring the
+  // bare-T3 target universe (built by prepareBareT3Targets) against the LIVE ownership array on the
+  // SHARED grid (buildAttachGrid), then the stage-B contention and the -RDT dedup (against the -RD
+  // table stage A left in hashKey/Val). The surviving owner arrays are kept in the bareT3* members
+  // for the -CC sweep + emission that runs after the chain rows are emitted. LST_CHAIN_T3_AUDIT
+  // still enables the grid-superset audit on the bare-T3 geometry.
+  attachT3Summary_.clear();
+  bareT3TgtPls_.reset();
+  bareT3TgtLogit_.reset();
+  bareT3Keep_.reset();
+  if (nBareT3_ == 0 || !bareT3Targets_.has_value() || !bareT3TgtPre_.has_value() || !attachGridOffs_.has_value())
+    return;
+
+  float const theta = chainConfig_.attachThetaT3;  // -AT3, GLOBAL (no eta bands)
+  ChainConfig const& cfgT3 = chainConfig_;
+
+  bool const timing = chainTimingEnabled();
+  auto stamp = [&]() {
+    if (timing)
+      alpaka::wait(queue_);
+    return std::chrono::steady_clock::now();
+  };
+
+  auto const serial_workDiv = cms::alpakatools::make_workdiv<Acc1D>(1, 1);
+  auto const chainFlat_workDiv = cms::alpakatools::make_workdiv<Acc1D>(max_blocks, 256);
+  auto const chainScan_workDiv = cms::alpakatools::make_workdiv<Acc1D>(1, kChainScanBlockThreads);
+  uint32_t const nPls = pixelSize_;
+  uint32_t const nNodes = nChainNodes_;
+  uint32_t const nBare = nBareT3_;
+  uint32_t const nEntries = attachGridEntries_;
+  auto& tgt_buf = *bareT3TgtPre_;
+  auto& goffs_buf = *attachGridOffs_;
+  auto& items_buf = *attachGridItems_;
   auto const b2 = stamp();
 
   // K8B-b: score, against the LIVE ownership array (stage A is final; invariant I4 ordering
@@ -2598,6 +2788,13 @@ void LSTEvent::attachBareT3(unsigned int nHits,
   // after the dedup revocations it flags exactly the DELIVERIES, which is what the -CC sweep's
   // gather in arbitrateChains reads.
   bareT3Keep_.emplace(cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, nBare));
+  // The -RDT window's own split points, so the four pieces are attributable separately: after the
+  // argmax + compaction, after the gather + concurrent table build, after the parallel partner
+  // prefilter, after the serial greedy. The remainder of the window is ChainAttachPublish.
+  auto b3c = b3;
+  auto b3ow = b3;
+  auto b3cf = b3;
+  auto b3sd = b3;
   {
     auto plsKey_buf = cms::alpakatools::make_device_buffer<uint64_t[]>(queue_, nPls);
     auto ownOffs_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, nBare + 1u);
@@ -2606,6 +2803,21 @@ void LSTEvent::attachBareT3(unsigned int nHits,
     auto ownerPls_buf = cms::alpakatools::make_device_buffer<int32_t[]>(queue_, nBare);
     auto ownerHits_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, size_t{nBare} * kMaxPLSHitsInHitsSoA);
     auto ownerNHits_buf = cms::alpakatools::make_device_buffer<uint8_t[]>(queue_, nBare);
+    // ZERO extra per-event allocations for the split (the round-1 discipline): the owner tag behind
+    // each table entry is the persistent rdHashOwner_ member stage A already allocates, and the
+    // per-owner prefilter word BORROWS ownOffs_buf, which is dead the moment ChainCompactSelect has
+    // consumed it. Neither needs initialising -- hashOwner is only read at a slot whose key matched
+    // (so the inserting thread wrote it) and cont is written for every owner before it is read.
+    uint32_t* const hashOwner = rdHashOwner_->data();
+    uint32_t* const ownCont = ownOffs_buf.data();
+    // The parity sidecar: restores the SHIPPED serial walk (incremental table build inside the
+    // greedy) inside this same binary, so an A/B and the seen[]-cap witnesses come from one
+    // compilation. Same in-binary-switch discipline as LST_CHAIN_RD_SERIAL was in round 1.
+    static bool const rdtSerial = [] {
+      char const* e = std::getenv("LST_CHAIN_RDT_SERIAL");
+      return e != nullptr && *e != '\0' && *e != '0';
+    }();
+    bool const rdtSplit = chainConfig_.attachSeedDedup && !rdtSerial;
     alpaka::memset(queue_, plsKey_buf, 0);
     alpaka::exec<Acc1D>(queue_,
                         chainFlat_workDiv,
@@ -2624,7 +2836,7 @@ void LSTEvent::attachBareT3(unsigned int nHits,
                         nBare,
                         plsKey_buf.data(),
                         bareT3Keep_->data());
-    alpaka::exec<Acc1D>(
+    chainScanTimed(timing, __LINE__,
         queue_, chainScan_workDiv, ChainSegPrefix{}, bareT3Keep_->data(), ownOffs_buf.data(), nOwners_buf.data(), nBare);
     alpaka::exec<Acc1D>(queue_,
                         chainFlat_workDiv,
@@ -2635,42 +2847,81 @@ void LSTEvent::attachBareT3(unsigned int nHits,
                         nullptr,
                         owners_buf.data(),
                         nullptr);
+    b3c = stamp();
+    if (chainConfig_.attachSeedDedup) {
+      alpaka::exec<Acc1D>(queue_,
+                          chainFlat_workDiv,
+                          ChainAttachOwnerHits{},
+                          lstInputDC_->const_view().pixelSeeds(),
+                          lstInputDC_->const_view().hits(),
+                          chainsDC_->const_view(),
+                          // the same argument TYPES as stage A's call, so the two share ONE ptxas entry
+                          static_cast<int32_t const*>(bareT3TgtPls_->data()),  // position-keyed grant
+                          owners_buf.data(),
+                          nOwners_buf.data(),
+                          nBare,
+                          nHits,
+                          ownerHits_buf.data(),
+                          ownerNHits_buf.data(),
+                          ownerPls_buf.data(),
+                          rdtSplit ? hashKey : static_cast<uint32_t*>(nullptr),  // stage B extends the table
+                          rdtSplit ? hashVal : static_cast<int32_t*>(nullptr),
+                          rdtSplit ? hashOwner : static_cast<uint32_t*>(nullptr),
+                          stats_buf.data(),
+                          chainattach::kSeedOwnerStageB);
+      b3ow = stamp();
+      if (rdtSplit)
+        alpaka::exec<Acc1D>(queue_,
+                            chainFlat_workDiv,
+                            ChainAttachSeedConflicts{},
+                            nOwners_buf.data(),
+                            ownerHits_buf.data(),
+                            ownerNHits_buf.data(),
+                            ownerPls_buf.data(),
+                            hashKey,
+                            hashOwner,
+                            nBare,
+                            ownCont,
+                            stats_buf.data(),
+                            chainattach::kSeedOwnerStageB);
+      b3cf = stamp();
+      alpaka::exec<Acc1D>(queue_,
+                          serial_workDiv,
+                          ChainAttachT3Dedup{},
+                          owners_buf.data(),
+                          nOwners_buf.data(),
+                          ownerPls_buf.data(),
+                          ownerHits_buf.data(),
+                          ownerNHits_buf.data(),
+                          rdtSplit ? ownCont : nullptr,
+                          bareT3TgtPls_->data(),
+                          bareT3TgtLogit_->data(),
+                          bareT3Keep_->data(),
+                          hashKey,
+                          hashVal,
+                          hashOwner,
+                          stats_buf.data(),
+                          chainattach::kSeedOwnerStageB);
+      b3sd = stamp();
+    } else {
+      b3ow = b3c;
+      b3cf = b3c;
+      b3sd = b3c;
+    }
+    // The surviving grants become the LIVE ownership (invariant I1). One thread per position, and it
+    // covers the -RDT-disabled configuration too: a revoked owner and a losing target are both a
+    // negative grant.
     alpaka::exec<Acc1D>(queue_,
                         chainFlat_workDiv,
-                        ChainAttachOwnerHits{},
-                        lstInputDC_->const_view().pixelSeeds(),
-                        lstInputDC_->const_view().hits(),
+                        ChainAttachPublish{},
                         chainsDC_->const_view(),
-                        bareT3TgtPls_->data(),  // stage B: the grant is position-keyed
-                        owners_buf.data(),
-                        nOwners_buf.data(),
+                        static_cast<uint32_t const*>(nullptr),
+                        static_cast<int32_t const*>(bareT3TgtPls_->data()),  // position-keyed grant
                         nBare,
-                        nHits,
-                        ownerHits_buf.data(),
-                        ownerNHits_buf.data(),
-                        ownerPls_buf.data());
-    alpaka::exec<Acc1D>(queue_,
-                        serial_workDiv,
-                        ChainAttachT3Dedup{},
-                        owners_buf.data(),
-                        nOwners_buf.data(),
-                        ownerPls_buf.data(),
-                        ownerHits_buf.data(),
-                        ownerNHits_buf.data(),
-                        bareT3TgtPls_->data(),
-                        bareT3TgtLogit_->data(),
-                        bareT3Keep_->data(),
                         plsOwned,
-                        hashKey,
-                        hashVal,
-                        stats_buf.data(),
-                        static_cast<uint8_t>(chainConfig_.attachSeedDedup ? 1 : 0));
+                        static_cast<uint32_t*>(nullptr));  // stats[4] here is the -CC delivery count
   }
   auto const b4 = stamp();
-
-  // Keep the target list for the -CC sweep + emission.
-  bareT3Targets_.emplace(std::move(targets_buf));
-  nBareT3_ = nBare;
 
   if (timing || objectsStatistics_) {
     auto statsH = cms::alpakatools::make_host_buffer<uint32_t[]>(queue_, chainattacht3::kStats);
@@ -2681,7 +2932,12 @@ void LSTEvent::attachBareT3(unsigned int nHits,
     attachT3Summary_ = std::format(
         "bareT3={} ofNodes={} pLS={} gridEntries={} cand={} dup={} scored={} overTheta={} withCand={} "
         "picks={} rdtRevoked={} theta={:.3f} t3FakeMax={:.4g} | "
-        "pre {:.3f} ms | grid {:.3f} ms | score {:.3f} ms | contend {:.3f} ms",
+        "rdtOwners={} rdtCont={} rdtByStageA={} rdtWalked={} rdtMaxEnt={} rdtMaxSeen={} rdtCapDrop={} "
+        "rdtIns={} rdtInsRefused={} rdtHashOverflow={} | "
+        // No `grid` term: with U4's one union-hull grid there is no stage-B grid left to time. Its
+        // cost is in the [CHAIN K8] line's g1..g5 breakdown, charged once to the shared build.
+        "pre {:.3f} ms | score {:.3f} ms | contend {:.3f} ms "
+        "(argmax+gather {:.3f} table {:.3f} prefilter {:.3f} greedy {:.3f} publish {:.3f})",
         nBare,
         nNodes,
         nPls,
@@ -2695,10 +2951,24 @@ void LSTEvent::attachBareT3(unsigned int nHits,
         st[5],
         theta,
         chainConfig_.t3FakeMax,
-        ms(b0, b1),
-        ms(b1, b2),
+        st[19],
+        st[13],
+        st[12],
+        st[20],
+        st[14],
+        st[15],
+        st[16],
+        st[17],
+        st[18],
+        st[7],
+        bareT3PreMs_,
         ms(b2, b3),
-        ms(b3, b4));
+        ms(b3, b4),
+        ms(b3, b3c),
+        ms(b3c, b3ow),
+        ms(b3ow, b3cf),
+        ms(b3cf, b3sd),
+        ms(b3sd, b4));
     lstWarning(std::format("[CHAIN K8B] {}", attachT3Summary_));
   }
 
@@ -2736,7 +3006,7 @@ void LSTEvent::attachBareT3(unsigned int nHits,
                     a[3],
                     a[3] == 0u ? "YES" : "NO"));
   }
-  alpaka::wait(queue_);  // the grid / scratch buffers above die with this scope
+  alpaka::wait(queue_);  // the scratch buffers above die with this scope
 }
 
 void LSTEvent::dumpChainTCs() {

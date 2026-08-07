@@ -119,9 +119,12 @@ namespace lst {
   using ChainItems = ChainItemsSoA::View;
   using ChainItemsConst = ChainItemsSoA::ConstView;
 
-  // K9 claim-flag bits (ChainsSoA::claimFlags).
+  // K9 claim-flag bits. U5: ChainsSoA::claimFlags is NO LONGER WRITTEN -- both of its stores were
+  // dead (nothing in the tree ever read the column, and kChainClaimAccepted had no reader at all).
+  // The COLUMN is kept so the layout does not move; see the stableKey note above for why that
+  // matters. kChainClaimCandidate survives as the threshold bit's name in ChainClaimPrep.
   static constexpr uint8_t kChainClaimCandidate = 0x1;
-  static constexpr uint8_t kChainClaimAccepted = 0x2;
+  static constexpr uint8_t kChainClaimAccepted = 0x2;  // UNUSED: no writer and no reader
 
   // Chain flag bits.
   static constexpr uint8_t kChainFlagKilled = 0x1;

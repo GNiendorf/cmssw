@@ -214,6 +214,25 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                       ChainXcPair* xcPairs,
                       uint32_t* xcCursor,
                       uint32_t xcCap);
+    // THE ONE K8a GRID, built from the UNION of the two stages' per-r-bin radial hulls and shared
+    // by BOTH attach stages. It used to be built twice -- same plsPre, same ChainConfig, same cell
+    // layout, only a different hull -- which cost a second GridCount + prefix + GridScatter, a
+    // second 96-byte-per-entry payload write, and a second mid-stream device->host drain. A union
+    // hull is a SUPERSET generator, and both scorers apply the exact analytic predicate before any
+    // observable write, so the extra candidates are re-filtered identically (ChainAttachGridBounds
+    // carries the argument). Built by buildAttachGrid, released in arbitrateChains right after the
+    // second stage has consumed it.
+    void buildAttachGrid(AttachPlsPre const* plsPre,
+                         AttachTargetPre const* tgtA,
+                         uint32_t nA,
+                         AttachTargetPre const* tgtB,
+                         uint32_t nB);
+    std::optional<cms::alpakatools::device_buffer<Device, uint32_t[]>> attachGridOffs_;
+    std::optional<cms::alpakatools::device_buffer<Device, AttachPlsPre[]>> attachGridItems_;
+    uint32_t attachGridEntries_ = 0;
+    // The buildAttachGrid sub-timings, formatted for the [CHAIN K8] printout.
+    std::string attachGridSummary_;
+    double attachGridMs_ = 0.;
     // Env-gated (LST_CHAIN_ATTACH_AUDIT) grid-vs-exhaustive-scan superset verification.
     void attachGridAudit(unsigned int nTargets,
                          AttachPlsPre const* plsPre,
@@ -230,12 +249,17 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     // (the -CC contention sweep + type-5 emission) runs later in arbitrateChains, after the chain
     // rows are emitted; the owner arrays below stay alive in between.
     void attachBareT3(unsigned int nHits,
-                      uint32_t const* accepted,
                       AttachPlsPre const* plsPre,
                       uint8_t* plsOwned,
                       uint32_t* plsBestT3,
                       uint32_t* hashKey,
                       int32_t* hashVal);
+    // The stage-B TARGET UNIVERSE, split out of attachBareT3 so it can run BEFORE stage A: the
+    // shared grid's hull needs both target sets, and this half depends only on the K9 accepted
+    // array (never on stage A's verdicts), so moving it earlier changes nothing it computes.
+    void prepareBareT3Targets(uint32_t const* accepted);
+    std::optional<cms::alpakatools::device_buffer<Device, AttachTargetPre[]>> bareT3TgtPre_;
+    double bareT3PreMs_ = 0.;
     std::string attachT3Summary_;
     // Stage-B owner state, device-resident, alive from attachBareT3 until the -CC sweep consumes
     // it (ChainT3CCSweepEmit). targets = dense node index per bare-T3 target; tgtPls / tgtLogit =

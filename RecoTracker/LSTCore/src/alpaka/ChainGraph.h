@@ -45,6 +45,73 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     return static_cast<uint32_t>(alpaka::getIdx<alpaka::Block, alpaka::Threads>(acc)[0u]);
   }
 
+  // Block-wide exclusive scan over ONE value per worker, for NLanes independent value streams at
+  // once. Every single-block scan in the chain path used to close with
+  //     for (uint32_t w = 0; w < nWorkers; ++w) { if (w == worker) base = total; total += partial[w]; }
+  // which is nWorkers serial iterations run REDUNDANTLY BY EVERY WORKER -- 1024 dependent shared
+  // loads and adds per thread, and therefore a fixed cost that dominates every one of these kernels
+  // whatever nKeys is. This replaces it with a Hillis-Steele scan: ceil(log2(nWorkers)) = 10 steps.
+  //
+  // EXACTNESS. The only operation performed on the data is uint32_t addition, i.e. addition in
+  // Z/2^32, which is associative and commutative -- wraparound included, since it IS the group
+  // operation. Both forms return, for each worker, the sum of the SAME multiset of addends
+  // (partial[0..worker) for `base`, partial[0..nWorkers) for `total`), so they agree bit for bit for
+  // every possible input, on every backend, with no assumption about the values. This is a
+  // regrouping of a sum and nothing else; it cannot move a physics bit.
+  //
+  // `scratch` must hold 2 * NLanes * Stride words. It is double buffered so that a
+  // step needs ONE syncBlockThreads (write to the other buffer) rather than two (read, sync, write
+  // in place, sync). Every worker in the block executes every sync -- the loop bound depends only on
+  // nWorkers, which is block-uniform -- so the barriers are never divergent.
+  //
+  // `Stride` is the number of words reserved per lane in `scratch`; it must be at least the block's
+  // thread count. It is a parameter only so that the tiled scan below, whose blocks are 256 wide,
+  // does not have to reserve 1024 words per lane.
+  //
+  // The ENTRY barrier is what makes the primitive safe to call REPEATEDLY on the same scratch:
+  // without it one thread could overwrite scratch for call n+1 while another was still reading call
+  // n's result, which the tiled scan (one call per chunk) hits on its second chunk.
+  //
+  // On a CPU backend alpaka gives one thread with many elements, so nWorkers == 1, the loop body
+  // never runs, and this degenerates to base = 0 / total = value exactly as the serial form did.
+  template <uint32_t NLanes, uint32_t Stride = kChainScanBlockThreads, typename TAcc>
+  ALPAKA_FN_ACC ALPAKA_FN_INLINE void chainScanBlockExclusive(TAcc const& acc,
+                                                              uint32_t* scratch,
+                                                              uint32_t nWorkers,
+                                                              uint32_t worker,
+                                                              uint32_t const (&value)[NLanes],
+                                                              uint32_t (&base)[NLanes],
+                                                              uint32_t (&total)[NLanes]) {
+    constexpr uint32_t kStride = Stride;
+    uint32_t* cur = scratch;
+    uint32_t* nxt = scratch + NLanes * kStride;
+
+    alpaka::syncBlockThreads(acc);
+    for (uint32_t l = 0; l < NLanes; ++l)
+      cur[l * kStride + worker] = value[l];
+    alpaka::syncBlockThreads(acc);
+
+    for (uint32_t d = 1u; d < nWorkers; d <<= 1) {
+      if (worker >= d) {
+        for (uint32_t l = 0; l < NLanes; ++l)
+          nxt[l * kStride + worker] = cur[l * kStride + worker - d] + cur[l * kStride + worker];
+      } else {
+        for (uint32_t l = 0; l < NLanes; ++l)
+          nxt[l * kStride + worker] = cur[l * kStride + worker];
+      }
+      alpaka::syncBlockThreads(acc);
+      uint32_t* const swap = cur;
+      cur = nxt;
+      nxt = swap;
+    }
+
+    // cur[] now holds the INCLUSIVE prefix over workers, and the last sync above published it.
+    for (uint32_t l = 0; l < NLanes; ++l) {
+      total[l] = cur[l * kStride + nWorkers - 1u];
+      base[l] = cur[l * kStride + worker] - value[l];
+    }
+  }
+
   // K0, first half. Exclusive prefix over the per-lower-module triplet counts, giving each module
   // the base of its slice in the dense node numbering, and the total node count.
   struct ChainPrefixTripletModules {
@@ -56,7 +123,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
       // 1-block kernel
       ALPAKA_ASSERT_ACC((alpaka::getWorkDiv<alpaka::Grid, alpaka::Blocks>(acc)[0u] == 1));
 
-      auto& partial = alpaka::declareSharedVar<uint32_t[kChainScanBlockThreads], __COUNTER__>(acc);
+      auto& partial = alpaka::declareSharedVar<uint32_t[2 * kChainScanBlockThreads], __COUNTER__>(acc);
 
       uint32_t const nWorkers = chainScanWorkerCount(acc);
       uint32_t const worker = chainScanWorkerIndex(acc);
@@ -67,22 +134,14 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
       uint32_t const begin = (worker * chunk < nKeys) ? worker * chunk : nKeys;
       uint32_t const end = (begin + chunk < nKeys) ? begin + chunk : nKeys;
 
-      uint32_t local = 0u;
+      uint32_t local[1] = {0u};
       for (uint32_t k = begin; k < end; ++k)
-        local += tripletsOccupancy.nTriplets()[k];
-      partial[worker] = local;
+        local[0] += tripletsOccupancy.nTriplets()[k];
 
-      alpaka::syncBlockThreads(acc);
+      uint32_t base[1], total[1];
+      chainScanBlockExclusive<1>(acc, &partial[0], nWorkers, worker, local, base, total);
 
-      uint32_t base = 0u;
-      uint32_t total = 0u;
-      for (uint32_t w = 0; w < nWorkers; ++w) {
-        if (w == worker)
-          base = total;
-        total += partial[w];
-      }
-
-      uint32_t running = base;
+      uint32_t running = base[0];
       for (uint32_t k = begin; k < end; ++k) {
         moduleNodeOffsets[k] = running;
         running += tripletsOccupancy.nTriplets()[k];
@@ -90,8 +149,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
 
       alpaka::syncBlockThreads(acc);
       if (cms::alpakatools::once_per_block(acc)) {
-        moduleNodeOffsets[nKeys] = total;
-        *nNodes = total;
+        moduleNodeOffsets[nKeys] = total[0];
+        *nNodes = total[0];
       }
     }
   };
@@ -159,7 +218,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
       // 1-block kernel
       ALPAKA_ASSERT_ACC((alpaka::getWorkDiv<alpaka::Grid, alpaka::Blocks>(acc)[0u] == 1));
 
-      auto& partial = alpaka::declareSharedVar<uint32_t[2 * kChainScanBlockThreads], __COUNTER__>(acc);
+      auto& partial = alpaka::declareSharedVar<uint32_t[4 * kChainScanBlockThreads], __COUNTER__>(acc);
 
       uint32_t const nWorkers = chainScanWorkerCount(acc);
       uint32_t const worker = chainScanWorkerIndex(acc);
@@ -170,27 +229,16 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
       uint32_t const begin = (worker * chunk < nKeys) ? worker * chunk : nKeys;
       uint32_t const end = (begin + chunk < nKeys) ? begin + chunk : nKeys;
 
-      uint32_t localMd = 0u, localLs = 0u;
+      uint32_t local[2] = {0u, 0u};
       for (uint32_t k = begin; k < end; ++k) {
-        localMd += mdsOccupancy.nMDs()[k];
-        localLs += segmentsOccupancy.nSegments()[k];
-      }
-      partial[worker] = localMd;
-      partial[nWorkers + worker] = localLs;
-
-      alpaka::syncBlockThreads(acc);
-
-      uint32_t baseMd = 0u, baseLs = 0u, totMd = 0u, totLs = 0u;
-      for (uint32_t w = 0; w < nWorkers; ++w) {
-        if (w == worker) {
-          baseMd = totMd;
-          baseLs = totLs;
-        }
-        totMd += partial[w];
-        totLs += partial[nWorkers + w];
+        local[0] += mdsOccupancy.nMDs()[k];
+        local[1] += segmentsOccupancy.nSegments()[k];
       }
 
-      uint32_t runMd = baseMd, runLs = baseLs;
+      uint32_t base[2], total[2];
+      chainScanBlockExclusive<2>(acc, &partial[0], nWorkers, worker, local, base, total);
+
+      uint32_t runMd = base[0], runLs = base[1];
       for (uint32_t k = begin; k < end; ++k) {
         mdKeyBias[k] = runMd - static_cast<uint32_t>(ranges.miniDoubletModuleIndices()[k]);
         lsKeyBias[k] = runLs - static_cast<uint32_t>(ranges.segmentModuleIndices()[k]);
@@ -200,76 +248,137 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
 
       alpaka::syncBlockThreads(acc);
       if (cms::alpakatools::once_per_block(acc)) {
-        totals[0] = totMd;
-        totals[1] = totLs;
+        totals[0] = total[0];
+        totals[1] = total[1];
       }
     }
   };
 
-  // K1b. Exclusive prefixes of the two K1a tallies, and in the same pass the exclusive prefix of
-  // the per-key edge products degIn * degOut, which yields the exact enumerable edge count for
-  // this key family (E1 for the MD-keyed instance, E2 for the Segment-keyed one).
-  struct ChainPrefixIncidence {
-    ALPAKA_FN_ACC void operator()(Acc1D const& acc, ChainIncidence incidence, uint32_t nKeys) const {
-      // 1-block kernel
-      ALPAKA_ASSERT_ACC((alpaka::getWorkDiv<alpaka::Grid, alpaka::Blocks>(acc)[0u] == 1));
-      ALPAKA_ASSERT_ACC(static_cast<uint32_t>(incidence.metadata().size()) == nKeys + 1u);
+  // Tiling of the multi-block incidence scan. The tile COUNT is a launch parameter, not a constant,
+  // so that one binary can sweep it in a single measurement slot -- including nTiles == 1, which is
+  // the direct experiment for "is one block enough once the fixed tail is gone?". Only the MAXIMUM is
+  // a compile-time constant, because it fixes the tileSums stride and that buffer's size.
+  // 256 threads is the block width every other chain kernel already uses (chainFlat_workDiv).
+  static constexpr uint32_t kChainScanTilesMax = 512u;
+  static constexpr uint32_t kChainScanTilesDefault = 128u;
+  static constexpr uint32_t kChainScanTileThreads = 256u;
 
-      auto& partial = alpaka::declareSharedVar<uint32_t[3 * kChainScanBlockThreads], __COUNTER__>(acc);
+  // K1b. Exclusive prefixes of the two K1a tallies, and in the same pass the exclusive prefix of the
+  // per-key edge products degIn * degOut, which yields the exact enumerable edge count for this key
+  // family (E1 for the MD-keyed instance, E2 for the Segment-keyed one).
+  //
+  // This REPLACES a single-block form that had the same three prefixes and the same values but gave
+  // each of 1024 workers a contiguous chunk of ceil(nKeys/1024) keys. Here the work is spread over
+  // nTiles blocks and read COALESCED.
+  //
+  // THE TWO DEFECTS IT FIXES, both measured. (i) One block = 1 SM of 142. (ii) inside that block
+  // each of the 1024 workers owned a CONTIGUOUS chunk of ceil(nKeys/1024) keys, so the 32 threads of
+  // a warp read addresses ~1.5 kB apart and every load was its own 32-byte sector -- for nLSKeys =
+  // 157k that is ~5 x 157k sectors of 32 B to move 3.1 MB of useful data. Here block b owns the
+  // contiguous tile [b*span, (b+1)*span) and walks it in chunks of blockThreads keys with thread w
+  // taking key chunk + w, so each warp's load is one 128-byte line.
+  //
+  // TWO PASSES, ONE KERNEL STRUCT, selected by `phase` -- so the kernel count does not move:
+  //   phase 0: block b sums its tile into tileSums[lane * kChainScanTilesMax + b]
+  //   phase 1: block b re-derives its own tile base by summing tileSums[lane][0 .. b), then walks
+  //            its tile writing the three offset columns
+  // The two passes need a grid-wide barrier between them, which on any backend means two launches.
+  //
+  // EXACTNESS. Every value written is a sum of exactly the same multiset of uint32_t addends as
+  // before -- for key k, the counts of all keys before k -- reassociated. uint32_t addition is the
+  // group operation of Z/2^32, associative and commutative including its wraparound, so each written
+  // word is bit-identical to the single-block form for every possible input. The KEY ORDER of the
+  // partition is preserved at both levels (tiles ascend with b, and within a chunk worker w takes
+  // key chunk + w), so this is a regrouping of a sum and nothing else. No warp primitive and no
+  // warp-width assumption; on a host backend chainScanWorkerCount() is 1 and each block degenerates
+  // to a sequential pass over its own tile, which is still the same sum.
+  //
+  // tileSums is 3 * kChainScanTilesMax words, a COMPILE-TIME size, so it is a persistent LSTEvent
+  // member allocated once -- not a per-event device buffer (see the rdHashOwner_ note in LSTEvent.h
+  // for why that distinction is worth 26 ms on the CPU backend). The MD and LS instances share it
+  // because their launches are queue-ordered.
+  struct ChainPrefixIncidenceTiled {
+    ALPAKA_FN_ACC void operator()(
+        Acc1D const& acc, ChainIncidence incidence, uint32_t nKeys, uint32_t* tileSums, uint32_t nTiles, uint32_t phase) const {
+      ALPAKA_ASSERT_ACC(static_cast<uint32_t>(incidence.metadata().size()) == nKeys + 1u);
+      constexpr uint32_t kLanes = 3u;
+      auto& scratch =
+          alpaka::declareSharedVar<uint32_t[2u * kLanes * kChainScanTileThreads], __COUNTER__>(acc);
 
       uint32_t const nWorkers = chainScanWorkerCount(acc);
       uint32_t const worker = chainScanWorkerIndex(acc);
-      ALPAKA_ASSERT_ACC(nWorkers <= kChainScanBlockThreads);
+      uint32_t const tile = static_cast<uint32_t>(alpaka::getIdx<alpaka::Grid, alpaka::Blocks>(acc)[0u]);
+      ALPAKA_ASSERT_ACC(nWorkers <= kChainScanTileThreads);
+      ALPAKA_ASSERT_ACC(nTiles >= 1u && nTiles <= kChainScanTilesMax);
+      ALPAKA_ASSERT_ACC(tile < nTiles);
 
-      uint32_t const chunk = (nKeys + nWorkers - 1u) / nWorkers;
-      uint32_t const begin = (worker * chunk < nKeys) ? worker * chunk : nKeys;
-      uint32_t const end = (begin + chunk < nKeys) ? begin + chunk : nKeys;
+      uint32_t const span = (nKeys + nTiles - 1u) / nTiles;
+      uint32_t const begin = (tile * span < nKeys) ? tile * span : nKeys;
+      uint32_t const end = (begin + span < nKeys) ? begin + span : nKeys;
 
-      uint32_t localOut = 0u, localIn = 0u, localProd = 0u;
-      for (uint32_t k = begin; k < end; ++k) {
-        uint32_t const degOut = incidence.t3OutCounts()[k];
-        uint32_t const degIn = incidence.t3InCounts()[k];
-        localOut += degOut;
-        localIn += degIn;
-        localProd += degIn * degOut;
-      }
-      partial[worker] = localOut;
-      partial[nWorkers + worker] = localIn;
-      partial[2u * nWorkers + worker] = localProd;
-
-      alpaka::syncBlockThreads(acc);
-
-      uint32_t baseOut = 0u, baseIn = 0u, baseProd = 0u;
-      uint32_t totOut = 0u, totIn = 0u, totProd = 0u;
-      for (uint32_t w = 0; w < nWorkers; ++w) {
-        if (w == worker) {
-          baseOut = totOut;
-          baseIn = totIn;
-          baseProd = totProd;
+      if (phase == 0u) {
+        uint32_t local[kLanes] = {0u, 0u, 0u};
+        for (uint32_t k = begin + worker; k < end; k += nWorkers) {
+          uint32_t const degOut = incidence.t3OutCounts()[k];
+          uint32_t const degIn = incidence.t3InCounts()[k];
+          local[0] += degOut;
+          local[1] += degIn;
+          local[2] += degIn * degOut;
         }
-        totOut += partial[w];
-        totIn += partial[nWorkers + w];
-        totProd += partial[2u * nWorkers + w];
+        uint32_t base[kLanes], total[kLanes];
+        chainScanBlockExclusive<kLanes, kChainScanTileThreads>(
+            acc, &scratch[0], nWorkers, worker, local, base, total);
+        if (cms::alpakatools::once_per_block(acc))
+          for (uint32_t l = 0; l < kLanes; ++l)
+            tileSums[l * kChainScanTilesMax + tile] = total[l];
+        return;
       }
 
-      uint32_t runOut = baseOut, runIn = baseIn, runProd = baseProd;
-      for (uint32_t k = begin; k < end; ++k) {
-        uint32_t const degOut = incidence.t3OutCounts()[k];
-        uint32_t const degIn = incidence.t3InCounts()[k];
-        incidence.t3OutOffsets()[k] = runOut;
-        incidence.t3InOffsets()[k] = runIn;
-        incidence.edgeProdPrefix()[k] = runProd;
-        runOut += degOut;
-        runIn += degIn;
-        runProd += degIn * degOut;
+      // This tile's base, and the grand totals. At the default nTiles = 128 this walk is an eighth
+      // of the 1024-iteration one it replaces, and it is over words every block reads from the same
+      // three cache lines -- it is not worth a launch of its own, and keeping it here is what holds
+      // the kernel count. It DOES grow with nTiles, which is one of the things the sweep measures.
+      uint32_t running[kLanes] = {0u, 0u, 0u};
+      uint32_t grand[kLanes] = {0u, 0u, 0u};
+      for (uint32_t t = 0; t < nTiles; ++t)
+        for (uint32_t l = 0; l < kLanes; ++l) {
+          uint32_t const s = tileSums[l * kChainScanTilesMax + t];
+          if (t < tile)
+            running[l] += s;
+          grand[l] += s;
+        }
+
+      // The tile itself, one chunk of blockThreads keys at a time. `begin` and `end` are block
+      // uniform, so every worker executes every iteration and therefore every barrier inside the
+      // scan -- no divergent barrier is possible here.
+      for (uint32_t chunk = begin; chunk < end; chunk += nWorkers) {
+        uint32_t const k = chunk + worker;
+        bool const live = k < end;
+        uint32_t local[kLanes] = {0u, 0u, 0u};
+        if (live) {
+          uint32_t const degOut = incidence.t3OutCounts()[k];
+          uint32_t const degIn = incidence.t3InCounts()[k];
+          local[0] = degOut;
+          local[1] = degIn;
+          local[2] = degIn * degOut;
+        }
+        uint32_t base[kLanes], total[kLanes];
+        chainScanBlockExclusive<kLanes, kChainScanTileThreads>(
+            acc, &scratch[0], nWorkers, worker, local, base, total);
+        if (live) {
+          incidence.t3OutOffsets()[k] = running[0] + base[0];
+          incidence.t3InOffsets()[k] = running[1] + base[1];
+          incidence.edgeProdPrefix()[k] = running[2] + base[2];
+        }
+        for (uint32_t l = 0; l < kLanes; ++l)
+          running[l] += total[l];
       }
 
-      alpaka::syncBlockThreads(acc);
-      if (cms::alpakatools::once_per_block(acc)) {
-        incidence.t3OutOffsets()[nKeys] = totOut;
-        incidence.t3InOffsets()[nKeys] = totIn;
-        incidence.edgeProdPrefix()[nKeys] = totProd;
-        incidence.nEdgesExact() = totProd;
+      if (tile == 0u && cms::alpakatools::once_per_block(acc)) {
+        incidence.t3OutOffsets()[nKeys] = grand[0];
+        incidence.t3InOffsets()[nKeys] = grand[1];
+        incidence.edgeProdPrefix()[nKeys] = grand[2];
+        incidence.nEdgesExact() = grand[2];
       }
     }
   };

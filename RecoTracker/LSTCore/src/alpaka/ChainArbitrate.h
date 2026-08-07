@@ -144,11 +144,14 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         float const thr =
             exempt ? (nL >= 6 ? cfg.thetaExempt6 : (nL == 5 ? cfg.thetaExempt5 : cfg.thetaExempt4)) : cfg.noCutTheta;
 
-        uint8_t claim = 0u;
-        if (score >= thr)
-          claim = kChainClaimCandidate;
-        chains.claimFlags()[c] = claim;
-        candKeep[c] = (claim & kChainClaimCandidate) ? 1u : 0u;
+        // U5 DEAD STORE REMOVED: `chains.claimFlags()[c] = claim;` stood here. The column is
+        // WRITE-ONLY in the whole tree (its only other writer is the phase-C store below, also
+        // removed) and `candKeep` is computed from the LOCAL `claim`, not from the column.
+        // The COLUMN ITSELF IS DELIBERATELY LEFT IN ChainsSoA: see ChainsSoA.h:100-104, removing a
+        // member mid-layout shifts every later column's base address and this codebase has a
+        // RECORDED ~1 ms/event regression from exactly that. Equivalent to the retired two-step
+        // form: kChainClaimCandidate is 0x1, so `(claim & bit) != 0` is exactly `score >= thr`.
+        candKeep[c] = (score >= thr) ? 1u : 0u;
 
         // (d) the -WE / -WZ band tolerances
         bool altBand = false;
@@ -175,7 +178,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     ALPAKA_FN_ACC void operator()(
         Acc1D const& acc, uint32_t const* counts, uint32_t* offsets, uint32_t* totalOut, uint32_t nKeys) const {
       ALPAKA_ASSERT_ACC((alpaka::getWorkDiv<alpaka::Grid, alpaka::Blocks>(acc)[0u] == 1));
-      auto& partial = alpaka::declareSharedVar<uint32_t[kChainScanBlockThreads], __COUNTER__>(acc);
+      auto& partial = alpaka::declareSharedVar<uint32_t[2 * kChainScanBlockThreads], __COUNTER__>(acc);
 
       uint32_t const nWorkers = chainScanWorkerCount(acc);
       uint32_t const worker = chainScanWorkerIndex(acc);
@@ -184,29 +187,22 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
       uint32_t const begin = (worker * chunk < nKeys) ? worker * chunk : nKeys;
       uint32_t const end = (begin + chunk < nKeys) ? begin + chunk : nKeys;
 
-      uint32_t local = 0u;
+      uint32_t local[1] = {0u};
       for (uint32_t k = begin; k < end; ++k)
-        local += counts[k];
-      partial[worker] = local;
+        local[0] += counts[k];
 
-      alpaka::syncBlockThreads(acc);
+      uint32_t base[1], total[1];
+      chainScanBlockExclusive<1>(acc, &partial[0], nWorkers, worker, local, base, total);
 
-      uint32_t base = 0u, total = 0u;
-      for (uint32_t w = 0; w < nWorkers; ++w) {
-        if (w == worker)
-          base = total;
-        total += partial[w];
-      }
-
-      uint32_t running = base;
+      uint32_t running = base[0];
       for (uint32_t k = begin; k < end; ++k) {
         offsets[k] = running;
         running += counts[k];
       }
       alpaka::syncBlockThreads(acc);
       if (cms::alpakatools::once_per_block(acc)) {
-        offsets[nKeys] = total;
-        *totalOut = total;
+        offsets[nKeys] = total[0];
+        *totalOut = total[0];
       }
     }
   };
@@ -757,7 +753,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                   uint32_t* stats,
                                   ChainConfig cfg) const {
       ALPAKA_ASSERT_ACC((alpaka::getWorkDiv<alpaka::Grid, alpaka::Blocks>(acc)[0u] == 1));
-      auto& partial = alpaka::declareSharedVar<uint32_t[kChainScanBlockThreads], __COUNTER__>(acc);
+      auto& partial = alpaka::declareSharedVar<uint32_t[2 * kChainScanBlockThreads], __COUNTER__>(acc);
       auto& sRemaining = alpaka::declareSharedVar<uint32_t, __COUNTER__>(acc);
 
       uint32_t const nWorkers = chainScanWorkerCount(acc);
@@ -893,8 +889,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
               owner[h] = static_cast<int32_t>(c);
             minPos[h] = chainpar::kNoPos;
           }
-          if (acceptedNow)
-            chains.claimFlags()[c] |= kChainClaimAccepted;
+          // U5 DEAD STORE REMOVED: `if (acceptedNow) chains.claimFlags()[c] |= kChainClaimAccepted;`
+          // stood here. A GLOBAL READ-MODIFY-WRITE at a random index, once per accepted chain PER
+          // ROUND (rounds = 4.1 mean, 7 max) inside this single-block kernel -- and
+          // kChainClaimAccepted has NO READER ANYWHERE IN THE TREE.
         }
         alpaka::syncBlockThreads(acc);
 
@@ -915,26 +913,23 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
       uint32_t const chunk = (n + nWorkers - 1u) / nWorkers;
       uint32_t const begin = (worker * chunk < n) ? worker * chunk : n;
       uint32_t const end = (begin + chunk < n) ? begin + chunk : n;
-      uint32_t local = 0u;
+      uint32_t local[1] = {0u};
       for (uint32_t i = begin; i < end; ++i)
-        local += (state[i] == chainpar::kAccepted) ? 1u : 0u;
-      partial[worker] = local;
-      alpaka::syncBlockThreads(acc);
+        local[0] += (state[i] == chainpar::kAccepted) ? 1u : 0u;
 
-      uint32_t base = 0u, total = 0u;
-      for (uint32_t w = 0; w < nWorkers; ++w) {
-        if (w == worker)
-          base = total;
-        total += partial[w];
-      }
-      uint32_t run = base;
+      // The epilogue is the same block-exclusive scan as everywhere else in this family. The round
+      // loop above is untouched; this replaces only its closing O(nWorkers)-per-thread walk.
+      uint32_t base[1], total[1];
+      chainScanBlockExclusive<1>(acc, &partial[0], nWorkers, worker, local, base, total);
+
+      uint32_t run = base[0];
       for (uint32_t i = begin; i < end; ++i)
         if (state[i] == chainpar::kAccepted)
           accepted[run++] = order[i];
       alpaka::syncBlockThreads(acc);
 
       if (cms::alpakatools::once_per_block(acc)) {
-        chains.nAccepted() = total;
+        chains.nAccepted() = total[0];
         stats[11] = rounds;
         stats[12] = peak;
       }

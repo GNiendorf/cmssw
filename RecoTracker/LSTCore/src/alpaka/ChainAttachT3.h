@@ -93,11 +93,42 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
   namespace chainattacht3 {
     // Diagnostic counters for stage B (never read by a decision):
     //   0 (unused)  1 candidates iterated   2 pairs scored   3 per-target picks
-    //   4 delivered type-5 rows   5 -RDT revocations   6 TC-row overflows
+    //   4 delivered type-5 rows   5 -RDT revocations
+    //   6 carried bare-pLS rows RETIRED by -RPS / -XC (written by ChainTCKeepSuppress, which shares
+    //     this buffer -- see the collision note below)
     //   7 seed-dedup owner-slot overflows   8 targets that saw at least one scored pair
     //   9 -CC revocations   10 grid candidates skipped as a repeat inside one target's cell walk
     //  11 pairs whose logit reached the class margin
-    constexpr uint32_t kStats = 12u;
+    // Slots 12-14 are written by the SHARED kernels ChainAttachOwnerHits / ChainAttachSeedConflicts
+    // and MUST keep the meaning chainattach::kStats gives them:
+    //  12 owners a final stage-A partner revokes outright   13 contentious owners
+    //  14 max table entries one owner's keys resolve to
+    // Stage-B-only -RDT witnesses:
+    //  15 max distinct partners one owner accumulated in seen[] (the kSeedDedupSeenMax headroom)
+    //  16 owners whose seen[] reached the cap -- MUST BE 0, it is the one place the two forms of
+    //     the walk could disagree
+    //  17 table entries the LST_CHAIN_RDT_SERIAL control arm inserted (max over its walk)
+    //  18 inserts that arm's load-factor cut-off refused -- MUST BE 0
+    //  19 stage-B owners (the -RDT walk length)
+    //  20 owners the serial residue actually hash-walked
+    //
+    // U5, INSTRUMENT DEFECT FIXED HERE (found 2026-08-07, measured, and it is exactly the trap T3
+    // recorded in round 1: "never let a must-be-zero assertion share a slot with a census").
+    // Slot 6 had TWO writers: the -CC sweep's TC-row overflow alarm (ChainAttachT3.h, `++stats[6];
+    // break;`, at most ONE per event by construction) and ChainTCKeepSuppress's retirement census
+    // (ChainArbitrate.h:490, an atomicAdd per retired row). postStats_buf is memset to 0 every event,
+    // so the printed `ccOverflow` read 568-723 PER EVENT on the shipped code -- which is the
+    // retirement count, and which makes the overflow alarm PERMANENTLY UNREADABLE: it can only ever
+    // add 1 to a number that is already ~700. Nobody would have noticed the alarm firing.
+    // The alarm now has a slot of its own; slot 6 keeps the census and is named for what it is.
+    // (No physics: both are diagnostic counters that no decision reads.)
+    //
+    // ROUND-2 MERGE: U5 gave the alarm slot 12, but U1's -RDT census had already taken 12-20 in THIS
+    // SAME buffer -- postStats_buf is sized by this kStats and is written both by the -CC sweep here
+    // and by ChainTCKeepSuppress. Taking either side verbatim would have recreated the exact
+    // double-writer defect U5 was fixing, one slot over. The alarm therefore lives at 21:
+    //  21 -CC sweep TC-row overflows   <-- MUST BE ZERO
+    constexpr uint32_t kStats = 22u;
   }  // namespace chainattacht3
 
   // The bare-T3 target kind's value of head input 18 (prototype/PixelAttach.h kAttachTargetT3).
@@ -184,8 +215,6 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
 
         AttachTargetPre o;
         o.chain = t3;
-        o.tcEta = 0.f;  // chain-target-only fields (the -XC pass-1 window); unused for bare T3s
-        o.tcPhi = 0.f;
         float const x0 = mds.anchorX()[md0], y0 = mds.anchorY()[md0];
         o.rtInner = alpaka::math::sqrt(acc, x0 * x0 + y0 * y0);
         o.zInner = mds.anchorZ()[md0];
@@ -380,12 +409,48 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
   // and on a device it removes the single most expensive kernel of the whole chain pass
   // (an O(n^2) selection sort chased through global memory by one thread, ~15 ms/event).
 
-  // K8B-c3, the serial residue: the -RDT hash walk in gather (ascending T3 row) order against the table stage A
-  // left behind, then the publish of the surviving owners into the LIVE plsOwned (invariant I1
-  // -- a stage-B owner is visible to the -XC anchor set and to the carried-row retirement, and
-  // the -CC sweep can still release it, -CCR 2). keep[] is maintained through the revocations:
-  // after this kernel it flags exactly the DELIVERIES, which is what the -CC sweep's gather
-  // reads.
+  // K8B-c3, the serial residue of the -RDT dedup, in gather (ascending T3 row) order against the
+  // table stage A left behind. keep[] is maintained through the revocations: after this kernel it
+  // flags exactly the DELIVERIES, which is what the -CC sweep's gather reads. The publish of the
+  // survivors into the LIVE plsOwned (invariant I1 -- a stage-B owner is visible to the -XC anchor
+  // set and to the carried-row retirement, and the -CC sweep can still release it, -CCR 2) is the
+  // shared ChainAttachPublish, one thread per position, launched right after this one.
+  //
+  // ==========================================================================================
+  // U1 (GPU timing): THE SAME THREE-PART SPLIT STAGE A GOT, WITH THE ONE CHANGE THAT MAKES IT PAY
+  // AT A HIGH FLAGGED FRACTION.
+  //
+  // The shipped walk (kept below as the LST_CHAIN_RDT_SERIAL control arm) is ONE THREAD over every
+  // stage-B owner doing, per owner, a probe run for each of its <= 4 pixel-hit keys and then, if it
+  // survives, an INSERT probe run for each of them. Stage A's parallelisation moved the table build
+  // out (ChainAttachOwnerHits, concurrent CAS) and left the greedy to the owners a symmetric
+  // prefilter flags -- which worked there because only 4 of 716 owners had any partner at all.
+  // In stage B ~4/5 of the owners are flagged, so "greedy over the flagged owners" alone is not a
+  // win: it would trade the insert for a nested attachSeedShared re-walk per matching entry.
+  //
+  // What makes it pay here is the SECOND prefilter bit. A partner belonging to STAGE A is FINAL --
+  // stage A's verdicts are settled before stage B starts and nothing here can revoke one -- so an
+  // owner with such a partner is revoked with NO table walk whatsoever, and the residue's hash walk
+  // is left with only the owners whose sole partners are other stage-B owners, where the order
+  // genuinely matters. Both bits are computed one thread per owner by ChainAttachSeedConflicts.
+  //
+  // EXACTNESS, and it is stronger than stage A's argument rather than weaker. For owner i the
+  // entries this walk ACCEPTS are exactly those with `tag < self` that are not marked dead, i.e.
+  //     {all stage-A survivors} u {stage-B owners j < i that this walk kept},
+  // which is precisely the MULTISET the shipped walk's incrementally built table held when it
+  // reached owner i (it had inserted exactly the kept earlier owners, and stage A had tombstoned
+  // its revoked ones). So the accepted entry multiset, the seen[] population, its maximum size and
+  // the verdict are identical owner for owner -- the parallel form is the shipped algorithm with
+  // the insert hoisted and the visiting order unchanged, not merely an equivalent of it. The one
+  // way the two could diverge is the kSeedDedupSeenMax truncation, which is order-sensitive and the
+  // table's slot layout is not preserved; stats[15]/stats[16] are the standing witnesses that it
+  // never fires (and the control arm measures the same two on the shipped walk).
+  //
+  // A revoked owner is retired by the kSeedContDead bit of its own cont[] word rather than by
+  // tombstoning its entries, which saves the revocations (~2/3 of the owners!) a second write pass
+  // over the table and costs no new array. The table is dead the moment this kernel returns --
+  // arbitrateChains' hashKey/hashVal are read by nothing after stage B -- so nothing depends on its
+  // final contents.
   struct ChainAttachT3Dedup {
     ALPAKA_FN_ACC void operator()(Acc1D const& acc,
                                   uint32_t const* order,
@@ -393,29 +458,74 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                   int32_t const* ownerPls,
                                   uint32_t const* ownerHits,
                                   uint8_t const* ownerNHits,
+                                  uint32_t* cont,  // nullptr == the LST_CHAIN_RDT_SERIAL control arm
                                   int32_t* tgtPls,
                                   float* tgtLogit,
                                   uint32_t* keep,
-                                  uint8_t* plsOwned,
                                   uint32_t* hashKey,
                                   int32_t* hashVal,
+                                  uint32_t const* hashOwner,
                                   uint32_t* stats,
-                                  uint8_t seedDedup) const {
+                                  uint32_t ownerTag) const {
       if (!cms::alpakatools::once_per_grid(acc))
         return;
       uint32_t const nOwners = *nOwnersPtr;
-      uint32_t nIns = 0;
+      stats[19] = nOwners;
+      uint32_t nIns = 0, maxSeen = 0, nCap = 0, nWalked = 0;
       for (uint32_t i = 0; i < nOwners; ++i) {
         int32_t const p = ownerPls[i];
         if (p < 0)
           continue;
-        if (seedDedup) {
-          uint32_t const* g = ownerHits + static_cast<size_t>(i) * kMaxPLSHitsInHitsSoA;
-          int const nh = ownerNHits[i];
+        uint32_t const* g = ownerHits + static_cast<size_t>(i) * kMaxPLSHitsInHitsSoA;
+        int const nh = ownerNHits[i];
+        uint32_t const self = ownerTag + i;
+        bool dup = false;
+        int nSeen = 0;
 
-          bool dup = false;
+        if (cont != nullptr) {
+          uint32_t const c = cont[i];
+          if ((c & chainattach::kSeedContPartner) == 0u)
+            continue;  // no partner anywhere: cannot be revoked, cannot revoke
+          if ((c & chainattach::kSeedContEarlierStage) != 0u) {
+            dup = true;  // a FINAL earlier-stage owner shares >= 2 hit rows; no walk needed
+          } else {
+            ++nWalked;
+            uint32_t seen[chainattach::kSeedDedupSeenMax];
+            for (int a = 0; a < nh && !dup; ++a) {
+              uint32_t slot = attachSeedHash(g[a]);
+              for (uint32_t key = hashKey[slot]; key != chainattach::kSeedHashEmpty; key = hashKey[slot]) {
+                if (key == g[a]) {
+                  uint32_t const j = hashOwner[slot];
+                  // Accept only DECIDED and STILL LIVE owners: our own entries and every later
+                  // owner fail `j < self`, and a revoked earlier stage-B owner carries the dead
+                  // bit. Stage-A tags are below ownerTag and are always live (their revoked ones
+                  // were tombstoned out of the table by ChainAttachSeedDedup).
+                  if (j < self &&
+                      (j < ownerTag || (cont[j - ownerTag] & chainattach::kSeedContDead) == 0u)) {
+                    for (int u = 0; u < nSeen; ++u)
+                      if (seen[u] == j) {
+                        dup = true;
+                        break;
+                      }
+                    if (dup)
+                      break;
+                    if (nSeen < chainattach::kSeedDedupSeenMax)
+                      seen[nSeen++] = j;
+                    else
+                      ++nCap;
+                  }
+                }
+                slot = (slot + 1u) & (chainattach::kSeedHashSlots - 1u);
+              }
+            }
+          }
+        } else {
+          // ---- the shipped walk, verbatim apart from the counters: the table is built here, one
+          // kept owner at a time, and the dup test keys on the entry's pLS. Reached only under
+          // LST_CHAIN_RDT_SERIAL, where ChainAttachOwnerHits is launched WITHOUT the table
+          // arguments and ChainAttachSeedConflicts is not launched at all, so this arm sees exactly
+          // the table the production build used to see.
           int32_t seen[chainattach::kSeedDedupSeenMax];
-          int nSeen = 0;
           for (int a = 0; a < nh && !dup; ++a) {
             uint32_t slot = attachSeedHash(g[a]);
             while (hashKey[slot] != chainattach::kSeedHashEmpty) {
@@ -430,34 +540,45 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                   break;
                 if (nSeen < chainattach::kSeedDedupSeenMax)
                   seen[nSeen++] = q;
+                else
+                  ++nCap;
               }
               slot = (slot + 1u) & (chainattach::kSeedHashSlots - 1u);
             }
           }
-
-          if (dup) {
-            uint32_t const pos = order[i];
-            tgtPls[pos] = -1;
-            tgtLogit[pos] = kAttachNoLogit;
-            keep[pos] = 0u;
-            ++stats[5];
-            continue;
-          }
-          for (int a = 0; a < nh; ++a) {
-            if (nIns + 1u >= chainattach::kSeedHashSlots / 2u) {
-              ++stats[7];
-              break;
+          ++nWalked;
+          if (!dup) {
+            for (int a = 0; a < nh; ++a) {
+              if (nIns + 1u >= chainattach::kSeedHashSlots / 2u) {
+                ++stats[18];
+                break;
+              }
+              uint32_t slot = attachSeedHash(g[a]);
+              while (hashKey[slot] != chainattach::kSeedHashEmpty)
+                slot = (slot + 1u) & (chainattach::kSeedHashSlots - 1u);
+              hashKey[slot] = g[a];
+              hashVal[slot] = p;
+              ++nIns;
             }
-            uint32_t slot = attachSeedHash(g[a]);
-            while (hashKey[slot] != chainattach::kSeedHashEmpty)
-              slot = (slot + 1u) & (chainattach::kSeedHashSlots - 1u);
-            hashKey[slot] = g[a];
-            hashVal[slot] = p;
-            ++nIns;
           }
         }
-        plsOwned[static_cast<uint32_t>(p)] = 1u;
+
+        if (static_cast<uint32_t>(nSeen) > maxSeen)
+          maxSeen = static_cast<uint32_t>(nSeen);
+        if (!dup)
+          continue;
+        uint32_t const pos = order[i];
+        tgtPls[pos] = -1;
+        tgtLogit[pos] = kAttachNoLogit;
+        keep[pos] = 0u;
+        ++stats[5];
+        if (cont != nullptr)
+          cont[i] |= chainattach::kSeedContDead;
       }
+      stats[15] = maxSeen;
+      stats[16] = nCap;
+      stats[17] = nIns;
+      stats[20] = nWalked;
     }
   };
 
@@ -576,7 +697,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
           ccClaimed[r.md[k]] = 1u;
 
         if (row >= nAllocated) {
-          ++stats[6];  // out of TC rows; not seen at PU200, but it must be visible if it happens
+          ++stats[21];  // out of TC rows; not seen at PU200, but it must be visible if it happens
           break;
         }
         rowOut[i] = static_cast<int32_t>(row++);

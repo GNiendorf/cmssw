@@ -196,7 +196,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
       // 1-block kernel
       ALPAKA_ASSERT_ACC((alpaka::getWorkDiv<alpaka::Grid, alpaka::Blocks>(acc)[0u] == 1));
 
-      auto& partial = alpaka::declareSharedVar<uint32_t[2 * kChainScanBlockThreads], __COUNTER__>(acc);
+      auto& partial = alpaka::declareSharedVar<uint32_t[4 * kChainScanBlockThreads], __COUNTER__>(acc);
 
       uint32_t const nWorkers = chainScanWorkerCount(acc);
       uint32_t const worker = chainScanWorkerIndex(acc);
@@ -206,28 +206,17 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
       uint32_t const begin = (worker * chunk < nNodes) ? worker * chunk : nNodes;
       uint32_t const end = (begin + chunk < nNodes) ? begin + chunk : nNodes;
 
-      uint32_t localHeads = 0u, localNodes = 0u;
+      uint32_t local[2] = {0u, 0u};
       for (uint32_t n = begin; n < end; ++n) {
         uint32_t const c = headNodeCount[n];
-        localHeads += (c != 0u) ? 1u : 0u;
-        localNodes += c;
-      }
-      partial[worker] = localHeads;
-      partial[nWorkers + worker] = localNodes;
-
-      alpaka::syncBlockThreads(acc);
-
-      uint32_t baseHeads = 0u, baseNodes = 0u, totHeads = 0u, totNodes = 0u;
-      for (uint32_t w = 0; w < nWorkers; ++w) {
-        if (w == worker) {
-          baseHeads = totHeads;
-          baseNodes = totNodes;
-        }
-        totHeads += partial[w];
-        totNodes += partial[nWorkers + w];
+        local[0] += (c != 0u) ? 1u : 0u;
+        local[1] += c;
       }
 
-      uint32_t runHeads = baseHeads, runNodes = baseNodes;
+      uint32_t base[2], total[2];
+      chainScanBlockExclusive<2>(acc, &partial[0], nWorkers, worker, local, base, total);
+
+      uint32_t runHeads = base[0], runNodes = base[1];
       for (uint32_t n = begin; n < end; ++n) {
         uint32_t const c = headNodeCount[n];
         chainIndexOf[n] = runHeads;
@@ -238,8 +227,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
 
       alpaka::syncBlockThreads(acc);
       if (cms::alpakatools::once_per_block(acc)) {
-        *nChains = totHeads;
-        *nChainNodesTotal = totNodes;
+        *nChains = total[0];
+        *nChainNodesTotal = total[1];
       }
     }
   };

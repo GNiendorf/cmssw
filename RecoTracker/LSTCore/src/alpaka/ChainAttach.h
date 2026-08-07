@@ -123,17 +123,33 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     // in 16k slots is under a quarter load, so it can only fire far outside the design point.
     constexpr uint32_t kSeedHashMaxProbe = 256u;
     constexpr int kSeedDedupSeenMax = 64;
+    // The two attach stages share ONE table, and the stage-B (-RDT) greedy has to know which
+    // entries are "earlier" than the owner it is deciding. An entry's owner tag is therefore
+    // `kSeedOwnerStageA + i` in stage A and `kSeedOwnerStageB + i` in stage B, so a plain
+    // `tag < myTag` is exactly "already decided": every stage-A entry precedes every stage-B one
+    // (stage A is final before stage B starts) and inside stage B it reduces to `j < i`. The bias
+    // is the top bit, so the stage-A owner index -- a few hundred accepted chains -- cannot reach
+    // it and the tags cannot alias.
+    constexpr uint32_t kSeedOwnerStageA = 0u;
+    constexpr uint32_t kSeedOwnerStageB = 0x80000000u;
+    // The bits of ChainAttachSeedConflicts' per-owner word (see that kernel for what they mean).
+    constexpr uint32_t kSeedContPartner = 1u;       // some other owner shares >= 2 pixel hit rows
+    constexpr uint32_t kSeedContEarlierStage = 2u;  // ... and one of them is final (earlier stage)
+    constexpr uint32_t kSeedContDead = 4u;          // the greedy's own "revoked" marker
     // Diagnostic counters (never read by a decision):
     //   0 grid entries   1 candidates iterated   2 pairs scored   3 per-target picks
     //   4 attached after contention   5 -RD revocations   6 carried rows retired
     //   7 seed-dedup owner-slot overflows   9 -RD logit-tie census
     //  10 grid candidates skipped as a repeat of the same pLS inside one target's cell walk
-    //  11 -XC pass-1 buffer overflow census   12 FREE (was -CCS suppressed, deleted with -CCS)
+    //  11 -XC pass-1 buffer overflow census
+    //  12 owners a STRICTLY EARLIER-STAGE partner revokes outright (stage B only -- see
+    //     ChainAttachSeedConflicts; unreachable in stage A, whose owner tag bias is zero)
     //  13 -RD contentious owners (the ones the serial greedy actually visits)
     //  14 -RD max table entries one owner's keys resolve to (the kSeedDedupSeenMax headroom witness)
     //  15 -RD prefilter disagreements with the brute-force pair scan (LST_CHAIN_RD_AUDIT only)
-    // Slot 12 is deliberately left in place rather than renumbered: the -RD writers below index 13-15
-    // directly, and renumbering to close a one-slot hole would be a silent-breakage risk for no gain.
+    // NOTE the two stats layouts are DELIBERATELY aligned on slots 7 and 12-14: ChainAttachOwnerHits
+    // and ChainAttachSeedConflicts are shared by both attach stages, so the slot they write has to
+    // mean the same thing in chainattach::kStats and in chainattacht3::kStats.
     constexpr uint32_t kStats = 16u;
   }  // namespace chainattach
 
@@ -241,11 +257,16 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     float fitKappa;
     float xs[5];  // head inputs 7..11, preprocessed (attachStdz<7..11>)
     float rotSign, centerX, centerY;
-    // The emitted-TC direction of a CHAIN target: eta/phi of the innermost member T3, exactly the
-    // values K10 gives the TC. Exact at scoring time because extendMode = 1 (outer end only) never
-    // changes the innermost member. Consumed by the -XC bare-chain arm's pass-1 dR^2 window; unused
-    // (0) for bare-T3 targets.
-    float tcEta, tcPhi;
+    // U5 DELETION (2026-08-07): `float tcEta, tcPhi;` lived here to feed the -XC bare-chain arm's
+    // pass-1 dR^2 window. That window was dropped in a2f81bb ("Drop the bare-chain crossclean's dR
+    // window") and -CCS, tcEta's last reader, was deleted by T1 in round 1, so BOTH FIELDS WERE
+    // WRITE-ONLY: three write sites (ChainAttach.h twice, ChainAttachT3.h once) and ZERO readers in
+    // the whole tree. T1 flagged this at FINDINGS_GPU.md [T1 11:15] item 7 and deliberately left it
+    // to keep its measured binary identical; nobody picked it up. Removing them also removes the
+    // three-level dependent chase that computed them (nodeItems -> tripletIndex -> chainNodeMDs ->
+    // chainT3Eta / chainHitPhi) once per target.
+    // NOT to be confused with the ChainsSoA::tcEta / tcPhi COLUMNS, which are LIVE
+    // (written in ChainArbitrate.h:306-307 by ChainEmitTCs).
     // radius = 1/|fitKappa| clamped to kStraightRadius, the target's own circle radius. Consumed
     // by head input 19 (rphiResidInwards); a bare-T3 target fills it the same way.
     float radius;
@@ -461,11 +482,12 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
   // the cumulative chord lengths in an sArc vector; the same sequential accumulation is replayed in
   // each pass here, which reproduces every partial sum bit for bit without an array.
   struct ChainAttachTargetPre {
+    // U5: `SegmentsConst segments`, `TripletsConst triplets` and `ChainNodesConst nodes` are gone
+    // with the tcEta / tcPhi block above -- they had NO other use in this kernel. Each was a whole
+    // SoA ConstView in the kernel's parameter pack, so the deletion also shrinks cmem[0]
+    // (a free ptxas receipt that the change is really in the device image).
     ALPAKA_FN_ACC void operator()(Acc1D const& acc,
                                   MiniDoubletsConst mds,
-                                  SegmentsConst segments,
-                                  TripletsConst triplets,
-                                  ChainNodesConst nodes,
                                   ChainItemsConst items,
                                   ChainsConst chains,
                                   uint32_t const* targets,
@@ -482,19 +504,6 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         o.centerX = 0.f;
         o.centerY = 0.f;
         o.centerValid = 0u;
-        o.tcEta = 0.f;
-        o.tcPhi = 0.f;
-
-        // The K10 TC direction (innermost member T3's eta/phi), for the -XC bare-chain arm's
-        // pass-1 dR^2 window. Byte-identical to what ChainEmitTCs later stores in tcEta / tcPhi,
-        // because outer-only extension never changes the innermost member.
-        if (chains.nNodes()[c] > 0) {
-          uint32_t const t3In = nodes.tripletIndex()[items.nodeItems()[chains.nodeOffset()[c]]];
-          unsigned int em0, em1, em2;
-          chainNodeMDs(triplets, segments, t3In, em0, em1, em2);
-          o.tcEta = chainT3Eta(acc, mds, em2);
-          o.tcPhi = chainHitPhi(acc, mds.anchorX()[em0], mds.anchorY()[em0]);
-        }
 
         uint32_t const mdBase = 3u * chains.nodeOffset()[c];
         int const nMD = chains.nMDs()[c];
@@ -599,20 +608,54 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
   // ------------------------------------------------------------------------------------------
   // K8a-1. The measured radial hull of the targets per r bin. Storing the raw bit patterns of the
   // non-negative floats makes the integer atomicMin / atomicMax an exact float min / max.
+  //
+  // It takes BOTH target sets (stage-A chain targets and stage-B bare-T3 targets) in ONE launch and
+  // reduces them into ONE hull -- the UNION. That is what lets a single grid serve both stages: the
+  // hull only ever LOOSENS the phi interval each pLS occupies, and a looser interval yields a
+  // SUPERSET of candidates which both scorers re-filter with the same exact analytic predicate
+  // before any observable write. Same argument already blessed in-tree for the aux 4-layer targets
+  // joining the stage-A hull. `tgtB` may be null (then only set A contributes).
   struct ChainAttachGridBounds {
-    ALPAKA_FN_ACC void operator()(
-        Acc1D const& acc, AttachTargetPre const* tgt, uint32_t nTargets, uint32_t* rMinBits, uint32_t* rMaxBits) const {
-      for (uint32_t t : cms::alpakatools::uniform_elements(acc, nTargets)) {
-        float const rt = tgt[t].rtInner;
+    ALPAKA_FN_ACC void operator()(Acc1D const& acc,
+                                  AttachTargetPre const* tgtA,
+                                  uint32_t nA,
+                                  AttachTargetPre const* tgtB,
+                                  uint32_t nB,
+                                  uint32_t* rMinBits,
+                                  uint32_t* rMaxBits) const {
+      for (uint32_t i : cms::alpakatools::uniform_elements(acc, nA + nB)) {
+        float const rt = (i < nA) ? tgtA[i].rtInner : tgtB[i - nA].rtInner;
         int const rb = attachRBin(rt);
         uint32_t const bits = std::bit_cast<uint32_t>(rt);
-        alpaka::atomicMin(acc, &rMinBits[rb], bits, alpaka::hierarchy::Threads{});
-        alpaka::atomicMax(acc, &rMaxBits[rb], bits, alpaka::hierarchy::Threads{});
+        // The read-first filter is exact -- atomicMin/Max are idempotent and a value that does not
+        // improve the running extremum cannot change the final one -- and it keeps a few thousand
+        // threads off the same three or four occupied bins.
+        if (bits < rMinBits[rb])
+          alpaka::atomicMin(acc, &rMinBits[rb], bits, alpaka::hierarchy::Threads{});
+        if (bits > rMaxBits[rb])
+          alpaka::atomicMax(acc, &rMaxBits[rb], bits, alpaka::hierarchy::Threads{});
       }
     }
   };
 
   // K8a-2 / K8a-4. Count and scatter share one mask buffer, so they cannot disagree.
+  //
+  // LAUNCH SHAPE (the reason `nR` exists). The natural element of both passes is a (pLS, r bin)
+  // PAIR, not a pLS: the nine r bins of one pLS are completely independent -- each computes its own
+  // phi-cell mask from that bin's target hull and writes its own masks[] slot -- so folding them
+  // into one thread throws away a factor of kAttachRBins of parallelism, and the launch was the
+  // fixed 80 x 256 flat work division regardless of the element count. With nR == kAttachRBins
+  // there are nPls * 9 ~ 211k elements and the launch is sized to them, which fills the machine.
+  // MEASURED WORTH, so nobody over-reads the paragraph above: only -0.032 ms of the 0.339 ms these
+  // two passes cost (broker tag U4P1), and the curve is already flat at nR = 3. The scatter is
+  // WRITE-BANDWIDTH bound, not latency bound -- it copies a whole 96-byte AttachPlsPre per grid
+  // entry to a scattered address -- so parallelism was never the binding constraint here. The real
+  // win in this area was removing one of the two grids entirely (see buildAttachGrid).
+  // nR == 1 recovers the original serial-over-r form verbatim and is what the host backends use
+  // (one thread per pLS, the r loop hoisting the pLS record and its tanLambda bin). Every nR
+  // partitions the same (pLS, r bin) set exactly once, and both passes only ever write
+  // masks[p * kAttachRBins + rb] (one owner per pair) and atomically accumulate into counts[] /
+  // cursor[], so the result is independent of the partition.
   struct ChainAttachGridCount {
     ALPAKA_FN_ACC void operator()(Acc1D const& acc,
                                   AttachPlsPre const* pls,
@@ -621,10 +664,14 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                   uint32_t const* rMaxBits,
                                   uint16_t* masks,
                                   uint32_t* counts,
+                                  uint32_t nR,
                                   ChainConfig cfg) const {
-      for (uint32_t p : cms::alpakatools::uniform_elements(acc, nPls)) {
+      uint32_t const nRs = (nR > 0u) ? nR : 1u;
+      for (uint32_t gi : cms::alpakatools::uniform_elements(acc, nPls * nRs)) {
+        uint32_t const p = (nRs == 1u) ? gi : gi / nRs;
+        int const rb0 = (nRs == 1u) ? 0 : static_cast<int>(gi - p * nRs);
         int const tb = attachTanLBin(pls[p].tanLambda, cfg.attachPrefDTanL);
-        for (int rb = 0; rb < kAttachRBins; ++rb) {
+        for (int rb = rb0; rb < kAttachRBins; rb += static_cast<int>(nRs)) {
           uint32_t const loBits = rMinBits[rb], hiBits = rMaxBits[rb];
           if (loBits == 0xFFFFFFFFu)
             continue;  // no target landed in this bin
@@ -648,10 +695,14 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                   uint32_t const* offsets,
                                   uint32_t* cursor,
                                   AttachPlsPre* itemsOut,
+                                  uint32_t nR,
                                   ChainConfig cfg) const {
-      for (uint32_t p : cms::alpakatools::uniform_elements(acc, nPls)) {
+      uint32_t const nRs = (nR > 0u) ? nR : 1u;
+      for (uint32_t gi : cms::alpakatools::uniform_elements(acc, nPls * nRs)) {
+        uint32_t const p = (nRs == 1u) ? gi : gi / nRs;
+        int const rb0 = (nRs == 1u) ? 0 : static_cast<int>(gi - p * nRs);
         int const tb = attachTanLBin(pls[p].tanLambda, cfg.attachPrefDTanL);
-        for (int rb = 0; rb < kAttachRBins; ++rb) {
+        for (int rb = rb0; rb < kAttachRBins; rb += static_cast<int>(nRs)) {
           uint32_t const mask = masks[p * kAttachRBins + rb];
           if (mask == 0u)
             continue;
@@ -1221,9 +1272,17 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
   // lives on the chain row, so `tgtPls == nullptr` reads chains.attachPls()) and target positions
   // in stage B (`tgtPls` is its position-keyed grant array). Nothing else differs.
   //
-  // Stage A ALSO builds the -RD table here (`hashKey != nullptr`), concurrently, one thread per
+  // NO DEFAULT ARGUMENTS, and every call site casts its nullptrs to the parameter type. alpaka
+  // deduces the kernel's argument PACK from the call, so a defaulted argument or a bare `nullptr`
+  // makes the two stages instantiate the SAME kernel TWICE -- two ptxas entries for one algorithm.
+  // Spelling every argument out collapses them to one. (This deletes one instantiation the baseline
+  // already carried: its stage-A call passed `Dn` for tgtPls and its stage-B call passed `Pi`.)
+  //
+  // BOTH stages also build the -RD table here (`hashKey != nullptr`), concurrently, one thread per
   // owner. See ChainAttachSeedDedup for why building it for every owner up front -- rather than
-  // one kept owner at a time in the serial walk -- leaves the same table.
+  // one kept owner at a time in the serial walk -- leaves the same table. `ownerTag` is the stage
+  // bias added to the owner index before it is stored (chainattach::kSeedOwnerStageA / ...StageB),
+  // which is what makes "this entry belongs to an already-decided owner" a single comparison.
   struct ChainAttachOwnerHits {
     ALPAKA_FN_ACC void operator()(Acc1D const& acc,
                                   PixelSeedsConst pixelSeeds,
@@ -1237,10 +1296,11 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                   uint32_t* ownerHits,
                                   uint8_t* ownerNHits,
                                   int32_t* ownerPls,
-                                  uint32_t* hashKey = nullptr,
-                                  int32_t* hashVal = nullptr,
-                                  uint32_t* hashOwner = nullptr,
-                                  uint32_t* stats = nullptr) const {
+                                  uint32_t* hashKey,
+                                  int32_t* hashVal,
+                                  uint32_t* hashOwner,
+                                  uint32_t* stats,
+                                  uint32_t ownerTag) const {
       uint32_t const n = *nOwnersPtr;
       // Local copy: atomicCas takes its compare value by reference, and a constexpr in namespace
       // scope has no device-side storage to bind to.
@@ -1281,7 +1341,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
             uint32_t const prev = alpaka::atomicCas(acc, &hashKey[slot], empty, key, alpaka::hierarchy::Blocks{});
             if (prev == empty) {
               hashVal[slot] = p;
-              hashOwner[slot] = i;
+              hashOwner[slot] = ownerTag + i;
               break;
             }
             slot = (slot + 1u) & (chainattach::kSeedHashSlots - 1u);
@@ -1293,7 +1353,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     }
   };
 
-  // How many entries of the -RD table, over ALL of owner i's staged keys, belong to owner j. This
+  // How many entries of the -RD table, over ALL of owner i's staged keys, carry owner TAG j. This
   // is exactly the quantity the serial form's `seen` array tested: an entry of j sits under key k
   // once per occurrence of k in j's staged list, so the count is
   //   sum over i's positions a of (multiplicity of ownerHits[i][a] in j's list)
@@ -1318,12 +1378,23 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
 
   // K8c-1, the parallel prefilter of the -RD dedup: one thread per owner, no order anywhere.
   //
-  // `cont[i]` is set iff SOME OTHER owner shares >= 2 pixel hit rows with owner i. Because the
+  // `cont[i]` bit 0 is set iff SOME OTHER owner shares >= 2 pixel hit rows with owner i. Because the
   // relation is symmetric (see attachSeedShared) each side of a pair marks itself, so no thread
   // writes another thread's flag. The serial greedy below then only has to visit the flagged
   // owners: an owner with no partner can neither be revoked (a revocation needs a partner) nor
   // cause one (the partner relation is the same relation), so it is inert and skipping it is not
   // an approximation. At PU200 the flagged set is a handful of a few hundred owners.
+  //
+  // `cont[i]` bit 1 (kSeedContEarlierStage) is set iff one of those partners belongs to an EARLIER
+  // STAGE -- an owner tag below `ownerTag`, i.e. a stage-A owner seen from stage B. Such a partner
+  // is final: it cannot be revoked by anything the greedy does, so bit 1 alone decides owner i and
+  // the greedy revokes it WITHOUT walking the table at all. This is what makes the split pay in
+  // stage B, where the flagged fraction is ~4/5 of the owners rather than stage A's 4 of 716.
+  // In stage A `ownerTag` is 0, no tag can be below it, and the predicate below collapses to the
+  // original `!contentious && j != i` character for character.
+  //
+  // Bit 2 (kSeedContDead) is not written here: it is the greedy's own "already revoked" marker, and
+  // it lives in this word so the residue needs no second array (see ChainAttachT3Dedup).
   struct ChainAttachSeedConflicts {
     ALPAKA_FN_ACC void operator()(Acc1D const& acc,
                                   uint32_t const* nOwnersPtr,
@@ -1334,7 +1405,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                   uint32_t const* hashOwner,
                                   uint32_t nBound,
                                   uint32_t* cont,
-                                  uint32_t* stats) const {
+                                  uint32_t* stats,
+                                  uint32_t ownerTag) const {
       uint32_t const n = *nOwnersPtr;
       for (uint32_t i : cms::alpakatools::uniform_elements(acc, nBound)) {
         if (i >= n)
@@ -1342,9 +1414,11 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         cont[i] = 0u;
         if (ownerPls[i] < 0)
           continue;
+        uint32_t const self = ownerTag + i;
         uint32_t const* g = ownerHits + static_cast<size_t>(i) * kMaxPLSHitsInHitsSoA;
         int const nh = ownerNHits[i];
         bool contentious = false;
+        bool earlierStage = false;
         // nEnt is the number of table entries owner i's keys resolve to. The retired serial walk
         // recorded one `seen` slot per DISTINCT owner among a SUBSET of these (only the kept
         // earlier owners were in its table), so nEnt bounds its nSeen from above: reporting the
@@ -1357,16 +1431,25 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
             if (key == g[a]) {
               ++nEnt;
               uint32_t const j = hashOwner[slot];
-              if (!contentious && j != i && attachSeedShared(hashKey, hashOwner, g, nh, j) >= 2u)
+              // Stop as soon as BOTH bits are settled; while only bit 1 is outstanding, only an
+              // earlier-stage tag can still change the answer. With ownerTag == 0 (stage A) the
+              // `j < ownerTag` disjunct is false, so this is `!contentious && j != i` exactly.
+              bool const want = (j != self) && (!contentious || (!earlierStage && j < ownerTag));
+              if (want && attachSeedShared(hashKey, hashOwner, g, nh, j) >= 2u) {
                 contentious = true;
+                if (j < ownerTag)
+                  earlierStage = true;
+              }
             }
             slot = (slot + 1u) & (chainattach::kSeedHashSlots - 1u);
           }
         }
         alpaka::atomicMax(acc, &stats[14], nEnt, alpaka::hierarchy::Blocks{});
         if (contentious) {
-          cont[i] = 1u;
+          cont[i] = chainattach::kSeedContPartner | (earlierStage ? chainattach::kSeedContEarlierStage : 0u);
           alpaka::atomicAdd(acc, &stats[13], 1u, alpaka::hierarchy::Blocks{});
+          if (earlierStage)
+            alpaka::atomicAdd(acc, &stats[12], 1u, alpaka::hierarchy::Blocks{});
         }
       }
     }
@@ -1499,22 +1582,30 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     }
   };
 
-  // The stage-A grants, after the -RD revocations: the one-pLS-one-owner authority array plsOwned.
-  // A chain can only carry a grant if it is a target, so one pass over the target list covers it.
+  // The surviving grants of EITHER stage, after that stage's -RD/-RDT revocations: the
+  // one-pLS-one-owner authority array plsOwned. Both stages leave "revoked" as a negative grant, and
+  // a losing target is already negative from ChainAttachResolve, so one pass over the position array
+  // covers exactly the survivors.
+  //
+  // `tgtPls == nullptr` is stage A, whose grant lives on the chain row (a chain can only carry one
+  // if it is a target, so its target list is the index); stage B passes its position-keyed grant
+  // array and `targets` is unused. Same nullptr switch as ChainAttachOwnerHits and
+  // ChainAttachResolve. `stats == nullptr` suppresses the census.
   struct ChainAttachPublish {
     ALPAKA_FN_ACC void operator()(Acc1D const& acc,
                                   ChainsConst chains,
                                   uint32_t const* targets,
+                                  int32_t const* tgtPls,
                                   uint32_t nTargets,
                                   uint8_t* plsOwned,
                                   uint32_t* stats) const {
       for (uint32_t pos : cms::alpakatools::uniform_elements(acc, nTargets)) {
-        uint32_t const c = targets[pos];
-        int32_t const p = chains.attachPls()[c];
+        int32_t const p = (tgtPls != nullptr) ? tgtPls[pos] : chains.attachPls()[targets[pos]];
         if (p < 0)
           continue;
         plsOwned[static_cast<uint32_t>(p)] = 1u;
-        alpaka::atomicAdd(acc, &stats[4], 1u, alpaka::hierarchy::Blocks{});
+        if (stats != nullptr)
+          alpaka::atomicAdd(acc, &stats[4], 1u, alpaka::hierarchy::Blocks{});
       }
     }
   };

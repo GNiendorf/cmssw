@@ -270,13 +270,12 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
       uint32_t const nMDKeys = static_cast<uint32_t>(mdIncidence.metadata().size()) - 1u;
       uint32_t const nLSKeys = static_cast<uint32_t>(lsIncidence.metadata().size()) - 1u;
 
-      // Record the family split in the collection so a consumer can slice the row range without
-      // carrying the two counts separately. Written on device to keep the host sync count at the
-      // two K1b already needs.
-      if (cms::alpakatools::once_per_grid(acc)) {
-        edges.nE1Exact() = nE1;
-        edges.nE2Exact() = nE2;
-      }
+      // U5 DEAD STORES REMOVED, and with them this kernel's ONLY serial section: an
+      // `if (once_per_grid(acc)) { edges.nE1Exact() = nE1; edges.nE2Exact() = nE2; }` stood here.
+      // Both scalars are WRITE-ONLY in the whole tree -- the "consumer" the old comment described
+      // ("so a consumer can slice the row range") does not exist, and the host carries nE1 / nE2
+      // itself. The two SOA_SCALARs are LEFT IN ChainEdgesSoA on purpose (see ChainsSoA.h:100-104 on
+      // why removing a layout member is not free).
 
       for (uint32_t e : cms::alpakatools::uniform_elements(acc, nE1 + nE2)) {
         bool const isE1 = (e < nE1);

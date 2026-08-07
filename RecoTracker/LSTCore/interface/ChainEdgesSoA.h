@@ -29,9 +29,21 @@ namespace lst {
                       SOA_COLUMN(uint32_t, outer),  // dense chain-node index of the outer triplet
                       SOA_COLUMN(uint8_t, type),    // 0 = hole, 1 = E1 (shared MD), 2 = E2 (shared LS)
                       SOA_COLUMN(float, logOdds),   // K5 edge-MLP logit; the quantity K6 will sum
-                      SOA_COLUMN(uint32_t, tie),    // K2 stable weld tie-break, see ChainWeld.h
-                      SOA_SCALAR(uint32_t, nE1Exact),
-                      SOA_SCALAR(uint32_t, nE2Exact))
+                      SOA_COLUMN(uint32_t, tie))  // K2 stable weld tie-break, see ChainWeld.h
+  // U5 DELETION: `SOA_SCALAR(uint32_t, nE1Exact)` and `SOA_SCALAR(uint32_t, nE2Exact)` stood here.
+  // Both were WRITE-ONLY -- ChainBuildEdges' once_per_grid block set them (also removed) and NOTHING
+  // in src/, interface/, standalone/code/ or RecoTracker/LST/ ever read them. The "consumer" the old
+  // comment promised ("so a consumer can slice the row range without carrying the two counts
+  // separately") does not exist; the host carries nE1 / nE2 itself.
+  // WHY THESE TWO CAN GO WHILE claimFlags AND nChains CANNOT (U2's layout split, and it is the whole
+  // reason this deletion is safe): these were the LAST TWO MEMBERS of the layout, so removing them
+  // shifts NO other member's base address. ChainsSoA::claimFlags sits mid-layout with eight live
+  // columns behind it and ChainsSoA::nChains is the first of three scalars with two live ones behind
+  // it, so for those the STORE is removed and the MEMBER stays -- see the ~1 ms/event warning at
+  // ChainsSoA.h:100-104. Free by construction here; not there.
+  // RESIDUAL CAVEAT, stated because it is not literally zero risk: the collection's total byte size
+  // changes, so the CMS caching allocator can land it in a different size bin. That is round 1's
+  // "address lottery" ([T5 ~10:50]), not a layout shift, and it is bounded by 8 bytes.
 
   using ChainEdgesSoA = ChainEdgesSoALayout<>;
   using ChainEdges = ChainEdgesSoA::View;
