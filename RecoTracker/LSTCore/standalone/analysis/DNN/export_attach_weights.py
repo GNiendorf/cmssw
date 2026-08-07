@@ -5,7 +5,8 @@ convention: weights are emitted TRANSPOSED (torch Linear stores [out,in]; the he
 stores wgt[in][out]) so the C++ inner loop is output[o] += input[i] * wgt[i][o].
 
 Feature order (must match train_attach.py / the frozen PixelAttach.h contract):
-af_00..af_17 -> 18 inputs, arch 18->24->24->1.
+The DEPLOYED head is 20 inputs (af_00..af_19), arch 20->24->24->1: the 19-slot frozen
+contract plus af_rphiResidInwards. Any input width the checkpoint declares is accepted.
 
 Conditioning: the norm json carries a "conditioning" spec (clip / log10_1p ops
 applied BEFORE standardization), baked into kClipLo/kClipHi (+-1e30 = no-op) and
@@ -25,7 +26,10 @@ import sys
 
 PROTO_DIR = os.path.dirname(os.path.abspath(__file__))
 
-EXPECTED_ARCH = [18, 24, 24, 1]
+# R1: the input width is whatever the checkpoint says (19 for the M19 "r2" head, up to
+# kAttachFeat for a head trained on the R1 matching block); only the 2-hidden-layer
+# scalar-output SHAPE is structural, because AttachInference.cc hardcodes it.
+EXPECTED_HIDDEN_LAYERS = 2
 UNCLIPPED = 1e30
 
 
@@ -69,7 +73,9 @@ def main():
         blob = torch.load(args.model, map_location="cpu", weights_only=False)
     sd = blob["state_dict"]
     arch = blob.get("arch")
-    assert arch == EXPECTED_ARCH, f"unexpected arch {arch}, expected {EXPECTED_ARCH}"
+    assert isinstance(arch, list) and len(arch) == EXPECTED_HIDDEN_LAYERS + 2, \
+        f"unexpected arch {arch}: AttachInference.cc implements in->h->h->1 only"
+    assert arch[1] == arch[2] and arch[3] == 1, f"unexpected arch {arch}"
     n_in, n_hid = arch[0], arch[1]
 
     with open(args.norm) as fh:
@@ -139,7 +145,9 @@ def main():
 //   2. x = min(max(x, kClipLo[i]), kClipHi[i])   (+-1e30 = unclipped)
 //   3. x = (x - kFeatMean[i]) / kFeatStd[i]
 //
-// Input feature order (af_00..af_17, frozen PixelAttach.h contract):
+// Input feature order (the LEADING {n_in} slots of the PixelAttach.h kAttachFeat layout;
+// AttachInference.cc feeds f[0..kInput-1], so this list must be a PREFIX of
+// PixelAttach.cc kAttachFeatNames):
 {feat_comment}
 #ifndef PROTOTYPE_ATTACH_MLP_WEIGHTS_H
 #define PROTOTYPE_ATTACH_MLP_WEIGHTS_H

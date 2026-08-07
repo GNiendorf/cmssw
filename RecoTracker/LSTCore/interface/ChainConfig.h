@@ -140,18 +140,22 @@ namespace lst {
     // with a WRONG seed (the T5 -> type-7 match is lost), and together with -CCS it accounted for
     // ~34 of the 77 distinct DISP1 sims the round spent (displaced ledger in the plan). Displaced
     // efficiency is the headline advantage, so the trade is unwound.
-    float attachTheta = 6.0f;   // -a   delivery margin, |eta| < 1.1
-    float attachThetaT = 6.0f;  // -a2  delivery margin, 1.1 <= |eta| < 1.7
-    float attachThetaE = 6.0f;  // -a3  delivery margin, |eta| >= 1.7
+    // RE-FITTED for the 20-input head, whose logit scale differs: -a 6.0 on it would be a LOOSENED
+    // attach (conversion 0.6799 -> 0.7470), and loosening conversion is exactly what costs displaced
+    // efficiency. These values hold conversion at the 19-input head's operating point and are not
+    // independent of AttachNetworkWeights.h.
+    float attachTheta = 7.3f;   // -a   delivery margin, |eta| < 1.1
+    float attachThetaT = 7.0f;  // -a2  delivery margin, 1.1 <= |eta| < 1.7
+    float attachThetaE = 6.4f;  // -a3  delivery margin, |eta| >= 1.7
     // -AT3 6.0: the bare-T3 (stage B) delivery margin, GLOBAL -- no eta bands. Also the T3-side
     // retirement bar of the -RPS predicate (-RPST was measured as a dead end and is deleted; the
     // bar is hardcoded to this value).
-    float attachThetaT3 = 6.f;
+    float attachThetaT3 = 6.450f;  // re-fitted with the 20-input head
     // -RPSA 5.5: the chain-side RETIREMENT bar of the -RPS predicate. Global, deliberately NOT
     // banded (banded -RPSA measured dominated). The retirement kernels must read THIS, never
     // attachTheta -- reusing the delivery margin is the pre-A11 behaviour and is wrong now that
     // delivery is banded.
-    float rpsThetaChain = 5.5f;
+    float rpsThetaChain = 6.084f;  // re-fitted with the 20-input head
     // -T3F 0.10: stage-B target admission on the production T3 fake score (node feature 12 ==
     // triplets.fakeScore()). NaN-rejecting form !(fakeScore <= t3FakeMax). Applied to the bare
     // mask so cut targets are never scored and never write plsBestT3.
@@ -177,18 +181,27 @@ namespace lst {
     float ccsThetaT = 1e9f;
     float ccsThetaE = 1e9f;
     // -XC 3 -XCT 3.665 -XCT2 3.15 -XCT3 3.75 -XCR2 1e-6 -XC4 1: the ported CrossCleanpLS.
-    // Pixel-anchored arm: retire a bare quad seed sharing >= 1 pixel hit row with, or within
-    // dR^2 < xcDR2Pix of, the seed of any delivery (LST's own pT5/pT3 arms, windows verbatim).
+    // Pixel-anchored arm: retire a bare quad seed sharing >= 1 pixel hit row with the seed of any
+    // delivery. LST's second test there (dR^2 < 1e-6 between the two seeds) is DELETED as measured
+    // inert -- see ChainCrossClean.h.
     // Bare-chain arm: retire a bare quad seed whose attach-head logit for SOME delivered SEEDLESS
     // chain TC reaches the |seed eta|-banded xcTheta -- the substitution for LST's deleted pLS/T5
     // embedding test. LST's T5 arm also required dR^2 < 0.02 against the TC centroid direction;
     // that window is DROPPED (see ChainAttach.h pass 1 for why, and for the measurement).
     // -XC4 is folded in unconditionally (4-layer accepted chains join the scored-pair stream,
     // score-only); -XC4T / -XCD / -XCG 1 are dead ends and are not ported.
-    float xcTheta = 3.665f;  // |seed eta| < 1.1
-    float xcThetaT = 3.15f;  // 1.1 <= |seed eta| < 1.7
-    float xcThetaE = 3.75f;  // |seed eta| >= 1.7
-    float xcDR2Pix = 1e-6f;  // LST TrackCandidate.h pT5/pT3 arm window, verbatim
+    // Bars re-fitted for the 20-input head (its logit scale differs from the 19-input one; see
+    // AttachNetworkWeights.h). These are NOT independent of the weights header.
+    float xcTheta = 4.5f;    // |seed eta| < 1.1
+    float xcThetaT = 4.0f;   // 1.1 <= |seed eta| < 1.7
+    float xcThetaE = 4.2f;   // |seed eta| >= 1.7
+    // -CC9 2: the T4-class crossclean against the delivered SEEDED rows -- drop a delivered type-9
+    // bare chain sharing this many outer-tracker hits (2 = one full mini-doublet) with a delivered
+    // type-7 or type-5 row. 0 disables it. See ChainCrossClean.h; measured fake barrel -.0037 with
+    // efficiency unchanged to 6 decimals and an exact cost of two displaced sims, neither in the
+    // efficiency denominator (977 evt). type-9 rows never share 3+, so the value is effectively
+    // binary.
+    int cc9MinShared = 2;
     // -RPS 1: also retire a carried bare-pLS (type 8) row whose seed had a scored pair above its
     // class RETIREMENT bar but lost the contention. -RD 1: seed-family dedup of the attach owners,
     // two pLS being the same seed when they share >= 2 pixel hit rows (also gates the stage-B
@@ -228,7 +241,7 @@ namespace lst {
   static constexpr unsigned int kChainBareT3TCHeadroom = 4096u;
 
   // prototype/PixelAttach.h kAttachFeat: the frozen pair-feature contract.
-  static constexpr int kAttachFeatures = 19;
+  static constexpr int kAttachFeatures = 20;
   // prototype/PixelAttach.cc: only chain targets with at least this many layers bid for a pLS
   // (v1 scope decision -- chain + pLS is a pT5-class object).
   static constexpr int kAttachMinLayers = 5;

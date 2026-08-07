@@ -3321,3 +3321,75 @@ neighbours (median |dPhi| .022 vs .013 while |dEta| is .00093 vs .0128). Purity 
 .12-.20 for a circular dR^2 window vs .91 for (tight eta AND loose phi AND same charge AND
 |ln ptRatio| bounded). This is the same effect as the maintainer's own win from DELETING the
 -XCW2 0.02 centroid window, and it applies to any same-track predicate anywhere in OUR pipeline.
+
+================================================================================================
+ROUND 2 INTEGRATED: THE 20-INPUT HEAD + CC9, AND WHAT WAS REJECTED (2026-08-07)
+================================================================================================
+
+SHIPPED (1000 evt PU200RelVal vs LST master b42d8f97ad5; artifacts win_ref/, plots
+performance/round2_vs_master_1000_3d53bfD-PU200_b42d8f-PU200/):
+                        pre-round-2   SHIPPED      LST master
+  eff overall              .8092       .8099        .8100
+  eff barrel/trans/endcap  .9250/.8792/.7445   .9239/.8815/.7464   .9246/.8801/.7466
+  dup barrel               .0231       .0194        .0097
+  dup transition           .0200       .0194        .0131
+  dup endcap               .0710       .0719        .0849
+  dup overall              .0486       .0479        .0514
+  fake barrel              .0552       .0516        .0437
+  fake overall             .0494       .0470        .0454
+  displaced vxy[5,10)/[10,30)/dxy[1,5)  ALL UP (.7227/.7128/.5815) -- lead intact and better
+  TIMING  CPU 758.2 ms/evt (baseline 768.1, master 763.6 -- we are now FASTER than both)
+          GPU 10.3 ms/evt (unchanged; master 4.5 -- the 2.3x gap is untouched, still THE problem)
+
+FOUR CHANGES, in order of what they bought:
+ 1. THE ATTACH HEAD GAINS ONE INPUT (R1). rphiResidInwards = |pLS hit0 - C_target| - R_target, the
+    seed's innermost hit residual against the TARGET's own circle -- LST's rPhiChiSquaredInwards in
+    content, one sqrt per pair, no new per-hit data. kAttachFeatures 19 -> 20. It does essentially
+    all of the duplicate work: measured ALONE (credit off, 1000 evt) eff +.0001, dupB -.0059,
+    dupT -.0034, fakB -.0035. Precision at the crossclean's own operating point goes .4633 -> .6735
+    on held-out TEST-60. FALSIFIED on the way: |eta| alone buys NOTHING, and the radius-pull family
+    is the LEAST-used block in a head that has all of it (permutation dAUC 2-10e-4 vs the
+    residual's 8841e-4) -- consistent with master, which forms no pull anywhere. WHAT CARRIES IT IS
+    RESIDUALS OF ONE OBJECT'S HITS AGAINST THE OTHER OBJECT'S CIRCLE.
+    The six bars are re-fitted for the new logit scale and are NOT optional: -a 7.3/7.0/6.4,
+    -AT3 6.450, -RPSA 6.084, xcTheta 4.5/4.0/4.2. The bar triple is the EFFICIENCY knob -- at
+    4.3/3.6/4.0 it is eff +.0001 / dupB .0171 / effB -.0018; at 4.5/4.0/4.2 it is eff +.0008 /
+    dupB .0194 / effB -.0011. The maintainer chose the second: efficiency must not go backwards.
+ 2. -CC9 (R3), the T4-class crossclean against the delivered SEEDED rows: drop a delivered type-9
+    bare chain sharing >= 2 OT hits (one full MD) with a delivered type-7/5 row. Set-safe by
+    construction. fakB -.0037 at eff unchanged, cost exactly 2 distinct displaced sims, NEITHER in
+    the efficiency denominator. It is the missing arm of LST's own CrossCleanT5, which went away
+    with the T5 pipeline -- the 4-layer bare class never had one.
+ 3. THE -XCR2 PIXEL dR ARM IS DELETED (R2): measured inert (5.7 of 2987.7 seeds/evt, no metric
+    moved at 5 decimals) and it cost a linear scan over ~700 anchors per candidate row. With the
+    anchor eta/phi staging and buffers gone, this is most of the 10 ms of CPU the round gained.
+ 4. NOT SHIPPED: R6's coincidence credit. It measured dupB -.0083 at eff -.0004 ON THE OLD HEAD,
+    but on the new head it adds only dupB -.0008 for eff -.0006 / effB -.0016 -- its exchange rate
+    collapsed from ~14 dup-per-eff-unit to ~1.3, because the head moved the very bar it credits
+    (3.665 -> 4.5). STRIPPED ENTIRELY (helper, both call sites, 5 config fields, 4 PSet entries,
+    AttachTargetPre::dca). Gate: the stripped build reproduces the credit-off scan point on all 29
+    metrics with an identical TC count. THE LESSON: a constant fitted against a bar is not
+    portable across a change of that bar -- re-fit or delete, never carry.
+ 5. ALSO REJECTED, ON SCOPE: R4's endcap helix-identity dedup (dup .0485 -> .0356) -- 97% of the
+    rows it cleans are LST-CARRIED, see the standing scope rule entry above.
+
+A BUG CC9 EXPOSED, worth remembering: it is the FIRST mechanism in the pipeline to drop a CHAIN
+row (ChainTCKeepSuppress only ever drops carried ones). Both the ntuple writer's isChainTCRow and
+the collection's per-class counters identify chain rows as "the LAST nChainTCs rows" rather than by
+type, so dropping one shrank nTrackCandidates without shrinking nChainTCs, the boundary slid, and a
+CARRIED row was parsed as a chain -> segfault in the sim matcher. Any future rule that drops a
+chain row must decrement BOTH chains.nChainTCs() and the class counter.
+
+REPRODUCIBILITY: analysis/DNN/{train_attach.py,export_attach_weights.py} were STALE (18-input only,
+they could not express even the shipping 19-input head). Both are now the versions that produced
+the deployed head; the promoted export script regenerates src/alpaka/AttachNetworkWeights.h
+byte-for-byte from r1_ref/attach_mlp_MIN1.pt + attach_norm_MIN1.json.
+
+THE LEAD FOR ROUND 3 (R1's closing measurement): the remaining ~.010 of barrel duplicate rate is
+NO LONGER SELECTOR QUALITY -- it is the retirement rule's LABEL. Pushing the bars lower keeps
+buying duplicates but starts costing barrel EFFICIENCY (xcTheta 3.776: dupB -.0106 at effB -.0051).
+The head is now right that "this seed and this chain are the same track"; the rule then ASSUMES
+"so the chain's TC covers the seed's sim", which at 75% hit matching is sometimes false. The
+payable version is a predicate that requires the reference TC to actually COVER. Related, measured
+twice independently: a wrong QUAD seed puts a 5-layer chain at 10/14 = .714 against that same 0.75
+threshold, which is exactly why lowering -a costs displaced efficiency.

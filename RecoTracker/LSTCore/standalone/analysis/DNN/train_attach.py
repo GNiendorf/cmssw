@@ -1,50 +1,17 @@
 #!/usr/bin/env python3
-"""M7 K8 attach-head (pair classifier) training for the LST chain-tracking prototype.
+"""train_attach.py -- trainer of the DEPLOYED attach head.
 
-Reads the flat per-pair dump produced by PairDumpWriter (TTree "pairs", one entry per
-PREFILTERED (accepted nLayers>=5 chain, pLS) pair; feature order recorded in the TNamed
-"feature_spec" = the frozen PixelAttach.h kAttachFeat contract), trains a small MLP pair
-head (plan 5a additive evidence: chain+pLS -> pT5-class TC) and evaluates it on held-out
-TEST events.
-
-Mirrors train_chain.py discipline exactly:
-  - fixed seeds for numpy AND torch,
-  - event-level 60/20/20 split by evt (row-level splits forbidden, plan 5c),
-  - feature conditioning BEFORE standardization, recorded in the norm json for the
-    C++ port (export_attach_weights.py bakes it into attach_mlp_weights.h),
-  - standardization mean/std fit on TRAIN rows only, saved to the norm json,
-  - class imbalance via BCEWithLogits pos_weight = n_fake/n_true (train),
-  - 100 epochs, early stopping patience 10 on val AUC.
-
-NO displaced weighting (deliberate M7 deviation from train_chain.py): displaced true
-pairs are RARE because displaced tracks have no pLS -- that is physically correct.
-Their count is reported; forcing a weight on O(1e3) rows of 27M would only add noise.
-
-CHUNKED RUNS (operational, not a training-discipline change): the 27M-pair dump makes a
-full run exceed the 10-minute foreground shell budget, so the trainer checkpoints model
-+ optimizer + permutation-generator state after EVERY epoch (--state) and caches the
-conditioned/standardized split arrays (--cache). When wall time exceeds
---time-budget-s it prints PAUSED and exits 0; re-invoking the identical command resumes
-at the next epoch with the exact state (bitwise-identical schedule) an uninterrupted
-run would have had. On completion it prints TRAINING COMPLETE.
-
-Conditioning (v2-edge lesson: heavy-tailed columns must be tamed BEFORE
-standardization or they cripple their own slots; measured on the 300-evt dump):
-  af_01 ptErrRel          -> log10_1p      (right tail to 74, bulk at 2e-3)
-  af_16 circleCenterDist  -> log10_1p      (right tail to 3.3e7 cm, q99.9 = 1.5e4)
-  af_00 log10PtIn         -> clip [-1, 4]  (junk seeds to log10(pt) = 5.6, q99.9 = 2.2)
-  af_05 log10CircleRadius -> clip [1, 5]   (same junk seeds, max 7.5, q99.9 = 4.2)
-
-Report: test AUC overall + per chainNLayers (5 / 6+) + prompt/displaced (vxy>=1;
-pileup-sim true pairs carry simVxy = -999 and are reported as their own stratum).
-
-Outputs:
-  attach_mlp_v1.pt    - torch state_dict + metadata (arch, feature names, best epoch/AUC)
-  attach_norm_v1.json - per-feature mean/std + conditioning spec
+This is the script that produced the head in src/alpaka/AttachNetworkWeights.h (20 inputs:
+the 19-slot frozen contract plus af_rphiResidInwards). It replaces the earlier 18-input-only
+version, which could not express the deployed head at all. The pair dump it consumes is
+produced by the standalone prototype with -PDML 1 (see standalone/r1_ref/r1_dump.sh); export
+the trained checkpoint with export_attach_weights.py beside this file.
 """
+
 
 import argparse
 import copy
+import glob
 import json
 import os
 import time
@@ -53,7 +20,25 @@ import numpy as np
 
 T0 = time.time()
 
-N_ATTACH_FEAT = 18
+# R1: the dump's own feature_spec is authoritative; this is only the LOWER bound every
+# dump must satisfy (slots 0-18 are the frozen M16 contract).
+N_BASE_FEAT = 19
+PROTO_DIR = os.path.dirname(os.path.abspath(__file__))
+# The C++ slot order (PixelAttach.cc kAttachFeatNames). A selection that is a PREFIX of
+# this list is deployable with no C++ edit; any other selection needs the layout permuted.
+CPP_ORDER = ["af_log10PtIn", "af_ptErrRel", "af_etaErr", "af_charge", "af_isQuad",
+             "af_log10CircleRadius", "af_plsDeltaPhi", "af_fitKappaSigned",
+             "af_chainTanLambda", "af_innermostLayer", "af_nLayers", "af_chainGateLogit",
+             "af_chargeAgree", "af_dKappa", "af_dTanLambda", "af_dPhiAtInnermost",
+             "af_circleCenterDist", "af_zResidAtInnermost", "af_targetType",
+             # R1 block, ordered by measured permutation importance (r1_perm.py) so every
+             # candidate head is a prefix -- MUST match PixelAttach.cc kAttachFeatNames.
+             "af_rphiResidInwards", "af_rphiResidRms", "af_rzResidRms",
+             "af_dPhiAtOutermost", "af_rphiResidMax", "af_rzResidMax", "af_rphiChi2Lst",
+             "af_rzChi2Lst", "af_absPlsEta", "af_radiusPull", "af_radiusAsym",
+             "af_log10TgtRadius", "af_log10SigmaR", "af_zResidPull"]
+FROZEN_TEST60 = ("/mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/"
+                 "standalone/prototype/m12_test60_evts.json")
 
 
 def log(msg):
@@ -62,99 +47,155 @@ def log(msg):
 
 def parse_args():
     p = argparse.ArgumentParser(description=__doc__)
-    d = "/mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/prototype"
-    p.add_argument("--input", default=f"{d}/pairs_300evt.root")
-    p.add_argument("--out-model", default=f"{d}/attach_mlp_v1.pt")
-    p.add_argument("--out-norm", default=f"{d}/attach_norm_v1.json")
-    p.add_argument("--seed", type=int, default=42, help="seed for numpy AND torch")
-    p.add_argument("--epochs", type=int, default=100)
-    p.add_argument("--patience", type=int, default=10, help="early stopping on val AUC")
-    p.add_argument("--no-feature-clip", action="store_true",
-                   help="disable feature conditioning (debug)")
+    p.add_argument("--input", default=f"{PROTO_DIR}/dump/pr_c*.root",
+                   help="PRIMARY dump glob (defines the frozen TEST-60)")
+    p.add_argument("--extra", default=f"{PROTO_DIR}/dump/sv_c*.root",
+                   help="EXTRA dump glob (salvage events; overlap dropped by evt key)")
+    p.add_argument("--out-model", default=f"{PROTO_DIR}/attach_mlp_r1.pt")
+    p.add_argument("--out-norm", default=f"{PROTO_DIR}/attach_norm_r1.json")
+    p.add_argument("--out-testauc", default=None)
+    p.add_argument("--seed", type=int, default=42)
+    p.add_argument("--epochs", type=int, default=60)
+    p.add_argument("--patience", type=int, default=8)
+    p.add_argument("--hidden", type=int, default=24)
     p.add_argument("--batch-size", type=int, default=16384)
     p.add_argument("--lr", type=float, default=1e-3)
     p.add_argument("--train-frac", type=float, default=0.6)
     p.add_argument("--val-frac", type=float, default=0.2)
-    p.add_argument("--cache", default=None,
-                   help="npz path: conditioned+standardized split arrays (written on the "
-                        "first run, loaded by resume runs; delete to rebuild from --input)")
-    p.add_argument("--state", default=None,
-                   help="checkpoint path for chunked runs (model+opt+RNG, saved every epoch)")
-    p.add_argument("--time-budget-s", type=float, default=None,
-                   help="pause (exit 0, resumable via --state) once wall time exceeds this")
+    p.add_argument("--pool-train-frac", type=float, default=0.75)
+    # --- M19 objective knobs ---
+    p.add_argument("--gamma-neg", type=float, default=0.0,
+                   help="one-sided focal exponent on NEGATIVES (0 = plain BCE = the g1 "
+                        "recipe). w_neg *= sigmoid(z)**gamma_neg")
+    p.add_argument("--disp-mid", type=float, default=1.0,
+                   help="extra multiplier on TRUE pairs with 1 <= simVxy < 5")
+    p.add_argument("--disp-hi", type=float, default=1.0,
+                   help="extra multiplier on TRUE pairs with simVxy >= 5")
+    p.add_argument("--chain-weight", type=float, default=1.0,
+                   help="multiplier on ALL ttype==0 (chain-target) rows")
+    p.add_argument("--val-metric", choices=["all", "chain"], default="chain",
+                   help="early-stopping metric: wgt-weighted AUC over both target types "
+                        "('all', the g1 behaviour) or over CHAIN pairs only ('chain', the "
+                        "universe -a cuts on)")
+    p.add_argument("--val-cap", type=int, default=6_000_000,
+                   help="max rows used for the PER-EPOCH val AUC (seeded subsample). "
+                        "The full 26M-row weighted AUC costs 61 s/epoch against ~12 s of "
+                        "actual training, and an early-stopping signal does not need it; "
+                        "the FINAL model is still judged on the full frozen TEST-60.")
+    p.add_argument("--use-cols", default="all",
+                   help="R1 column selection: 'all', 'base19', or a comma-separated list "
+                        "of feature names (af_* or bare). The order given IS the head's "
+                        "input order.")
+    p.add_argument("--cache", default=f"{PROTO_DIR}/cache_ret.npz")
+    p.add_argument("--state", default=None)
+    p.add_argument("--eval-only", action="store_true")
     return p.parse_args()
 
 
 # ---------------------------------------------------------------- data loading
 
-META_BRANCHES = ["evt", "label", "simVxy", "simPt", "chainNLayers"]
+META_BRANCHES = ["evt", "label", "ttype", "wgt", "simVxy", "simPt", "chainNLayers"]
 
 
-def load_dump(path):
-    """Load the pair dump. Returns (meta dict, X float32 [N,18], names)."""
+def load_dump(pattern, tag):
     import uproot
 
-    f = uproot.open(path)
-    spec = f["feature_spec"].member("fTitle")
-    assert spec.startswith("af:"), f"unexpected feature_spec '{spec[:20]}...'"
-    af_names = spec[3:].split(",")
-    assert len(af_names) == N_ATTACH_FEAT, f"expected {N_ATTACH_FEAT} features, got {len(af_names)}"
-    feat_branches = [f"af_{i:02d}" for i in range(N_ATTACH_FEAT)]
-    names = [f"af_{n}" for n in af_names]
+    files = sorted(glob.glob(pattern))
+    assert files, f"no dump chunks matched {pattern}"
+    trees, ns, names = [], [], None
+    for path in files:
+        f = uproot.open(path)
+        spec = f["feature_spec"].member("fTitle")
+        assert spec.startswith("af:"), f"unexpected feature_spec in {path}"
+        af_names = spec[3:].split(",")
+        assert len(af_names) >= N_BASE_FEAT, \
+            f"{path}: expected >= {N_BASE_FEAT} features, got {len(af_names)}"
+        nm = [f"af_{n}" for n in af_names]
+        assert names is None or nm == names, f"{path}: feature_spec disagrees"
+        names = nm
+        t = f["pairs"]
+        trees.append(t)
+        ns.append(t.num_entries)
+    n_tot = int(sum(ns))
+    log(f"{tag}: {len(files)} chunks, {n_tot} pairs total")
 
-    tree = f["pairs"]
-    arr = tree.arrays(META_BRANCHES + feat_branches, library="np")
-    meta = {k: arr[k] for k in META_BRANCHES}
-    n = len(meta["label"])
-    X = np.empty((n, N_ATTACH_FEAT), dtype=np.float32)
-    for j, b in enumerate(feat_branches):
-        X[:, j] = arr[b]
-        del arr[b]
+    n_feat = len(names)
+    feat_branches = [f"af_{i:02d}" for i in range(n_feat)]
+    X = np.empty((n_tot, n_feat), dtype=np.float32)
+    meta = {"evt": np.empty(n_tot, dtype=np.uint64),
+            "label": np.empty(n_tot, dtype=np.int8),
+            "ttype": np.empty(n_tot, dtype=np.int8),
+            "wgt": np.empty(n_tot, dtype=np.float32),
+            "simVxy": np.empty(n_tot, dtype=np.float32),
+            "simPt": np.empty(n_tot, dtype=np.float32),
+            "chainNLayers": np.empty(n_tot, dtype=np.int8)}
+    off = 0
+    for path, t, n in zip(files, trees, ns):
+        a = t.arrays(META_BRANCHES, library="np")
+        for k in META_BRANCHES:
+            meta[k][off:off + n] = a[k]
+        del a
+        a = t.arrays(feat_branches, library="np")
+        for j, b in enumerate(feat_branches):
+            X[off:off + n, j] = a[b]
+            del a[b]
+        del a
+        off += n
+    assert off == n_tot
     return meta, X, names
 
 
-def data_quality_report(X, names):
-    log("--- data quality (all rows) ---")
-    degenerate = []
-    print(f"{'feature':>26} {'min':>12} {'max':>12} {'mean':>12} {'std':>12} {'nan':>8} {'inf':>8}")
-    for j, name in enumerate(names):
-        col = X[:, j]
-        n_nan = int(np.isnan(col).sum())
-        n_inf = int(np.isinf(col).sum())
-        finite = col[np.isfinite(col)] if (n_nan or n_inf) else col
-        mn, mx = float(finite.min()), float(finite.max())
-        mu, sd = float(finite.mean()), float(finite.std())
-        flag = ""
-        if sd < 1e-8:
-            degenerate.append(name)
-            flag = "  <-- DEGENERATE"
-        print(f"{name:>26} {mn:>12.4g} {mx:>12.4g} {mu:>12.4g} {sd:>12.4g} {n_nan:>8d} {n_inf:>8d}{flag}")
-    n_bad = int((~np.isfinite(X)).sum())
-    if n_bad:
-        log(f"WARNING: {n_bad} non-finite feature values -> replaced with 0 "
-            "(PixelAttach.cc sanitize contract says this cannot happen)")
-        np.nan_to_num(X, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
-    if degenerate:
-        log(f"degenerate (zero-variance) columns: {degenerate}")
-    return degenerate
-
-
 # ------------------------------------------------------- feature conditioning
+# IDENTICAL to train_attach_gen.py (the M16 spec). Not touched: the C++ port bakes this
+# into attach_mlp_weights.h and the feature contract is frozen.
 
-# Applied IN ORDER to the named columns BEFORE standardization. The C++ inference
-# port must reproduce this exactly; the applied spec is written into the norm json
-# (same op vocabulary as train_chain.py / export_chain_weights.py: "clip", "log10_1p").
 CONDITIONING_SPEC = [
     {"feature": "af_ptErrRel", "op": "log10_1p"},
     {"feature": "af_circleCenterDist", "op": "log10_1p"},
     {"feature": "af_log10PtIn", "op": "clip", "lo": -1.0, "hi": 4.0},
     {"feature": "af_log10CircleRadius", "op": "clip", "lo": 1.0, "hi": 5.0},
+    {"feature": "af_fitKappaSigned", "op": "clip", "lo": -1.0, "hi": 1.0},
+    {"feature": "af_dKappa", "op": "clip", "lo": -1.0, "hi": 1.0},
+    # ---- R1 matching block. Same two-op vocabulary as above (clip / log10_1p): the C++
+    # preprocess in AttachInference.cc is NOT extended. Every clip is far outside the
+    # physical range and exists to stop a sentinel row from collapsing the column into
+    # |z| < 1e-3 (the M16 "crippled column" lesson), never to reshape the bulk.
+    {"feature": "af_absPlsEta", "op": "clip", "lo": 0.0, "hi": 4.0},
+    # The two PULLS and the inwards residual are signed and heavy-tailed (measured on
+    # dump/pr_c00: radiusPull spans +-1e6, zResidPull +-3e3). The clip is deliberately
+    # NARROW: past ~20 sigma the verdict is already "not the same track", so the only cost
+    # is resolution the decision does not use, while a wide clip would put the informative
+    # |pull| < 5 region inside |z| < 0.1 after standardization (the M16 crippled-column
+    # failure mode in mild form).
+    {"feature": "af_radiusPull", "op": "clip", "lo": -20.0, "hi": 20.0},
+    {"feature": "af_radiusAsym", "op": "clip", "lo": -1.0, "hi": 1.0},
+    {"feature": "af_log10TgtRadius", "op": "clip", "lo": 0.0, "hi": 5.0},
+    {"feature": "af_log10SigmaR", "op": "clip", "lo": -3.0, "hi": 4.0},
+    {"feature": "af_rphiResidRms", "op": "log10_1p"},
+    {"feature": "af_rphiResidRms", "op": "clip", "lo": 0.0, "hi": 3.0},
+    {"feature": "af_rphiResidMax", "op": "log10_1p"},
+    {"feature": "af_rphiResidMax", "op": "clip", "lo": 0.0, "hi": 3.0},
+    {"feature": "af_rphiChi2Lst", "op": "log10_1p"},
+    {"feature": "af_rphiChi2Lst", "op": "clip", "lo": 0.0, "hi": 10.0},
+    {"feature": "af_rphiResidInwards", "op": "clip", "lo": -30.0, "hi": 30.0},
+    {"feature": "af_rzResidRms", "op": "log10_1p"},
+    {"feature": "af_rzResidRms", "op": "clip", "lo": 0.0, "hi": 3.0},
+    {"feature": "af_rzResidMax", "op": "log10_1p"},
+    {"feature": "af_rzResidMax", "op": "clip", "lo": 0.0, "hi": 3.0},
+    {"feature": "af_rzChi2Lst", "op": "log10_1p"},
+    {"feature": "af_rzChi2Lst", "op": "clip", "lo": 0.0, "hi": 10.0},
+    {"feature": "af_zResidPull", "op": "clip", "lo": -20.0, "hi": 20.0},
 ]
 
 
 def apply_conditioning(X, names, spec):
-    """In-place column conditioning. Returns the applied spec (for the norm json)."""
+    """R1: entries naming an absent feature are skipped (so the spec is valid for a
+    19-column and a 33-column dump alike) and the APPLIED subset is what gets recorded."""
+    applied = []
     for c in spec:
+        if c["feature"] not in names:
+            continue
+        applied.append(c)
         j = names.index(c["feature"])
         if c["op"] == "clip":
             np.clip(X[:, j], c["lo"], c["hi"], out=X[:, j])
@@ -164,81 +205,119 @@ def apply_conditioning(X, names, spec):
             raise ValueError(f"unknown conditioning op {c['op']}")
         log(f"conditioned {c['feature']}: {c['op']}"
             + (f" [{c['lo']:g},{c['hi']:g}]" if c["op"] == "clip" else ""))
-    return spec
+    return applied
 
 
 # ---------------------------------------------------------------- event split
 
-def event_split(meta, train_frac, val_frac, rng):
-    """60/20/20 split on evt keys (the pair dump has no lumi branch; the 300-evt
-    RelVal sample has 300 distinct evt values -- asserted implicitly by the count)."""
+def combined_event_split(meta, src, args, rng):
+    """train_chain3.py `combined_event_split`, verbatim in behaviour: the frozen TEST
+    split is derived from the PRIMARY source alone (so it is byte-for-byte the test-60
+    every previous head was judged on), and the remaining pool -- primary train+val plus
+    every non-overlapping salvage event -- is reshuffled into train/val."""
     key = meta["evt"].astype(np.uint64)
-    uniq = np.unique(key)
-    rng.shuffle(uniq)
-    n = len(uniq)
-    n_tr = int(round(train_frac * n))
-    n_va = int(round(val_frac * n))
-    tr_keys, va_keys, te_keys = uniq[:n_tr], uniq[n_tr:n_tr + n_va], uniq[n_tr + n_va:]
+    uniq0 = np.unique(key[src == 0])
+    rng.shuffle(uniq0)
+    n0 = len(uniq0)
+    n_tr0 = int(round(args.train_frac * n0))
+    n_va0 = int(round(args.val_frac * n0))
+    te_keys = uniq0[n_tr0 + n_va0:]
+    te = np.isin(key, te_keys)
+    assert not (te & (src != 0)).any(), "frozen-test key present in an extra input (leak)"
+    with open(FROZEN_TEST60) as fh:
+        frozen = sorted(int(v) for v in json.load(fh))
+    got = sorted(int(v) for v in te_keys)
+    assert got == frozen, ("TEST split is NOT the frozen test-60 "
+                           f"({len(got)} keys, {len(set(got) ^ set(frozen))} differ)")
+    log("TEST split == frozen test-60 (prototype/m12_test60_evts.json) VERIFIED")
+    pool_keys = np.unique(key[~te])
+    rng.shuffle(pool_keys)
+    n_ptr = int(round(args.pool_train_frac * len(pool_keys)))
+    tr_keys, va_keys = pool_keys[:n_ptr], pool_keys[n_ptr:]
     tr = np.isin(key, tr_keys)
     va = np.isin(key, va_keys)
-    te = np.isin(key, te_keys)
-    log(f"event split: {n} distinct evt keys -> {n_tr}/{n_va}/{n - n_tr - n_va} events -> "
-        f"{tr.sum()}/{va.sum()}/{te.sum()} pairs (train/val/test)")
+    log(f"COMBINED split: frozen test = {len(te_keys)} primary events; pool "
+        f"{len(pool_keys)} events -> train {len(tr_keys)} / val {len(va_keys)} -> "
+        f"{tr.sum()}/{va.sum()}/{te.sum()} pairs")
     return tr, va, te
 
 
+def strata_report(meta, mask, tag):
+    is_true = (meta["label"] == 1) & mask
+    acc = is_true & (meta["simPt"] > -998.0)
+    print(f"  --- true-pair strata ({tag}) ---")
+    print(f"  {'stratum':>22} {'chain(tt0)':>12} {'bareT3(tt1)':>12}")
+    for name, lo, hi in [("accepted vxy [0,1)", 0.0, 1.0), ("accepted vxy [1,5)", 1.0, 5.0),
+                         ("accepted vxy [5,10)", 5.0, 10.0),
+                         ("accepted vxy [10,30)", 10.0, 30.0),
+                         ("accepted vxy >=30", 30.0, 1e9)]:
+        m = acc & (meta["simVxy"] >= lo) & (meta["simVxy"] < hi)
+        print(f"  {name:>22} {int((m & (meta['ttype'] == 0)).sum()):>12d} "
+              f"{int((m & (meta['ttype'] == 1)).sum()):>12d}")
+    m = is_true & ~acc
+    print(f"  {'pileup-sim only':>22} {int((m & (meta['ttype'] == 0)).sum()):>12d} "
+          f"{int((m & (meta['ttype'] == 1)).sum()):>12d}")
+    print(f"  {'ALL true':>22} {int((is_true & (meta['ttype'] == 0)).sum()):>12d} "
+          f"{int((is_true & (meta['ttype'] == 1)).sum()):>12d}")
+
+
 def build_cache(args, rng):
-    """First run: ROOT dump -> quality report -> conditioning -> split ->
-    standardization -> npz cache of everything later stages need."""
-    meta, X, names = load_dump(args.input)
+    meta0, X0, names = load_dump(args.input, "PRIMARY")
+    prim_evts = np.unique(meta0["evt"])
+    log(f"PRIMARY: {len(X0)} pairs over {len(prim_evts)} events")
+    parts_meta, parts_X, parts_src = [meta0], [X0], [np.zeros(len(X0), dtype=np.int8)]
+    if args.extra:
+        meta1, X1, names1 = load_dump(args.extra, "EXTRA")
+        assert names1 == names, "extra dump feature_spec disagrees with primary"
+        n_ev1 = len(np.unique(meta1["evt"]))
+        keep = ~np.isin(meta1["evt"], prim_evts)
+        n_new = len(np.unique(meta1["evt"][keep]))
+        log(f"EXTRA: {n_ev1} events -> {n_new} NEW events "
+            f"({n_ev1 - n_new} already in primary, dropped); "
+            f"{int(keep.sum())}/{len(X1)} pairs kept")
+        parts_meta.append({k: v[keep] for k, v in meta1.items()})
+        parts_X.append(X1[keep])
+        parts_src.append(np.ones(int(keep.sum()), dtype=np.int8))
+        del meta1, X1
+    meta = {k: np.concatenate([m[k] for m in parts_meta]) for k in META_BRANCHES}
+    X = np.concatenate(parts_X)
+    src = np.concatenate(parts_src)
+    del parts_meta, parts_X, parts_src, meta0, X0
     n_all = len(X)
-    log(f"loaded {n_all} pairs x {X.shape[1]} features from {args.input}")
+    log(f"COMBINED: {n_all} pairs over {len(np.unique(meta['evt']))} events")
 
-    degenerate = data_quality_report(X, names)
+    n_bad = int((~np.isfinite(X)).sum())
+    if n_bad:
+        log(f"WARNING: {n_bad} non-finite feature values -> 0")
+        np.nan_to_num(X, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
+    strata_report(meta, np.ones(n_all, dtype=bool), "all rows")
 
-    conditioning = []
-    if not args.no_feature_clip:
-        conditioning = apply_conditioning(X, names, CONDITIONING_SPEC)
+    conditioning = apply_conditioning(X, names, CONDITIONING_SPEC)
+    tr, va, te = combined_event_split(meta, src, args, rng)
+    strata_report(meta, tr, "TRAIN")
+    strata_report(meta, te, "TEST-60")
 
-    # Displaced accounting (NO weighting -- see the module docstring): true pairs by
-    # sim stratum. Pileup-sim true pairs carry simVxy = simPt = -999 (main.cc pairdump).
-    is_true_all = meta["label"] == 1
-    acc_true = is_true_all & (meta["simPt"] > -998.0)
-    pileup_true = is_true_all & ~acc_true
-    disp_true = acc_true & (meta["simVxy"] >= 1.0)
-    n_disp_true = int(disp_true.sum())
-    log(f"true-pair strata: total={int(is_true_all.sum())} "
-        f"accepted-sim={int(acc_true.sum())} (displaced vxy>=1: {n_disp_true}, "
-        f"vxy>=5: {int((acc_true & (meta['simVxy'] >= 5.0)).sum())}) "
-        f"pileup-sim={int(pileup_true.sum())} -- displaced true pairs are rare because "
-        "displaced tracks have no pLS (physically correct); no weighting applied")
-
-    tr, va, te = event_split(meta, args.train_frac, args.val_frac, rng)
-
-    # ---- standardization from TRAIN rows (in-place: X becomes Xs) ----
     mu = X[tr].mean(axis=0, dtype=np.float64).astype(np.float32)
     sd = X[tr].std(axis=0, dtype=np.float64).astype(np.float32)
     sd[sd < 1e-8] = 1.0
     X -= mu
     X /= sd
 
-    y = is_true_all.astype(np.float32)
-    cache = {
-        "Xtr": X[tr], "ytr": y[tr],
-        "Xva": X[va], "yva": y[va],
-        "Xte": X[te],
-        "lab_te": meta["label"][te].astype(np.int32),
-        "vxy_te": meta["simVxy"][te].astype(np.float32),
-        "pt_te": meta["simPt"][te].astype(np.float32),
-        "nl_te": meta["chainNLayers"][te].astype(np.int32),
-        "mu": mu, "sd": sd,
-        "meta_json": np.bytes_(json.dumps({
-            "names": names, "conditioning": conditioning, "degenerate": degenerate,
-            "n_all": int(n_all), "n_true_displaced_total": n_disp_true,
-            "input": args.input, "seed": args.seed,
-            "train_frac": args.train_frac, "val_frac": args.val_frac,
-            "feature_clip": not args.no_feature_clip})),
-    }
+    y = (meta["label"] == 1).astype(np.float32)
+    cache = {}
+    for nm, m in (("tr", tr), ("va", va), ("te", te)):
+        cache[f"X{nm}"] = X[m]
+        cache[f"y{nm}"] = y[m]
+        cache[f"w{nm}"] = meta["wgt"][m]
+        cache[f"t{nm}"] = meta["ttype"][m]
+        cache[f"v{nm}"] = meta["simVxy"][m]
+        cache[f"p{nm}"] = meta["simPt"][m]
+    cache["nl_te"] = meta["chainNLayers"][te]
+    cache["mu"] = mu
+    cache["sd"] = sd
+    cache["meta_json"] = np.bytes_(json.dumps({
+        "names": names, "conditioning": conditioning, "n_all": int(n_all),
+        "input": args.input, "extra": args.extra, "seed": args.seed}))
     if args.cache:
         np.savez(args.cache, **cache)
         log(f"wrote cache {args.cache} ({os.path.getsize(args.cache) / 1e9:.2f} GB)")
@@ -249,46 +328,96 @@ def load_cache(path, args):
     z = np.load(path)
     cache = {k: z[k] for k in z.files}
     mj = json.loads(bytes(cache["meta_json"]).decode())
-    assert mj["seed"] == args.seed and mj["input"] == args.input, \
-        "cache was built with different seed/input -- delete it to rebuild"
-    assert mj["feature_clip"] == (not args.no_feature_clip), \
-        "cache was built with different conditioning -- delete it to rebuild"
+    assert mj["seed"] == args.seed, "cache built with a different seed -- delete to rebuild"
+    if mj["input"] != args.input:
+        log(f"NOTE: cache was built from input={mj['input']} (requested {args.input})")
     log(f"loaded cache {path}: train/val/test = "
         f"{len(cache['Xtr'])}/{len(cache['Xva'])}/{len(cache['Xte'])} pairs")
     return cache
 
 
-# ---------------------------------------------------------------- model
+# ---------------------------------------------------------- R1 column selection
 
-def build_model(n_in):
+def resolve_cols(spec, names):
+    """Returns (indices into the cache's column axis, selected names). 'all' keeps the
+    dump order; 'base19' keeps the frozen M16 contract; otherwise the comma list IS the
+    order. Also reports whether the selection is deployable without a C++ layout edit."""
+    if spec == "all":
+        sel = list(names)
+    elif spec == "base19":
+        sel = list(names[:N_BASE_FEAT])
+    else:
+        sel = []
+        for tok in spec.split(","):
+            tok = tok.strip()
+            if not tok:
+                continue
+            nm = tok if tok.startswith("af_") else f"af_{tok}"
+            assert nm in names, f"--use-cols: '{nm}' is not in the dump ({names})"
+            sel.append(nm)
+    idx = [names.index(nm) for nm in sel]
+    prefix = sel == CPP_ORDER[:len(sel)]
+    log(f"columns: {len(sel)} selected -- "
+        + ("PREFIX of the C++ layout (deployable as-is)" if prefix else
+           "NOT a C++ prefix: permute PixelAttach.cc slots before deploying"))
+    log("  " + ",".join(nm[3:] for nm in sel))
+    return idx, sel, prefix
+
+
+# ---------------------------------------------------------------- model / eval
+
+def build_model(n_in, n_hid, n_out=1):
     import torch.nn as nn
-    return nn.Sequential(nn.Linear(n_in, 24), nn.ReLU(),
-                         nn.Linear(24, 24), nn.ReLU(),
-                         nn.Linear(24, 1))
+    return nn.Sequential(nn.Linear(n_in, n_hid), nn.ReLU(),
+                         nn.Linear(n_hid, n_hid), nn.ReLU(),
+                         nn.Linear(n_hid, n_out))
 
 
 def batched_scores(model, X_t, device, bs=1 << 20):
     import torch
     model.eval()
-    out = np.empty(len(X_t), dtype=np.float32)
+    n = len(X_t)
+    out = np.empty(n, dtype=np.float32)
     with torch.no_grad():
-        for i in range(0, len(X_t), bs):
-            logits = model(X_t[i:i + bs].to(device)).squeeze(1).float().cpu()
-            # CMSSW torch build lacks numpy interop (.numpy() raises); tolist is fine.
-            out[i:i + bs] = logits.tolist()
+        for i in range(0, n, bs):
+            z = model(X_t[i:i + bs].to(device)).float().cpu()
+            out[i:i + bs] = np.asarray(z.reshape(-1).tolist(), dtype=np.float32)
     return out
 
 
-def eval_block(tag, s_true, s_fake):
+def wauc(s_pos, w_pos, s_neg, w_neg):
     from sklearn.metrics import roc_auc_score
-    if len(s_true) == 0 or len(s_fake) == 0:
-        print(f"  {tag:>24} n_true={len(s_true):>8d} n_fake={len(s_fake):>8d} AUC=n/a (empty class)")
-        return {"auc": None, "n_true": int(len(s_true)), "n_fake": int(len(s_fake))}
-    y = np.concatenate([np.ones(len(s_true)), np.zeros(len(s_fake))])
-    s = np.concatenate([s_true, s_fake])
-    auc = roc_auc_score(y, s)
-    print(f"  {tag:>24} n_true={len(s_true):>8d} n_fake={len(s_fake):>8d} AUC={auc:.5f}")
-    return {"auc": float(auc), "n_true": int(len(s_true)), "n_fake": int(len(s_fake))}
+    if len(s_pos) == 0 or len(s_neg) == 0:
+        return None
+    y = np.concatenate([np.ones(len(s_pos)), np.zeros(len(s_neg))])
+    s = np.concatenate([s_pos, s_neg])
+    w = np.concatenate([w_pos, w_neg])
+    return float(roc_auc_score(y, s, sample_weight=w))
+
+
+def eval_block(tag, s_pos, w_pos, s_neg, w_neg, res=None):
+    a = wauc(s_pos, w_pos, s_neg, w_neg)
+    txt = "n/a" if a is None else f"{a:.5f}"
+    print(f"  {tag:>32} n_true={len(s_pos):>9d} n_fake={len(s_neg):>9d} "
+          f"(eff.fake {float(w_neg.sum()):>13.0f}) AUC={txt}")
+    if res is not None:
+        res[tag] = {"auc": a, "n_true": int(len(s_pos)), "n_fake": int(len(s_neg)),
+                    "eff_fake": float(w_neg.sum()), "eff_true": float(w_pos.sum())}
+    return a
+
+
+def precision_frontier(s_true, s_fake, cuts):
+    """Per-cut precision / true-recall on the CHAIN universe -- the quantity the -a scan
+    trades against. Unweighted counts: every chain-universe row has wgt 1."""
+    out = {}
+    n_true = len(s_true)
+    for c in cuts:
+        tp = int((s_true >= c).sum())
+        fp = int((s_fake >= c).sum())
+        out[f"{c:g}"] = {"cut": c, "tp": tp, "fp": fp,
+                         "precision": (tp / (tp + fp)) if (tp + fp) else None,
+                         "recall": (tp / n_true) if n_true else None}
+    return out
 
 
 # ---------------------------------------------------------------- main
@@ -302,141 +431,264 @@ def main():
     torch.cuda.manual_seed_all(args.seed)
     rng = np.random.default_rng(args.seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    log(f"seed={args.seed} device={device}")
+    log(f"seed={args.seed} device={device} gamma_neg={args.gamma_neg} "
+        f"disp=({args.disp_mid},{args.disp_hi}) chain_weight={args.chain_weight} "
+        f"val_metric={args.val_metric}")
 
     if args.cache and os.path.exists(args.cache):
         cache = load_cache(args.cache, args)
     else:
         cache = build_cache(args, rng)
     mj = json.loads(bytes(cache["meta_json"]).decode())
-    names, conditioning, degenerate = mj["names"], mj["conditioning"], mj["degenerate"]
+    names, conditioning = mj["names"], mj["conditioning"]
 
-    n_pos, n_neg = int(cache["ytr"].sum()), int((1 - cache["ytr"]).sum())
-    pos_weight = n_neg / max(n_pos, 1)
-    log(f"train: {n_pos} true / {n_neg} fake -> pos_weight={pos_weight:.4f}")
+    # R1: the TEST rows' |pLS eta| and nLayers, recovered BEFORE column selection so the
+    # per-band working-point table can be reported even for a variant that does not use
+    # eta as an input. The cache is standardized and af_absPlsEta's only conditioning is a
+    # clip to [0, 4] which is inert on the measured range, so un-standardizing is exact.
+    eta_te = None
+    if "af_absPlsEta" in names:
+        je = names.index("af_absPlsEta")
+        eta_te = cache["Xte"][:, je] * float(cache["sd"][je]) + float(cache["mu"][je])
+
+    # R1: column selection. Applied AFTER the cache (which always holds every dumped
+    # column, standardized per column), so an ablation costs a reload and not a re-dump.
+    col_idx, col_names, col_prefix = resolve_cols(args.use_cols, names)
+    n_in = len(col_idx)
+    for k in ("Xtr", "Xva", "Xte"):
+        cache[k] = np.ascontiguousarray(cache[k][:, col_idx])
+    cache["mu"] = cache["mu"][col_idx]
+    cache["sd"] = cache["sd"][col_idx]
+    conditioning = [c for c in conditioning if c["feature"] in col_names]
+
+    ytr_np, ttr_np, vtr_np = cache["ytr"], cache["ttr"], cache["vtr"]
+    # ---- per-row TRAINING weight = dump sampling weight x M19 emphasis multipliers ----
+    wtr_np = cache["wtr"].astype(np.float32).copy()
+    if args.chain_weight != 1.0:
+        wtr_np[ttr_np == 0] *= args.chain_weight
+    if args.disp_mid != 1.0 or args.disp_hi != 1.0:
+        istrue = ytr_np == 1
+        wtr_np[istrue & (vtr_np >= 1.0) & (vtr_np < 5.0)] *= args.disp_mid
+        wtr_np[istrue & (vtr_np >= 5.0)] *= args.disp_hi
+    W_pos = float((wtr_np * ytr_np).sum())
+    W_neg = float((wtr_np * (1.0 - ytr_np)).sum())
+    pos_weight = W_neg / max(W_pos, 1.0)
+    log(f"train weighted: {W_pos:.4g} true / {W_neg:.4g} fake -> pos_weight={pos_weight:.4f}")
+    log(f"  chain rows {int((ttr_np == 0).sum())} (weighted {float(wtr_np[ttr_np == 0].sum()):.4g})"
+        f" | T3 rows {int((ttr_np == 1).sum())} (weighted {float(wtr_np[ttr_np == 1].sum()):.4g})")
 
     Xtr = torch.tensor(np.ascontiguousarray(cache["Xtr"]))
-    ytr = torch.tensor(np.ascontiguousarray(cache["ytr"]))
-    Xva = torch.tensor(np.ascontiguousarray(cache["Xva"]))
-    yva_np = cache["yva"]
+    ytr = torch.tensor(np.ascontiguousarray(ytr_np))
+    wtr = torch.tensor(np.ascontiguousarray(wtr_np))
+    # ---- per-epoch validation set -------------------------------------------------
+    # Restricted to the universe the early-stopping metric is about (chain rows only for
+    # --val-metric chain) and then capped by a SEEDED subsample. Scoring + weighted AUC
+    # over all 26.2M val rows costs 61 s against ~12 s of training per epoch, and it is
+    # only ever used as a stop/keep signal -- the reported model quality comes from the
+    # full frozen TEST-60 pass at the end, which is NOT subsampled.
+    yva_np, wva_np, tva_np = cache["yva"], cache["wva"], cache["tva"]
+    vsel = np.flatnonzero(tva_np == 0) if args.val_metric == "chain" \
+        else np.arange(len(yva_np))
+    if len(vsel) > args.val_cap:
+        # FRESH seeded generator, not `rng`: rng's draw history differs between the run
+        # that BUILDS the cache and the runs that LOAD it, and every variant must see the
+        # identical val subsample for its early-stopping numbers to be comparable.
+        vsel = np.sort(np.random.default_rng(args.seed + 1)
+                       .choice(vsel, size=args.val_cap, replace=False))
+    yva_np, wva_np = yva_np[vsel], wva_np[vsel]
+    Xva = torch.tensor(np.ascontiguousarray(cache["Xva"][vsel]))
+    log(f"val metric '{args.val_metric}': {len(vsel)} of {len(cache['yva'])} val rows "
+        f"({int((yva_np == 1).sum())} true)")
     if device.type == "cuda":
-        Xtr, ytr = Xtr.to(device), ytr.to(device)
+        Xtr, ytr, wtr = Xtr.to(device), ytr.to(device), wtr.to(device)
+        Xva = Xva.to(device)
 
-    model = build_model(N_ATTACH_FEAT).to(device)
+    model = build_model(n_in, args.hidden).to(device)
     opt = torch.optim.Adam(model.parameters(), lr=args.lr)
-    crit = torch.nn.BCEWithLogitsLoss(pos_weight=torch.tensor(pos_weight, device=device))
+    pw = torch.tensor(pos_weight, device=device)
+    crit = torch.nn.BCEWithLogitsLoss(pos_weight=pw, reduction="none")
     gen = torch.Generator(device="cpu").manual_seed(args.seed)
+    gneg = float(args.gamma_neg)
 
-    # ---- resume (chunked runs; see the module docstring) ----
     start_epoch, best_auc, best_state, best_epoch, bad = 1, -1.0, None, -1, 0
-    if args.state and os.path.exists(args.state):
-        st = torch.load(args.state, map_location="cpu", weights_only=False)
-        model.load_state_dict(st["model"])
+    if args.eval_only:
+        blob = torch.load(args.out_model, map_location="cpu", weights_only=False)
+        model.load_state_dict(blob["state_dict"])
         model.to(device)
-        opt.load_state_dict(st["opt"])
-        gen.set_state(st["gen_state"])
-        start_epoch = st["epoch"] + 1
-        best_auc, best_state = st["best_auc"], st["best_state"]
-        best_epoch, bad = st["best_epoch"], st["bad"]
-        log(f"resumed {args.state}: next epoch {start_epoch} "
-            f"(best val AUC {best_auc:.5f} @ epoch {best_epoch}, bad={bad})")
+        best_epoch, best_auc = blob.get("best_epoch", -1), blob.get("best_val_auc", -1.0)
+    else:
+        n_tr = len(Xtr)
+        for epoch in range(start_epoch, args.epochs + 1):
+            model.train()
+            perm = torch.randperm(n_tr, generator=gen)
+            tot_loss, tot_w = 0.0, 0.0
+            for i in range(0, n_tr, args.batch_size):
+                idx = perm[i:i + args.batch_size]
+                if device.type == "cuda":
+                    idx = idx.to(device)
+                xb, yb, wb = Xtr[idx], ytr[idx], wtr[idx]
+                opt.zero_grad()
+                z = model(xb).squeeze(1)
+                base = crit(z, yb)
+                if gneg > 0.0:
+                    # ONE-SIDED focal: negatives only. sigmoid(z) is the model's own
+                    # "this is a true pair" score, so the factor is ~1 exactly where a
+                    # tighter -a has to make its cut and ~0 deep in the easy-fake bulk.
+                    # detach(): this is a gradient-BUDGET reweighting, not an extra
+                    # objective term -- no gradient flows through the modulation itself.
+                    mod = torch.sigmoid(z.detach()).pow(gneg)
+                    fw = torch.where(yb > 0.5, torch.ones_like(mod), mod)
+                    l = (base * wb * fw).sum() / (wb * fw).sum().clamp_min(1e-12)
+                else:
+                    l = (base * wb).sum() / wb.sum()
+                l.backward()
+                opt.step()
+                tot_loss += float(l.detach()) * float(wb.sum())
+                tot_w += float(wb.sum())
+            s_va = batched_scores(model, Xva, device)
+            m = yva_np == 1
+            auc = wauc(s_va[m], wva_np[m], s_va[~m], wva_np[~m])
+            log(f"epoch {epoch:3d} train_loss={tot_loss / tot_w:.5f} val_auc={auc:.6f}")
+            if auc > best_auc:
+                best_auc, best_epoch, bad = auc, epoch, 0
+                best_state = copy.deepcopy({k: v.cpu() for k, v in model.state_dict().items()})
+            else:
+                bad += 1
+            if bad >= args.patience:
+                log(f"early stop at epoch {epoch} (best val AUC {best_auc:.6f} @ {best_epoch})")
+                break
+        log(f"best checkpoint: epoch {best_epoch} val_auc={best_auc:.6f}")
+        assert best_state is not None
+        model.load_state_dict(best_state)
+        model.to(device)
 
-    from sklearn.metrics import roc_auc_score
+        torch.save({"state_dict": {k: v.cpu() for k, v in model.state_dict().items()},
+                    "arch": [n_in, args.hidden, args.hidden, 1],
+                    "feature_names": col_names, "seed": args.seed,
+                    "conditioning": conditioning, "per_type": False,
+                    "best_epoch": best_epoch, "best_val_auc": float(best_auc)},
+                   args.out_model)
+        with open(args.out_norm, "w") as fh:
+            json.dump({"feature_names": col_names, "conditioning": conditioning,
+                       "r1_use_cols": args.use_cols, "r1_cpp_prefix": bool(col_prefix),
+                       "mean": cache["mu"].tolist(), "std": cache["sd"].tolist(),
+                       "seed": args.seed, "degenerate_columns": [], "per_type": False,
+                       "sampling_weights": {
+                           "rule": "loss and AUC weighted by the dump 'wgt' branch "
+                                   "(bare-T3 FAKES downsampled 1-in-64) x the M19 "
+                                   "emphasis multipliers below",
+                           "train_W_true": W_pos, "train_W_fake": W_neg,
+                           "pos_weight": pos_weight},
+                       "m19_objective": {
+                           "gamma_neg": args.gamma_neg,
+                           "disp_mid": args.disp_mid, "disp_hi": args.disp_hi,
+                           "chain_weight": args.chain_weight,
+                           "val_metric": args.val_metric, "val_cap": args.val_cap},
+                       "train_args": {"epochs": args.epochs, "patience": args.patience,
+                                      "batch_size": args.batch_size, "lr": args.lr,
+                                      "hidden": args.hidden}}, fh, indent=1)
+        log(f"saved {args.out_model} and {args.out_norm}")
 
-    finished = start_epoch > args.epochs or (0 < args.patience <= bad)
-    n_tr = len(Xtr)
-    for epoch in range(start_epoch, args.epochs + 1):
-        model.train()
-        perm = torch.randperm(n_tr, generator=gen)
-        tot_loss = 0.0
-        for i in range(0, n_tr, args.batch_size):
-            idx = perm[i:i + args.batch_size]
-            if device.type == "cuda":
-                idx = idx.to(device)
-            xb, yb = Xtr[idx], ytr[idx]
-            opt.zero_grad()
-            loss = crit(model(xb).squeeze(1), yb)
-            loss.backward()
-            opt.step()
-            tot_loss += float(loss.detach()) * len(idx)
-        s_va = batched_scores(model, Xva, device)
-        auc = roc_auc_score(yva_np, s_va)
-        log(f"epoch {epoch:3d} train_loss={tot_loss / n_tr:.5f} val_auc={auc:.5f}")
-        if auc > best_auc:
-            best_auc, best_epoch, bad = auc, epoch, 0
-            best_state = copy.deepcopy({k: v.cpu() for k, v in model.state_dict().items()})
-        else:
-            bad += 1
-        if args.state:
-            torch.save({"model": {k: v.cpu() for k, v in model.state_dict().items()},
-                        "opt": opt.state_dict(), "gen_state": gen.get_state(),
-                        "epoch": epoch, "best_auc": best_auc, "best_state": best_state,
-                        "best_epoch": best_epoch, "bad": bad}, args.state)
-        if bad >= args.patience:
-            log(f"early stop at epoch {epoch} (best val AUC {best_auc:.5f} @ epoch {best_epoch})")
-            finished = True
-            break
-        if epoch == args.epochs:
-            finished = True
-            break
-        if args.time_budget_s is not None and time.time() - T0 > args.time_budget_s:
-            log(f"PAUSED after epoch {epoch} (time budget {args.time_budget_s:.0f}s; "
-                f"re-run the same command to resume from {args.state})")
-            return
-    log(f"best checkpoint: epoch {best_epoch} val_auc={best_auc:.5f}")
-    assert finished and best_state is not None
-    model.load_state_dict(best_state)
-    model.to(device)
-
-    # ---- save model + normalization ----
-    torch.save({"state_dict": best_state, "arch": [N_ATTACH_FEAT, 24, 24, 1],
-                "feature_names": names, "seed": args.seed,
-                "conditioning": conditioning,
-                "best_epoch": best_epoch, "best_val_auc": float(best_auc)}, args.out_model)
-    with open(args.out_norm, "w") as fh:
-        json.dump({"feature_names": names,
-                   # C++ inference: apply "conditioning" ops IN ORDER to the raw
-                   # features FIRST, then x_std = (x - mean) / std.
-                   "conditioning": conditioning,
-                   "mean": cache["mu"].tolist(), "std": cache["sd"].tolist(),
-                   "seed": args.seed, "degenerate_columns": degenerate,
-                   "displaced_weighting": {"rule": "none (M7: displaced true pairs are "
-                                                   "physically rare -- displaced tracks have no pLS)",
-                                           "n_true_displaced_total": mj["n_true_displaced_total"]},
-                   "train_args": {"epochs": args.epochs, "patience": args.patience,
-                                  "batch_size": args.batch_size, "lr": args.lr,
-                                  "feature_clip": not args.no_feature_clip}}, fh, indent=1)
-    log(f"saved {args.out_model} and {args.out_norm}")
-
-    # ---- TEST evaluation: overall + per chainNLayers (5/6+) + prompt/displaced ----
+    # ------------------------------------------------ TEST report (frozen test-60)
     Xte = torch.tensor(np.ascontiguousarray(cache["Xte"]))
+    tte = cache["tte"]
     s_te = batched_scores(model, Xte, device)
-    lab_te = cache["lab_te"]
-    vxy_te = cache["vxy_te"]
-    pt_te = cache["pt_te"]
-    nl_te = cache["nl_te"]
-    is_true = lab_te == 1
+    yte, wte = cache["yte"], cache["wte"]
+    vxy, spt, nl = cache["vte"], cache["pte"], cache["nl_te"]
+    is_true = yte == 1
     is_fake = ~is_true
-    acc_te = is_true & (pt_te > -998.0)
+    acc = is_true & (spt > -998.0)
 
-    print("\n=== attach-head MLP on TEST events ===")
+    print("\n=== M19 attach head on the FROZEN TEST-60 events "
+          "(all AUCs population-weighted by wgt) ===")
     res = {}
-    res["all"] = eval_block("all", s_te[is_true], s_te[is_fake])
-    for tag, m in (("chainNLayers=5", nl_te == 5), ("chainNLayers>=6", nl_te >= 6)):
-        res[tag] = eval_block(tag, s_te[is_true & m], s_te[is_fake & m])
-    # vxy subgroups: true pairs of the stratum vs ALL test fakes (fakes carry no
-    # displacement class -- same convention as train_chain.py). Pileup-sim true pairs
-    # (simVxy = -999) are their own stratum, NOT lumped into prompt.
-    res["prompt vxy<1"] = eval_block("prompt vxy<1", s_te[acc_te & (vxy_te < 1)], s_te[is_fake])
-    res["displaced vxy>=1"] = eval_block("displaced vxy>=1", s_te[acc_te & (vxy_te >= 1)], s_te[is_fake])
-    res["pileup-sim true"] = eval_block("pileup-sim true", s_te[is_true & ~acc_te], s_te[is_fake])
+    eval_block("ALL (both target types)", s_te[is_true], wte[is_true],
+               s_te[is_fake], wte[is_fake], res)
+    for tt, nm in ((0, "CHAIN targets (ttype 0)"), (1, "BARE-T3 targets (ttype 1)")):
+        mt = tte == tt
+        eval_block(nm, s_te[is_true & mt], wte[is_true & mt],
+                   s_te[is_fake & mt], wte[is_fake & mt], res)
+        fk, wfk = s_te[is_fake & mt], wte[is_fake & mt]
+        for tag, lo, hi in (("prompt vxy<1", 0.0, 1.0), ("displaced vxy [1,5)", 1.0, 5.0),
+                            ("displaced vxy [5,10)", 5.0, 10.0),
+                            ("displaced vxy >=10", 10.0, 1e9),
+                            ("displaced vxy >=1 (all)", 1.0, 1e9)):
+            m = acc & mt & (vxy >= lo) & (vxy < hi)
+            eval_block(f"  tt{tt} {tag}", s_te[m], wte[m], fk, wfk, res)
+        m = is_true & ~acc & mt
+        eval_block(f"  tt{tt} pileup-sim true", s_te[m], wte[m], fk, wfk, res)
+    for tag, m in (("chain nLayers=5", (tte == 0) & (nl == 5)),
+                   ("chain nLayers>=6", (tte == 0) & (nl >= 6))):
+        eval_block(tag, s_te[is_true & m], wte[is_true & m],
+                   s_te[is_fake & m], wte[is_fake & m], res)
 
-    # Logit-scale context for the thetaAttach threshold pick in K8.
-    for tag, m in (("true", is_true), ("fake", is_fake)):
-        q = np.quantile(s_te[m], [0.05, 0.25, 0.5, 0.75, 0.95])
-        print(f"  test {tag} logit quantiles 5/25/50/75/95%: "
-              + " ".join(f"{v:+.2f}" for v in q))
+    # ---- the M19 deliverable: CHAIN-universe precision/recall frontier vs the -a cut ----
+    ch = tte == 0
+    cuts = [0.0, 2.0, 4.0, 5.0, 6.0, 7.0, 7.5, 8.0, 8.5, 9.0, 10.0, 11.0, 13.0]
+    front = precision_frontier(s_te[is_true & ch], s_te[is_fake & ch], cuts)
+    print("\n  CHAIN-universe frontier on TEST-60 (unweighted; wgt==1 in this universe):")
+    print(f"    {'cut':>6} {'tp':>7} {'fp':>9} {'precision':>10} {'recall':>8}")
+    for k in front:
+        r = front[k]
+        p = "n/a" if r["precision"] is None else f"{r['precision']:.4f}"
+        rc = "n/a" if r["recall"] is None else f"{r['recall']:.4f}"
+        print(f"    {r['cut']:>6.1f} {r['tp']:>7d} {r['fp']:>9d} {p:>10} {rc:>8}")
+    res["chain_frontier"] = front
+    # ---- PER-ETA-BAND frontier: the input to a WP table -----------------------------
+    # LST's practice is one working point per eta bin chosen for ~uniform signal
+    # efficiency (interface/alpaka/Common.h kWp_pT3[10], 0.25-wide bins). Our -a is banded
+    # at 1.1 / 1.7 only, so this table answers directly whether one bar has one meaning.
+    if eta_te is not None:
+        bands = [("|eta|<1.1", 0.0, 1.1), ("1.1-1.7", 1.1, 1.7), (">=1.7", 1.7, 9.9)]
+        fine = [(f"{lo:.2f}-{lo + 0.25:.2f}", lo, lo + 0.25) for lo in np.arange(0, 2.5, 0.25)]
+        for label, blist in (("BAND (the -a/-a2/-a3 bands)", bands),
+                             ("FINE (LST's 0.25 bins)", fine)):
+            print(f"\n  CHAIN-universe recall/precision at cut 6.0 by |pLS eta| -- {label}:")
+            print(f"    {'band':>12} {'n_true':>8} {'n_fake':>9} {'recall':>8} {'prec':>8}"
+                  f" {'cut@rec.306':>12}")
+            for nm, lo, hi in blist:
+                mb = ch & (eta_te >= lo) & (eta_te < hi)
+                st, sf = s_te[is_true & mb], s_te[is_fake & mb]
+                if len(st) == 0:
+                    continue
+                tp = int((st >= 6.0).sum())
+                fp = int((sf >= 6.0).sum())
+                rc = tp / len(st)
+                pr = tp / (tp + fp) if (tp + fp) else float("nan")
+                # the cut this band would need for the GLOBAL recall of 0.3062 (r2 @ 6.0)
+                cq = float(np.quantile(st, 1.0 - 0.3062))
+                print(f"    {nm:>12} {len(st):>8d} {len(sf):>9d} {rc:>8.4f} {pr:>8.4f}"
+                      f" {cq:>12.3f}")
+                res[f"etaband_{label.split()[0]}_{nm}"] = {
+                    "n_true": len(st), "n_fake": len(sf), "recall@6": rc,
+                    "precision@6": pr, "cut_at_recall_0.3062": cq}
+    # displaced-pair recall on the chain universe at each cut
+    dm = acc & ch & (vxy >= 1.0)
+    res["chain_displaced_true_n"] = int(dm.sum())
+    res["chain_displaced_recall"] = {
+        f"{c:g}": (float((s_te[dm] >= c).mean()) if int(dm.sum()) else None) for c in cuts}
+    # same for the T3 universe (its threshold -AT3 lives at 6.0 in the FLAGSHIP)
+    t3 = tte == 1
+    res["t3_frontier"] = precision_frontier(s_te[is_true & t3], s_te[is_fake & t3],
+                                            [4.0, 5.0, 6.0, 7.0, 8.0])
 
+    print("\n  logit quantiles 5/25/50/75/95% (unweighted rows):")
+    for tt in (0, 1):
+        for tag, m in ((f"tt{tt} true", is_true & (tte == tt)),
+                       (f"tt{tt} fake", is_fake & (tte == tt))):
+            q = np.quantile(s_te[m], [0.05, 0.25, 0.5, 0.75, 0.95])
+            print(f"    {tag:>12}: " + " ".join(f"{v:+.2f}" for v in q))
+
+    if args.out_testauc:
+        with open(args.out_testauc, "w") as fh:
+            json.dump({"model": args.out_model, "best_epoch": best_epoch,
+                       "best_val_auc": float(best_auc),
+                       "objective": {"gamma_neg": args.gamma_neg,
+                                     "disp_mid": args.disp_mid, "disp_hi": args.disp_hi,
+                                     "chain_weight": args.chain_weight,
+                                     "val_metric": args.val_metric},
+                       "test": res}, fh, indent=1)
+        log(f"wrote {args.out_testauc}")
     log("TRAINING COMPLETE")
 
 

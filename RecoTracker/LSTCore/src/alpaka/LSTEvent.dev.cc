@@ -1679,8 +1679,6 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
   alpaka::memset(queue_, xcStats_buf, 0u);
   if (pixelSize_ > 0) {
     auto anchorPls_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, nPls);
-    auto anchorEta_buf = cms::alpakatools::make_device_buffer<float[]>(queue_, nPls);
-    auto anchorPhi_buf = cms::alpakatools::make_device_buffer<float[]>(queue_, nPls);
     auto nAnchors_buf = cms::alpakatools::make_device_buffer<uint32_t>(queue_);
     auto xcHash_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, chainxc::kHitHashSlots);
     alpaka::memset(queue_, nAnchors_buf, 0u);
@@ -1692,8 +1690,6 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
                         plsOwned_buf.data(),
                         pixelSize_,
                         anchorPls_buf.data(),
-                        anchorEta_buf.data(),
-                        anchorPhi_buf.data(),
                         nAnchors_buf.data());
     alpaka::exec<Acc1D>(queue_,
                         chainFlat_workDiv,
@@ -1717,15 +1713,11 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
                         plsOwned_buf.data(),
                         xcHash_buf.data(),
                         anchorPls_buf.data(),
-                        anchorEta_buf.data(),
-                        anchorPhi_buf.data(),
-                        nAnchors_buf.data(),
                         pixelSize_,
                         nHits,
                         nAllocatedTCs,
                         xcRetired_buf.data(),
-                        xcStats_buf.data(),
-                        chainConfig_);
+                        xcStats_buf.data());
     alpaka::exec<Acc1D>(queue_,
                         chainFlat_workDiv,
                         ChainXcChainArm{},
@@ -1769,6 +1761,39 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
                         nIn,
                         postStats_buf.data(),
                         chainConfig_);
+    // -CC9 (R3): the T4-class crossclean against the delivered seeded rows, applied to the KEEP
+    // array before the prefix so it needs no second compaction. Two passes over the same rows:
+    // publish the surviving seeded rows' outer-tracker hits, then clear the keep bit of any type-9
+    // row sharing a full mini-doublet with one of them.
+    if (chainConfig_.cc9MinShared > 0) {
+      auto cc9Key_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, chaincc9::kSlots);
+      auto cc9Val_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, chaincc9::kSlots);
+      alpaka::memset(queue_, cc9Key_buf, 0xFF);
+      alpaka::exec<Acc1D>(queue_,
+                          chainFlat_workDiv,
+                          ChainCc9Publish{},
+                          trackCandidatesBaseDC_->const_view(),
+                          trackCandidatesExtendedDC_->const_view(),
+                          keep_buf.data(),
+                          nIn,
+                          cc9Key_buf.data(),
+                          cc9Val_buf.data(),
+                          postStats_buf.data());
+      alpaka::exec<Acc1D>(queue_,
+                          chainFlat_workDiv,
+                          ChainCc9Apply{},
+                          trackCandidatesBaseDC_->const_view(),
+                          trackCandidatesExtendedDC_->const_view(),
+                          chainsDC_->view(),
+                          cc9Key_buf.data(),
+                          cc9Val_buf.data(),
+                          keep_buf.data(),
+                          class_buf.data(),
+                          nIn,
+                          postStats_buf.data(),
+                          chainConfig_);
+      alpaka::wait(queue_);  // the cc9 scratch dies with this scope
+    }
     alpaka::exec<Acc1D>(
         queue_, chainScan_workDiv, ChainSegPrefix{}, keep_buf.data(), offs_buf.data(), total_buf.data(), nIn);
     alpaka::exec<Acc1D>(queue_,

@@ -104,6 +104,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
   namespace chainattach {
     // prototype/PixelAttach.cc anonymous namespace.
     constexpr float kEps = 1e-6f;
+    // Radius a straight (zero-curvature) target reports to head input 19; 1e5 cm is far outside
+    // the detector, so the residual it produces is a saturated flag rather than an infinity.
+    constexpr float kStraightRadius = 1e5f;
     constexpr float kPi = 3.14159265358979323846f;
     // -RD seed-family dedup scratch. The table holds one entry per (pixel hit index, kept owner)
     // pair; at PU200 that is a few hundred owners x <= 4 hits, so a 16k-slot open-addressed table
@@ -132,6 +135,13 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
   }
 
   ALPAKA_FN_ACC ALPAKA_FN_INLINE float attachFabs(float v) { return (v < 0.f) ? -v : v; }
+
+  // A target's circle radius from its signed curvature. A straight target (kappa at or below the
+  // epsilon) reads the cap instead of overflowing, so head input 19 stays finite everywhere.
+  ALPAKA_FN_ACC ALPAKA_FN_INLINE float chainAttachRadiusOf(float fitKappa) {
+    float const a = attachFabs(fitKappa);
+    return (a > chainattach::kEps) ? (1.f / a) : chainattach::kStraightRadius;
+  }
 
   // The frozen per-input preprocessing of the r2 head for ONE input index: the Features.cc sanitize
   // followed by the generated header's optional log10(1 + x), clip and standardize, in that order.
@@ -184,6 +194,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     float phi;          // the dPhi fallback direction == the SEED phi (pixelSeeds.phi())
     float cx, cy, r, d;
     float hit0z, rt0;
+    // The seed's innermost anchor hit, for head input 19 (rphiResidInwards): its residual to the
+    // TARGET's circle. rt0 above is already built from these two, so they cost no extra load.
+    float hit0x, hit0y;
     // A11 / A15 per-seed resolved quantities, computed once here so the scoring loop pays one
     // register read per pair instead of a band lookup:
     //   eta        the SEED eta (pixelSeeds.eta()) -- the -XC dR^2 candidate side
@@ -219,9 +232,13 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     // changes the innermost member. Consumed by the -XC bare-chain arm's pass-1 dR^2 window; unused
     // (0) for bare-T3 targets.
     float tcEta, tcPhi;
+    // radius = 1/|fitKappa| clamped to kStraightRadius, the target's own circle radius. Consumed
+    // by head input 19 (rphiResidInwards); a bare-T3 target fills it the same way.
+    float radius;
     uint32_t chain;
     uint8_t centerValid;
   };
+
 
   // ------------------------------------------------------------------------------------------
   // The direction of motion of the pLS helix where it crosses radius R1 outbound, EXACTLY as
@@ -404,6 +421,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         o.hit0z = pixelSeeds.hit0Z()[p];
         float const hx = pixelSeeds.hit0X()[p], hy = pixelSeeds.hit0Y()[p];
         o.rt0 = alpaka::math::sqrt(acc, hx * hx + hy * hy);
+        o.hit0x = hx;
+        o.hit0y = hy;
         o.row = p;
         o.phiMask = 0u;  // only the scattered copies carry a cell set
         out[p] = o;
@@ -540,6 +559,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
 
         o.fitKappa = chains.features()[c][7];
         o.rotSign = (o.fitKappa >= 0.f) ? 1.f : -1.f;
+        // The target's own circle radius (head input 19). A straight target reads the cap rather
+        // than overflowing.
+        o.radius = chainAttachRadiusOf(o.fitKappa);
         o.xs[0] = attachStdz<7>(acc, o.fitKappa);
         o.xs[1] = attachStdz<8>(acc, o.tanLambda);
         o.xs[2] = attachStdz<9>(acc, chains.features()[c][10]);  // innermostLayer
@@ -676,6 +698,16 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     xOut[17 * xStride] = attachStdz<17>(acc, zResid);
     // targetType: chain target (-RT3 0, so the bare-T3 kind does not exist)
     xOut[18 * xStride] = attachStdz<18>(acc, 0.f);
+    // 19 rphiResidInwards: the SEED's innermost anchor hit's signed residual to the TARGET's own
+    // circle -- LST's rPhiChiSquaredInwards in content (PixelTriplet.h:330-339), one sqrt per pair.
+    // An invalid target circle keeps the 0 flag value, exactly as slot 16 does.
+    float residInw = 0.f;
+    if (cp.centerValid) {
+      float const rdx = pls.hit0x - cp.centerX;
+      float const rdy = pls.hit0y - cp.centerY;
+      residInw = alpaka::math::sqrt(acc, rdx * rdx + rdy * rdy) - cp.radius;
+    }
+    xOut[19 * xStride] = attachStdz<19>(acc, residInw);
     return true;
   }
 
@@ -822,7 +854,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
             // pairs the head had already scored as matches. Dropping it and re-fitting the three
             // bars buys dup barrel -.0046 / transition -.0027 at eff -.0005, displaced bit-flat
             // (977 evt, d3_ref/r_E1_977 vs r_BASE977). Ordering: BEFORE the delivery threshold
-            // (the crossclean sees sub-margin pairs; xcThr 3.15-3.75 sits below attachThr 6.0).
+            // (the crossclean sees sub-margin pairs; xcThr sits below attachThr).
             if (xcPairs != nullptr && pq.isQuad != 0u && lo >= pq.xcThr) {
               uint32_t const slot = alpaka::atomicAdd(acc, xcCursor, 1u, alpaka::hierarchy::Threads{});
               if (slot < xcCap) {

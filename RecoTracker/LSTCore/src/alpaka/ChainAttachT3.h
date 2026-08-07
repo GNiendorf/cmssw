@@ -192,6 +192,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         o.tanLambda = nodes.features()[node][2];
         o.fitKappa = nodes.features()[node][0];
         o.rotSign = (o.fitKappa >= 0.f) ? 1.f : -1.f;
+        // Head input 19 needs the target's own circle radius here exactly as the chain kind does.
+        o.radius = chainAttachRadiusOf(o.fitKappa);
 
         float const cx = triplets.centerX()[t3], cy = triplets.centerY()[t3];
         o.centerX = 0.f;

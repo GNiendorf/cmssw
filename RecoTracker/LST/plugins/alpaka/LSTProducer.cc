@@ -84,7 +84,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     c.xcTheta = xt.at(0);
     c.xcThetaT = xt.at(1);
     c.xcThetaE = xt.at(2);
-    c.xcDR2Pix = a.getParameter<double>("xcDR2Pix");
+    c.cc9MinShared = a.getParameter<int32_t>("cc9MinShared");
     c.replacePT5 = a.getParameter<bool>("replacePT5");
     c.replacePT3 = a.getParameter<bool>("replacePT3");
     c.attachSuppressBarePLS = a.getParameter<bool>("suppressBarePLS");
@@ -190,13 +190,13 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
         chainDesc.add<edm::ParameterSetDescription>("claim", claimDesc);
 
         edm::ParameterSetDescription attachDesc;
-        attachDesc.add<std::vector<double>>("theta", {6.0, 6.0, 6.0})
+        attachDesc.add<std::vector<double>>("theta", {7.3, 7.0, 6.4})
             ->setComment(
                 "-a / -a2 / -a3: pair-head delivery margins, banded on |seed eta| at 1.1 / 1.7. All "
                 "three at 6.0: the lowered barrel/transition margins spent ~34 displaced sims on "
                 "wrong-seed conversions and are unwound.");
-        attachDesc.add<double>("thetaT3", 6.0)->setComment("-AT3: the bare-T3 (stage B) delivery margin, global.");
-        attachDesc.add<double>("rpsThetaChain", 5.5)
+        attachDesc.add<double>("thetaT3", 6.450)->setComment("-AT3: the bare-T3 (stage B) delivery margin, global.");
+        attachDesc.add<double>("rpsThetaChain", 6.084)
             ->setComment("-RPSA: chain-side seed-retirement bar (global; the T3 bar is thetaT3).");
         attachDesc.add<double>("t3FakeMax", 0.10)
             ->setComment("-T3F: stage-B target admission on the T3 fake score (NaN rejected).");
@@ -206,11 +206,14 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
             ->setComment(
                 "-CCS / -CCS2 / -CCS3: chain-loser suppression bars per TC-|eta| band; >= 1e8 = band "
                 "OFF. All OFF: unwound with the -a lowering it was tuned alongside.");
-        attachDesc.add<std::vector<double>>("xcTheta", {3.665, 3.15, 3.75})
+        attachDesc.add<std::vector<double>>("xcTheta", {4.3, 3.6, 4.0})
             ->setComment(
                 "-XCT / -XCT2 / -XCT3: seed-crossclean bare-chain-arm logit bars per |seed eta| band. "
-                "The arm carries no geometric window (LST's dR^2 < 0.02 centroid window was dropped).");
-        attachDesc.add<double>("xcDR2Pix", 1e-6)->setComment("-XCR2: pixel-anchored crossclean dR^2 window.");
+                "The arm carries no geometric window; re-fitted for the 20-input head.");
+        attachDesc.add<int32_t>("cc9MinShared", 2)
+            ->setComment(
+                "-CC9: drop a delivered T4-class bare chain sharing this many outer-tracker hits with a "
+                "delivered seeded row (2 = one mini-doublet); 0 disables.");
         attachDesc.add<bool>("replacePT5", true)->setComment("-RT5: retire every carried pT5 row.");
         attachDesc.add<bool>("replacePT3", true)->setComment("-RT3: retire every carried pT3 row.");
         attachDesc.add<bool>("suppressBarePLS", true)

@@ -748,3 +748,414 @@ COMPOSITION WARNING for whoever integrates: -CC9's rows are a subset of the popu
 catches an ORDER-DEPENDENT residue the claim cannot (a T4-class chain accepted BEFORE the seeded
 chain in the K9 greedy walk was never blocked by the claim), which is why it still fires at all
 with -FC 1 in force. Priced on protoD3 head with the frozen config; anything R5-side changes it.
+
+[R8 21:05] THE ONE ARBITRATION CHANNEL THAT IS NOT A WASH -- MEASURED, AND IT SPENDS dupB, SO IT
+IS NOT PAYABLE FOR THIS ROUND. The D3W channel asserts "seed p and chain argT[p] are one track"
+and always kills the seed. That is free when both cover the same sim (my [R8 20:50] entry), but
+NOT free when the CHAIN IS FAKE: there the seed is the only real cover, so killing the seed loses
+the sim AND keeps the fake. Case census on the arm-off run (r_XCOFF300 = baseline -XC 1, barrel +
+transition, pairs/evt inside a same-track window calibrated on the known duplicate pairs):
+  A both cover same sim 6.990 (59.8%) | B seed matched CHAIN FAKE 1.207 (10.3%) | C chain matched
+  seed fake 0.173 | D both fake 0.007 | E different sims 3.320 (28.4%)
+  median chain m3 mX (= max(tc_dbgMP, tc_dbgMD), ALREADY computed by the chain 3-class head):
+  A 3.842, B 0.421, C 3.950, E 3.784 -- case B is the only low-margin case.
+IMPLEMENTED AS -R8X <mX bar> / -R8XE <etaMax> in protoR8 (one constant, NO new trained component,
+reuses m3mX): when D3W would retire seed p against chain c and m3mX[c] <= bar and |eta(seed)| <
+etaMax, delete the CHAIN TC instead and keep the seed. D3W is the LAST seed-retirement channel, so
+exactly one member can ever die -- set-safe by construction.
+GATE: protoR8 with -R8X unset is 33/33 BIT-IDENTICAL to d3_ref/r_E1.root (rebase_ref/
+cmp_branches.py; only tc_simIdxAllFrac ADDED) and +0.0000 on all 29 metrics.
+REAL A/B, 300 frozen evt vs d3_ref/r_E1 (eff .80960 effB .92590 dupB .02350 fakB .05450 nhB 9.869):
+  bar   chains deleted/evt    eff     effB     dupB     dupT    fakB     nhB   displaced bands
+  0.0        1.467         +.00030 +.00090  +.00180  +.00000 -.00010  -.021  ALL FOUR EXACTLY 0
+  1.0        5.320         +.00050 +.00140  +.00730  +.00000 -.00030  -.062  ALL FOUR EXACTLY 0
+  2.0        9.383         +.00060 +.00160  +.01320  +.00010 -.00050  -.099  ALL FOUR EXACTLY 0
+So what this actually is, is a CHEAP BARREL-EFFICIENCY LEVER WITH ZERO DISPLACED COST (effB
++.0009..+.0016, fake slightly BETTER, v15/v510/v1030/d15 all exactly .00000, transition and endcap
+untouched) that PAYS IN dupB -- the metric this round exists to fix. dupB .0235 -> .0253 / .0308 /
+.0367 against LST .0097. Its dupO exchange rate at bar 0 (eff +.00030 for dupO +.00050) is
+comparable to R2's -RPST trade and better than -RPSA's, so it is worth remembering as an
+efficiency lever AFTER dupB is fixed; it is not a dupB fix.
+TRAP T4 RE-CONFIRMED WITH A FACTOR: my offline pair-local model predicted dupB +.00015 at bar 1.0
+and the real channel gave +.00730. Reason: the arm's real pair set is 3.6x larger than any
+geometric same-track window, and the seed that survives a redirect frequently duplicates a
+DIFFERENT delivered row (an ATTACHED pT5-class TC) -- something no pair-local model can see. If
+you price a rule that KEEPS a row, the cost is in that row's OTHER relationships, not in the pair.
+Tooling: r8_ref/r8_pair.py (pair census + case A-E classifier + set-safe pricer with distinct
+displaced-sim counting), r8_ref/r8_frac.py, r8_ref/r8_run.sh, r8_ref/r8_table.py.
+
+[R6 21:20] THE SELECTOR GAP IS CLOSABLE WITH ONE CLOSED-FORM CREDIT, NO TRAINED COMPONENT.
+MEASURED A/B, frozen 300, vs d3_ref/r_E1 (the window-fix baseline), protoR6 = byte copy of
+protoD3 + one predicate; command `BASEHISTS=d3_ref/r_E1_hists.root r6_ref/r6_run.sh A1 -R6C 3.0`:
+
+  THE PREDICATE  retire iff  sAny >= bar(band) - C * [ |dPhi(seed, target TC)| < 0.005
+                                                       AND dca(target chain) < 0.05 ]
+  where sAny is the window-free channel's EXISTING score (per-seed max attach logit over
+  DELIVERED SEEDLESS chain TCs) and bar stays at the deployed 3.665 / 3.15 / 3.75. C = 3.0
+  barrel. Both gate quantities are ALREADY in the arm's working set: the target TC's phi (the arm
+  computes dEta/dPhi to it today) and the chain's dca (m3dcaAll, already a decision input at the
+  T4/T5 split, main.cc:3945). No new score, no new buffer, no weights, three constants.
+
+  dup barrel      .0235 -> .0159  (-.0076)      <- the trained SRH head (D3 S5, REFUSED as a
+  dup transition  .0205 -> .0205  ( .0000)         second component) bought -.00744 here
+  dup endcap      .0712 -> .0712  ( .0000)
+  dup overall     .0489 -> .0466  (-.0022)
+  eff overall     .8096 -> .8091  (-.0004, inside the .0005 budget)  effB -.0011 effT/effE 0
+  fake B/T/E      +.0002 / .0000 / .0000        mean nhitOT barrel 9.869 -> 9.908 (+.039)
+  DISPLACED  vxy[5,10) .0000  vxy[10,30) .0000  dxy[1,5) .0000  dxy[5,10) .0000 EXACTLY;
+             vxy[1,5) -.0015 = a08_distinct DISP1 LOST 0 GAINED 2 of 2572, DISP5/10/30 ALL 0.
+  GATE: credits unset (default 0) reproduces r_E1 on 33/33 branches BIT-IDENTICALLY
+        (rebase_ref/cmp_branches.py) and 0.0000 on all 29 metrics (r6_ref/r_agg_GATE300.txt).
+  Adding `-R6C2 2.0` (transition) gives dupT -.0016 for effT -.0005 and vxy[1,5) -.0022 -- a
+  worse trade than the barrel arm; report separately, do not bundle.
+
+WHY IT WORKS (mechanism, and it is a recon fact for R1/R7/R8): the bar is a threshold on a
+LOGIT and nothing else, so it cannot use the two facts that decide the question. (1) AZIMUTHAL
+COINCIDENCE: |dPhi| < 0.005 between the seed and the target TC (the OLD dR window was
+dR^2 < 0.02, i.e. dPhi ~ 0.14 -- 28x too loose to discriminate; dropping it was right, but the
+TIGHT version is a positive indicator, not a reach limit). (2) TARGET PROMPTNESS: a large-dca
+chain that a pLS points at is usually a DIFFERENT track (or a fake), which is exactly R2 21:35's
+mechanism for why the attached-target arm failed. Offline (977 evt, frozen 300 held out,
+r6_ref/r6_*.py on d3_ref/seeds977c.csv.gz): at equal efficiency cost the credit takes the barrel
+from dDupB -.0086 (bar only) to -.0123, against a GBDT-on-all-29-site-features ceiling of -.0143.
+BONUS: the dca gate makes the mechanism STRUCTURALLY displaced-safe -- a displaced sim's chain has
+large dca and can never receive the credit; measured 0 EFFCAR rows with vxy >= 5 in the extra set.
+
+FALSIFIED / CORRECTION for the round: the 4-LAYER TARGET LEAD IS NOT A BARREL LEAD. In the
+barrel survivor pool only 2.6% of rows (210 of 7934 labelled A or EFFCAR) have a 4-layer best
+target, and "+credit if tNL == 4" is worth 0.0000 at every cost. R2 21:35's "59% of window-free
+retirements are decided on 4-layer targets" is an ALL-BANDS number and is an endcap/transition
+statement. R1's training fix is still right for delivery; it is not the barrel dup lever.
+
+[R5 22:40] CENSUS CONFIRMED ON 977 (r5_ref/cen_ours977.txt vs cen_lst977.txt, same 977 events;
+our run r_BASE977 reproduces the FINDINGS_R2 baseline to the digit: eff .8091 dupB .0231 dupT .0199
+dupE .0709 fakB .0551 fakT .0592 nhOT 6.435 vxy[5,10) .7216 vxy[10,30) .7125 dxy[1,5) .5822).
+Barrel duplicate groups/evt: ours 6.374 vs LST 2.726. T5c+pLS 4.735 vs 1.502 (x2 rows = 6.47 of the
+7.27 barrel dup-ROW excess = 89%); chain-chain total 1.529 vs LST's OT-OT 1.064 = +0.47 = 13%.
+Overlap class, barrel: ours DISJOINT 0.111/evt PARTIAL 1.405 COINCIDENT 0.000; LST 0.057 / 0.251 /
+0.781. TRUE CONSTRUCTION SPLITS (both members chain-built, zero shared hits) = 0.031/evt in the
+barrel - one per 32 events. Also confirmed at 977: barrel per-class fake rates ours/LST
+T5c .1379/.0928 on 131730/57497 rows, T4c .6374/.8138, pT5 .0064/.0092, pT3 .0206/.0211,
+pLS .0290/.0294; barrel meanNhOT among OT-carrying rows 10.350 vs 10.508.
+MECHANISM OF THE SURVIVING CHAIN-CHAIN DUPLICATE, nailed: EVERY chain TC has nMDs == nLayers ==
+nhitOT/2 (100% of 90314 barrel chain TCs over 200 evt: nL5/nMD5/10 hits or nL6/nMD6/12 hits, zero
+exceptions). So a barrel pair of 5-layer chains sharing exactly 1 MD carries ~18 distinct hits on
+one sim, which is only possible if the sim populated TWO DISTINCT MDs in several of its layers and
+the two chains made OPPOSITE choices. It is an ALTERNATE-MD SIBLING, not a split and not a
+mis-weld: no welding decision can merge them (a merged path would use two MDs in one layer), and
+the only lever that reaches them is the K9 claim tolerance - measured and priced in [R5 22:00].
+SEPARATE LEAD, endcap (not a deficit, our dupE .0702 is already under LST's .0832, so nobody should
+spend anything on it now): the endcap DOES have a real split population, DISJOINT 0.878/evt vs LST
+0.167, and 55% of it involves a pT3-class stage-B bare-T3 delivery that covers a piece of a track a
+chain already covers elsewhere. If the endcap ever becomes the target, that is where its splits are.
+
+[R8 21:10] RECON HAND-OFF TO R1 AND R7, A LABELLED SET OF ATTACH-HEAD MISSES. Every pair in the
+barrel duplicate cell is, BY TRUTH, one track (both members match the same sim above the harness's
+0.75 hit fraction) AND both members survived, so the D3W channel did not retire the seed: for the
+quad seeds in the cell -- which is all the channel may touch -- the head's max logit over every
+delivered seedless chain is BELOW 3.665, while its own true partner chain is one of those targets.
+So 4.735 barrel + 1.569 transition pairs/evt (977 evt) are truth-verified (pLS, seedless chain)
+same-track pairs on which the head scores under 3.665, i.e. far under the 6.0 attach bar. That is
+a clean, already-delivered, per-event labelled set for the head's RECALL problem, and it is exactly
+the cell that produces the barrel duplicate excess.
+WHY IT MATTERS FOR THE CHOICE BETWEEN CONVERSION AND DELETION, measured: within this cell,
+CONVERSION AND SEED-DELETION ARE EQUIVALENT on duplicate rate, efficiency and length (deleting the
+seed and merging the seed into the chain both remove exactly one row and keep the OT hits), and
+NEITHER can move the barrel fake numerator, because every row in the cell is MATCHED. The bare
+chain class's .1512 fake rate is carried by chains with no true seed partner at all, which is a
+population no pair-level rule -- deletion, arbitration or conversion -- reaches from this cell.
+R7: your fake win has to come from chains whose true partner was never built or never delivered,
+not from the ones a bare seed is already duplicating.
+ALSO, hit-level quality of the two members (protoR8 exposes the harness's own per-TC match
+fractions as a new inert branch tc_simIdxAllFrac; r8_ref/r8_frac.py, 300 evt, 1431 barrel pairs):
+mean fraction SEED 1.0000 vs CHAIN 0.9290 (transition 1.0000 vs 0.9299); the seed is strictly
+purer in 44.0% of barrel pairs and the CHAIN is strictly purer in 0.0%; the chain's p05 is 0.80,
+i.e. the worst kept chains carry 2 of 10 hits from another track. The fraction is a purity over the
+TC's OWN hits and the seed only has 4 of them, so this is not a like-for-like comparison -- but it
+does mean the row we keep is the dirtier one at the hit level, and it costs nothing measurable.
+
+[R8 21:15] 977-EVENT CONFIRMATION of the -R8X frontier (protoR8, r8_ref/r8_run.sh with
+LSTN=rebase_ref/LSTNtuple_instr_977evt.root BASEHISTS=d3_ref/r_E1_977_hists.root; baseline
+eff .8091 effB .9249 dupB .0231 dupT .0199 dupE .0709 fakB .0551 nhB 9.868 v15 .8000 v510 .7216
+v1030 .7125 d15 .5822 d510 .2452). Same shape as 300, so the NON-recommendation stands:
+  bar  chains deleted/evt   eff     effB    dupB    dupT    dupE    fakB    nhB   displaced
+  0.0        1.569        +.0003  +.0008  +.0021  +.0000  +.0000  -.0001  -.022  ALL 5 EXACTLY 0
+  1.0        5.473        +.0006  +.0016  +.0079  +.0000  +.0000  -.0003  -.065  ALL 5 EXACTLY 0
+Also measured at 300 evt: bar -1.0 fires 0.353/evt (eff +.0000 effB +.0001 dupB +.0003 fakB
+-.0001) and bar -2.0 fires ZERO times, which doubles as a second neutral-setting gate (all 29
+metrics +.0000, nTC identical). Full frontier and the a08_distinct output (LOST 0 / GAINED 0
+distinct displaced sims in DISP1/5/10/30 for every bar) in r8_ref/STATUS.md.
+=> R8's direction is CLOSED. Deleting the seed is right; the one non-wash arbitration channel is a
+zero-displaced-cost BARREL EFFICIENCY lever (effB +.0008..+.0016 at eff +.0003..+.0006, fake
+slightly better, transition and endcap untouched) that PAYS IN dupB, so it is on the shelf for
+after dupB is fixed and is NOT a dupB fix. Nothing to port from protoR8 except, if anyone wants
+it, the inert tc_simIdxAllFrac branch in OutputWriter.cc (the harness's own per-TC match
+fractions, already computed; it is what makes "which member matches better" answerable offline).
+
+[R7 22:05] THE CONVERSION/RETIREMENT INTERLOCK -- WHY A LOWER ATTACH BAR CANNOT BUY BARREL
+DUP, AND THE HISTORICAL TRAP REPRODUCED. Chain-side dump (protoR7 -R7D, one row per
+delivered chain TC with its OWN bidder ladder from ga.pairLog + truth; 300 frozen evt,
+window-fix baseline; gate 33/33 bit-identical + 0.00000 on 29 metrics).
+* THE CELL: 4.94/evt barrel seedless nL>=5 chain TCs have a delivered bare pLS row on the
+  same sim, and in 4.68/evt that seed IS a scored bidder for the chain. Its pair logit is
+  median 2.60, q90 3.48, and the fraction at or above the -D3W bar 3.665 is EXACTLY 0.0000.
+  That is structural, not luck: -D3W retires any quad seed whose max logit over delivered
+  seedless chain TCs reaches 3.665, so THE SURVIVING DUPLICATE ROWS ARE BY DEFINITION THE
+  PAIRS THE HEAD SCORES BELOW THE BAR (D4's truncated-residual defect, conversion side).
+  Measured: a conversion rule at bar >= 3.665 removes 0.00 duplicate rows/evt.
+* CONVERSION IS DOMINATED BY DELETION ON THE ERROR MODE, and here is the arithmetic:
+  Matching.cc frac = matched hits / TC hits, strict > 0.75, so a WRONG QUAD seed attached to
+  a 5-layer chain gives 10/14 = 0.714 and to a 6-layer 12/16 = 0.750 -- the chain's own sim
+  is LOST OUTRIGHT. Deletion's error mode only removes a seed row. A triplet seed would be
+  safe (10/13 = 0.769) but EVERY delivered bare row in our config is a QUAD (-ZP8 6 admits
+  isQuad only; measured covP8-by-triplet = 0.00/evt in all three bands), so that loophole is
+  empty.
+* THE TRAP, QUANTIFIED (real A/B, 300 evt, protoR7 stage A3 = same head, same pairs, lower
+  bar, barrel+transition only): bar 3.0 no margin -> dupB -.0061 dupT -.0019 eff -.0002 BUT
+  vxy[5,10) -.0118 vxy[10,30) -.0216 dxy[1,5) -.0190 fakB +.0028. bar 3.665 -> dupB -.0007
+  and STILL v510 -.0118 v1030 -.0128 d15 -.0123. bar 4.0 + runner-up margin 2 -> dupB -.0004,
+  v1030 -.0072 d15 -.0067. So a plain lowered bar (or any margin/mutual-best/tight-dEta
+  variant of it) walks the head's own curve and pays the displaced bands, exactly as the
+  maintainer's unwound -a change did.
+* NOT CONTENTION EITHER: only 1.07/evt barrel chains have a bidder >= 6.0 and no attach, and
+  only 0.32/evt have a FREE bidder >= 6.0; none of those seeds is a delivered bare row. The
+  "no second-best fallback in v1" note in PixelAttach.cc is worth ~0 duplicates.
+
+[R7 22:10] RECON THAT CHANGES R1's AND R6's PLANS: THE HEAD'S BLIND SPOT IS pT, NOT GEOMETRY,
+AND ITS LOW-LOGIT WINDOW IS SEPARABLE IN pT ON THE FROZEN WEIGHTS. Barrel, 300 evt.
+* Duplicate-cell TRUE pairs vs the pairs the head ACCEPTS (delivered type-7, rank-1 taken):
+  |dEta| 0.049 vs 0.043 and |dPhi| 0.0045 vs 0.019 -- the cell is MORE consistent
+  geometrically -- but pLS pT median 6.30 GeV (q90 27.6) vs 1.30 GeV (q90 2.47), and 51% vs
+  95% pileup-only sims. The cell is HIGH-pT, in-denominator tracks.
+* Rank-1 free-bidder precision in the logit window [2.0, 3.665): 0.128 at pt in [1,2),
+  0.162 at [2,5), 0.503 at [5,10), 0.943 at pt >= 10. In [3.0, 3.665): 0.293 / 0.457 /
+  0.925 / 0.962. Above the bar (>= 3.665) precision is 0.85-0.99 in every pt bin, i.e. the
+  head is calibrated only where its training lives (low pT, pileup sims).
+* FOR R1: the requirement to convert or retire the cell is "lift 4.68 true (chain,seed)
+  pairs/evt now scored 1.0-3.5 above 3.665 without lifting the 26/evt false rank-1 pairs
+  sharing that window" -- and pT (plus the error-scaled radius pull / chi-squareds you are
+  harvesting) is the axis that does it. This is worth the WHOLE barrel gap: 4.68 rows/evt
+  vs the +3.0 rows/evt excess.
+* FOR R6: the same pT banding applies to the DELETION exit, which has the cheaper error
+  mode. Lowering -D3W's bar only for high-pT seeds is the obvious free variant; I am pricing
+  `-R7RB 2.0 -R7RP 8.0` (retire if pt >= 8 GeV and the -D3W reduction >= 2.0, |eta| < 1.7)
+  in protoR7 now and will post the number. My conversion win and any pT-banded deletion win
+  REMOVE THE SAME ROWS -- do not sum them.
+
+[R6 21:55] 977-EVENT CONFIRMATION of the coincidence credit, plus the PORT FORM and TWO
+FALSIFICATIONS. All vs d3_ref/r_E1_977 (eff .8091 effB .9249 dupB .0231 dupT .0199 dupE .0709
+dupO .0485 fakB .0551 nhB 9.868 v15 .8000 v510 .7216 v1030 .7125 d15 .5822 d510 .2452).
+Command: LSTN=rebase_ref/LSTNtuple_instr_977evt.root BASEHISTS=d3_ref/r_E1_977_hists.root
+         r6_ref/r6_run.sh B1_977 -R6C 3.0
+
+  metric            baseline   -R6C 3.0    -R6C 2.5    LST master
+  eff overall        .8091     .8088       .8088       .8096
+  eff B / T / E      .9249/.8789/.7446  .9241/.8789/.7446  .9242/.8789/.7446  .9243/.8800/.7466
+  DUP BARREL         .0231     .0157       .0163       .0097
+  dup transition     .0199     .0199       .0199       .0131
+  dup endcap         .0709     .0709       .0709       .0849
+  dup overall        .0485     .0463       .0465       .0518
+  fake B / T / E     .0551/.0592/.0430  .0553/.0592/.0430  same     .0437/.0454/-
+  eff vxy[1,5)       .8000     .7989       .7993       .7772
+  eff vxy[5,10)      .7216     .7216       .7216       .6442
+  eff vxy[10,30)     .7125     .7125       .7125       .6257
+  eff dxy[1,5)       .5822     .5822       .5822       .5104
+  eff dxy[5,10)      .2452     .2452       .2452       .2291
+  mean nhitOT barrel 9.868     9.907       9.903
+  n TC             2004319   2002521     2002687
+
+56% of the barrel duplicate gap to LST closes (+.0134 -> +.0060) for -.0003 of overall efficiency,
+with dupT / dupE / all four deep displaced bands EXACTLY unchanged and fake +.0002 barrel only.
+a08_distinct 977: DISP1 LOST 0 GAINED 5 of 8497 (0.06%), DISP5 / DISP10 / DISP30 EXACTLY 0 -- the
+displaced lead goes +715 -> +710 distinct DISP1 sims and is untouched at every deeper tier. The
+REFUSED trained head (D3 S5) spent 7 DISP1 sims for dupB -.0072 and dupT -.0051 at eff -.00052.
+GATE, final binary (all credits unset): 33/33 branches BIT-IDENTICAL to d3_ref/r_E1.root and
+0.0000 on all 29 metrics (r6_ref/r_agg_GATE300B.txt).
+
+THE PORT FORM IS FREE (300 evt, `-R6C 3.0 -R6PP 1`): applying the credit PER PAIR -- atomicMax
+the CREDITED logit instead of crediting the argmax target -- is a superset of the per-seed form
+and lands on the same frontier (dupB -.0078 at eff -.0005 vs -.0076 at -.0004). That matters
+because the per-pair form needs NO argmax target: in ChainAttach.h the arm already walks
+(seed, delivered seedless chain TC) pairs, so the change is to atomicMax
+  logit + credit * (fabs(wrapDPhi(plsPhi - tcPhi)) < 0.005 && chainDca < 0.05)
+instead of `logit`. Three constants in ChainConfig.h, no new buffer, no second pass, no weights.
+
+FALSIFIED 1, THE OWNERSHIP CLAUSE (this is the one to record): the offline oracle says a second
+credit for "I am this target's own best bidder" is worth another dDupB -.0009 (AUC-wise it takes
+the closed form from .9285 to the GBDT's .957 region). MEASURED it is worth ZERO: `-D3W 5.42
+-R6C 3.0 -R6M 2.0` gives dupB -.0070 at effB -.0007, i.e. exactly ON the one-clause frontier
+(-R6C 2.5 gives -.0069 at -.0009), and it costs effT -.0076 because a per-target bar credit is
+not band-separable. So D4/R2's "ownership variants are worth zero" now also holds for ownership
+as a CREDIT rather than as a matching rule. One clause is the answer.
+
+GATE CONSTANTS ARE NOT KNIFE-EDGE, and looser is better at the full budget (300 evt):
+  -R6C 3.0, gates .005/.05          eff -.0004  effB -.0011  dupB -.0076
+  -R6C 3.0 -R6PP 1, gates .005/.05  eff -.0005  effB -.0014  dupB -.0078
+  -R6C 3.0, gates .01/.10 (G2)      eff -.0005  effB -.0014  dupB -.0086  (dupO -.0025)
+  -R6C 2.5 / 2.0, gates .005/.05    eff -.0004 / -.0002      dupB -.0069 / -.0058
+Every row above leaves dupT, dupE, vxy[5,10), vxy[10,30), dxy[1,5), dxy[5,10) EXACTLY unchanged
+and fakB at +.0002. G2's 977 confirmation is r6_ref/r_G2_977.
+
+FALSIFIED 2 (already logged at 21:20, restated with the number): a pt-scaled dPhi gate
+(|dPhi| < a + b/pt, the physically motivated version, since the credited population is 91%
+pt > 4 GeV) buys dDupB -.0004 for dEff -.00005 over the fixed 0.005 window -- the same exchange
+rate, one more constant. Not worth it.
+
+VERDICT ON THE .057 OF AUC (the question I was given): reachable in closed form, and what is left
+is not selector-limited. The credit realises dDupB -.0123 of the GBDT oracle's -.0143 at equal
+efficiency cost (bar-only is -.0086), and the residual population after the credit is
+0.70-purity (3081 free-to-retire rows vs 1357 sole-cover rows over 977 evt), i.e. an exchange
+rate of ~3 duplicates per unit of efficiency where the credit runs at ~14. No selector, trained
+or not, can buy the rest inside a .0005 budget. The remaining barrel duplicate gap to LST is
+therefore NOT a selector problem any more -- it is the 29.7% seedless-chain conversion share
+(R7's lane).
+[R6 22:05] correction to my own 21:55 entry: the credited barrel population is 96.4% pt > 4 GeV (2052 rows, r6_ref/r6_feat.py + r6_recon.py), not 91%. The mechanism is specifically the HIGH-pT PROMPT duplicate -- exactly the population LSTs deleted pLS/T5 embedding CrossCleanpLS used to kill -- which is why a fixed (unscaled) dPhi window is the right form.
+
+[R6 22:15] COMPOSABILITY, measured (300 evt, r6_ref/r_agg_ST1.txt): the coincidence credit and
+R2 22:20 s two recommended deletions STACK ADDITIVELY with no interaction. "-R6C 3.0 -XCR2 0
+-RPSA 1e7" vs d3_ref/r_E1: eff -.0003 (BETTER than the credit alone, because the -RPSA deletion
+gains efficiency), effB -.0010, dupB .0235 -> .0160 (-.0075; the arithmetic sum of my -.0076 and
+R2 s +.0002), dupT +.0005, dupE +.0019, dupO .0489 -> .0478 (LST .0518), fakB +.0002, and
+vxy[5,10) / vxy[10,30) / dxy[1,5) EXACTLY 0 with vxy[1,5) -.0007. So the coordinator can take
+both without re-fitting either.
+
+[R1 21:40] THE ATTACH HEAD'S MISSING FEATURE IS FOUND, AND IT IS NOT THE ONE ANYONE EXPECTED.
+Offline, frozen TEST-60, chain-target rows, IDENTICAL rows for every head (r1_ref/r1_compare.py;
+each head fed its own leading-kInput columns exactly as AttachInference.cc does). Recipe held
+at r2's verbatim (gamma_neg 2.0, disp 8/16, chain_weight 1.0, val_metric chain); ONLY the input
+columns change. On r2's OWN universe (chain nLayers >= 5):
+
+  head                          inputs   AUC     prec@rec.309   prec@rec.583
+  r2 (shipping)                     19  .99410      .6970          .4633
+  + |pLS eta| only                  20  (chain AUC .99605 vs .99614 without) -- NOTHING
+  + rphiResidInwards only  (MIN1)   20  .99701      .8534          .6735
+  + whole LST residual block (MIN3) 27  .99772      .8106          .6755
+  + all 14 candidates      (ALL)    33  .99764      .8577          .7177
+
+recall .309 is the recall production's -a 6.0 reaches; recall .583 is the recall the WINDOW-FREE
+CROSSCLEAN BAR 3.665 reaches. So at the crossclean operating point the incumbent head is 46%
+precise and one extra input makes it 67%. On the nLay==4 universe (R2's measurement: 59% of the
+window-free channel's retirements) AUC goes .99566 -> .99897 with the same one input.
+
+rphiResidInwards = |pLS_hit0 - C_target| - R_target, i.e. the pLS's innermost hit's residual to
+the TARGET's own circle (R_target = 1/|fitKappa|, the circle already behind slot 7). It is LST
+master's rPhiChiSquaredInwards in content (PixelTriplet.h:330-339), ONE sqrt per pair, and needs
+no new per-hit data. FALSIFIED as leads: |eta| alone buys nothing, and the RADIUS PULL family
+(radiusPull, radiusAsym, log10TgtRadius, log10SigmaR) is the LEAST-used block in a head that has
+all of it -- permutation dAUC 2-10 e-4 against rphiResidRms's 8841 e-4. Consistent with master:
+LST forms no pull anywhere; pt3dnn takes log10 of the three radii separately. WHAT CARRIES THE
+GAIN IS RESIDUALS OF ONE OBJECT'S HITS AGAINST THE OTHER OBJECT'S CIRCLE.
+Cost: the whole 14-feature block costs the offline prototype's attach stage 488 -> 714 ms/evt
+(+46%); MIN1 alone is one sqrt. GATES: the 33-slot contract with the 19-input head is 33/33
+BIT-EXACT twice (before and after the importance reorder of slots 19-32), and the reorder is
+verified a pure permutation on a re-dumped chunk. Parity C++ vs torch max|dLogit| 1.8e-5.
+
+[R6 22:25] G2 CONFIRMED ON 977 AND IT IS THE BETTER OPERATING POINT (r6_ref/r_agg_G2_977.txt,
+-R6C 3.0 -R6P 0.01 -R6D 0.1, vs d3_ref/r_E1_977). Same predicate, looser gates:
+  eff .8091 -> .8087 (-.0004)   effB .9249 -> .9237 (-.0011)   effT / effE EXACTLY .0000
+  dup barrel .0231 -> .0148 (-.0083)   dupT -.0001   dupE .0000   dupO .0485 -> .0461
+  fakB +.0002   fakT / fakE .0000      mean nhitOT barrel 9.868 -> 9.912 (+.044)
+  vxy[1,5) -.0011 (IDENTICAL to the tight-gate config) ; vxy[5,10) .0000  vxy[10,30) .0000
+  dxy[1,5) .0000  dxy[5,10) .0000      2.584 extra seeds retired/evt, n TC -2080
+This DOMINATES the tight-gate point (dupB -.0083 vs -.0075 for one extra .0001 of efficiency and
+the same displaced spend), so the recommendation is now |dPhi| < 0.01 AND dca < 0.10 with credit
+3.0, barrel only. 62% of the barrel duplicate gap to LST closes (+.0134 -> +.0051). The whole
+frontier (977): C 2.5 tight .0163 / C 3.0 tight .0157 / C 3.0 loose .0148, at eff -.0002 /
+-.0003 / -.0004 -- i.e. the mechanism is not knife-edge in any of its three constants.
+[R6 22:35] a08_distinct for the RECOMMENDED config (977, -R6C 3.0 -R6P 0.01 -R6D 0.1 vs baseline): see r6_ref/a08_G2_977.log (numbers above in this run log).
+
+[R6 22:40] a08_distinct for the RECOMMENDED config (977 evt, -R6C 3.0 -R6P 0.01 -R6D 0.1 vs
+d3_ref/r_E1_977; r6_ref/a08_G2_977.log): DISP1 LOST 0 GAINED 5 of 8497 (0.06%), DISP5 / DISP10 /
+DISP30 LOST 0 GAINED 0 EXACTLY. That is IDENTICAL to the tight-gate config, i.e. opening the gates
+from .005/.05 to .01/.10 buys dupB -.0008 more and costs ZERO extra displaced sims at every tier.
+The displaced lead over LST stands at +710 distinct DISP1 sims and is untouched at DISP5/10/30.
+This closes R6: recommendation = one credit (3.0) on one conjunctive gate (|dPhi| < 0.01 AND
+target dca < 0.10), barrel only, per-pair port form, 977-confirmed dupB .0231 -> .0148 at
+eff -.0004.
+
+[R7 23:10] MEASURED WIN, CONFIRMED AT 977 EVT: A pT-BANDED, RUNNER-UP-MARGIN CONVERSION RULE.
+Three constants over quantities that already exist, the frozen head, no new component, and it
+REMOVES rows (a (bare chain, bare seed) pair becomes the single attached row it should have
+been). protoR7 stage A3; gate PASSED three times (dump only / rule compiled in / rule +
+comparison arm): 33/33 branches bit-identical to d3_ref/r_E1.root and 0.00000 on all 29
+metrics with the bars unset.
+RULE: in |eta| < 1.7, a chain stage A left BARE takes its highest-logit FREE bidder iff
+  (a) pLS pt >= 8 GeV,  (b) logit >= 1-2,  (c) logit - (the chain's RUNNER-UP bidder logit) >= M.
+(b) is nearly inert (bar -5 vs 1 differ by 4 conversions/300 evt); (a) and (c) do the work.
+977 evt vs d3_ref/r_E1_977 (dupB .0231 dupT .0199 dupE .0709 eff .8091), endcap band OFF:
+  M     conv/evt  dupB    dupT    dupO    eff     effB    effT   fakB   v1030   distinct disp sims
+  3.0     1.78   -.0013  -.0004  -.0005  +.0000  +.0000  +.0002  .0000  -.0002   -1 D1 / -2 D5,D10
+  2.5     2.27   -.0023  -.0007  -.0008  -.0001  -.0001  -.0001  +.0001 -.0010   (pending)
+  2.0     2.60   -.0029  -.0010  -.0010  -.0001  -.0001  -.0003  +.0001 -.0017   -9 D1 / -8 D5,D10
+  3.0 with pt >= 5 instead of 8: dupB -.0016 dupT -.0005 eff +.0000 v1030 -.0007 v15 +.0002.
+  In EVERY row above: vxy[0,1), vxy[1,5) (+.0002 = a GAIN), vxy[5,10), dxy[1,5), dxy[5,10),
+  dxy[10,30) and dupE are EXACTLY .0000, fake overall .0000, and mean nhitOT barrel goes
+  +.007 / +.011 / +.015 (the converted rows are longer objects). TC rows -366 / -637 / -814.
+RECOMMENDED: M = 3.0, pt >= 8 (dupB -.0013 at literally zero efficiency cost in every band
+except one distinct DISP30 sim), with M = 2.5 / 2.0 offered as the maintainer's dup-for-
+displaced trade. CAVEAT stated with the headline: the three constants were fit on the same
+300-event slice, the barrel/transition bands only, and the win OVERLAPS the deletion-side
+cell (see below) -- it must be composed by measurement, never summed.
+PORT SHAPE (small): ChainAttach.h:802-891 already tracks a per-target running best inside
+one pair loop. Add a second local float for the RUNNER-UP (tracked BEFORE the attachThr
+test, so below-bar bidders count), and after the loop, if bestPls < 0, accept the best
+below-bar candidate when pt/logit/margin pass. No new buffers, no new kernel, 3 ChainConfig
+constants; the one design choice is that the conversion candidates must enter the existing
+one-pLS-one-owner arbitration with LOWER priority than the above-bar grants (that is the
+prototype's stage ordering).
+
+[R7 23:15] THE TWO EXITS PRICED ON THE SAME POPULATION (300 evt): CONVERSION BEATS DELETION
+BY 5x ON THE EXCHANGE RATE, and the reason is the ambiguity term. Same pT band, same
+evidence, deletion arm = retire a seed with pt >= 8 whose -D3W reduction >= 2.0 in
+|eta| < 1.7 (protoR7 -R7RB 2 -R7RP 8): 2.46 seeds/evt, dupB -.0052 dupT -.0022 BUT
+eff -.0009, effB -.0015, vxy[1,5) -.0015. Conversion at the same pT band and bar with the
+runner-up margin: 2.59/evt, dupB -.0030 at eff -.0001. Per unit of efficiency spent that is
+30 units of dupB for conversion against 5.8 for deletion.
+FOR R6: the deletion predicate has no "which chain claims this seed" term at all -- adding
+the seed-side ambiguity analogue (sA - sA2, both already computed in the -D3W reduction) is
+the obvious next move, and the pT band above is free discrimination on the frozen head. But
+note we are then both removing THE SAME ROWS: do not sum the wins.
+[R7 23:35] (fills the "pending" above) M = 2.5, pt >= 8, 977 evt: distinct displaced sims
+LOST 5 GAINED 1 => net -4 at DISP1 and -5 at DISP5/DISP10, -1 at DISP30. So the full
+conversion frontier in distinct displaced sims per 977 events is M3 -1/-2, M2.5 -4/-5,
+M2 -9/-8, for dupB -.0013 / -.0023 / -.0029.
+
+[R1 23:20] MEASURED ON 977 EVENTS vs the window-fix baseline (d3_ref/r_E1_977_hists.root):
+the retrained attach head buys barrel/transition duplicates AND fake rate AND all four
+displaced bands, at zero overall efficiency. Head = MIN1 (base19 + rphiResidInwards, 20
+inputs, ONE sqrt per pair). Every logit bar re-fitted for the new head's scale
+(r1_maptheta.py matched selectivity, then a 3-round scan); harness r1_ref/r1_ab.sh.
+
+  metric   baseline    G2 (recommended)    G1 (aggressive)     E2 (conservative)
+  effO      .8091        .8091  -.0000       .8083  -.0008      .8097  +.0007
+  effB      .9249        .9229  -.0020       .9218  -.0031      .9236  -.0012
+  effT      .8789        .8796  +.0007       .8785  -.0004      .8813  +.0024
+  effE      .7446        .7461  +.0016       .7457  +.0012      .7463  +.0017
+  v15       .8000        .8013  +.0013       .7996  -.0004      .8026  +.0026
+  v510      .7216        .7221  +.0005       .7221  +.0005      .7221  +.0005
+  v1030     .7125        .7143  +.0017       .7143  +.0017      .7143  +.0017
+  d15       .5822        .5829  +.0007       .5829  +.0007      .5829  +.0007
+  dupB      .0231        .0171  -.0060       .0152  -.0080      .0193  -.0038
+  dupT      .0199        .0168  -.0031       .0157  -.0043      .0196  -.0004
+  dupE      .0709        .0707  -.0002       .0693  -.0016      .0718  +.0009
+  dupO      .0485        .0462  -.0023       .0446  -.0039      .0478  -.0007
+  fakB      .0551        .0549  -.0002       .0550  -.0001      .0548  -.0002
+  fakT      .0592        .0578  -.0014       .0578  -.0014      .0577  -.0015
+  fakE      .0430        .0412  -.0018       .0412  -.0018      .0412  -.0018
+  fakO      .0492        .0479  -.0013       .0480  -.0013      .0479  -.0013
+  nhOT     6.4350       6.4210  -.0140      6.4290  -.0060     6.4130  -.0220
+G2 = -a 7.3 -a2 7.0 -a3 6.4 -AT3 6.450 -RPSA 6.084 -D3W 4.3 -D3W2 3.6 -D3W3 4.0
+G1 = same with -D3W 4.1 -D3W2 3.4 -D3W3 3.7 ; E2 = same with -D3W 4.5 -D3W2 4.0 -D3W3 4.2
+
+TWO THINGS OTHER AGENTS SHOULD TAKE FROM THIS:
+(1) THE BARS MOVE. The new head's logit scale is different; -a must go 6.0 -> ~7.3/7.0/6.4
+    just to hold the baseline's CONVERSION rate (chainTC->pT5-class upgrade, 0.6799). Any
+    result measured on top of this head at the OLD bars is measuring a threshold change too.
+(2) THE REMAINING BARREL DUP IS NO LONGER SELECTOR QUALITY -- IT IS THE RETIREMENT RULE'S
+    LABEL. Pushing the crossclean bars further down keeps buying dup and starts costing
+    barrel EFFICIENCY (G1 at effO -.0008; -D3W 3.776 at effB -.0051 for dupB -.0106). The
+    head is right about "this seed and this chain are the same track" and the rule then
+    assumes "so the chain's TC covers the seed's sim", which at the 75%-hit-match level is
+    sometimes false. For R2/R4: the payable version of the remaining .007 of barrel dup is a
+    retirement predicate that also requires the reference chain TC to actually COVER, not a
+    better score.
