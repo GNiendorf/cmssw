@@ -3393,3 +3393,53 @@ The head is now right that "this seed and this chain are the same track"; the ru
 payable version is a predicate that requires the reference TC to actually COVER. Related, measured
 twice independently: a wrong QUAD seed puts a 5-layer chain at 10/14 = .714 against that same 0.75
 threshold, which is exactly why lowering -a costs displaced efficiency.
+
+================================================================================================
+TWO RE-AUDITS, AND THE STANDING DIRECTIVE ON THE MLP CASCADE (2026-08-07)
+================================================================================================
+
+1. TERMINAL TRIM (-TR) RE-AUDITED AT THE ROUND-2 BASELINE AND KEPT. The maintainer asked whether
+its physics benefit still exists, since its ledger dated from the P1 frozen config (2026-08-02,
+before the window fix, before the 20-input head, WITH the extension stage present -- and extensions
+later measured a liability). Measured, trim OFF vs shipped, 1000 evt (win_ref/trim_agg.txt):
+    eff overall -.0019 | effB -.0013 effT -.0035 effE -.0019
+    vxy[1,5) -.0041  vxy[5,10) -.0034  vxy[10,30) -.0010  dxy[1,5) -.0019
+    dupB +.0028 dupT +.0003 dupE +.0009 dupO +.0014 | fakB +.0013 fakT +.0028 fakO +.0016
+    mean nhitOT +.129 | GPU 10.2 vs 10.3 ms/evt
+So removal costs efficiency in EVERY band including two displaced ones and raises dup AND fake.
+The old ledger (+.0022 eff, -.0012 fake) reproduces at the current baseline: unlike extensions and
+-RPSA, this lever did not rot. VERDICT: KEEP, do not re-litigate.
+NOTE WORTH CARRYING: trim is deliberately SHORTENING chains (+.129 mean nhitOT without it), so part
+of our -.098 length deficit vs master is trim buying efficiency and purity with length, knowingly.
+Deleting it would save ~0.1 ms of GPU, i.e. nothing.
+
+2. THE LEGACY 2-CLASS CHAIN HEAD IS LOAD-BEARING AS A FEATURE PROVIDER -- deletion REFUSED for now.
+Its original job (the K9 order-key fake penalty) was superseded by -BK 1 (the 3-class mX margin),
+so it survives only as attach feature f11. Measured by retraining the deployed head's recipe with
+that column removed (same objective flags, only --use-cols changes; frozen TEST-60, precision at
+EQUAL recall; win_ref/nof11_compare.txt):
+    population                       at 3.665 bar      at 6.0 bar        AUC
+    all chain targets                .720 -> .672      .913 -> .846      .99826 -> .99706
+    nLay>=5 & isQuad (the -XC arm)    .593 -> .557      .850 -> .676      .99519 -> .99267
+    nLay>=5 & |eta|<1.1 (BARREL)     .523 -> .372      .781 -> .574      .99821 -> .99680
+    nLay==4                          .867 -> .803      .956 -> .927      .99897 -> .99813
+Dropping f11 costs .048 of precision at the crossclean's operating point and .067 at the delivery
+bar, and in the BARREL it gives back most of what adding rphiResidInwards won (.523 -> .372 at the
+crossclean bar, against the +.207 that feature bought). The stale head's logit is one of the attach
+head's more valuable inputs, and it is most valuable exactly where we are weakest.
+
+3. STANDING DIRECTIVE (maintainer, 2026-08-07): MERGE THE CHAINED MLPs INTO ONE, and in doing so
+IDENTIFY WHICH INPUT FEATURES CAUSE THE LOSS. Explicitly a FOLLOWUP PASS, not to be done inline.
+The cascade today is four networks with one feeding the next: edge MLP (weld) -> chain 2-class
+(its logit becomes attach f11) + chain 3-class gate (its margins gate, and -BK feeds the K9 order
+key) -> attach head. That is the structure to collapse; the end state remains ONE head answering
+"is this pLS and this OT object a track" plus one cut.
+  * The right way to kill the 2-class head is to REPLACE the feature, not remove it: the 3-class
+    gate's mX margin is already resident and free, and -BK 1 already showed mX substituting for
+    this same head successfully in the order key. Cost: a dump regeneration to get mX into the
+    training columns (r1_ref/r1_dump.sh + the -PDML 1 tap), then one retrain -- a half-day, and it
+    deletes a per-chain MLP from the GPU hot path, so it pairs naturally with the timing round.
+  * The feature-loss diagnosis wants permutation importance over the MERGED input set, not over
+    each head separately -- R1's r1_perm.py is the instrument and already reports dAUC per column.
+  * Do NOT ship a merged head without re-fitting all six bars: the bars are not independent of the
+    weights (round 2 proved that twice -- see the coincidence-credit rejection above).
