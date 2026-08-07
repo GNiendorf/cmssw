@@ -637,27 +637,64 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
   // a candidate in the sorted sequence is exactly the number of candidates that compare before it.
   // Counting that directly is a perfectly parallel O(n^2) pass over n ~ 2-4k records that all fit
   // in cache, and it reproduces the merge sort's permutation element for element by construction.
-  struct ChainClaimRank {
+  // The comparator itself, so the one-pass and the sliced form cannot drift apart.
+  ALPAKA_FN_ACC ALPAKA_FN_INLINE bool chainOrderBefore(ChainOrderKeyRec const& b, ChainOrderKeyRec const& a) {
+    return (b.key != a.key) ? (b.key > a.key)
+                            : ((b.stable != a.stable) ? (b.stable < a.stable) : (b.chain < a.chain));
+  }
+
+  // T4 (GPU timing): the SAME rank, sliced.
+  //
+  // ChainClaimRank is one thread per candidate, so its parallelism is nCand (~4.7k at PU200 =
+  // ~18 blocks of 256, an eighth of an L40's SMs) while its work is nCand^2. The rank is a SUM of
+  // independent predicates, so it splits: slice s of candidate i counts the j == s (mod kSlices)
+  // part, and the finish pass adds the kSlices partials. An integer sum does not care in what
+  // order it is accumulated, so the rank -- and therefore `order` -- is identical element for
+  // element, not merely equivalent.
+  //
+  // The slice layout is deliberate: consecutive threads take consecutive s of the SAME i, so a
+  // warp broadcasts recs[i] and reads recs[s .. s+31] as one contiguous 384-byte line per step.
+  static constexpr uint32_t kChainRankSlices = 32u;
+
+  struct ChainClaimRankPartial {
     ALPAKA_FN_ACC void operator()(Acc1D const& acc,
                                   ChainOrderKeyRec const* recs,
                                   uint32_t const* nCandPtr,
                                   uint32_t nBound,
+                                  uint32_t* partial) const {
+      uint32_t const n = *nCandPtr;
+      for (uint32_t w : cms::alpakatools::uniform_elements(acc, nBound * kChainRankSlices)) {
+        uint32_t const i = w / kChainRankSlices;
+        if (i >= n)
+          continue;
+        uint32_t const s = w % kChainRankSlices;
+        ChainOrderKeyRec const a = recs[i];
+        uint32_t cnt = 0u;
+        for (uint32_t j = s; j < n; j += kChainRankSlices) {
+          if (j == i)
+            continue;
+          cnt += chainOrderBefore(recs[j], a) ? 1u : 0u;
+        }
+        partial[w] = cnt;
+      }
+    }
+  };
+
+  struct ChainClaimRankFinish {
+    ALPAKA_FN_ACC void operator()(Acc1D const& acc,
+                                  ChainOrderKeyRec const* recs,
+                                  uint32_t const* nCandPtr,
+                                  uint32_t nBound,
+                                  uint32_t const* partial,
                                   uint32_t* order) const {
       uint32_t const n = *nCandPtr;
       for (uint32_t i : cms::alpakatools::uniform_elements(acc, nBound)) {
         if (i >= n)
           continue;
-        ChainOrderKeyRec const a = recs[i];
         uint32_t rank = 0u;
-        for (uint32_t j = 0; j < n; ++j) {
-          if (j == i)
-            continue;
-          ChainOrderKeyRec const b = recs[j];
-          bool const bFirst = (b.key != a.key) ? (b.key > a.key)
-                                               : ((b.stable != a.stable) ? (b.stable < a.stable) : (b.chain < a.chain));
-          rank += bFirst ? 1u : 0u;
-        }
-        order[rank] = a.chain;
+        for (uint32_t s = 0; s < kChainRankSlices; ++s)
+          rank += partial[i * kChainRankSlices + s];
+        order[rank] = recs[i].chain;
       }
     }
   };
@@ -807,6 +844,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
             // Owner-relative braid, per-chain and allocation-free: the reference's touched-owner
             // list is replaced by "count the occurrences of the FIRST appearance of each owner
             // label", which visits every distinct owner exactly once with the same denominator.
+            //
             for (int k = 0; k < total && !killed; ++k) {
               int32_t const o = owner[claimHits[hitBase + k]];
               if (o == chainarb::kFree)
@@ -833,30 +871,30 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         }
         alpaka::syncBlockThreads(acc);
 
-        // --- phase C: the owner writes of everything accepted THIS round -------------------------
+        // --- phase C: the owner writes of everything accepted THIS round, and the minPos reset ---
         // Two chains decided in the same round are the unique minimum at each of their own claim
-        // hits, so their hit sets are disjoint and these stores never race.
-        for (uint32_t oi = worker; oi < n; oi += nWorkers) {
-          if (part[oi] == 0u || state[oi] != chainpar::kAccepted)
-            continue;
-          uint32_t const c = order[oi];
-          uint32_t const hitBase = 6u * chains.nodeOffset()[c];
-          int const total = chains.nClaimHits()[c];
-          for (int k = 0; k < total; ++k)
-            owner[claimHits[hitBase + k]] = static_cast<int32_t>(c);
-          chains.claimFlags()[c] |= kChainClaimAccepted;
-        }
-        alpaka::syncBlockThreads(acc);
-
-        // --- phase D: put minPos back to its empty state, touching only the hits used ------------
+        // hits, so their hit sets are disjoint and the owner stores never race.
+        //
+        // T4: the minPos reset used to be a fourth phase behind its own barrier. It needs none.
+        // It writes minPos, which nothing in this phase reads; the owner stores go to a different
+        // array; and two participants sharing a hit both store the SAME value (kNoPos) there. So
+        // the reset rides along on the claim-hit walk this phase already makes, and one of the
+        // four random-access passes over claimHits per round disappears.
         for (uint32_t oi = worker; oi < n; oi += nWorkers) {
           if (part[oi] == 0u)
             continue;
           uint32_t const c = order[oi];
           uint32_t const hitBase = 6u * chains.nodeOffset()[c];
           int const total = chains.nClaimHits()[c];
-          for (int k = 0; k < total; ++k)
-            minPos[claimHits[hitBase + k]] = chainpar::kNoPos;
+          bool const acceptedNow = (state[oi] == chainpar::kAccepted);
+          for (int k = 0; k < total; ++k) {
+            uint32_t const h = claimHits[hitBase + k];
+            if (acceptedNow)
+              owner[h] = static_cast<int32_t>(c);
+            minPos[h] = chainpar::kNoPos;
+          }
+          if (acceptedNow)
+            chains.claimFlags()[c] |= kChainClaimAccepted;
         }
         alpaka::syncBlockThreads(acc);
 
@@ -914,10 +952,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         Acc1D const& acc, ChainsConst chains, uint32_t const* accepted, uint32_t nBound, uint32_t* keep) const {
       uint32_t const nAcc = chains.nAccepted();
       for (uint32_t ai : cms::alpakatools::uniform_elements(acc, nBound))
-        keep[ai] = (ai < nAcc && chains.nLayers()[accepted[ai]] >= kChainTCMinLayers &&
-                    (chains.flags()[accepted[ai]] & kChainFlagCcsSuppressed) == 0u)
-                       ? 1u
-                       : 0u;
+        keep[ai] = (ai < nAcc && chains.nLayers()[accepted[ai]] >= kChainTCMinLayers) ? 1u : 0u;
     }
   };
 

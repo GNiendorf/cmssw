@@ -167,19 +167,14 @@ namespace lst {
     // releases the seed AND erases its bare-T3 evidence (-CCR 2 hardcoded -- the only release that
     // releases; see the -CCR 1 failure mode in the port spec). Only the count is a parameter.
     int ccMinShared = 1;
-    // -CCS 6.0 / -CCS2 5.0 / -CCS3 unset: chain-loser suppression of an accepted BARE chain whose
-    // best scored pair toward a pLS owned by a DIFFERENT chain reaches the band bar. Band on the
-    // emitted TC |eta| (the innermost member T3) at the literal 1.1 / 1.7 boundaries.
-    // SENTINEL SEMANTICS DIFFER from the -a family: >= 1e8 means OFF FOR THAT BAND, with NO
-    // follow-the-barrel fallback -- the endcap dup rate is already below LST and must not move by
-    // accident. Do not "resolve" these.
-    //
-    // ALL THREE BANDS ARE OFF (maintainer, 2026-08-06): -CCS was part of the same barrel-dup trade
-    // as the -a lowering above and is unwound with it. The mechanism stays in the code -- setting
-    // these fields is all it takes to switch it back on.
-    float ccsTheta = 1e9f;
-    float ccsThetaT = 1e9f;
-    float ccsThetaE = 1e9f;
+    // -CCS (chain-loser suppression of an accepted BARE chain whose best scored pair toward a pLS
+    // owned by a DIFFERENT chain reached a banded bar) IS DELETED, not switched off. It was part of
+    // the same barrel-dup trade as the -a lowering above, was unwound with it (all three bands
+    // 1e9 = OFF, maintainer 2026-08-06) and then cost 1.1 ms/event of GPU time computing a loser
+    // score that no configuration consumed: it needed its own post-contend grid pass plus the
+    // inverted grant map that fed it. Restoring it means restoring that pass, so it lives in git
+    // history rather than as a dead field. The -XC4 half of that pass -- which IS load-bearing --
+    // now rides in ChainAttachScore.
     // -XC 3 -XCT 3.665 -XCT2 3.15 -XCT3 3.75 -XCR2 1e-6 -XC4 1: the ported CrossCleanpLS.
     // Pixel-anchored arm: retire a bare quad seed sharing >= 1 pixel hit row with the seed of any
     // delivery. LST's second test there (dR^2 < 1e-6 between the two seeds) is DELETED as measured

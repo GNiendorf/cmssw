@@ -76,10 +76,6 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     c.rpsThetaChain = a.getParameter<double>("rpsThetaChain");
     c.t3FakeMax = a.getParameter<double>("t3FakeMax");
     c.ccMinShared = a.getParameter<int32_t>("ccMinShared");
-    auto const cs = a.getParameter<std::vector<double>>("ccsTheta");
-    c.ccsTheta = cs.at(0);
-    c.ccsThetaT = cs.at(1);
-    c.ccsThetaE = cs.at(2);
     auto const xt = a.getParameter<std::vector<double>>("xcTheta");
     c.xcTheta = xt.at(0);
     c.xcThetaT = xt.at(1);
@@ -202,10 +198,6 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
             ->setComment("-T3F: stage-B target admission on the T3 fake score (NaN rejected).");
         attachDesc.add<int32_t>("ccMinShared", 1)
             ->setComment("-CCN: revoke a stage-B delivery when >= this many of its 3 MDs are already claimed.");
-        attachDesc.add<std::vector<double>>("ccsTheta", {1e9, 1e9, 1e9})
-            ->setComment(
-                "-CCS / -CCS2 / -CCS3: chain-loser suppression bars per TC-|eta| band; >= 1e8 = band "
-                "OFF. All OFF: unwound with the -a lowering it was tuned alongside.");
         attachDesc.add<std::vector<double>>("xcTheta", {4.3, 3.6, 4.0})
             ->setComment(
                 "-XCT / -XCT2 / -XCT3: seed-crossclean bare-chain-arm logit bars per |seed eta| band. "

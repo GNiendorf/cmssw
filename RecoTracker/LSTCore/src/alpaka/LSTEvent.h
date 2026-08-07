@@ -200,11 +200,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     // Chain-tracking phase P2.4: K8 pixel attach, stage A (chain targets). Runs inside
     // arbitrateChains, on the K9-accepted chains and before the extension. Builds the
     // invariant-keyed grid prefilter, scores the (chain, pLS) candidates with the r2 pair head
-    // under the banded -a margins, appends the -XC pass-1 pair candidates, resolves the
-    // one-pLS-one-owner contention and the -RD seed-family dedup, and runs the -CCS restricted
-    // second pass (which also covers the 4-layer -XC4 score-only targets). The type-7 upgrade
-    // itself is applied by ChainEmitTCs; the carried-row retirement is the FINAL pass of
-    // arbitrateChains.
+    // under the banded -a margins (for the stage-A 5+ targets and the score-only 4-layer -XC4
+    // tail alike), and resolves the one-pLS-one-owner contention and the -RD seed-family dedup.
+    // The type-7 upgrade itself is applied by ChainEmitTCs; the carried-row retirement is the
+    // FINAL pass of arbitrateChains.
     void attachPixels(unsigned int nHits,
                       uint32_t const* accepted,
                       AttachPlsPre const* plsPre,
@@ -247,6 +246,14 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     // keep[pos] = 1 iff position pos is a DELIVERY (stage-B owner that survived the -RDT dedup);
     // the -CC sweep's gather+rank reads it.
     std::optional<cms::alpakatools::device_buffer<Device, uint32_t[]>> bareT3Keep_;
+    // The owner tag behind each -RD table entry. PERSISTENT, allocated once on first use and reused
+    // every event, because AN EXTRA PER-EVENT DEVICE BUFFER IN THIS BLOCK IS EXPENSIVE ON THE CPU
+    // BACKEND: measured +26 ms/event, all of it in pLS and TC, i.e. in stages this code never
+    // touches, via the caching allocator evicting buffers those stages were reusing. Its size is
+    // chainattach::kSeedHashSlots, a compile-time constant, so there is nothing to resize. It needs
+    // no initialising either: an entry is only read at a slot whose key matched, and the thread that
+    // claimed that key wrote the tag first. See gpu_wt/g3/T3_STATUS.md and FINDINGS_GPU.md [T3 10:20].
+    std::optional<cms::alpakatools::device_buffer<Device, uint32_t[]>> rdHashOwner_;
     uint32_t nBareT3_ = 0;
 
     // ---- P1 RE-BASELINE INSTRUMENT: ALGORITHMIC DUPLICATE-FLAG SNAPSHOTS -------------------

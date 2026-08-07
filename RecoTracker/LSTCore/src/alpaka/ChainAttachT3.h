@@ -27,7 +27,8 @@
 // owner, across target kinds -- invariant I1), records the bare-T3 retirement evidence in its
 // OWN key array (plsBestT3, read by the -RPS predicate against the -AT3 bar), admits targets
 // through the -T3F fake-score gate, and delivers one type-5 (pT3-class) TC per owner through
-// the -CC hit-overlap contention sweep (ChainT3CCPreclaim + ChainT3CCSweepEmit below), which
+// the -CC hit-overlap contention sweep (ChainT3CCPrep / ChainT3CCSweep / ChainT3CCEmit below),
+// which
 // revokes a delivery whose MDs are already claimed by an emitted chain TC or by an earlier
 // delivery (-CCN 1 at MD granularity) and applies the -CCR 2 release: the seed's ownership AND
 // its bare-T3 evidence are both cleared, so its carried type-8 row genuinely survives.
@@ -228,6 +229,14 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
   //       bare T3's pick. Both halves are reproduced in that order.
   // plsBest here is the SEPARATE bare-T3 evidence key array (plsBestT3): the -RPS predicate reads
   // it against the -AT3 bar, and the -CC revoke (-CCR 2) erases entries in it.
+  //   (3) P2.6c, the same DEVICE SLICING as ChainAttachScore: nS threads share one target's
+  //       candidate walk, thread `sl` taking items b+sl, b+sl+nS, ... of every scanned cell, so
+  //       every candidate is visited exactly once and nothing is re-walked. The per-target argmax
+  //       becomes an atomicMax on the packed attachContendKey (the same strict total order as the
+  //       serial `lo > best || (lo == best && p < best)`), unpacked by ChainAttachUnpackBest; the
+  //       two per-target censuses move there with it. nS == 1 on host backends, where this is the
+  //       previous code verbatim. Reason: nTargets here is the bare-T3 list, another ~1e3 entries,
+  //       so one thread per target left this kernel on ~3% of the device exactly as stage A was.
   struct ChainAttachT3Score {
     template <typename TAcc>
     ALPAKA_FN_ACC void operator()(TAcc const& acc,
@@ -236,14 +245,17 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                   uint32_t const* offsets,
                                   AttachPlsPre const* items,
                                   uint8_t const* plsOwned,
-                                  int32_t* tgtPls,
-                                  float* tgtLogit,
+                                  uint64_t* tgtKey,
+                                  uint32_t* tgtScored,
                                   uint32_t* plsBest,
                                   uint32_t* stats,
                                   float theta,
+                                  uint32_t nSlices,
                                   ChainConfig cfg) const {
-      constexpr int kB = cms::alpakatools::requires_single_thread_per_block_v<TAcc> ? kAttachScoreBatch : 1;
+      constexpr bool kHost = cms::alpakatools::requires_single_thread_per_block_v<TAcc>;
+      constexpr int kB = kHost ? kAttachScoreBatch : 1;
       constexpr int kIn = dnn::attachmlp::kInput;
+      uint32_t const nS = kHost ? 1u : ((nSlices > 0u) ? nSlices : 1u);
 
       alignas(64) float xT[kIn * kB];
       int32_t rowB[kB];
@@ -252,7 +264,15 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         xT[i] = 0.f;
       float const t3Type = attachStdz<18>(acc, kAttachTargetTypeT3);
 
-      for (uint32_t t : cms::alpakatools::uniform_elements(acc, nTargets)) {
+      for (uint32_t g : cms::alpakatools::uniform_elements(acc, nTargets * nS)) {
+        uint32_t t, sl;
+        if constexpr (kHost) {
+          t = g;
+          sl = 0u;
+        } else {
+          t = g / nS;
+          sl = g - t * nS;
+        }
         AttachTargetPre const cp = tgt[t];
         int32_t bestPls = -1;
         float bestLogit = kAttachNoLogit;
@@ -299,7 +319,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
             uint32_t const earlier = (1u << k) - 1u;
             uint32_t const cell = attachCellId(rb, tb, pb);
             uint32_t const b = offsets[cell], e = offsets[cell + 1u];
-            for (uint32_t i = b; i < e; ++i) {
+            for (uint32_t i = b + sl; i < e; i += nS) {
               AttachPlsPre const& pp = items[i];
               uint32_t const p = pp.row;
               ++nCand;
@@ -323,16 +343,19 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         if (nb > 0)
           flush();
 
-        tgtPls[t] = bestPls;
-        tgtLogit[t] = bestLogit;
+        // One packed-key atomicMax per slice retires the slice's local argmax; stats[3] (picks) and
+        // stats[8] (targets that scored anything) are per-TARGET counts and move to the unpack.
+        if (bestPls >= 0)
+          alpaka::atomicMax(acc,
+                            &tgtKey[t],
+                            attachContendKey(bestLogit, static_cast<uint32_t>(bestPls)),
+                            alpaka::hierarchy::Blocks{});
+        if (nScored > 0)
+          alpaka::atomicAdd(acc, &tgtScored[t], nScored, alpaka::hierarchy::Blocks{});
         alpaka::atomicAdd(acc, &stats[1], nCand, alpaka::hierarchy::Threads{});
         alpaka::atomicAdd(acc, &stats[2], nScored, alpaka::hierarchy::Threads{});
         alpaka::atomicAdd(acc, &stats[10], nDup, alpaka::hierarchy::Threads{});
         alpaka::atomicAdd(acc, &stats[11], nOverTheta, alpaka::hierarchy::Threads{});
-        if (nScored > 0)
-          alpaka::atomicAdd(acc, &stats[8], 1u, alpaka::hierarchy::Threads{});
-        if (bestPls >= 0)
-          alpaka::atomicAdd(acc, &stats[3], 1u, alpaka::hierarchy::Threads{});
       }
     }
   };
@@ -454,46 +477,78 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
   // map that does not apply to them.
   static constexpr uint32_t kBareT3TCMarker = 0xFFFFFFFFu;
 
-  // -CC sweep + emission, one serial kernel:
-  //   (1) the deliveries (tgtPls >= 0) are walked in ASCENDING position order == ascending T3
-  //       row, PRE-GATHERED into `order` by the keep[] CSR (prefix + scatter preserve position
-  //       order, so the compacted list IS the row-order walk; the compaction only spares the
-  //       serial thread the skip-scan over ~4x more positions). The reference swept in -CCK 0
-  //       order (logit desc, T3 row asc on ties); the sweep order was A/B'd NULL twice (a05 M13
-  //       -CCK 1 pt-order, t3attach R4 -CCK 3 quality-order: eff/dup deltas ~1e-4 or below --
-  //       the contention's outcome is set by WHICH MDs are claimed, not the order), so the rank
-  //       machinery is gone. NONEXACT vs the logit-order sweep by construction; gated NULL on
-  //       the n300 scoreboard (simp change 2: max |delta| 0.0003, displaced bands 0.0000).
-  //   (2) for each delivery count its MDs already in the claim map; >= ccMinShared -> REVOKE and
-  //       apply -CCR 2: tgtPls = -1, plsOwned[p] = 0, plsBestT3[p] = 0 (orderFloat(-inf)) -- the
-  //       seed is genuinely released, its carried type-8 row survives unless other evidence
-  //       retires it;
-  //   (3) otherwise claim the 3 MDs and emit the type-5 row.
-  // Runs AFTER ChainEmitTCs (the chain rows pre-claimed) and BEFORE the -XC kernels and the final
-  // ChainSuppressCarriedTCs (invariant I7: the revoke's erasure must be visible to the
-  // retirement).
-  struct ChainT3CCSweepEmit {
+  // ==========================================================================================
+  // T4 (GPU timing): the -CC sweep, SPLIT ALONG THE ONLY DEPENDENCE IT ACTUALLY HAS.
+  //
+  // ChainT3CCSweepEmit below is the reference's one loop and it runs on ONE THREAD. Read it as
+  // three things per delivery:
+  //   (i)   look up the delivery's pLS and its three MDs (nodes.tripletIndex -> segmentIndices ->
+  //         mdIndices: a three-level dependent chase through global memory);
+  //   (ii)  count how many of those MDs the claim map already holds, revoke or claim, and take the
+  //         next output row from a running counter;
+  //   (iii) assemble the type-5 TrackCandidate row: ~55 stores (type, seedIdx, objectIndices, the
+  //         kLayers slot reset, the pixel-hit walk, the three MD slot writes).
+  // Only (ii) reads state an earlier iteration wrote. (i) is a pure function of the delivery and
+  // (iii) is a pure function of (pls, t3, MDs, assigned row) -- nothing any other delivery decided.
+  // So (i) and (iii) go to the grid and the serial residue keeps exactly (ii), which is 3 byte
+  // loads and 3 byte stores against a 20-byte record it now reads sequentially.
+  //
+  // EXACTNESS. The serial kernel visits the SAME deliveries in the SAME order and hands out the
+  // same rows from the same counter, so the emitted multiset, the row numbering, nEmit and the
+  // -CCR 2 releases are unchanged element for element. The row-overflow break is reproduced where
+  // it is: the delivery that hit the bound has ALREADY claimed its MDs, and no later delivery is
+  // examined at all (rowOut stays -1 for them, which the emit pass skips). stats[7] (layer-slot
+  // fallbacks) becomes an atomicAdd of the same total.
+  struct ChainT3CCRec {
+    uint32_t t3;
+    uint32_t md[3];
+    int32_t pls;
+  };
+  static constexpr int32_t kT3CCNoRow = -1;
+
+  // (i) -- the per-delivery lookup, on the grid.
+  struct ChainT3CCPrep {
     ALPAKA_FN_ACC void operator()(Acc1D const& acc,
-                                  ModulesConst modules,
-                                  MiniDoubletsConst mds,
                                   SegmentsConst segments,
                                   TripletsConst triplets,
-                                  HitsBaseConst hitsBase,
-                                  PixelSeedsConst pixelSeeds,
                                   ChainNodesConst nodes,
+                                  uint32_t const* targets,
+                                  int32_t const* tgtPls,
+                                  uint32_t const* order,
+                                  uint32_t const* nDelivPtr,
+                                  uint32_t nBound,
+                                  ChainT3CCRec* recs,
+                                  int32_t* rowOut) const {
+      uint32_t const n = *nDelivPtr;
+      for (uint32_t i : cms::alpakatools::uniform_elements(acc, nBound)) {
+        if (i >= n)
+          continue;
+        uint32_t const pos = order[i];
+        ChainT3CCRec r;
+        r.pls = tgtPls[pos];
+        r.t3 = nodes.tripletIndex()[targets[pos]];
+        chainNodeMDs(triplets, segments, r.t3, r.md[0], r.md[1], r.md[2]);
+        recs[i] = r;
+        rowOut[i] = kT3CCNoRow;
+      }
+    }
+  };
+
+  // (ii) -- the serial residue: the claim map and the row counter, nothing else.
+  struct ChainT3CCSweep {
+    ALPAKA_FN_ACC void operator()(Acc1D const& acc,
                                   Chains chains,
                                   TrackCandidatesBase candsBase,
                                   TrackCandidatesExtended candsExtended,
-                                  uint32_t const* targets,
-                                  int32_t* tgtPls,
+                                  ChainT3CCRec const* recs,
                                   uint32_t const* order,
                                   uint32_t const* nDelivPtr,
+                                  int32_t* tgtPls,
+                                  int32_t* rowOut,
                                   uint8_t* ccClaimed,
                                   uint8_t* plsOwned,
                                   uint32_t* plsBestT3,
                                   int ccMinShared,
-                                  uint32_t nHits,
-                                  uint16_t pixelModuleIndex,
                                   uint32_t nAllocated,
                                   uint32_t* stats) const {
       if (!cms::alpakatools::once_per_grid(acc))
@@ -503,40 +558,70 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
       uint32_t row = candsBase.nTrackCandidates();
       uint32_t nEmit = 0;
       for (uint32_t i = 0; i < n; ++i) {
-        uint32_t const pos = order[i];
-        int32_t const pls = tgtPls[pos];
-        uint32_t const t3 = nodes.tripletIndex()[targets[pos]];
-        unsigned int m[3];
-        chainNodeMDs(triplets, segments, t3, m[0], m[1], m[2]);
+        ChainT3CCRec const r = recs[i];
 
-        // (2) the -CCN verdict on the MD unit set.
         int nShared = 0;
         for (int k = 0; k < 3; ++k)
-          if (ccClaimed[m[k]] != 0u)
+          if (ccClaimed[r.md[k]] != 0u)
             ++nShared;
         if (nShared >= ccMinShared) {
-          // REVOKE + -CCR 2 release.
-          tgtPls[pos] = -1;
-          plsOwned[static_cast<uint32_t>(pls)] = 0u;
-          plsBestT3[static_cast<uint32_t>(pls)] = 0u;  // orderFloat(-inf): erase the evidence
+          // REVOKE + -CCR 2 release. order[] is read only here, on the rare branch.
+          tgtPls[order[i]] = -1;
+          plsOwned[static_cast<uint32_t>(r.pls)] = 0u;
+          plsBestT3[static_cast<uint32_t>(r.pls)] = 0u;  // orderFloat(-inf): erase the evidence
           ++stats[9];
           continue;
         }
         for (int k = 0; k < 3; ++k)
-          ccClaimed[m[k]] = 1u;
+          ccClaimed[r.md[k]] = 1u;
 
-        // (3) emit.
         if (row >= nAllocated) {
           ++stats[6];  // out of TC rows; not seen at PU200, but it must be visible if it happens
           break;
         }
-        uint32_t const tc = row++;
+        rowOut[i] = static_cast<int32_t>(row++);
+        ++nEmit;
+      }
+      candsBase.nTrackCandidates() = row;
+      candsExtended.nTrackCandidatespT3() = candsExtended.nTrackCandidatespT3() + nEmit;
+      chains.nChainTCs() = chains.nChainTCs() + nEmit;
+      stats[4] = nEmit;
+    }
+  };
+
+  // (iii) -- the row assembly, on the grid. Rows are distinct per delivery, so no two threads
+  // touch the same TrackCandidate row and nothing here needs an ordering.
+  struct ChainT3CCEmit {
+    ALPAKA_FN_ACC void operator()(Acc1D const& acc,
+                                  ModulesConst modules,
+                                  MiniDoubletsConst mds,
+                                  HitsBaseConst hitsBase,
+                                  PixelSeedsConst pixelSeeds,
+                                  TrackCandidatesBase candsBase,
+                                  TrackCandidatesExtended candsExtended,
+                                  ChainT3CCRec const* recs,
+                                  int32_t const* rowOut,
+                                  uint32_t const* nDelivPtr,
+                                  uint32_t nBound,
+                                  uint32_t nHits,
+                                  uint16_t pixelModuleIndex,
+                                  uint32_t* stats) const {
+      uint32_t const n = *nDelivPtr;
+      for (uint32_t i : cms::alpakatools::uniform_elements(acc, nBound)) {
+        if (i >= n)
+          continue;
+        int32_t const assigned = rowOut[i];
+        if (assigned == kT3CCNoRow)
+          continue;
+        uint32_t const tc = static_cast<uint32_t>(assigned);
+        ChainT3CCRec const r = recs[i];
+        uint32_t const pls = static_cast<uint32_t>(r.pls);
 
         candsBase.trackCandidateType()[tc] = LSTObjType::pT3;
         candsBase.pixelSeedIndex()[tc] = pixelSeeds.seedIdx()[pls];
         candsExtended.directObjectIndices()[tc] = kBareT3TCMarker;
-        candsExtended.objectIndices()[tc][0] = static_cast<uint32_t>(pls);
-        candsExtended.objectIndices()[tc][1] = t3;
+        candsExtended.objectIndices()[tc][0] = pls;
+        candsExtended.objectIndices()[tc][1] = r.t3;
         for (int s = 0; s < Params_TC::kLayers; ++s) {
           candsExtended.logicalLayers()[tc][s] = 0;
           candsExtended.lowerModuleIndices()[tc][s] = kTCEmptyLowerModule;
@@ -562,8 +647,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         }
 
         for (int k = 0; k < 3; ++k) {
-          uint16_t const mod = mds.moduleIndices()[m[k]];
-          int const logical = chainMdLayer(modules, mds, m[k]);
+          uint32_t const md = r.md[k];
+          uint16_t const mod = mds.moduleIndices()[md];
+          int const logical = chainMdLayer(modules, mds, md);
           int slot = (logical - 1) + Params_TC::kPixelLayerSlots;
           if (slot < Params_TC::kPixelLayerSlots || slot >= Params_TC::kLayers ||
               candsExtended.lowerModuleIndices()[tc][slot] != kTCEmptyLowerModule) {
@@ -573,21 +659,16 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                 slot = s;
                 break;
               }
-            ++stats[7];
+            alpaka::atomicAdd(acc, &stats[7], 1u, alpaka::hierarchy::Blocks{});
             if (slot < 0)
               break;
           }
           candsExtended.logicalLayers()[tc][slot] = static_cast<uint8_t>(logical);
           candsExtended.lowerModuleIndices()[tc][slot] = mod;
-          candsBase.hitIndices()[tc][slot][0] = mds.anchorHitIndices()[m[k]];
-          candsBase.hitIndices()[tc][slot][1] = mds.outerHitIndices()[m[k]];
+          candsBase.hitIndices()[tc][slot][0] = mds.anchorHitIndices()[md];
+          candsBase.hitIndices()[tc][slot][1] = mds.outerHitIndices()[md];
         }
-        ++nEmit;
       }
-      candsBase.nTrackCandidates() = row;
-      candsExtended.nTrackCandidatespT3() = candsExtended.nTrackCandidatespT3() + nEmit;
-      chains.nChainTCs() = chains.nChainTCs() + nEmit;
-      stats[4] = nEmit;
     }
   };
 

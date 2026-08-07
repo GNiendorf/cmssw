@@ -52,6 +52,22 @@ namespace {
     return enabled;
   }
 
+  // Device slice count of the K8 attach scorer (ChainAttachScore). The shipped value is the
+  // constant; LST_CHAIN_ATTACH_SLICES is a tuning override that exists so one measurement slot can
+  // sweep it. It changes NOTHING about the result -- every slicing visits every candidate exactly
+  // once and reduces through the same packed argmax.
+  uint32_t chainAttachScoreSlices() {
+    static uint32_t const n = []() {
+      char const* s = std::getenv("LST_CHAIN_ATTACH_SLICES");
+      if (s == nullptr)
+        return kAttachScoreSlices;
+      int const v = std::atoi(s);
+      return (v > 0) ? static_cast<uint32_t>(v) : kAttachScoreSlices;
+    }();
+    return n;
+  }
+
+
   // Copies one single-byte device SoA column into a host vector. The wait is required because
   // the very next kernel in the queue is the one that overwrites the column.
   template <typename TQueue, typename TSpan>
@@ -1407,18 +1423,22 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
   auto stats_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, kChainArbStats);
   alpaka::memset(queue_, stats_buf, 0u);
 
+  // T4 INSTRUMENT (timing only): the K9-claim block is seven things, and the map lumps them.
+  auto k9a = t2, k9b = t2, k9c = t2, k9d = t2, k9e = t2;
+  uint32_t nCandDiag = 0u;
+  auto nCand_buf = cms::alpakatools::make_device_buffer<uint32_t>(queue_);
   {
     // P2.6a: the same walk, reached by conflict-free rounds instead of a single thread. See the
     // exactness / termination argument in ChainArbitrate.h.
     auto candOffs_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, nChainCount_ + 1u);
     auto candRecs_buf = cms::alpakatools::make_device_buffer<ChainOrderKeyRec[]>(queue_, nChainCount_);
-    auto nCand_buf = cms::alpakatools::make_device_buffer<uint32_t>(queue_);
     auto minPos_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, nHits);
     auto nClaimed_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, nChainCount_);
     auto state_buf = cms::alpakatools::make_device_buffer<uint8_t[]>(queue_, nChainCount_);
     auto part_buf = cms::alpakatools::make_device_buffer<uint8_t[]>(queue_, nChainCount_);
     alpaka::memset(queue_, owner_buf, 0xFF);   // chainarb::kFree everywhere
     alpaka::memset(queue_, minPos_buf, 0xFF);  // chainpar::kNoPos everywhere
+    k9a = stamp();
 
     alpaka::exec<Acc1D>(queue_,
                         chainScan_workDiv,
@@ -1427,6 +1447,7 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
                         candOffs_buf.data(),
                         nCand_buf.data(),
                         nChainCount_);
+    k9b = stamp();
     alpaka::exec<Acc1D>(queue_,
                         chainFlat_workDiv,
                         ChainCandScatter{},
@@ -1434,13 +1455,27 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
                         candKeep_buf.data(),
                         candOffs_buf.data(),
                         candRecs_buf.data());
-    alpaka::exec<Acc1D>(queue_,
-                        chainFlat_workDiv,
-                        ChainClaimRank{},
-                        candRecs_buf.data(),
-                        nCand_buf.data(),
-                        nChainCount_,
-                        order_buf.data());
+    k9c = stamp();
+    {
+      auto rankPart_buf =
+          cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, nChainCount_ * kChainRankSlices);
+      alpaka::exec<Acc1D>(queue_,
+                          chainFlat_workDiv,
+                          ChainClaimRankPartial{},
+                          candRecs_buf.data(),
+                          nCand_buf.data(),
+                          nChainCount_,
+                          rankPart_buf.data());
+      alpaka::exec<Acc1D>(queue_,
+                          chainFlat_workDiv,
+                          ChainClaimRankFinish{},
+                          candRecs_buf.data(),
+                          nCand_buf.data(),
+                          nChainCount_,
+                          rankPart_buf.data(),
+                          order_buf.data());
+    }
+    k9d = stamp();
     if (chainConfig_.preClaim)
       alpaka::exec<Acc1D>(queue_,
                           chainFlat_workDiv,
@@ -1449,6 +1484,7 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
                           trackCandidatesExtendedDC_->const_view(),
                           owner_buf.data(),
                           nHits);
+    k9e = stamp();
     alpaka::exec<Acc1D>(queue_,
                         chainScan_workDiv,
                         ChainClaimRounds{},
@@ -1469,6 +1505,12 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
                         chainConfig_);
   }
   auto const t3 = stamp();
+  if (timing) {
+    auto nCand_h = cms::alpakatools::make_host_buffer<uint32_t>(queue_);
+    alpaka::memcpy(queue_, nCand_h, nCand_buf);
+    alpaka::wait(queue_);
+    nCandDiag = *nCand_h.data();
+  }
 
   // K8: pixel attach. It runs on the K9-ACCEPTED chain set and BEFORE the extension, exactly as
   // prototype/main.cc orders it under -A 4: the attach features are built from the chain's
@@ -1492,6 +1534,8 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
   auto plsBestT3_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, nPls);
   auto rdHashKey_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, chainattach::kSeedHashSlots);
   auto rdHashVal_buf = cms::alpakatools::make_device_buffer<int32_t[]>(queue_, chainattach::kSeedHashSlots);
+  if (!rdHashOwner_.has_value())
+    rdHashOwner_.emplace(cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, chainattach::kSeedHashSlots));
   constexpr uint32_t kXcPairCap = 1u << 17;  // ~131k pairs; measured pass-1 volume is far below
   auto xcPairs_buf = cms::alpakatools::make_device_buffer<ChainXcPair[]>(queue_, kXcPairCap);
   auto xcCursor_buf = cms::alpakatools::make_device_buffer<uint32_t>(queue_);
@@ -1616,13 +1660,20 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
   // extension); carried pixel rows contribute nothing (replacePT5 / replacePT3 dropped them all).
   auto postStats_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, chainattacht3::kStats);
   alpaka::memset(queue_, postStats_buf, 0u);
+  // T4 INSTRUMENT (timing only): T3CC is prefix(nBareT3) + compact(nBareT3) + a ONE-THREAD sweep.
+  auto cc1 = t4c, cc2 = t4c, cc3 = t4c;
+  uint32_t nDelivDiag = 0u;
   if (ccActive) {
-    // Compact the keep[] deliveries into an ascending-position list (prefix + compaction preserve
-    // position order) so the serial sweep walks the ~n deliveries instead of skip-scanning every
-    // target. No rank: the sweep order is the row order (see ChainT3CCSweepEmit).
+    // T4: the -CC sweep, split along its only real dependence. The per-delivery lookup (a 3-level
+    // dependent chase) and the type-5 row assembly (~55 stores) are pure functions of the delivery
+    // and of its assigned row, so they go to the grid; the claim map and the row counter -- the
+    // only state an earlier delivery writes -- stay on one thread, reading a 20-byte record
+    // sequentially. Exactness argument at ChainT3CCPrep in ChainAttachT3.h.
     auto ccOffs_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, nBareT3_ + 1u);
     auto nDeliv_buf = cms::alpakatools::make_device_buffer<uint32_t>(queue_);
     auto ccOwners_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, nBareT3_);
+    auto ccRecs_buf = cms::alpakatools::make_device_buffer<ChainT3CCRec[]>(queue_, nBareT3_);
+    auto ccRow_buf = cms::alpakatools::make_device_buffer<int32_t[]>(queue_, nBareT3_);
     alpaka::exec<Acc1D>(queue_,
                         chainScan_workDiv,
                         ChainSegPrefix{},
@@ -1630,6 +1681,7 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
                         ccOffs_buf.data(),
                         nDeliv_buf.data(),
                         nBareT3_);
+    cc1 = stamp();
     alpaka::exec<Acc1D>(queue_,
                         chainFlat_workDiv,
                         ChainCompactSelect{},
@@ -1640,31 +1692,59 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
                         ccOwners_buf.data(),
                         nullptr);
     alpaka::exec<Acc1D>(queue_,
-                        serial_workDiv,
-                        ChainT3CCSweepEmit{},
-                        modules_.const_view().modules(),
-                        miniDoubletsDC_->const_view().miniDoublets(),
+                        chainFlat_workDiv,
+                        ChainT3CCPrep{},
                         segmentsDC_->const_view().segments(),
                         tripletsDC_->const_view().triplets(),
-                        lstInputDC_->const_view().hits(),
-                        lstInputDC_->const_view().pixelSeeds(),
                         chainNodesDC_->const_view(),
-                        chainsDC_->view(),
-                        trackCandidatesBaseDC_->view(),
-                        trackCandidatesExtendedDC_->view(),
                         bareT3Targets_->data(),
                         bareT3TgtPls_->data(),
                         ccOwners_buf.data(),
                         nDeliv_buf.data(),
+                        nBareT3_,
+                        ccRecs_buf.data(),
+                        ccRow_buf.data());
+    cc2 = stamp();
+    alpaka::exec<Acc1D>(queue_,
+                        serial_workDiv,
+                        ChainT3CCSweep{},
+                        chainsDC_->view(),
+                        trackCandidatesBaseDC_->view(),
+                        trackCandidatesExtendedDC_->view(),
+                        ccRecs_buf.data(),
+                        ccOwners_buf.data(),
+                        nDeliv_buf.data(),
+                        bareT3TgtPls_->data(),
+                        ccRow_buf.data(),
                         ccClaimed_buf.data(),
                         plsOwned_buf.data(),
                         plsBestT3_buf.data(),
                         chainConfig_.ccMinShared,
-                        nHits,
-                        pixelModuleIndex_,
                         nAllocatedTCs,
                         postStats_buf.data());
-    alpaka::wait(queue_);  // the scratch buffers above die with this scope
+    alpaka::exec<Acc1D>(queue_,
+                        chainFlat_workDiv,
+                        ChainT3CCEmit{},
+                        modules_.const_view().modules(),
+                        miniDoubletsDC_->const_view().miniDoublets(),
+                        lstInputDC_->const_view().hits(),
+                        lstInputDC_->const_view().pixelSeeds(),
+                        trackCandidatesBaseDC_->view(),
+                        trackCandidatesExtendedDC_->view(),
+                        ccRecs_buf.data(),
+                        ccRow_buf.data(),
+                        nDeliv_buf.data(),
+                        nBareT3_,
+                        nHits,
+                        pixelModuleIndex_,
+                        postStats_buf.data());
+    cc3 = stamp();
+    if (timing) {
+      auto nD_h = cms::alpakatools::make_host_buffer<uint32_t>(queue_);
+      alpaka::memcpy(queue_, nD_h, nDeliv_buf);
+      alpaka::wait(queue_);
+      nDelivDiag = *nD_h.data();
+    }
   }
   bareT3Targets_.reset();
   bareT3TgtPls_.reset();
@@ -1729,7 +1809,6 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
                         pixelSize_,
                         xcRetired_buf.data(),
                         xcStats_buf.data());
-    alpaka::wait(queue_);  // the anchor scratch dies with this scope
   }
   auto const t4e = stamp();
 
@@ -1792,7 +1871,6 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
                           nIn,
                           postStats_buf.data(),
                           chainConfig_);
-      alpaka::wait(queue_);  // the cc9 scratch dies with this scope
     }
     alpaka::exec<Acc1D>(
         queue_, chainScan_workDiv, ChainSegPrefix{}, keep_buf.data(), offs_buf.data(), total_buf.data(), nIn);
@@ -1822,14 +1900,15 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
                         class_buf.data(),
                         nIn);
   }
-  alpaka::wait(queue_);  // every consumer of the pls-side scratch above has run
 
   auto const t5 = stamp();
 
   if (timing || objectsStatistics_) {
     auto stats_h = cms::alpakatools::make_host_buffer<uint32_t[]>(queue_, kChainArbStats);
+    auto post_h = cms::alpakatools::make_host_buffer<uint32_t[]>(queue_, chainattacht3::kStats);
     auto nAcc_h = cms::alpakatools::make_host_buffer<uint32_t>(queue_);
     auto nTC_h = cms::alpakatools::make_host_buffer<uint32_t>(queue_);
+    alpaka::memcpy(queue_, post_h, postStats_buf);
     alpaka::memcpy(queue_, stats_h, stats_buf);
     alpaka::memcpy(queue_, nAcc_h, cms::alpakatools::make_device_view(queue_, chainsDC_->view().nAccepted()));
     alpaka::memcpy(queue_, nTC_h, cms::alpakatools::make_device_view(queue_, chainsDC_->view().nChainTCs()));
@@ -1863,6 +1942,28 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
                       ms(t4d, t4e),
                       ms(t4e, t5),
                       ms(t0, t5)));
+      lstWarning(std::format(
+          "[CHAIN T4] nCand={} nChains={} nAllocTC={} nBareT3={} nDeliv={} "
+          "ccOverflow={} | "
+          "K9: alloc+memset {:.3f} prefix {:.3f} scatter {:.3f} RANK {:.3f} preclaim {:.3f} ROUNDS {:.3f} | "
+          "T3CC: prefix {:.3f} PREP {:.3f} SWEEP+EMIT {:.3f} (emit={} ccRevoked={})",
+          nCandDiag,
+          nChainCount_,
+          nAllocatedTCs,
+          nBareT3_,
+          nDelivDiag,
+          post_h.data()[6],
+          ms(t2, k9a),
+          ms(k9a, k9b),
+          ms(k9b, k9c),
+          ms(k9c, k9d),
+          ms(k9d, k9e),
+          ms(k9e, t3),
+          ms(t4c, cc1),
+          ms(cc1, cc2),
+          ms(cc2, cc3),
+          post_h.data()[4],
+          post_h.data()[9]));
       lstWarning(std::format("[CHAIN K8] {}", attachSummary_));
     }
   }
@@ -1879,8 +1980,8 @@ void LSTEvent::attachPixels(unsigned int nHits,
                             uint32_t* xcCursor,
                             uint32_t xcCap) {
   // Chain-tracking phase P2.4 (port map section 5, K8a-K8c) at the CHAINFINAL2 flags
-  // (-A 4 -a 5.0 -a2 5.0 -a3 6.0 -RT5 1 -RT3 1 -RPS 1 -RPSA 5.5 -RD 1 -D4 1e9 -CCS 6.0
-  // -CCS2 5.0 -XC 3 -XC4 1). Reference: prototype/PixelAttach.cc, prototype/AttachDelivery.cc
+  // (-A 4 -a 5.0 -a2 5.0 -a3 6.0 -RT5 1 -RT3 1 -RPS 1 -RPSA 5.5 -RD 1 -D4 1e9
+  // -XC 3 -XC4 1). Reference: prototype/PixelAttach.cc, prototype/AttachDelivery.cc
   // gaStageChains and the -A 4 blocks of prototype/main.cc. The carried-row retirement (K8d)
   // moved to the end of arbitrateChains -- it must see the -CC and -XC verdicts.
   attachSummary_.clear();
@@ -1934,7 +2035,7 @@ void LSTEvent::attachPixels(unsigned int nHits,
                         targets_buf.data(),
                         nullptr);  // the prefix above already published the count
   }
-  // A15 -XC4 / A14 -CCS: the aux 4-layer accepted targets, appended after the stage-A list. They
+  // A15 -XC4: the aux 4-layer accepted targets, appended after the stage-A list. They
   // are score-only (never delivered) but they join the GRID BOUNDS so the measured radial hull
   // covers them -- the superset argument transfers, and the stage-A scored-pair set is unchanged
   // (a wider hull only adds candidates that the exact predicate re-filters identically).
@@ -2026,27 +2127,50 @@ void LSTEvent::attachPixels(unsigned int nHits,
 
   // K8b: candidate iteration, the exact analytic predicate, the 19 features and the r2 head.
   // plsBestChain is written for EVERY scored pair before the banded threshold (invariant I4); the
-  // -XC pass-1 candidates are appended here too.
+  // -XC pass-1 candidates are appended here too, for the stage-A 5+ targets AND for the aux
+  // 4-layer (-XC4) tail of the same target array, which is score-only.
   auto stats_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, chainattach::kStats);
   auto tgtPls_buf = cms::alpakatools::make_device_buffer<int32_t[]>(queue_, nTargets);
   auto tgtLogit_buf = cms::alpakatools::make_device_buffer<float[]>(queue_, nTargets);
+  auto tgtKey_buf = cms::alpakatools::make_device_buffer<uint64_t[]>(queue_, nTargets);
   alpaka::memset(queue_, stats_buf, 0u);
+  alpaka::memset(queue_, tgtKey_buf, 0);  // key 0 = "no pair reached the margin"
+  // The device slice count (see ChainAttachScore): nS threads cooperate on one target's candidate
+  // walk, so the launch has to be nTargets * nS wide instead of nTargets wide. Host backends run
+  // one thread per target and ignore it.
+  uint32_t const attachSlices =
+      cms::alpakatools::requires_single_thread_per_block_v<Acc1D> ? 1u : chainAttachScoreSlices();
+  // nTgtAll, not nTargets: the launch carries the aux 4-layer target list too (T1's -XC4 fold), and
+  // each target's candidate walk is sliced attachSlices ways (T2). uniform_elements would stride over
+  // any shortfall, but sizing it correctly is what keeps the aux threads from serialising onto others.
+  auto const attachScore_workDiv = cms::alpakatools::make_workdiv<Acc1D>(
+      std::max<uint32_t>(max_blocks, (nTgtAll * attachSlices + 255u) / 256u), 256);
   alpaka::exec<Acc1D>(queue_,
-                      chainFlat_workDiv,
+                      attachScore_workDiv,
                       ChainAttachScore{},
                       plsPre,
                       tgtPre_buf.data(),
                       nTargets,
+                      nTgtAll,
                       offsets_buf.data(),
                       items_buf.data(),
-                      tgtPls_buf.data(),
-                      tgtLogit_buf.data(),
+                      tgtKey_buf.data(),
                       plsBestChain,
                       xcPairs,
                       xcCursor,
                       xcCap,
                       stats_buf.data(),
+                      attachSlices,
                       chainConfig_);
+  alpaka::exec<Acc1D>(queue_,
+                      chainFlat_workDiv,
+                      ChainAttachUnpackBest{},
+                      tgtKey_buf.data(),
+                      static_cast<uint32_t const*>(nullptr),  // stage A has no "scored" census
+                      tgtPls_buf.data(),
+                      tgtLogit_buf.data(),
+                      nTargets,
+                      stats_buf.data());
   auto const a3 = stamp();
 
   // K8c: contention and the -RD seed dedup.
@@ -2054,16 +2178,19 @@ void LSTEvent::attachPixels(unsigned int nHits,
   // Split point of the contend stage: up to it the one-pLS-one-owner argmax, after it the -RD
   // seed-family dedup, whose hash walk is the one piece of P2.4 that stays sequential.
   auto a3rd = a3;
-  // The inverted grant map (pLS row -> owning chain row) the A14 -CCS pass below reads. Filled by
-  // ChainAttachPublish, which is the one pass that knows the post-dedup grants.
-  auto plsOwnerChain_buf = cms::alpakatools::make_device_buffer<int32_t[]>(queue_, nPls);
-  alpaka::memset(queue_, plsOwnerChain_buf, 0xFF);  // -1 everywhere
+  // Inside the -RD window: after the gather + concurrent table build, after the parallel partner
+  // prefilter, after the serial greedy. The remainder of the window is ChainAttachPublish.
+  // (T3's plsOwnerChain buffer is NOT reinstated -- it existed only for -CCS, which T1 deleted.)
+  auto a3ow = a3;
+  auto a3cf = a3;
+  auto a3sd = a3;
   {
     // P2.6a. The one-pLS-one-owner rule is an argmax, so it becomes a packed atomicMax; the -RD
     // visiting order is the gathered ascending-position (K9 accepted) order -- zero sorts, simp
     // change 3, replacing the reference's O(n^2) selection sort (7-10 ms per event on the device,
-    // all of it one thread chasing a global load per comparison). Only the hash-table walk itself
-    // stays sequential -- see ChainAttachSeedDedup.
+    // all of it one thread chasing a global load per comparison). The -RD hash walk is split into
+    // a concurrent table build, a parallel partner prefilter and a greedy over the few flagged
+    // owners -- see ChainAttachSeedDedup for why that leaves the same verdicts.
     auto plsKey_buf = cms::alpakatools::make_device_buffer<uint64_t[]>(queue_, nPls);
     auto ownKeep_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, nTargets);
     auto ownOffs_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, nTargets + 1u);
@@ -2072,6 +2199,14 @@ void LSTEvent::attachPixels(unsigned int nHits,
         cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, size_t{nTargets} * kMaxPLSHitsInHitsSoA);
     auto ownerNHits_buf = cms::alpakatools::make_device_buffer<uint8_t[]>(queue_, nTargets);
     auto ownerPls_buf = cms::alpakatools::make_device_buffer<int32_t[]>(queue_, nTargets);
+    // The owner index behind each -RD table entry, and the prefilter's per-owner verdict. Neither
+    // needs initialising: hashOwner is only ever read at a slot whose key matched (so the same
+    // thread wrote it), and cont is written for every owner before it is read.
+    // ZERO extra per-event allocations (see rdHashOwner_ in LSTEvent.h for why that matters):
+    // the owner-tag array is the persistent member, and the per-owner prefilter verdict BORROWS
+    // ownOffs_buf, which is dead the moment ChainCompactSelect has consumed it.
+    uint32_t* const hashOwner = rdHashOwner_->data();
+    uint32_t* const ownCont = ownOffs_buf.data();
 
     alpaka::memset(queue_, plsKey_buf, 0);  // no bid yet; plsOwned is already zero (see the caller)
     alpaka::exec<Acc1D>(queue_,
@@ -2124,7 +2259,25 @@ void LSTEvent::attachPixels(unsigned int nHits,
                           nHits,
                           ownerHits_buf.data(),
                           ownerNHits_buf.data(),
-                          ownerPls_buf.data());
+                          ownerPls_buf.data(),
+                          hashKey,  // stage A builds the -RD table here, concurrently
+                          hashVal,
+                          hashOwner,
+                          stats_buf.data());
+      a3ow = stamp();
+      alpaka::exec<Acc1D>(queue_,
+                          chainFlat_workDiv,
+                          ChainAttachSeedConflicts{},
+                          nOwners_buf.data(),
+                          ownerHits_buf.data(),
+                          ownerNHits_buf.data(),
+                          ownerPls_buf.data(),
+                          hashKey,
+                          hashOwner,
+                          nTargets,
+                          ownCont,
+                          stats_buf.data());
+      a3cf = stamp();
       alpaka::exec<Acc1D>(queue_,
                           serial_workDiv,
                           ChainAttachSeedDedup{},
@@ -2134,9 +2287,27 @@ void LSTEvent::attachPixels(unsigned int nHits,
                           ownerHits_buf.data(),
                           ownerNHits_buf.data(),
                           ownerPls_buf.data(),
+                          ownCont,
                           hashKey,
-                          hashVal,
+                          hashOwner,
                           stats_buf.data());
+      a3sd = stamp();
+      // The brute-force check that the prefilter flagged every revocable owner. O(nOwners^2), so
+      // it is gated like the grid superset audit; stats[15] must come back zero.
+      char const* rdAudit = std::getenv("LST_CHAIN_RD_AUDIT");
+      if (rdAudit != nullptr && *rdAudit != '\0' && *rdAudit != '0') {
+        alpaka::exec<Acc1D>(queue_,
+                            chainFlat_workDiv,
+                            ChainAttachSeedAudit{},
+                            nOwners_buf.data(),
+                            ownerHits_buf.data(),
+                            ownerNHits_buf.data(),
+                            ownerPls_buf.data(),
+                            ownCont,
+                            nTargets,
+                            stats_buf.data());
+        a3sd = stamp();
+      }
     }
     alpaka::exec<Acc1D>(queue_,
                         chainFlat_workDiv,
@@ -2145,34 +2316,9 @@ void LSTEvent::attachPixels(unsigned int nHits,
                         targets_buf.data(),
                         nTargets,
                         plsOwned,
-                        plsOwnerChain_buf.data(),
                         stats_buf.data());
   }
   auto const a3b = stamp();
-
-  // A14 -CCS + A15 -XC4: the restricted second pass. Walks the grid for the bare 5+ targets
-  // (owned-pLS pairs only) and the aux 4-layer targets (every pair, their -XC4 score-only
-  // enumeration), and applies the -CCS suppression flag that K10 row assignment honours. Runs
-  // after the grants are final, exactly as the reference builds its map after -RD
-  // (main.cc:4109-4127); the map itself came out of ChainAttachPublish above.
-  {
-    alpaka::exec<Acc1D>(queue_,
-                        chainFlat_workDiv,
-                        ChainAttachCcsScore{},
-                        chainsDC_->view(),
-                        tgtPre_buf.data(),
-                        nTgtAll,
-                        offsets_buf.data(),
-                        items_buf.data(),
-                        plsOwnerChain_buf.data(),
-                        xcPairs,
-                        xcCursor,
-                        xcCap,
-                        stats_buf.data(),
-                        chainConfig_);
-    alpaka::wait(queue_);  // the owner-chain scratch dies with this scope
-  }
-  auto const a4 = stamp();
 
   attachGridAudit(nTargets, plsPre, tgtPre_buf.data(), offsets_buf.data(), items_buf.data());
 
@@ -2184,8 +2330,10 @@ void LSTEvent::attachPixels(unsigned int nHits,
     auto ms = [](auto a, auto b) { return std::chrono::duration<double, std::milli>(b - a).count(); };
     attachSummary_ = std::format(
         "targets={} (+{} aux4L) pLS={} gridEntries={} cand={} dup={} scored={} picks={} attached={} "
-        "rdRevoked={} ccsSuppressed={} xcOverflow={} hashOverflow={} tieRD={} | pre {:.3f} ms | "
-        "grid {:.3f} ms | score {:.3f} ms | contend {:.3f} ms | RDdedup {:.3f} ms | ccs {:.3f} ms",
+        "rdRevoked={} xcOverflow={} hashOverflow={} tieRD={} rdCont={} rdMaxEnt={} "
+        "rdAuditBad={} | pre {:.3f} ms | "
+        "grid {:.3f} ms | score {:.3f} ms | contend {:.3f} ms | RDdedup {:.3f} ms "
+        "(gather+table {:.3f} prefilter {:.3f} greedy {:.3f} publish {:.3f})",
         nTargets,
         nTgtAll - nTargets,
         pixelSize_,
@@ -2196,16 +2344,21 @@ void LSTEvent::attachPixels(unsigned int nHits,
         st[3],
         st[4],
         st[5],
-        st[12],
         st[11],
         st[7],
         st[9],
+        st[13],
+        st[14],
+        st[15],
         ms(a0, a1),
         ms(a1, a2),
         ms(a2, a3),
         ms(a3, a3rd),
         ms(a3rd, a3b),
-        ms(a3b, a4));
+        ms(a3rd, a3ow),
+        ms(a3ow, a3cf),
+        ms(a3cf, a3sd),
+        ms(a3sd, a3b));
   }
 }
 
@@ -2401,20 +2554,40 @@ void LSTEvent::attachBareT3(unsigned int nHits,
   bareT3TgtLogit_.emplace(cms::alpakatools::make_device_buffer<float[]>(queue_, nBare));
   auto stats_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, chainattacht3::kStats);
   alpaka::memset(queue_, stats_buf, 0u);
+  // The sliced scorer reduces into a packed argmax key (see ChainAttachT3Score); tgtScored carries
+  // the per-target "scored anything" census the slices can no longer count themselves.
+  auto tgtKey_buf = cms::alpakatools::make_device_buffer<uint64_t[]>(queue_, nBare);
+  auto tgtScored_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, nBare);
+  alpaka::memset(queue_, tgtKey_buf, 0);
+  alpaka::memset(queue_, tgtScored_buf, 0u);
+  uint32_t const t3Slices =
+      cms::alpakatools::requires_single_thread_per_block_v<Acc1D> ? 1u : chainAttachScoreSlices();
+  auto const t3Score_workDiv = cms::alpakatools::make_workdiv<Acc1D>(
+      std::max<uint32_t>(max_blocks, (nBare * t3Slices + 255u) / 256u), 256);
   alpaka::exec<Acc1D>(queue_,
-                      chainFlat_workDiv,
+                      t3Score_workDiv,
                       ChainAttachT3Score{},
                       tgt_buf.data(),
                       nBare,
                       goffs_buf.data(),
                       items_buf.data(),
                       plsOwned,
-                      bareT3TgtPls_->data(),
-                      bareT3TgtLogit_->data(),
+                      tgtKey_buf.data(),
+                      tgtScored_buf.data(),
                       plsBestT3,
                       stats_buf.data(),
                       theta,
+                      t3Slices,
                       cfgT3);
+  alpaka::exec<Acc1D>(queue_,
+                      chainFlat_workDiv,
+                      ChainAttachUnpackBest{},
+                      tgtKey_buf.data(),
+                      tgtScored_buf.data(),
+                      bareT3TgtPls_->data(),
+                      bareT3TgtLogit_->data(),
+                      nBare,
+                      stats_buf.data());
   auto const b3 = stamp();
 
   // K8B-c: contention + the stage-B half of the -RD seed dedup, against the hash table stage A

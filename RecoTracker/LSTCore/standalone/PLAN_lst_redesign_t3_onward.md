@@ -3443,3 +3443,97 @@ key) -> attach head. That is the structure to collapse; the end state remains ON
     each head separately -- R1's r1_perm.py is the instrument and already reports dAUC per column.
   * Do NOT ship a merged head without re-fitting all six bars: the bars are not independent of the
     weights (round 2 proved that twice -- see the coincidence-credit rejection above).
+
+================================================================================================
+GPU TIMING ROUND 1: 10.3 -> 5.8 ms/evt, CHAIN BLOCK 6.9 -> 2.2 (2026-08-07)
+================================================================================================
+
+FOUR CHANGES, all measured independently and then merged; the merged tree gates CPU 35/35 IDENTICAL
+against the pre-merge binary and measures, interleaved twice in one quiet session:
+    GPU  10.3 -> 5.8 ms/evt   (chain block 6.9 -> 2.2; master 4.5 total, ~2.6 for the stages we
+                               replaced -- OUR CHAIN BLOCK IS NOW CHEAPER THAN WHAT IT REPLACED)
+    CPU  758.6 / 760.6 -> 758.0 / 759.9  (palindrome, neutral -- the CPU lead over master is kept)
+    The gap to master closes 2.3x -> 1.29x, and what remains is almost entirely stages we do not own
+    (Hits 0.6 MD 0.2 LS 0.2 T3 0.6 graph 1.4).
+SCOPE, as the maintainer requires: NO shared LST kernel is touched. Nine files, all chain-specific
+or the orchestrator, and inside LSTEvent.dev.cc the edits sit in exactly attachPixels,
+attachBareT3 and arbitrateChains. The pLS stage is untouched (GPU 0.2 both sides).
+
+ 1. T2, THE LARGEST: the attach scorers were parallel over TARGETS (1080 threads = 34 warps on a
+    142-SM L40, ~3% of the machine) while the work is over PAIRS (135k). Each target's candidate
+    walk is now sliced kAttachScoreSlices = 64 ways with a packed-key atomicMax reduce.
+    stage-A score 1.345 -> 0.055, stage-B score 1.591 -> 0.191 (combined 2.936 -> 0.257).
+    +1 kernel (ChainAttachUnpackBest). Host backends force nS = 1 via if constexpr, so the CPU path
+    is the previous code verbatim. The tie-break survives because "max logit, lowest row" IS a max
+    over a packed monotone key, and max is associative.
+ 2. T1: the `ccs` pass was 1.07 ms of DISCARDED work (-CCS off in all bands, ccsSuppressed=0). Its
+    load-bearing half (the -XC4 4-layer append) reads nothing the contention produces, so those ~40
+    aux targets now ride in ChainAttachScore's own launch -- free by block arithmetic
+    (ceil(1080/256) == ceil(1121/256) == 5) and measured free (+0.018 ms). -CCS deleted outright.
+    -1 KERNEL, -215/+49 lines: the only one of the four that is a net reduction.
+ 3. T3: -RD seed-family dedup, 0.737 ms on ONE thread to revoke 2 rows/evt. Counters (not reasoning)
+    unlocked it: the seen[] cap peaks at 4 of 64 and never fires, so the verdict reads table
+    MEMBERSHIP, never slot layout -- which a concurrent CAS build preserves. Split into concurrent
+    table build + parallel symmetric partner prefilter + serial greedy over only the 4 of 716 flagged
+    owners: 0.737 -> 0.113. +2 kernels (one is a brute-force audit, LST_CHAIN_RD_AUDIT only).
+ 4. T4: the -CC sweep (ChainT3CCSweepEmit, serial over ~314 deliveries) split prep/sweep/emit
+    0.460 -> 0.104; the K9 order rank sliced 32 ways 0.223 -> 0.046; two claim phases fused (a
+    barrier removed); and FOUR alpaka::wait scope drains deleted -- unnecessary because the caching
+    allocator is queue-ordered. Net +4 kernels, -2, -1 barrier, -4 waits. CPU IMPROVED 763.7 -> 758.8
+    in its own slot.
+
+KERNEL-COUNT HONESTY, against the standing "86 is too many": only T1 reduces. Net for the four is
+about +5 kernels and +400 lines, because de-serialising a latency-bound kernel means splitting it
+into parallel phases. Win per added kernel: T2 -2.2 ms/kernel, T1 free-and-simplifying, T3 -0.3,
+T4 -0.2. The maintainer took all four with that trade stated.
+ONE UNEXPLAINED REGRESSION, not glossed: GPU TC 0.1 -> 0.3 ms. Most likely T4's emission split
+landing in the TC stamp. Net is still -4.5, but it is +0.2 of new cost nobody has attributed.
+
+METHOD RESULTS THAT OUTLAST THE PATCHES -- these cost the round more time than the code did:
+ * A GPU-vs-GPU branch comparison IS NOT A GATE on this codebase. The baseline fails against ITSELF
+   (~250 per 1e5 TCs, 18/50 events), and T3 proved it with a NULL CONTROL: two provably-equivalent
+   variants moved the output as much as the baseline moved against itself. CPU bit-identity is the
+   real gate; the CPU backend is deterministic (35/35, zero event-level differences on a repeat).
+ * A GPU floor needs THREE baseline samples, not two. One pair is a point and cannot bound a spread:
+   the type-5 excursion runs +7 to +14 across three runs, and a cross-slot -10 that looked
+   disqualifying against a single pair sits comfortably inside it.
+ * A CPU TOTAL CANNOT ATTRIBUTE A CHANGE. Relinking alone moves an untouched stage ~19-25 ms
+   REPRODUCIBLY (v1 vs v6 have byte-identical kernels and differ only in buffer lifetime; v1 was
+   +47 ms in both palindrome positions). Attribute via the per-stage line plus a direct per-kernel
+   measurement. Do not trust a CPU delta under ~15 ms without a palindrome.
+ * COUNTERS BEAT REASONING. Two of T3's three hypotheses were wrong and cheap counters killed both;
+   the retraction of one (a cap it assumed was binding, measured at 4 of 64) is what produced its win.
+ * ALLOCATION: a count/size model is FALSIFIED (three extra per-event buffers, neutral; two, +47 ms)
+   yet the discipline is SUFFICIENT to remove the cost. Nobody has separated allocation from code
+   layout, because every source change is also a relink. Practical rule: do not add a per-event
+   device buffer in the chain block -- persistent member, or borrow a buffer that is already dead.
+ * A queued job that resolves its binary FROM THE BUILD TREE measures whatever is there when the slot
+   runs. Freeze the executable AND liblst_*.so, and print the md5 inside the job.
+ * My own seed map had TWO holes, both from truncating greps (tail -4): K0+K1 incidence (0.878 ms)
+   and the whole of stage B (score 1.593, contend 0.959) -- two of the five largest lines. Both were
+   found by agents auditing my inputs, not by me. Print the whole timing block, never a tail.
+
+THE MEASUREMENT BROKER (standalone infra, gpu_wt/broker/): five agents cannot time on one box, and
+builds contaminate measurements because our number is wall-clock per event. One FIFO slot at a time
+with the machine to itself, builds taking the lock SHARED and yielding to a pending measurement.
+Worked; two operator errors of mine are recorded there (a stale intent flag that silently stalls
+every agent, and restarting the daemon mid-job, which orphans it).
+
+ROUND-TWO TARGET LIST, all measured or read from source, none attempted:
+ * THE ONE-BLOCK LAUNCHES. chainScan_workDiv is make_workdiv(1, 1024) -- ONE block, 1 SM of 142 --
+   and the closing loop is O(1024) serial iterations run by all 1024 threads. 12+ ChainSegPrefix
+   sites plus ChainPrefixTripletModules / ChainPrefixChains / ChainPrefixKeyModules and K6cd
+   (0.150 ms). T4 wrote a 10-step double-buffered shared-memory scan (chainScanBlockExclusive),
+   reverted it unmeasured when the round closed, and RELEASED THE CLAIM. ChainClaimRounds is also
+   still one block (0.159 ms).
+ * K0+K1 incidence, 0.878 ms, volume-bound (corr 0.972 with node count, 0.415 ms + 11.75 us/1000
+   nodes). 47% is NODE-INDEPENDENT: K0 scans exactly 40000 modules every event regardless of
+   occupancy. Nobody has touched it.
+ * THE DUPLICATE pLS GRID. attachBareT3 builds a SECOND independent copy of the same pLS grid with
+   the same config, differing only in the per-r-bin hull. A union hull makes one grid serve both,
+   removing a GridCount + prefix + GridScatter AND one mid-stream device->host round trip (a full
+   pipeline drain). The superset argument is already blessed in-tree. Caveat: a wider hull means more
+   candidates for both scorers -- print the two hulls before writing code.
+ * The unexplained GPU TC +0.2 ms above.
+ * T5's in-binary dummy-allocation experiment, the only design that can separate allocation cost
+   from code layout.

@@ -28,7 +28,7 @@
 //   filtered pair compaction the attach scorers appended (threshold on the |seed eta|-banded
 //   xcTheta, no geometric window -- LST's dR^2 < 0.02 centroid window was dropped, see
 //   ChainAttach.h pass 1). Pass 2 keeps a pair only when the chain actually EMITTED a seedless TC
-//   (tcRow >= 0 -- which already excludes the -CCS-suppressed and the too-short -- and
+//   (tcRow >= 0 -- which already excludes the too-short and the out-of-rows -- and
 //   attachPls < 0) and the seed is still unowned. The two passes together are exactly "retire the
 //   seed iff its MAX pair logit over DELIVERED seedless chain TCs reaches the band bar".
 //
@@ -206,7 +206,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         if (p >= nPls)
           continue;
         if (chains.tcRow()[c] < 0)
-          continue;  // not emitted (K9-rejected, < 4 layers, -CCS-suppressed, out of rows)
+          continue;  // not emitted (K9-rejected, < 4 layers, out of rows)
         if (chains.attachPls()[c] >= 0)
           continue;  // seeded (type 7): the pixel-anchored arm's business
         if (plsOwned[p] != 0u)
