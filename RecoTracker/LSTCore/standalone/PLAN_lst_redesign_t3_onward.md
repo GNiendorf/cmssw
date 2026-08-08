@@ -3667,3 +3667,274 @@ METHOD RESULTS THAT OUTLIVE THIS ROUND
    physics validation cycle instead of a bit-identity gate, perturbing a fit whose features feed a
    trained gate MLP whose bars were fitted against FP64 -- and a precision cut in a fit feeding a cut
    hurts the MARGINAL cases, which are the displaced ones that are this project's whole advantage.
+
+## 2026-08-07 -- DISPLACED / cube50 ROUND (5 agents A1-A5): DIAGNOSIS COMPLETE, TWO PARETO POINTS, NOTHING SHIPPED
+
+Shared log `standalone/FINDINGS_CUBE.md` (~2900 lines, every number with denominators and Poisson
+sigma). Maintainer decision at round end: **SHIP NOTHING, carry everything into the next round** --
+neither candidate reaches master's dxy[10,30) and arm K's fake bill is unpaid, so shipping either
+would have to be unwound. Arm K is the new BASELINE TO BEAT.
+
+### THE DIAGNOSIS, AND IT SURVIVED THREE REVERSALS
+**The whole deficit is our 4-LAYER (T4-class) objects. Our 5+-layer chains already match master.**
+    cube50  dxy[10,30) denom 9353   master .0269 (T4cl 210)   ours .0056 (T4cl 20)
+    cube50  vxy[10,30) denom 5521   master .0639 (T4cl 166)   ours .0389 (T4cl 34)
+    PU200   dxy[10,30) denom 1735   master .0496 (T4cl  47)   ours .0288 (T4cl 25)
+`cube50_highPt` is otherwise FINE (equal or ahead in every other band). **There are ZERO
+pixel-containing TCs (types 5/7/8) in dxy[10,30) on either side** -- that band is entirely OT-only,
+so the pT3/pT5/stage-B hypothesis is dead. Deficit concentrates in LOW-pT, HIGH-dxy, 4-LAYER.
+
+### THE FINDING THAT UNBLOCKED THE ROUND: TWO BARS IN SERIES, EACH MASKING THE OTHER (A1)
+Gate alone open: +.0027. Edge weld-eligibility bar (`thetaEdge`) alone: +.0016. **BOTH: +.0326 --
+twelve times the sum**, reaching cube50 dxy[10,30) .0382 ABOVE master's .0269, T4cl 20 -> 316.
+**THE OBJECTS EXIST.** A1's earlier "objects are not built" verdict (and this coordinator's relay of
+it) was WRONG because it opened only one of the two series bars. Every prior single-bar scan in three
+rounds read as a dead end for the same reason. The honest price of the naive route: PU200 fake
+.0470 -> .2099 (4.5x), barrel -> .3711. Not shippable, but it converts the problem from "blocked
+upstream" to "we cannot yet PAY for what we can already reach".
+
+### THE ROOT CAUSE OF THE 4-LAYER WEAKNESS: THE TRAINING AXIS WAS WRONG *AND* MOSTLY UNDEFINED
+Found independently by A5 and A2. The shipped 3-class gate's displaced class AND its 8x/16x weight
+tiers were keyed on `simVxy`:
+ * **WRONG AXIS**: 64% of that up-weighted "displaced" class sits at |dxy| < 1 cm -- born displaced
+   but still pointing home, the cell where we BEAT master by +.087. Only 0.9% is dxy[10,30).
+ * **WRONG COVERAGE**: `simVxy` is defined for only 5.7% of positives. `labelChainsHarness` records
+   kinematics only from an ACCEPTED sim, so pileup matches leave the -999 sentinel, and `-999 < 1`
+   files **94.3% of positives** under class 1 "prompt-true". The prompt/displaced split had never
+   been measured on the bulk of the positive class.
+ * WHY IT WAS WRITTEN THAT WAY: `sim_pca_dxy` is FULL-LENGTH in the tracking ntuple (pileup included)
+   while **`sim_vx`/`sim_vy` are not branches at all**. vxy was the only thing available.
+ * `abs(-999)` = +999 puts the sentinel in the HIGHEST dxy bin -- cost A2 one wrong census.
+
+### ENRICHMENT: THE MAINTAINER WAS RIGHT, AND THE MECHANISM IS NOT LOSS WEIGHTING
+First cube50 chain-gate training dump ever produced (needed LST master `-mcCd`, an 11-branch
+`write_lst_ntuple.cc` patch, AND `getUL` + a `ULong64_t` arm added to master's `treeutil.h`, because
+the tracking ntuple's `event` branch is ULong64_t and stock master has no accessor -- that is the
+specific reason no cube50 training set had ever existed).
+ * Supply: cube50 5000 evt -> 1651 chains, 1641 positives, **10 fakes**; highPt -> 1153 / 8.
+ * **THE RATIO IS THE RESULT: uniform weight 1 is OPTIMAL. Weight 10 buys the far band but loses
+   dxy[1,5). Weight 50 (== pure loss weighting) COLLAPSES.** So enrichment is NOT loss weighting in
+   disguise -- a few well-placed positives beat many loudly-weighted ones. A2's earlier structural
+   argument that "cube50 has no fakes so it can only teach accept-more" was RETRACTED as too strong,
+   and so was this coordinator's relay of it.
+ * **1651 cube rows = 0.12% of the training set moved the frontier outward on their own** (arm K
+   strictly dominates arm H, the re-key-only arm).
+ * OUT-OF-SAMPLE PROOF, `cube50_highPt` in NO training input: 5 of 6 bands ahead of master, two at
+   3.2 and 4.5 sigma; in dxy[10,30) the shipped config reconstructs ZERO 4-layer objects, arm K three.
+ * **NEITHER PIECE WORKS ALONE**: enrichment needs the re-key to give the cube rows a class to land
+   in; the re-key alone is dominated. Both together are what paid.
+
+### THE TWO PARETO POINTS (PU200RelVal 1000 evt, CPU, weights-only, no C++ in either)
+                        MASTER   round-2 SHIPPED   ARM B (+3 bars)   ARM K (+M4D=0.0)
+    eff overall          .8100      .8099            .8102             .8090
+    dup                  .0514      .0479            .0477             .0472
+    fake                 .0454      .0470            .0439             .0565
+    dxy [1,5)            .5097      .5815            .5731             .5799
+    dxy [5,10)           .2314      .2463            .2493             .2781
+    dxy [10,30)          .0545      .0317            .0342             .0393
+    vxy [5,10)           .6448      .7227            .7113             .7172
+    vxy [10,30)          .6257      .7128            .6944             .7109
+**ARM B** = re-key + `m3Theta4D -1.912 / m3Theta4 3.844 / m3ThetaR -2.5`: beats master on all three
+headline metrics and 6 of 7 displaced bands; fixes our only real deficit (fake); pays -.0184 vxy[10,30).
+**ARM K** = arm B's re-key + cube50 enrichment at weight 1, `M4D=0.0`: the displaced shape is
+strictly better (vxy give-back is noise, -.0019), moves dxy[10,30) the furthest anyone did
+(+.0076, master's lead -.0228 -> -.0152), and its ENTIRE bill is fake +.0111. Confirmed HEAD-driven,
+not bar-driven (positive across its whole 1.83-logit scan), and it CANNOT be made fake-neutral.
+Weights + bars on disk: `gpu_wt/g2/a2_ref/`, handoff `A2_HANDOFF.md`.
+
+### METHOD RESULTS THAT MUST SURVIVE THIS ROUND
+ * **The offline cost-matched bar UNDER-predicts the online fake cost for EVERY re-keyed head**
+   (H +.0083, I +.0219, K +.0155) because the training dump is PRE-ARBITRATION. Always scan 2-3
+   points online; never ship an offline-solved bar.
+ * **`--evt-offset` is MANDATORY for enrichment**: cube50 and PU200 both number events from 1, so the
+   combination rule silently drops the entire cube set -- verified "keep 1651/1651" with it, 0/1651
+   without. **A null enrichment that reads as a real negative** is this problem's worst failure mode.
+ * **cube50's standard overall-efficiency selection admits only 19 of 22194 tracks** (it requires
+   `vtx_perp < 2.5` and this is a 50 cm cube). cube50 `eff overall`, eta-region rows and dup/fake are
+   NOISE on ~20 tracks. Quote ONLY the vxy/dxy band metrics for cube samples.
+ * **The 75% match rule is STRICTLY `>`, and 4 layers is the ONLY length where one bad MiniDoublet is
+   fatal**: 2*nL hits means 6/8 = 0.750 FAILS while 8/10 = .800 passes. 146,104 training rows sit at
+   exactly 6/8. NOT a mislabel (the efficiency metric uses the same rule and master's T4 faces the
+   same bar) and NOT the explanation (a PU200-occupancy effect: 15 of 1164 cube50 chains).
+ * `U4`/`thetaExempt4` is NUMERICALLY INERT (0 of 3687 gate-spared exempt T4 dropped) because
+   `chains.score` carries `lambdaLen*nLayers` = +12 for a 4-layer chain.
+ * **100.000% of 4-layer chains are 2-node welds** (931445/931445, structural -- a third node forces
+   nLayers>=5), so 3 of the gate's nominal inputs are CONSTANT and 2 are duplicates: 25 nominal
+   inputs, **20 distinct numbers**. Any 4-layer story lives in those 20.
+ * **The 14 inputs master's t4dnn has and we lack DO NOT PAY** (all 14 together +.038 to +.044; no
+   single one individually resolvable; several negative in a dedicated fit). Do not re-litigate.
+   Reason: the 20 live inputs already reach TPR .9804 on dxy>=10 when the fit is AIMED at it, versus
+   .5737 pooled -- the information is present, the MIX and the DECISION lose it.
+ * The dump's `ievt` counted DUMPED events, not input entries -- silently mislabels every record but
+   the first. Aggregate censuses unaffected; anything truth-joined on that index is not. Patched at
+   `a4_ref/chain_dump_ievt.patch`.
+ * PRE-EXISTING DEFECTS FOUND, each logged separately: the shipped gate was TRAINED at
+   `lambdaLen = 0.5` and SHIPS at 3 (train/serve mismatch); the training dump is UNTRIMMED while
+   serving trims before features and gate (33.1% of rows, 45.9% of positives -- but
+   `trimMinLayersAfter = 5` and no 4-layer chain has nNodes>=3, so the 4-layer conclusions stand).
+
+### THE FUNNEL, RECONCILED (A4, after correcting its own edge-count ranking to sim-track units)
+    pre-gate T4-reachable distinct sims  0.0880/evt      gate discards 64.5%
+    post-gate                            0.0312/evt      master delivered 0.0986/evt
+Our pre-gate supply is **0.89x master's delivered output -- 11% short, not 4x**; the upstream edge/weld
+losses are largely BRAID DUPLICATES (1164 chains collapse to 880 sims) and 98.2% of pre-gate supply is
+creditable. A post-gate stage nobody had measured (arbitration/crossclean/emit) costs a further 1.72x.
+In dxy[10,30) specifically supply is ~2.2x short BEFORE the gate and the gate keeps only 31%.
+**The weld is EXCLUSIVE by construction** (one out-slot, one in-slot per T3; master's T4 builder has
+none), and the coordinator's exclusivity hypothesis is CONFIRMED on cube50 (E1 median logit +2.61
+takes 80.7% of contested T3s) and REFUTED on PU200 (E1 median -3.79, 60.6% of blocks are E2-vs-E2) --
+so any E1/E2 competition fix acts differently in the two samples and must be priced on both.
+
+### NEXT ROUND'S SLOTS (maintainer: "crush it next round", follow up what these agents started)
+ 1. **Pay down arm K's fake bill.** It is the round's best displaced shape and its whole cost is
+    +.0111 fake. Unexploited: `c25Theta/D` (the one bar never scanned), the edge MLP never RETRAINED
+    at the loosened admission, and A1's two-bars-in-series interaction never jointly optimised.
+ 2. **Retrain the edge MLP at the loosened `thetaEdge`.** A1 opened it and the fake exploded because
+    the score was never trained to separate at that admission. This is the "representation problem,
+    not a bar problem" A4 named, and the only route to the reachable-but-unaffordable objects.
+ 3. **Braid duplicates + the post-gate 1.72x stage.** 1164 chains -> 880 sims; recovering sims there
+    costs NO admission loosening and therefore no fake.
+ 4. **cube50_highPt exploitation** -- arm K is already ahead of master in 5 of 6 bands there
+    out-of-sample; plus the untested T4-IP bar `m3Theta4 = 4.0` against the 5+ branch's -0.5, which on
+    highPt kills 100% of the IP branch including chains scoring up to mX +3.15.
+ 5. **Non-exclusive welding for the 4-layer case**, priced on both samples per the E1/E2 asymmetry.
+ Plus, independent of all five: fix the `lambdaLen` train/serve mismatch and the untrimmed dump.
+
+## 2026-08-07 late -- DISPLACED ROUND 2 (C1-C6): THE ROOT CAUSE FOUND, FOUR CANDIDATES, NOTHING SHIPPED
+
+Shared log `standalone/FINDINGS_CUBE2.md`. Six agents. Maintainer decision: **ship nothing yet**; a
+final general round was under consideration at close. Read with the previous entry -- several of ITS
+conclusions were overturned here.
+
+### THE ROOT CAUSE, AND IT IS A ONE-LINE RECIPE DEFECT
+**`prototype/edge_norm_v3.json` records `"displaced_weighting": null` / `"displaced_weight": false` --
+THE SHIPPED EDGE MLP WAS TRAINED WITH NO DISPLACED OBJECTIVE AT ALL.** Consequence, measured on
+held-out PU200: true-edge weld eligibility at `thetaEdge=0` collapses with displacement --
+.9051 / .7956 / .5531 / .3028 / .1048 across dxy [0,1) [1,5) [5,10) [10,30) >=30. **The median logit of
+a true cube50 dxy[10,30) edge is NEGATIVE (-0.633), i.e. BELOW the shipped weld bar.** Since 100% of
+4-layer chains are 2-node welds of exactly one E2 edge, a lost edge IS a lost T4-class object. This is
+an 18,097-edge PU200 defect, not a cube50 artifact, so no sample-overfitting objection applies.
+Retraining with a displaced objective takes cube50 dxy[10,30) tracks WITH a weld-eligible edge from
+**27% to 89%**. The gate must be retrained too, because gate features 2/3/4/18 ARE edge logits.
+
+### THE FOUR CANDIDATES (PU200RelVal 1000 evt; cube50 5000 evt)
+                        MASTER  SHIPPED    C1      C2(A)    C2(C)    C4(B)
+    eff                 .8100   .8099   .8107    .8090    .8093    .8098
+    dup                 .0514   .0479   .0498    .0482    .0487    .0477
+    fake                .0454   .0470   .0471    .0437    .0495    .0514
+    dxy[5,10)           .2314   .2463   .2711    .2691    .2979    .2632
+    dxy[10,30)          .0545   .0317   .0412    .0462    .0614    .0367
+    vxy[10,30)          .6257   .7128   .7097    .7006    .6984      --
+    cube50 dxy[10,30)   .0269   .0056   .0091    .0089    .0214    .0079
+    n TC                  --      --    +0.56%   -5686    +0.81%     --
+ * **C1** = 8 existing `ChainConfig.h` constants on the SHIPPED head, no weights
+   (`thetaEdge -0.5`, `m3Theta4D -2.5`, `t4ExemptDcaMin 2.0`, `m3Theta4 0.5`, `c25Theta 2.0`,
+   `c25ThetaD -1.0`, `m3ThetaRB/RT -1.2`). Patch `gpu_wt/g1/c1_ref/c1_candidate_Z2.patch`, commit
+   `5922044ab9b`. **The only candidate that GAINS efficiency.**
+ * **C2(A)** = ONE generated header (`EdgeNetworkWeights_Ea.h`), ZERO constants: the retrained edge head
+   with its logits affine-rescaled back onto the distribution the SHIPPED gate was fitted on
+   (`a=1.19462896, b=-1.37382330` folded into `wgt_out`/`bias_out`). **fake .0437 and barrel .0426 are
+   both BELOW master's**, dup flat, n TC DOWN 5686 -- the only candidate likely to be timing-favourable.
+   But cube50 dxy[10,30) only .0089, so it does NOT recover the population the round was about.
+ * **C2(C)** = `int_EG_bin` (retrained edge + gate) + 6 constants (`E=1.15 M4D=0.0 M4=2.0
+   MR=MRB=MRT=-0.5`). **The ONLY configuration that beats master on PU200 dxy[10,30) (.0614 vs .0545)**,
+   cube50 .0214 with T4-class 20 -> **145** against master's 210, ahead of master on all five PU200
+   displaced bands and on dup, at eff -.0006 (inside 1 sigma) and fake +.0025.
+ * **C4(B)** = `dcaSplit2 = 7` + `t4FarMaxResid = 0.10` (2 constants, one clause): guards the displaced
+   cell on `maxXyResid` so it selects displaced AND well-fitted. Eliminates the shipped config's only
+   significant `cube50_highPt` deficit; dup better than shipped.
+**CPU/GPU TIME IS UNMEASURED FOR ALL FOUR.**
+
+### WHAT OVERTURNED THE PREVIOUS ENTRY
+ * **"The objects are not built" is FALSE.** A1's ceiling test had opened only ONE of two series bars.
+   Gate alone +.0027, weld-eligibility bar alone +.0016, **BOTH +.0326**, reaching cube50 dxy[10,30)
+   .0382 ABOVE master's .0269 (T4cl 20 -> 316). Naive price: fake .0470 -> .2099.
+ * **"Exclusivity is a loss" is FALSE** (C5, with truth attached): whenever a 4-layer candidate loses
+   its T3 to a chain that WORKS, that chain is **the same track** -- 110/110 cube50, 107/107 PU200. The
+   prize is a duplicate. Non-exclusive welding gains 0 distinct sims on cube50 in every band, and +1 in
+   PU200 dxy[10,30). Branch `c5_e2_rescue`, off by default.
+ * **"87% of the fake bill is the nL=5 cell" does not transfer between configurations.** True of arm K
+   (a gate re-key on the SHIPPED edge head); C2's bill is **61% nL=4** because it changed the EDGE head,
+   which adds 4-layer supply. **Never import another agent's fake census -- run it on your own config.**
+ * **The `lambdaLen 0.5 vs 3.0` train/serve "defect" is a NON-DEFECT** (C1): 48 of 49 dump columns are
+   bit-identical over 118,921 rows; only `score` differs and it is not a feature.
+ * **The T4-IP bar `m3Theta4` cannot reach displaced tracks at all** (C4, then confirmed twice more):
+   of 4-layer chains matching a dxy[10,30) sim, those on the IP branch number **0/25, 0/135, 0/1284**.
+   It is a prompt/fake bar. Downward it is the round's largest single efficiency gain; UPWARD it is
+   inert, which is why three rounds wrote it off.
+
+### MECHANISMS WORTH MORE THAN THE CANDIDATES
+ * **A GATE KILL IS A RELEASE, NOT A SUBTRACTION** (C2). `C25=1e9` made fake AND eff BOTH worse with
+   n TC barely moving -- only possible if killing a chain hands its hits to whatever is next in K9's
+   greedy claim, frequently a fake. **Corollary: a cut UPSTREAM of the hit claim (the weld) is a true
+   subtraction; a cut inside it is not.** And the AND-rule argument that `C25` "can only kill chains
+   already bad on the displaced margin" is INCOMPLETE -- immunity from the kill is not immunity from
+   losing the claim to what the kill released.
+ * **PAY IN THE CELL YOUR OWN EXCESS LIVES IN, AND ON THE RIGHT BRANCH.** The three nL=5 dials behave
+   completely differently: `C25` wrong-signed, `MRI` marginal (-.0009), `MR/MRB/MRT` **works**
+   (fake -.0074, eff +.0007) because MR governs the EXEMPT (large-dcaXY) 5+ branch, which is exactly
+   where an edge-head change's collateral lands. Those floors had been relaxed to -1.8 in an earlier
+   round BECAUSE they were "the largest single consumer of the displaced advantage" -- on a head that
+   ranks displaced edges properly, restoring them is nearly free. The retrained head made an expensive
+   trade cheap.
+ * **A MONOTONE MAP IS NEUTRAL ON A THRESHOLD, NOT ON A DOWNSTREAM REGRESSOR'S INPUT** (C2, retracting
+   its own claim). The affine rescale preserves edge SELECTION exactly (verified online) but moves the
+   GATE outcome, because the gate consumes sum/min/mean/std edge logits as continuous features and K9's
+   order key consumes `edgeSum`: dxy[10,30) .0684 -> .0614.
+ * **ANY LEVER PRICED ON THE SHIPPED HEAD MEASURES THE GATE'S NULL, NOT THE LEVER'S** (C6). The same
+   constant buys +.0009 on the shipped head and saturates, but +.0053 on a retrained head -- 6x from
+   changing nothing but the head it runs on. A1's "not built", A4/A5's construction ceilings and A3's
+   threshold exhaustion are all that artifact.
+ * **THE WELD BAR MUST BE SPLIT BY EDGE FAMILY** (C6). E1 (shared-MD) welds give 5-layer chains, E2
+   (shared-LS) give 4-layer, and `ChainGate.h` already bars those classes separately -- but ONE
+   `thetaEdge` served both. On PU200 only 19.95% of E1 edges are eligible vs 53.5% of E2, so a global
+   loosening admits ~4x more E1, and since the weld argmax is type-blind with one slot per endpoint,
+   **those E1 edges take E2's slots**: loosening E1 alone DESTROYS 128.5 four-layer chains/event and
+   LOWERED PU200 dxy[10,30) from .0317 to .0241. A typed bar reaches master-parity on cube50.
+ * **THE POST-GATE 1.72x COSTS NO EFFICIENCY** (C3): one mechanism (the K9 hit-claim tolerance),
+   98.7% same-sim duplicate collapse, distinct creditable sims lost = **0.0000/evt cube50, 0.65/evt
+   PU200** against the gate's 76.24/evt. **A gate loosening is therefore 100% monetisable on cube50 and
+   93.1% at PU200 -- price admission arms on the gate ledger alone.** Turning the whole post-gate block
+   off costs dup **+.5726** for +.0007 eff (~818:1).
+ * **SIX OF EIGHT ARBITRATION PARAMETERS ARE REMOVABLE with no metric change** (C3, proofs + online):
+   `maxClaimedFrac` inert given `-FC 1`; the BARREL BRAID CAN NEVER FIRE (so no T4-class chain can ever
+   be braid-killed, 0 of 185255); `claimItemsAltMDs` inert; three dead constants. What survives is
+   `nClaimed <= 2` plus the endcap braid (dup -.0024 / fake -.0006, so it stays).
+ * **cube50 CANNOT PRICE A CLAIM TIGHTENING** (C3): `TEXCL` costs cube50 one TC and zero efficiency
+   while costing PU200 vxy[10,30) -.0414. Nothing contends in a 10-muon gun. Only the LOOSENING-direction
+   zeros from cube50 are safe to carry forward. **This is the INVERSE of the usual overfitting worry.**
+ * **THE HARD FLOOR ON THE 4-LAYER ROUTE** (C2/A3): T4-class barrel is **.6091 fake ALREADY at shipped**
+   and its marginal population is 80% fake. A better edge head buys the right 20%; it cannot make the
+   other 80% go away.
+ * **SUPER-ADDITIVITY IS THE ROUND'S RECURRING LAW**, seen four independent ways: two series bars
+   (12x the sum), head-vs-lever (6x), C2's head + a gate bar (1.63x benefit at 1.43x cost), and
+   weld+gate payments (81% of summed cost, 93% of summed benefit). **One-at-a-time scans are unreliable
+   here -- two wrong-signed results came from that method.**
+
+### MASTER'S ANTI-PROMPT dxy FLOOR (maintainer, 2026-08-07) -- A LEAD WE HAVE NO EQUIVALENT OF
+`Quadruplet.h:486-499`, and it is one of the FIRST cuts, before the T4 DNN:
+    float dxy = abs(hypot(regressionCenterX, regressionCenterY) - regressionRadius);
+    if (dxy < 0.05f && eta_layer3 < 0.5f) return false;
+    else if (dxy < 0.01f && eta_layer3 < 1.5f) return false;
+i.e. **master REJECTS T4s that point too close to the beamline**, in two eta bands. A prompt 4-layer
+track in the barrel is better reconstructed as a T5/pT5, so a 4-layer object pointing at the IP is
+overwhelmingly fake -- exactly the cell we measure at .6091 fake. It is resolution-aware (0.05 cm to
+|eta|<0.5, 0.01 to <1.5, nothing beyond) and it CANNOT cost displaced efficiency by construction, since
+it REQUIRES displacement. **Our `dcaSplit` only ROUTES between branches; we have no unconditional
+floor.** C1's `t4ExemptDcaMin` is the same physical idea one stage later and was the round's best free
+lever (it buys fake with dxy[1,5) and NOTHING else -- dxy[10,30) flat across Z=0..5). Also note
+`Quadruplet.h:444`: master runs its dBeta selector ONLY for pT>10 or pT<1, commented "to avoid removing
+displaced efficiency" -- it already disables its own cut in the displaced-sensitive region.
+
+### TRAPS ADDED THIS ROUND
+ * Multi-stream ntuples are written in **completion order** -- any paired A/B must sort by `evt` or it
+   silently compares unrelated events (C5, and C3 independently: a per-entry diff of an `-s 8` run
+   against the `-s 32` reference reports 978 false mismatches; compare multisets).
+ * The standalone ntuple writer **segfaults under box load** (`write_lst_ntuple.cc:1385`), leaving a
+   `.root` with no `tree` key WHILE REPORTING NORMAL TIMING -- a crashed arm reads as a null result.
+   Check `uproot.open(f)['tree']` opens. Transient: died 3x at `-s 8`, passed at `-s 4`.
+ * A per-head install script leaves any OTHER head you swapped earlier in place (C2 measured a
+   confound this way and caught it from the numbers, not the tree).
+ * A fifth `dumpChains` early return skips 1350 of 5000 cube50 records (`c3_ref/fifth_return.patch`),
+   on top of the `ievt` misalignment (`a4_ref/chain_dump_ievt.patch`).
+ * `pgrep`-based waiter loops MATCH THEIR OWN COMMAND LINE and never exit -- three agents left orphans.
