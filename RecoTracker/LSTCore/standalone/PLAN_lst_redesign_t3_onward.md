@@ -4063,3 +4063,37 @@ of fake costs ~0.2 sigma of dxy[1,5).
    BINARY (`python` is an alias), so from a script it must be launched as `python3 <path>`.
  * `lst_make_tracklooper` prints "compilation successful" regardless; grepping the log for `error`
    also matches every `-Werror=` flag in the compile lines. Grep for `error:` with the colon.
+
+### 2026-08-08 -- E1-B2 TIMING MEASURED (both backends, interleaved BASE/B2 x2 reps)
+
+Method: pre-B2 baseline built from clean `d950e4315be` in worktree g5, B2 in the main tree, both
+CPU+CUDA, 0 `error:` in either make log. Runs strictly sequential, BASE/B2/BASE/B2 at each stream
+count, 175 events each, means taken over per-event rows (not the 1-decimal `avg` line).
+Artifacts: `ship_ref/gputime/`, `ship_ref/cputime/`, drivers `ship_ref/{gpu,cpu}time.sh`.
+
+**GPU -- no regression.** s=1/2/4 (where both reps agree to ~0.01 ms): chain block +0.012 to
++0.016 ms (+0.3 to +0.5%), TOTAL UNCHANGED (4.181 -> 4.182 at s=1). Wall `explicit` rate identical
+at every stream count. We keep the round-2 win: ~4.2 ms/evt vs master 4.5.
+**s=6 and s=8 are noise** -- at s=8 the BASELINE AGAINST ITSELF differs by 0.93 ms in the chain
+block (9.235 vs 10.169), larger than either arm's apparent delta, and the sign flips between the
+two configs. Do not quote the +2.7% / -2.6% seen there.
+
+**CPU -- no regression in the total, a real +3% in the chain block.** `pLS` matches within 2.5 ms
+at every stream count, so by the layout-band rule every row is readable:
+    s      blk BASE   blk B2    delta      Tot BASE   Tot B2    delta
+    1        196.17   202.59   +3.3%         752.69   759.56   +0.9%
+    4        196.50   202.36   +3.0%         757.13   757.50   +0.0%
+    16       198.72   204.88   +3.1%         762.87   767.17   +0.6%
+    32       200.90   207.68   +3.4%         770.14   775.95   +0.8%
+    64       220.66   227.79   +3.2%         853.02   857.65   +0.5%
+Still below master's 763.6 at s=1. Breakdown at s=1: TC +3.14 ms (+8.3%), Graph +2.46 ms (+8.9%),
+Chain itself only +0.82 ms (+0.6%). **The TC rise is explained** -- 2.6x more T4-class TCs
+(24766 -> 64110), so K10 assembly and the ownership cleaning do more work. **The Graph +2.46 ms is
+NOT explained**: nothing in B2 touches graph construction, and it reproduces across all 10 runs at
+every stream count, so it is not noise. Open question for the cleanup round.
+
+Note the earlier in-round CPU estimate (E1's own, +0.9-1.3% on the chain block) UNDERSTATED it;
+the measured figure is +3.0-3.4%. The total-level conclusion is unchanged.
+
+**STILL UNMEASURED: MTV / track-resolution.** This family emits ~35% fewer pT3-class TCs, replaced
+by bare OT 4-layer chains. Efficiency cannot see that; d0/z0/pT resolution can.
