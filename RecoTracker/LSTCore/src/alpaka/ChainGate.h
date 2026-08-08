@@ -618,7 +618,14 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         if (nL <= 4) {
           if (dca >= chainMaxf(cfg.dcaSplit, cfg.t4ExemptDcaMin)) {
             // Exempt (large-DCA) T4-class: displaced-oriented acceptance on mD.
-            if (mD < cfg.m3Theta4D + d4D) {
+            // -X2 / -M4D2: above the second reconstructed-dcaXY breakpoint the cell gets its own
+            // bar and the eta-band delta d4D is NOT applied (see ChainConfig.h dcaSplit2). With
+            // dcaSplit2 at its 1e9 default this branch is unreachable and the rule is unchanged.
+            // -FR: the cell also requires a GOOD FIT (feature 16 = maxXyResid), so it selects
+            // "displaced AND well measured" rather than merely "badly fitted". Default 1e9 = off.
+            bool const farCell = dca >= cfg.dcaSplit2 && chains.features()[c][16] <= cfg.t4FarMaxResid;
+            float const bar4D = farCell ? cfg.m3Theta4D2 : (cfg.m3Theta4D + d4D);
+            if (mD < bar4D) {
               score -= cfg.gateKill;
               flags |= kChainFlagKilled;
             }

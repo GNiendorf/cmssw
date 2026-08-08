@@ -1,0 +1,187 @@
+diff --git a/RecoTracker/LSTCore/interface/ChainConfig.h b/RecoTracker/LSTCore/interface/ChainConfig.h
+index cf99a97434b..879d25b9989 100644
+--- a/RecoTracker/LSTCore/interface/ChainConfig.h
++++ b/RecoTracker/LSTCore/interface/ChainConfig.h
+@@ -17,6 +17,13 @@ namespace lst {
+   struct ChainConfig {
+     // -e 0 : K6 weld eligibility on the edge logit.
+     float thetaEdge = 0.f;
++    // D4/C6: PER-EDGE-FAMILY weld eligibility. E1 (shared-MD) welds always yield a 5-layer chain,
++    // E2 (shared-LS) welds always yield a 4-layer one, and the gate downstream already judges those
++    // two classes with SEPARATE bars -- but the weld carried ONE bar for both. A value >= 1e29 means
++    // "inherit thetaEdge for this family", so these defaults reproduce the shipped arithmetic
++    // exactly, edge for edge. This hunk is the MECHANISM ONLY and is inert as it stands.
++    float thetaEdgeE1 = 1e30f;
++    float thetaEdgeE2 = -0.5f;  // E3-Q: the typed substitution for C1's global thetaEdge = -0.5.
+     // -L 3.0 : chain score length weight (ANCHOR said 0.5, the M19 block overrides).
+     float lambdaLen = 3.f;
+ 
+@@ -34,8 +41,12 @@ namespace lst {
+ 
+     // -G 6 three-class margin kills. mP = zPrompt - zFake, mD = zDisp - zFake,
+     // mX = max(zPrompt, zDisp) - zFake.
+-    float m3Theta4 = 4.f;     // -M4  : T4-class IP    kill iff mX < m3Theta4
+-    float m3Theta4D = -1.2f;  // -M4D : T4-class exempt kill iff mD < m3Theta4D
++    // E3-Q: the two T4-class admission bars. Both GENERALISE out of sample (D3's five-arm
++    // attribution: reverting either LOSES on cube50_highPt), unlike the constants added afterwards
++    // to pay a fake bill. m3Theta4D = -2.5 specifically is what keeps cube50_highPt dxy[5,10) at
++    // shipped's level -- at -1.9 it costs 4 of its 59 tracks.
++    float m3Theta4 = 2.f;     // -M4  : T4-class IP    kill iff mX < m3Theta4
++    float m3Theta4D = -2.5f;  // -M4D : T4-class exempt kill iff mD < m3Theta4D
+     float m3Theta5 = 1e9f;    // -M5  : IP nLayers == 5 kill iff mP < m3Theta5 (inert at 1e9)
+     float m3Theta6 = 1e9f;    // -M6  : IP nLayers >= 6 kill iff mP < m3Theta6 (inert at 1e9)
+     float m3ThetaD = 1e9f;    // -MD  : exempt 5+       kill iff mD < m3ThetaD (inert at 1e9)
+@@ -52,11 +63,20 @@ namespace lst {
+     // they bought was FAKE rate only (fakB -.0057, fakT -.0055), which is the lowest-priority
+     // metric, so the trade is being unwound. The band machinery stays in place -- setting these two
+     // fields is all it takes to put the bars back.
+-    float m3ThetaRB = -1.8f;
+-    float m3ThetaRT = -1.8f;
++    float m3ThetaRB = -1.2f;  // E3-Q
++    float m3ThetaRT = -1.2f;  // E3-Q
+     // -C25 0.0 / -C25D -2.0 : the (nNodes == 2, nLayers == 5) cell rule; kills only when BOTH
+     // margins fail, and never re-kills an already-killed chain.
+-    float c25Theta = 0.f;
++    // E3-Q: c25Theta 2.0, and **c25ThetaD DELIBERATELY LEFT AT ITS SHIPPED -2.0**. The rule kills a
++    // (nNodes==2, nLayers==5) chain iff (mP < c25Theta AND mD < c25ThetaD). c25ThetaD is the conjunct
++    // that reaches DISPLACED 5-layer chains (high mD is what the exempt branch selects on) and
++    // c25Theta is the PROMPT margin. With c25ThetaD at -2.0 the displaced conjunct still fails, so
++    // raising c25Theta reaches only chains that are prompt-weak AND displaced-weak: measured, it buys
++    // fake -.0010 and dup -.0003 while GAINING dxy[1,5) +.0010 and vxy[10,30) +.0007, and it is
++    // exactly inert on both cube samples. It is the only free fake payer found in this round.
++    // C1 moved BOTH; D3 attributed every held-out regression of that family to the c25ThetaD half.
++    // TAKE THIS HALF. DO NOT MOVE c25ThetaD.
++    float c25Theta = 2.f;
+     float c25ThetaD = -2.f;
+ 
+     // Transition-band levers. The band is keyed on |eta| of the chain's INNERMOST member T3
+@@ -100,15 +120,24 @@ namespace lst {
+     // units for physics readability; the claim universe is HITS (-H 1 is compile-time true) and
+     // every MD contributes 2 of them, so the budget doubles.
+     float maxClaimedFrac = 0.20f;
+-    int maxClaimedMDs = 1;
++    // E3-Q (D5's dial, and E2 measured it dominating claimCountExclusive on an open admission):
++    // 0 makes the claim budget 0 everywhere, so admission becomes nClaimed <= floor(0.20*nClaimHits).
++    // Do NOT also set claimCountExclusive -- they are the same mechanism twice and the second
++    // application costs 1 sigma of dxy[1,5) (E1's U2: -.0438).
++    int maxClaimedMDs = 0;
+     bool claimCountExclusive = false;
+ 
+     // -W 0.50: owner-relative braid kill. -WE 0.20 / -WZ 1.5 / -WN off: the BAND-AWARE braid --
+     // candidates with |eta(innermost T3)| >= braidAltEta and nNodes <= braidAltMaxNodes use the
+     // tight fraction. -FB / -FBC 0: the same band's own claim tolerance (claimItemsAltMDs == -2
+     // and claimFracAlt <= 0 mean "band uses the global value").
+-    float braidFrac = 0.5f;
+-    float braidFracAlt = 0.20f;
++    // E3-Q 0.2: the braid is QUANTIZED. A candidate that passed the claim shares at most 2 hits and
++    // owner claim-hit totals are even (2 per MD, oTot in {8,10,12,14}), so the kill cnt >= W*oTot has
++    // exactly three live settings: W in (.1667,.20] == "oTot <= 10", (.1429,.1667] == "oTot <= 12",
++    // (.125,.1429] == all. 0.20 is the cheapest live one (0.33 sigma of dxy[1,5)); 0.15 costs 0.94.
++    // There is no value in between, so this dial cannot be trimmed finer.
++    float braidFrac = 0.2f;
++    float braidFracAlt = 0.10f;  // E3-Q (D5's -WE 0.10)
+     float braidAltEta = 1.5f;
+     float braidAltMaxNodes = 1e9f;
+     float claimFracAlt = 0.f;
+@@ -196,7 +225,7 @@ namespace lst {
+     // efficiency unchanged to 6 decimals and an exact cost of two displaced sims, neither in the
+     // efficiency denominator (977 evt). type-9 rows never share 3+, so the value is effectively
+     // binary.
+-    int cc9MinShared = 2;
++    int cc9MinShared = 1;  // E3-Q
+     // -RPS 1: also retire a carried bare-pLS (type 8) row whose seed had a scored pair above its
+     // class RETIREMENT bar but lost the contention. -RD 1: seed-family dedup of the attach owners,
+     // two pLS being the same seed when they share >= 2 pixel hit rows (also gates the stage-B
+diff --git a/RecoTracker/LSTCore/src/alpaka/ChainWeld.h b/RecoTracker/LSTCore/src/alpaka/ChainWeld.h
+index a31ef2938a9..cc2f6be4611 100644
+--- a/RecoTracker/LSTCore/src/alpaka/ChainWeld.h
++++ b/RecoTracker/LSTCore/src/alpaka/ChainWeld.h
+@@ -84,16 +84,21 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+                                   int32_t const* inWeld,
+                                   uint64_t* bestOut,
+                                   uint64_t* bestIn,
+-                                  float thetaEdge) const {
++                                  float thetaEdgeE1,
++                                  float thetaEdgeE2) const {
+       uint32_t const nEdges = static_cast<uint32_t>(edges.metadata().size());
+ 
+       for (uint32_t e : cms::alpakatools::uniform_elements(acc, nEdges)) {
+         // type 0 rows are the enumeration holes K2 never filled; the reference edge list has no
+         // such entries at all, so they must not be able to win an argmax.
+-        if (edges.type()[e] == 0u)
++        uint8_t const etype = edges.type()[e];
++        if (etype == 0u)
+           continue;
+         float const lo = edges.logOdds()[e];
+-        if (lo < thetaEdge)
++        // Per-family eligibility bar: type 1 (shared MD) welds give 5 layers, type 2 (shared LS)
++        // give 4. The host collapses both to thetaEdge unless a family bar is set, so the shipped
++        // configuration takes the identical branch value on every edge.
++        if (lo < ((etype == 1u) ? thetaEdgeE1 : thetaEdgeE2))
+           continue;  // eligibility gate
+         uint32_t const n = edges.inner()[e];
+         uint32_t const m = edges.outer()[e];
+@@ -127,11 +132,13 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+                                   int32_t* inWeld,
+                                   uint64_t const* bestOut,
+                                   uint64_t const* bestIn,
+-                                  float thetaEdge) const {
++                                  float thetaEdgeE1,
++                                  float thetaEdgeE2) const {
+       uint32_t const nEdges = static_cast<uint32_t>(edges.metadata().size());
+ 
+       for (uint32_t e : cms::alpakatools::uniform_elements(acc, nEdges)) {
+-        if (edges.type()[e] == 0u)
++        uint8_t const etype = edges.type()[e];
++        if (etype == 0u)
+           continue;  // enumeration hole: its logOdds column was never given a meaning
+         uint32_t const n = edges.inner()[e];
+         uint64_t const bestKey = bestOut[n];
+@@ -142,7 +149,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+         if (bestKey == 0u)
+           continue;
+         float const lo = edges.logOdds()[e];
+-        if (lo < thetaEdge)
++        if (lo < ((etype == 1u) ? thetaEdgeE1 : thetaEdgeE2))
+           continue;
+         if (bestKey != chainWeldKey(lo, edges.tie()[e]))
+           continue;
+diff --git a/RecoTracker/LSTCore/src/alpaka/LSTEvent.dev.cc b/RecoTracker/LSTCore/src/alpaka/LSTEvent.dev.cc
+index 8ca82be712c..99aa2505471 100644
+--- a/RecoTracker/LSTCore/src/alpaka/LSTEvent.dev.cc
++++ b/RecoTracker/LSTCore/src/alpaka/LSTEvent.dev.cc
+@@ -1233,6 +1233,14 @@ void LSTEvent::buildChains() {
+   alpaka::memset(queue_, outWeld_buf, 0xff);
+   alpaka::memset(queue_, inWeld_buf, 0xff);
+ 
++  // C6: resolve the per-edge-family weld bars on the HOST so the kernels take two plain floats. In
++  // the shipped configuration both inherit sentinels resolve to thetaEdge, so both families compare
++  // against the same number and the arithmetic is unchanged.
++  float const weldThetaE1 =
++      (chainConfig_.thetaEdgeE1 < 1e29f) ? chainConfig_.thetaEdgeE1 : chainConfig_.thetaEdge;
++  float const weldThetaE2 =
++      (chainConfig_.thetaEdgeE2 < 1e29f) ? chainConfig_.thetaEdgeE2 : chainConfig_.thetaEdge;
++
+   for (int sweep = 0; sweep < kChainWeldSweeps; ++sweep) {
+     // A fixed sweep count, no host sync: the reference's "break when nothing welded" early exit is
+     // a CPU nicety and a zero-weld sweep is idempotent.
+@@ -1246,7 +1254,8 @@ void LSTEvent::buildChains() {
+                         inWeld_buf.data(),
+                         bestOut_buf.data(),
+                         bestIn_buf.data(),
+-                        chainConfig_.thetaEdge);
++                        weldThetaE1,
++                        weldThetaE2);
+     alpaka::exec<Acc1D>(queue_,
+                         chainFlat_workDiv,
+                         ChainWeldMutual{},
+@@ -1255,7 +1264,8 @@ void LSTEvent::buildChains() {
+                         inWeld_buf.data(),
+                         bestOut_buf.data(),
+                         bestIn_buf.data(),
+-                        chainConfig_.thetaEdge);
++                        weldThetaE1,
++                        weldThetaE2);
+   }
+ 
+   auto const t1 = stamp();

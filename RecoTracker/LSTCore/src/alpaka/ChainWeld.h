@@ -84,16 +84,21 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                   int32_t const* inWeld,
                                   uint64_t* bestOut,
                                   uint64_t* bestIn,
-                                  float thetaEdge) const {
+                                  float thetaEdgeE1,
+                                  float thetaEdgeE2) const {
       uint32_t const nEdges = static_cast<uint32_t>(edges.metadata().size());
 
       for (uint32_t e : cms::alpakatools::uniform_elements(acc, nEdges)) {
         // type 0 rows are the enumeration holes K2 never filled; the reference edge list has no
         // such entries at all, so they must not be able to win an argmax.
-        if (edges.type()[e] == 0u)
+        uint8_t const etype = edges.type()[e];
+        if (etype == 0u)
           continue;
         float const lo = edges.logOdds()[e];
-        if (lo < thetaEdge)
+        // Per-family eligibility bar: type 1 (shared MD) welds give 5 layers, type 2 (shared LS)
+        // give 4. The host collapses both to thetaEdge unless a family bar is set, so a
+        // single-bar configuration takes the identical branch value on every edge.
+        if (lo < ((etype == 1u) ? thetaEdgeE1 : thetaEdgeE2))
           continue;  // eligibility gate
         uint32_t const n = edges.inner()[e];
         uint32_t const m = edges.outer()[e];
@@ -127,11 +132,13 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                   int32_t* inWeld,
                                   uint64_t const* bestOut,
                                   uint64_t const* bestIn,
-                                  float thetaEdge) const {
+                                  float thetaEdgeE1,
+                                  float thetaEdgeE2) const {
       uint32_t const nEdges = static_cast<uint32_t>(edges.metadata().size());
 
       for (uint32_t e : cms::alpakatools::uniform_elements(acc, nEdges)) {
-        if (edges.type()[e] == 0u)
+        uint8_t const etype = edges.type()[e];
+        if (etype == 0u)
           continue;  // enumeration hole: its logOdds column was never given a meaning
         uint32_t const n = edges.inner()[e];
         uint64_t const bestKey = bestOut[n];
@@ -142,7 +149,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         if (bestKey == 0u)
           continue;
         float const lo = edges.logOdds()[e];
-        if (lo < thetaEdge)
+        if (lo < ((etype == 1u) ? thetaEdgeE1 : thetaEdgeE2))
           continue;
         if (bestKey != chainWeldKey(lo, edges.tie()[e]))
           continue;

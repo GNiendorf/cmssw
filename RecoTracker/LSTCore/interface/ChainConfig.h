@@ -17,6 +17,23 @@ namespace lst {
   struct ChainConfig {
     // -e 0 : K6 weld eligibility on the edge logit.
     float thetaEdge = 0.f;
+    // PER-EDGE-FAMILY weld eligibility. A type-1 (E1, shared-MD) weld ALWAYS yields a 5-layer
+    // chain and a type-2 (E2, shared-LS) weld ALWAYS yields a 4-layer one, and the gate downstream
+    // already judges those two classes with SEPARATE bars (m3Theta4 / m3Theta4D for the 4-layer
+    // class, m3ThetaRI / m3ThetaR / m3ThetaRB / m3ThetaRT for 5+). The weld carried ONE bar for
+    // both, even though the edge type DETERMINES which class the weld produces. That coupling is
+    // not neutral: the two families sit on very different logit scales (PU200RelVal, shipped edge
+    // head, 3.29M E1 + 1.33M E2 edges: E1 median logit -3.79 with 19.95% at-or-above thetaEdge = 0,
+    // E2 median +0.22 with 53.49%), so a GLOBAL loosening admits about four times more E1 than E2 --
+    // and because the weld argmax is taken over all incident eligible edges REGARDLESS OF TYPE with
+    // one out-slot and one in-slot per node (ChainWeld.h), the extra E1 edges take the slots the E2
+    // pairs wanted. Loosening E1 alone therefore DESTROYS 4-layer chains. Splitting the bar makes
+    // the weld consistent with the gate rather than adding a new kind of knob.
+    //
+    // A value >= 1e29 means "inherit thetaEdge for this family", resolved on the HOST, so leaving
+    // both at the sentinel reproduces the single-bar behaviour exactly.
+    float thetaEdgeE1 = 1e30f;
+    float thetaEdgeE2 = -2.0f;
     // -L 3.0 : chain score length weight (ANCHOR said 0.5, the M19 block overrides).
     float lambdaLen = 3.f;
 
@@ -30,12 +47,25 @@ namespace lst {
     // -X 0.5 : IP-compatibility boundary on the chain dcaXY, cm.
     float dcaSplit = 0.5f;
     // -Z 0 : extra dca floor for the T4-class exempt branch (exempt iff dca >= max(-X, -Z)).
-    float t4ExemptDcaMin = 0.f;
+    float t4ExemptDcaMin = 2.0f;
+    // -X2 / -M4D2 / -FR : SECOND breakpoint on the same reconstructed-dcaXY axis dcaSplit already
+    // branches on, applied to the T4-class EXEMPT branch only. The exempt bar m3Theta4D is ONE
+    // number covering every chain with dcaXY >= 0.5 cm, and that population is overwhelmingly
+    // concentrated just above 0.5 cm, so the bar a 20 cm displaced chain must clear was fitted on
+    // 0.5-2 cm objects. Above dcaSplit2 the cell gets its own bar and the eta-band delta zdM4D is
+    // NOT applied. The cell also requires a GOOD FIT (feature 16 = maxXyResid) so it selects
+    // "displaced AND well measured" rather than merely "badly fitted": in the far cell PU200
+    // far-displaced positives sit at maxXyResid p50 0.015 while PU200 fakes sit at p50 0.245.
+    // dcaSplit2 = 1e9 leaves the cell EMPTY and t4FarMaxResid = 1e9 disables the guard, so the
+    // defaults reproduce the shipped configuration exactly. Both are per-chain RECO quantities.
+    float dcaSplit2 = 12.f;
+    float m3Theta4D2 = -1e9f;
+    float t4FarMaxResid = 0.02f;
 
     // -G 6 three-class margin kills. mP = zPrompt - zFake, mD = zDisp - zFake,
     // mX = max(zPrompt, zDisp) - zFake.
-    float m3Theta4 = 4.f;     // -M4  : T4-class IP    kill iff mX < m3Theta4
-    float m3Theta4D = -1.2f;  // -M4D : T4-class exempt kill iff mD < m3Theta4D
+    float m3Theta4 = 2.f;     // -M4  : T4-class IP    kill iff mX < m3Theta4
+    float m3Theta4D = -2.5f;  // -M4D : T4-class exempt kill iff mD < m3Theta4D
     float m3Theta5 = 1e9f;    // -M5  : IP nLayers == 5 kill iff mP < m3Theta5 (inert at 1e9)
     float m3Theta6 = 1e9f;    // -M6  : IP nLayers >= 6 kill iff mP < m3Theta6 (inert at 1e9)
     float m3ThetaD = 1e9f;    // -MD  : exempt 5+       kill iff mD < m3ThetaD (inert at 1e9)
@@ -52,12 +82,12 @@ namespace lst {
     // they bought was FAKE rate only (fakB -.0057, fakT -.0055), which is the lowest-priority
     // metric, so the trade is being unwound. The band machinery stays in place -- setting these two
     // fields is all it takes to put the bars back.
-    float m3ThetaRB = -1.8f;
-    float m3ThetaRT = -1.8f;
+    float m3ThetaRB = -1.2f;
+    float m3ThetaRT = -1.2f;
     // -C25 0.0 / -C25D -2.0 : the (nNodes == 2, nLayers == 5) cell rule; kills only when BOTH
     // margins fail, and never re-kills an already-killed chain.
-    float c25Theta = 0.f;
-    float c25ThetaD = -2.f;
+    float c25Theta = 2.f;
+    float c25ThetaD = -1.5f;
 
     // Transition-band levers. The band is keyed on |eta| of the chain's INNERMOST member T3
     // (the same quantity K10 gives the TC), and the deltas are ADDITIVE to the thresholds above.
@@ -101,13 +131,13 @@ namespace lst {
     // every MD contributes 2 of them, so the budget doubles.
     float maxClaimedFrac = 0.20f;
     int maxClaimedMDs = 1;
-    bool claimCountExclusive = false;
+    bool claimCountExclusive = true;
 
     // -W 0.50: owner-relative braid kill. -WE 0.20 / -WZ 1.5 / -WN off: the BAND-AWARE braid --
     // candidates with |eta(innermost T3)| >= braidAltEta and nNodes <= braidAltMaxNodes use the
     // tight fraction. -FB / -FBC 0: the same band's own claim tolerance (claimItemsAltMDs == -2
     // and claimFracAlt <= 0 mean "band uses the global value").
-    float braidFrac = 0.5f;
+    float braidFrac = 0.2f;
     float braidFracAlt = 0.20f;
     float braidAltEta = 1.5f;
     float braidAltMaxNodes = 1e9f;
@@ -196,7 +226,7 @@ namespace lst {
     // efficiency unchanged to 6 decimals and an exact cost of two displaced sims, neither in the
     // efficiency denominator (977 evt). type-9 rows never share 3+, so the value is effectively
     // binary.
-    int cc9MinShared = 2;
+    int cc9MinShared = 1;
     // -RPS 1: also retire a carried bare-pLS (type 8) row whose seed had a scored pair above its
     // class RETIREMENT bar but lost the contention. -RD 1: seed-family dedup of the attach owners,
     // two pLS being the same seed when they share >= 2 pixel hit rows (also gates the stage-B

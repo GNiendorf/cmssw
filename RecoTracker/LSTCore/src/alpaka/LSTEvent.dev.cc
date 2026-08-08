@@ -1233,6 +1233,14 @@ void LSTEvent::buildChains() {
   alpaka::memset(queue_, outWeld_buf, 0xff);
   alpaka::memset(queue_, inWeld_buf, 0xff);
 
+  // Resolve the per-edge-family weld bars on the HOST so the kernels take two plain floats. A
+  // family left at its inherit sentinel resolves to thetaEdge, so both families then compare
+  // against the same number and the arithmetic is unchanged.
+  float const weldThetaE1 =
+      (chainConfig_.thetaEdgeE1 < 1e29f) ? chainConfig_.thetaEdgeE1 : chainConfig_.thetaEdge;
+  float const weldThetaE2 =
+      (chainConfig_.thetaEdgeE2 < 1e29f) ? chainConfig_.thetaEdgeE2 : chainConfig_.thetaEdge;
+
   for (int sweep = 0; sweep < kChainWeldSweeps; ++sweep) {
     // A fixed sweep count, no host sync: the reference's "break when nothing welded" early exit is
     // a CPU nicety and a zero-weld sweep is idempotent.
@@ -1246,7 +1254,8 @@ void LSTEvent::buildChains() {
                         inWeld_buf.data(),
                         bestOut_buf.data(),
                         bestIn_buf.data(),
-                        chainConfig_.thetaEdge);
+                        weldThetaE1,
+                        weldThetaE2);
     alpaka::exec<Acc1D>(queue_,
                         chainFlat_workDiv,
                         ChainWeldMutual{},
@@ -1255,7 +1264,8 @@ void LSTEvent::buildChains() {
                         inWeld_buf.data(),
                         bestOut_buf.data(),
                         bestIn_buf.data(),
-                        chainConfig_.thetaEdge);
+                        weldThetaE1,
+                        weldThetaE2);
   }
 
   auto const t1 = stamp();

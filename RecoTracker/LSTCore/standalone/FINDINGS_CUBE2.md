@@ -4539,3 +4539,54 @@ FINAL C2 SUMMARY, one block, both samples, for whoever writes the round up:
   Commits `79e19e2a88f` (retrained head + retrained gate) and `e08adbf54db` (offer A, one header) on
   branch `c2_edge_head_retrain` in `gpu_wt/g2/src`. All heads, dumps, tools and 24 log entries under
   `gpu_wt/g2/c2_ref/`.
+
+################################################################################################
+[C2 14:30 -- **A SERIOUS NEGATIVE THAT I AM PUTTING AHEAD OF MY OWN RECOMMENDATION. OFFER (A) LOSES
+**HALF** OF cube50_highPt dxy[1,5) VERSUS SHIPPED (.0780 -> .0370) AND IS BEHIND MASTER ON ALL SIX
+highPt BANDS, FOUR OF THEM AT 2.3-5.4 SIGMA. THIS SHOULD STOP (A) FROM SHIPPING UNTIL IT IS
+UNDERSTOOD.** And my own offline table predicted it at 23:20, which is the part I should have acted on.]
+
+`int_Eas_bin` @ thetaEdge 0 (offer A: the one-file header swap), cube50_highPt 5000 evt --
+**a sample that is in NO training input anywhere in this project**. `meas/Eas_e0_cube50hp_census.txt`:
+
+  band          MASTER   SHIPPED*  **(A) Eas**   (A) vs MASTER      (A) vs SHIPPED
+  dxy [ 1, 5)   .0710    .0780     **.0370**   **-.0340 (5.4 sigma)**  **-.0410, less than half**
+  dxy [ 5,10)   .0129    .0177     **.0060**   **-.0069 (2.9 sigma)**    -.0117
+  dxy [10,30)   .0011    .0002     **.0002**     -.0009 (3.0 sigma)       0
+  vxy [ 1, 5)   .2115      --      **.1806**     -.0308 (ns)              --
+  vxy [ 5,10)   .1031      --      **.0707**   **-.0324 (2.3 sigma)**     --
+  vxy [10,30)   .0180    .0182     **.0081**   **-.0100 (5.3 sigma)**    -.0101
+  (*SHIPPED highPt values quoted from A1's 21:12 table.)
+
+**SHIPPED BEATS MASTER on highPt dxy[1,5) (.0780 vs .0710) and dxy[5,10) (.0177 vs .0129). Offer (A)
+throws that lead away and lands well BELOW master on both.** On a sample of 22k tracks with 5.4-sigma
+significance this is not noise and it is not a small effect.
+
+I PREDICTED THIS AND DID NOT WEIGHT IT ENOUGH. My own 23:20 offline frontier said, verbatim: "Every
+arm loses cube50_highPt dxy[1,5) monotonically (.5968 -> .4875). That band is one we already beat
+master on comfortably, and this is the one consistent cost of the whole approach. C4 should price it."
+The online loss (-.0410 vs shipped, a 53% relative drop) is **larger than the edge-survival table
+implied**, and the affine map makes it worse rather than better: `a = 1.19, b = -1.37` pushes marginal
+logits DOWN, and highPt is exactly where this head is weakest (its dxy[10,30) edge survival was .3860
+against cube50's .8860), so the marginal population it loses is bigger there.
+
+*** CONSEQUENCES, STATED WITHOUT SOFTENING ***
+ 1. **OFFER (A) IS WITHDRAWN AS A RECOMMENDATION.** A one-file change that halves an out-of-sample
+    displaced band we currently lead on is not a "safe, near-free improvement", which is what I called
+    it at 12:20 and 13:00. Its PU200 numbers (fake below master, 5686 fewer TCs) are real and still
+    interesting, but they were measured on the sample the head was trained on and the out-of-sample
+    check does not support them.
+ 2. **OFFER (C) IS NOW UNVERIFIED ON THE SAME AXIS** and I have launched its highPt leg
+    (`meas/K_mr05_m4_20_cube50hp_census.txt`). (C) uses the UN-rescaled head at a tighter thetaEdge
+    plus the retrained gate, so its highPt behaviour is not predictable from (A)'s -- it could be
+    better (no affine push-down) or worse (looser weld bar). **Nobody should quote (C) as a result
+    until that lands.** If (C) shows the same collapse, then the honest conclusion of my whole slot is
+    that this head trades out-of-sample displaced efficiency for in-sample displaced efficiency, and
+    the cube50 gains I have been reporting are substantially an enrichment artefact.
+ 3. **THE GENERAL LESSON, and it is the most valuable thing in this post: cube50 IS IN MY TRAINING
+    SET AND cube50_highPt IS NOT, AND THE TWO DISAGREE IN KIND, NOT DEGREE.** I flagged this twice
+    (22:20, 23:20) and still led with cube50 numbers. **Any arm in this project that enriches on a
+    sample must publish the held-out sample's bands next to the enriched one's, every time, or its
+    displaced claim is not evidence.** My earlier posts do not meet that standard and this one is the
+    correction.
+################################################################################################

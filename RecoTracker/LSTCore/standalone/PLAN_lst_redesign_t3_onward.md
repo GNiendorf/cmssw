@@ -3938,3 +3938,128 @@ displaced efficiency" -- it already disables its own cut in the displaced-sensit
  * A fifth `dumpChains` early return skips 1350 of 5000 cube50 records (`c3_ref/fifth_return.patch`),
    on top of the `ievt` misalignment (`a4_ref/chain_dump_ievt.patch`).
  * `pgrep`-based waiter loops MATCH THEIR OWN COMMAND LINE and never exit -- three agents left orphans.
+
+## 2026-08-08 -- FINISH-LINE WORKFLOW (D1-D6 then E1-E3): **E1-B2 SHIPPED**
+
+Two-round workflow. Round 1 = six specific agents (D1-D6) on one axis each; round 2 = three
+COMBINING agents (E1 maximum-reach, E2 robustness-first, E3 adversarial), each free to combine
+anything round 1 found, all sharing `FINDINGS_FINAL.md`. Every arm was measured on SHIPPED heads
+with NO retraining -- the entire round moves pre-existing `ChainConfig.h` constants plus two small
+mechanisms. **E1-B2 is shipped in this commit.** E2-K6 and E3-Q are recorded as the alternative
+frontier points and are NOT shipped.
+
+### What shipped: E1-B2
+
+Two mechanisms (both borrowed from round 1, both written so their defaults are exactly shipped
+behaviour) plus fourteen constants.
+
+**Mechanism 1 -- the per-edge-family weld bar** (C6/D2, `ChainWeld.h` + a host resolve in
+`LSTEvent.dev.cc`). A type-1 (E1, shared-MD) weld ALWAYS yields a 5-layer chain and a type-2
+(E2, shared-LS) weld ALWAYS yields a 4-layer one, and the gate downstream already judges those two
+classes with SEPARATE bars. The weld carried ONE bar for both. That coupling is not neutral: on
+PU200RelVal with the shipped edge head (3.29M E1 + 1.33M E2 edges) the E1 family has median logit
+-3.79 with 19.95% at or above `thetaEdge = 0` while E2 has median +0.22 with 53.49%, so a GLOBAL
+loosening admits ~4x more E1 than E2 -- and because the weld argmax runs over all incident eligible
+edges REGARDLESS OF TYPE with one out-slot and one in-slot per node, the extra E1 edges take the
+slots the E2 pairs wanted. **Loosening E1 alone DESTROYS 4-layer chains.** `thetaEdgeE1` stays at
+the inherit sentinel (1e30); only `thetaEdgeE2` moves, to -2.0.
+
+**Mechanism 2 -- the far-dca cell with a fit-quality guard** (A3 -> C4 -> D6, `ChainGate.h`, 3 lines).
+A SECOND breakpoint `dcaSplit2 = 12` cm on the same reconstructed-dcaXY axis `dcaSplit` already
+branches on, applied to the T4-class exempt branch only, with its own bar `m3Theta4D2 = -1e9`
+(i.e. no gate inside the cell) and WITHOUT the eta-band delta. The shipped exempt bar `m3Theta4D`
+is one number covering every chain with dcaXY >= 0.5 cm, a population overwhelmingly concentrated
+just above 0.5, so the bar a 20 cm displaced chain had to clear was fitted on 0.5-2 cm objects.
+99.6% of dxy >= 10 positives sit at chain dca >= 5, so the cell captures nearly the whole target
+population and almost nothing else. The cell ALSO requires a good fit -- `t4FarMaxResid = 0.02` on
+`features()[c][16]` (maxXyResid, already computed) -- so it selects "displaced AND well measured"
+rather than merely "badly fitted": in the far cell PU200 far-displaced positives sit at maxXyResid
+p50 0.015 while PU200 fakes sit at p50 0.245. A3 built the cell UNGUARDED and WITHDREW it himself
+(the two cube samples want opposite breakpoints, 5 vs 10); C4 added the guard; D6 pushed it to keep
+the ENTIRE PU200 dxy[10,30) gain at fake +.0187 instead of +.1949, a **10.4x** improvement.
+`dcaSplit2 = 1e9` / `t4FarMaxResid = 1e9` reproduce shipped exactly.
+
+Constants (shipped -> B2): `thetaEdgeE2` inherit -> -2.0, `t4ExemptDcaMin` 0 -> 2.0,
+`dcaSplit2` -> 12, `m3Theta4D2` -> -1e9, `t4FarMaxResid` -> 0.02, `m3Theta4` 4 -> 2,
+`m3Theta4D` -1.2 -> -2.5, `m3ThetaRB`/`m3ThetaRT` -1.8 -> -1.2, `c25Theta` 0 -> 2,
+`c25ThetaD` -2 -> -1.5, `claimCountExclusive` false -> true, `braidFrac` 0.5 -> 0.2,
+`cc9MinShared` 2 -> 1.
+
+    PU200RelVal 1000 evt   SHIPPED   MASTER    E1-B2     delta
+    eff overall (pt>0.9)    .8099     .8100    .8102    +.0003  above master
+    dup                     .0479     .0514    .0452    -.0027  below master
+    fake                    .0470     .0454    .0455    -.0015  level with master
+    fake barrel             .0516     .0437    .0514
+    dxy [ 1, 5)             .5815       --     .5513    -.0302  the cost, 2.2 sigma
+    dxy [ 5,10)             .2463       --     .2363    -.0100
+    dxy [10,30)             .0317     .0545    .0494    +.0177  91% of master
+    vxy [ 1, 5)             .8027       --     .7999    -.0028
+    vxy [ 5,10)             .7227       --     .7138    -.0089
+    vxy [10,30)             .7128       --     .6932    -.0196  1.5 sigma
+    n TC (pt>0.9)         1592804            1587160    -0.35%
+    n T4-class TC            24766              64110   2.6x
+
+  cube50 5000 evt      : ALL SIX bands at or above master within noise.
+  cube50_highPt 5000   : beats master on EVERY band -- dxy .0932/.0204/.0048 vs master
+                         .0710/.0129/.0011; vxy .1199/.0253 vs .1031/.0180. Both protected
+                         held-out goals MET with margin. This is the held-out sample that killed
+                         the retrained heads of the previous round.
+
+**Ship verification (this tree, this commit).** `e1_candidate.patch` applied to `b15820e82c7`,
+clean CPU build (0 `error:` in `.make.log.1786191276`), `lst_cpu -i PU200RelVal -n 1000 -s 8 -p 0.8`
+reproduces E1's measured B2 arm **BIT-IDENTICALLY: all 35 judge fields equal at full float
+precision** (eff .8102012675346716, n TC 1587160, n T4-class 64110), artifacts in
+`ship_ref/B2_shipped.{root,log,judge}` against `e1_ref/pu/B2.judge`. E1's arm was measured in
+worktree `g1` (branch `e1_combine` = `d950e4315be` + C3's env-override instrument, verified inert);
+this tree has no instrument, so the match also re-proves the instrument's inertness.
+
+### The two alternatives, NOT shipped (recorded so the frontier is not lost)
+
+**E2-K6** (`e2_ref/e2_candidate.patch`, `e2_ref/E2_STATUS.md`) -- robustness-first. Eight constants
+plus the same inert typed weld bar; `thetaEdgeE2 = -0.2`, `m3Theta4D = -1.9`, `maxClaimedMDs 1 -> 0`.
+eff .8103 / dup .0469 / fake .0453, **every PU200 retain band MET** (dxy[1,5) exactly shipped),
+dxy[10,30) only .0361. Held-out record: 24 band measurements, 18 up / 3 level / 3 down, 10 ahead of
+master; the three down entries are -4, -4 and -1 tracks. The safe pick; it does not close the far band.
+
+**E3-Q** (`e3_ref/e3_candidate_Q.patch`, `e3_ref/E3_README.md`) -- adversarial. Nine constants plus
+the same weld bar. eff .8100 / dup .0454 / fake .0459 (misses the .0454 fake goal by .00046),
+dxy[10,30) .0393, all six cube50 bands above shipped with dxy[1,5) AHEAD of master, and clean on the
+cube50 SECOND HALF with gains LARGER out of sample than in sample. E3's verdict, which stands as the
+round's honest limit: **the full finish line is not reachable** -- the two far-band goals cost fake
++.0136 and +.0460 against a -.0018 budget, and what exists is a monotone frontier where every .0010
+of fake costs ~0.2 sigma of dxy[1,5).
+
+### Falsified this round, with numbers (do not spend a slot)
+
+ * A `maxXyResid` ceiling on the WHOLE T4 class or on the 5+ classes: 1e9 -> 0.1 buys fake -.0005 and
+   costs dxy[1,5) -.0019; 0.5 removes THREE TCs of 1.6M. C4/D6's residual separation is CONDITIONAL
+   on the mD bar being switched off inside the far cell. `maxXyResid` is a far-cell-only discriminant
+   (E2: a 4-point circle fit has 3 free parameters).
+ * `m3Theta4D` left at its shipped -1.2 together with the far cell (E1 arm Z6): the best PU200 numbers
+   of anything E1 measured, and it FAILS cube50_highPt dxy[5,10) at .0150 vs the protected .0177.
+   **RULE: never ship the far cell with `m3Theta4D` at -1.2.**
+ * D1's flat T4 dcaXY floor stacked on any configuration with `m3Theta4 >= 2`: fake -.0000, eff -.0005.
+   The floor and `m3Theta4` are the same cut and `m3Theta4` is the free one. (Earlier in the round the
+   floor was reported as the cleanest result; D2 measured it buys ZERO fake and E3 measured it takes
+   the 4-layer class from .2155 to .4955 fake -- it deletes the clean half. Retracted.)
+ * `m3Theta4 = 4.0` (shipped) on a deep gate: same fake as 2.0 for eff -.0006. 2.0 is an interior optimum.
+ * `maxClaimedMDs = 0` on a deep gate: fake .0406 but dxy[1,5) -.0438 and vxy[10,30) -.0460.
+ * The gate's eta-band machinery cannot separate the T4 gain from the T4 bill -- a transition-only
+   loosening delivers ZERO displaced gain.
+ * `ccMinShared` and the bare-chain crossclean bars buy eff +.0012 (the highest ever measured here,
+   .8113) but sit in the pLS-carried cell the scope rules forbid. Not available to us.
+
+### Method notes worth keeping
+
+ * The dxy/vxy efficiency histograms are **SIGNED** (-30..30). A band must be taken on |dxy|;
+   integrating the positive half only reports master's dxy[10,30) as .0356 instead of .0545 and
+   inverts the ranking of every candidate. The `_incut` scorer (`d3_ref/pu_judge.py`) and the MTV
+   `TC_base` hists agree on every band to 4 dp once |dxy| is used; they differ only in overall `eff`
+   (.8102 incut vs .8028 TC_base) because of the extra `_incut` selection.
+ * `cmsenv` is a shell ALIAS: it silently no-ops inside a `#!/bin/bash` script file. Use
+   `eval $(cd <src> && scramv1 runtime -sh)`. `scramv1 runtime` also WIPES the three standalone PATH
+   entries, which is what the second `source setup.sh` restores.
+ * `lst_plot_performance.py` has shebang `#!/bin/env python` and CMSSW ships only a `python3`
+   BINARY (`python` is an alias), so from a script it must be launched as `python3 <path>`.
+ * `lst_make_tracklooper` prints "compilation successful" regardless; grepping the log for `error`
+   also matches every `-Werror=` flag in the compile lines. Grep for `error:` with the colon.
