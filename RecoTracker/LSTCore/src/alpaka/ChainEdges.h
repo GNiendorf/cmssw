@@ -395,6 +395,19 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         for (int i = 0; i < Params_ChainNode::kFeatures; ++i)
           nodes.features()[n][i] = chainSanitize(f[i]);
 
+        // S1. This node's working-point cell, on LST's T3-DNN binning and built from the SAME two
+        // quantities t3dnn::runInference bins its own working points on (NeuralNetwork.h:127-129):
+        // the T3's radius-derived pT and the |eta| of the anchor hit of its FIRST MD. Both are free
+        // here -- radius is already in a register and m0 is already resolved -- while in the
+        // per-edge kernel they would cost a triplet -> segment -> md index chase. K5 turns this
+        // cell into the edge's weld eligibility bar.
+        float const wpPt = radius * k2Rinv1GeVf * 2.f;
+        float const wpEta = alpaka::math::abs(acc, mds.anchorEta()[m0]);
+        unsigned int const wpPtBin = (wpPt > 5.f) ? 1u : 0u;
+        unsigned int const wpEtaBin =
+            (wpEta > 2.5f) ? (dnn::kEtaBins - 1) : static_cast<unsigned int>(wpEta / dnn::kEtaSize);
+        nodes.wpBin()[n] = static_cast<uint8_t>(wpPtBin * dnn::kEtaBins + wpEtaBin);
+
         // theta(c) = atan2(|c_xy|, c_z) in [0, pi]; the one fixed rz-angle definition, so the
         // edge kink theta12(inner) - theta01(outer) lands in [-pi, pi] with no wrap needed.
         nodes.phiC01()[n] = phi01;
@@ -422,9 +435,15 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                   ChainIncidenceConst mdIncidence,
                                   ChainIncidenceConst lsIncidence,
                                   ChainEdges edges,
+                                  float thetaEdgeE1,
+                                  float thetaEdgeE2,
+                                  bool edgeWpTable,
                                   float* edgeFeatOut) const {
       static_assert(dnn::edgemlp::kInput == 2 * Params_ChainNode::kFeatures + kChainEdgeFeatures,
                     "EdgeNetworkWeights.h input size does not match the frozen feature layout");
+      static_assert(dnn::edgemlp::kOutputs == 3, "arm F's edge head is 3-class: fake / prompt / displaced");
+      static_assert(dnn::edgemlp::kWpBins == dnn::kPtBins * dnn::kEtaBins,
+                    "the edge working-point table must be on LST's kPtBins x kEtaBins binning");
 
       // P2.6b. On the host backends the head runs kB edges at a time: the 40 preprocessed inputs of
       // each surviving edge are staged TRANSPOSED into xT and retired in blocks, which interleaves
@@ -439,8 +458,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
       constexpr int kHid = dnn::edgemlp::kHidden;
 
       alignas(64) float xT[kNet * kB];
+      constexpr int kCls = dnn::edgemlp::kOutputs;
       uint32_t rowB[kB];
-      float logits[kB];
+      float zB[kCls * kB];  // class logits, TRANSPOSED like every other staged block: z[c * kB + b]
+      uint8_t famB[kB], binB[kB];
       int nb = 0;
       for (int i = 0; i < kNet * kB; ++i)
         xT[i] = 0.f;  // the tail lanes of a partial block are evaluated and discarded
@@ -455,21 +476,51 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
           relu_activation<kHid>(h1);
           linear_layer<kHid, kHid>(h1, h2, dnn::edgemlp::wgt_l2, dnn::edgemlp::bias_l2);
           relu_activation<kHid>(h2);
-          // Single output unit, NO sigmoid: K6 needs the logit (log-odds) so chain scores are sums.
-          float logit = dnn::edgemlp::bias_out;
+          // THREE output units, NO softmax: the pipeline works on logit MARGINS (exactly as the
+          // 3-class chain gate does), and the stored scalar must stay a log-odds so chain scores
+          // remain sums.
           CMS_UNROLL_LOOP
-          for (int j = 0; j < kHid; ++j)
-            logit += h2[j] * dnn::edgemlp::wgt_out[j];
-          logits[0] = logit;
+          for (int c = 0; c < kCls; ++c) {
+            float z = dnn::edgemlp::bias_out[c];
+            CMS_UNROLL_LOOP
+            for (int j = 0; j < kHid; ++j)
+              z += h2[j] * dnn::edgemlp::wgt_out[c][j];
+            zB[c] = z;
+          }
         } else {
           chainLinearBatch<kNet, kHid, kB>(xT, h1, dnn::edgemlp::wgt_l1, dnn::edgemlp::bias_l1);
           chainReluBatch<kHid, kB>(h1);
           chainLinearBatch<kHid, kHid, kB>(h1, h2, dnn::edgemlp::wgt_l2, dnn::edgemlp::bias_l2);
           chainReluBatch<kHid, kB>(h2);
-          chainDotBatch<kHid, kB>(h2, logits, dnn::edgemlp::wgt_out, dnn::edgemlp::bias_out);
+          // The batched linear primitive blocks its output units by 8, so it cannot take 3; the
+          // output layer is instead three dot products over the same staged h2 block. wgt_out is
+          // stored [class][hidden] (the ONE place the wgt[in][out] convention is transposed) so
+          // each class's weight vector is contiguous for chainDotBatch.
+          CMS_UNROLL_LOOP
+          for (int c = 0; c < kCls; ++c)
+            chainDotBatch<kHid, kB>(h2, zB + c * kB, dnn::edgemlp::wgt_out[c], dnn::edgemlp::bias_out[c]);
         }
-        for (int b = 0; b < nb; ++b)
-          edges.logOdds()[rowB[b]] = logits[b];
+        for (int b = 0; b < nb; ++b) {
+          float const zF = zB[0 * kB + b];
+          float const mP = zB[1 * kB + b] - zF;  // prompt-true margin over fake
+          float const mD = zB[2 * kB + b] - zF;  // displaced-true margin over fake
+          // The ONE scalar the rest of the pipeline consumes (weld argmax key, chain score summed
+          // against lambdaLen, chain features 2/3/4/18): mX = max(zP, zD) - zF, i.e. "how much more
+          // this edge looks like SOME real track than like a fake". Its scale is pinned to the
+          // shipped head's by the affine map baked into the output layer, so the K9 order key and
+          // the gate's inputs keep their distribution.
+          edges.logOdds()[rowB[b]] = chainMaxf(mP, mD);
+          // Eligibility is the T3-DNN OR-rule on the TWO per-cell tables, which is the thing a
+          // single scalar bar cannot express: an edge is eligible if it is prompt-like enough OR
+          // displaced-like enough for its cell. The result is materialized into weldBar as a
+          // degenerate bar (-/+ 1e30) so K6a/K6b keep their single `logOdds < weldBar` test and
+          // stay untouched.
+          if (edgeWpTable) {
+            uint32_t const cell = static_cast<uint32_t>(famB[b]) * dnn::edgemlp::kWpBins + binB[b];
+            bool const elig = (mP >= dnn::edgemlp::kWpPrompt[cell]) || (mD >= dnn::edgemlp::kWpDisp[cell]);
+            edges.weldBar()[rowB[b]] = elig ? -1e30f : 1e30f;
+          }
+        }
         nb = 0;
       };
 
@@ -484,6 +535,14 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         uint32_t const outer = edges.outer()[e];
         uint32_t const t3In = nodes.tripletIndex()[inner];
         uint32_t const t3Out = nodes.tripletIndex()[outer];
+
+        // S1 arm F. The per-edge eligibility decision needs BOTH class margins, so it is taken in
+        // flush() where the three logits live; here we only stage this edge's cell. edgeWpTable
+        // false keeps the pre-S1 scalar path (on the stored mX scalar), which is what the A/B and
+        // the inertness test use.
+        uint8_t const wpCell = nodes.wpBin()[inner];
+        if (!edgeWpTable)
+          edges.weldBar()[e] = (etype == 1u) ? thetaEdgeE1 : thetaEdgeE2;
 
         float const kIn = nodes.features()[inner][0];
         float const kOut = nodes.features()[outer][0];
@@ -569,6 +628,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         }
 
         rowB[nb] = e;
+        famB[nb] = static_cast<uint8_t>(etype - 1u);
+        binB[nb] = wpCell;
         ++nb;
         if (nb == kB)
           flush();

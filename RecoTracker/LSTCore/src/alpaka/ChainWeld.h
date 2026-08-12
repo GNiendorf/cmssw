@@ -83,9 +83,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                   int32_t const* outWeld,
                                   int32_t const* inWeld,
                                   uint64_t* bestOut,
-                                  uint64_t* bestIn,
-                                  float thetaEdgeE1,
-                                  float thetaEdgeE2) const {
+                                  uint64_t* bestIn) const {
       uint32_t const nEdges = static_cast<uint32_t>(edges.metadata().size());
 
       for (uint32_t e : cms::alpakatools::uniform_elements(acc, nEdges)) {
@@ -95,10 +93,11 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         if (etype == 0u)
           continue;
         float const lo = edges.logOdds()[e];
-        // Per-family eligibility bar: type 1 (shared MD) welds give 5 layers, type 2 (shared LS)
-        // give 4. The host collapses both to thetaEdge unless a family bar is set, so a
-        // single-bar configuration takes the identical branch value on every edge.
-        if (lo < ((etype == 1u) ? thetaEdgeE1 : thetaEdgeE2))
+        // S1: the per-edge eligibility bar, resolved once by K5 (ChainEdgesSoA::weldBar). It used
+        // to be a branch on the edge type between two kernel-argument scalars; the bar is now a
+        // per-family, per-(pT,|eta|)-cell table entry, so it travels on the edge row. A family
+        // whose whole table row holds one value reproduces the old single-scalar behaviour exactly.
+        if (lo < edges.weldBar()[e])
           continue;  // eligibility gate
         uint32_t const n = edges.inner()[e];
         uint32_t const m = edges.outer()[e];
@@ -120,7 +119,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
   // incident-edge list (chainWeldKey, see the header note), so at most one edge per node satisfies
   // bestOut[n] == key and at most one satisfies bestIn[m] == key.
   //
-  // The type and thetaEdge gates mirror K6a exactly, so an ineligible row can never collide with
+  // The type and weldBar gates mirror K6a exactly, so an ineligible row can never collide with
   // the 0 sentinel. The weld-slot gates are deliberately NOT repeated: an edge whose tail or head
   // was welded in an earlier sweep was skipped by K6a, so that node's best-key is still 0 and the
   // equality test rejects it anyway. Not reading the weld slots also removes the only
@@ -131,9 +130,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                   int32_t* outWeld,
                                   int32_t* inWeld,
                                   uint64_t const* bestOut,
-                                  uint64_t const* bestIn,
-                                  float thetaEdgeE1,
-                                  float thetaEdgeE2) const {
+                                  uint64_t const* bestIn) const {
       uint32_t const nEdges = static_cast<uint32_t>(edges.metadata().size());
 
       for (uint32_t e : cms::alpakatools::uniform_elements(acc, nEdges)) {
@@ -149,7 +146,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         if (bestKey == 0u)
           continue;
         float const lo = edges.logOdds()[e];
-        if (lo < ((etype == 1u) ? thetaEdgeE1 : thetaEdgeE2))
+        if (lo < edges.weldBar()[e])
           continue;
         if (bestKey != chainWeldKey(lo, edges.tie()[e]))
           continue;

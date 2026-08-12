@@ -64,7 +64,18 @@ namespace lst {
                       // lookup on every edge. Stored once per node instead. Appended LAST so no
                       // pre-existing column's offset within the row moves.
                       SOA_COLUMN(uint32_t, mdKeyIn),
-                      SOA_COLUMN(uint32_t, lsKeyIn))
+                      SOA_COLUMN(uint32_t, lsKeyIn),
+                      // S1 (edge weld working-point table). This node's cell in LST's T3-DNN
+                      // working-point binning, packed as ptbin * dnn::kEtaBins + etabin (0..19):
+                      //   ptbin  = (radius * k2Rinv1GeVf * 2 > 5)              (dnn::kPtBins  == 2)
+                      //   etabin = (|eta| > 2.5) ? 9 : |eta| / dnn::kEtaSize   (dnn::kEtaBins == 10)
+                      // with eta = mds.anchorEta()[md0] -- EXACTLY the two quantities
+                      // t3dnn::runInference bins its own working points on (NeuralNetwork.h:127).
+                      // Computed in K3, where the radius and md0 are already in registers, so the
+                      // per-edge cost in K5 is one byte load instead of a
+                      // triplet -> segment -> md index chase. Appended LAST so no pre-existing
+                      // column's offset within the row moves.
+                      SOA_COLUMN(uint8_t, wpBin))
 
   using ChainNodesSoA = ChainNodesSoALayout<>;
   using ChainNodes = ChainNodesSoA::View;

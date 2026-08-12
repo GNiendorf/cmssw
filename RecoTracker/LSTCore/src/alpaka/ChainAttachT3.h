@@ -190,7 +190,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
   //   rotSign          : sign(fitKappa), the same recovery ChainAttachTargetPre uses
   //   innermostLayer   : node feature 9 = md_layer[md0]
   //   nLayers          : 3 by construction
-  //   gateLogit        : 0 -- no chain gate exists for a bare T3; feature 18 flags the absence
+  //   gateLogit        : 0 -- no chain gate exists for a bare T3; feature 20 flags the absence
   //   centre           : the T3's own circle-fit centre; non-finite -> centerValid 0
   //
   // `chain` carries the SPARSE TRIPLET INDEX (not a chain row) so the host dump can name the
@@ -239,7 +239,12 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         o.xs[1] = attachStdz<8>(acc, o.tanLambda);
         o.xs[2] = attachStdz<9>(acc, nodes.features()[node][9]);  // innermostLayer
         o.xs[3] = attachStdz<10>(acc, 3.f);                       // nLayers
-        o.xs[4] = attachStdz<11>(acc, 0.f);                       // no chain gate
+        // No chain gate exists for a bare T3, so ALL THREE gate-logit slots take the same 0
+        // sentinel the single deleted slot took -- the literal extension of the shipped
+        // convention, with head input 20 (targetType) flagging the absence exactly as before.
+        o.xs[4] = attachStdz<11>(acc, 0.f);
+        o.xs[5] = attachStdz<12>(acc, 0.f);
+        o.xs[6] = attachStdz<13>(acc, 0.f);
         out[t] = o;
       }
     }
@@ -291,7 +296,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
       float logits[kB];
       for (int i = 0; i < kIn * kB; ++i)
         xT[i] = 0.f;
-      float const t3Type = attachStdz<18>(acc, kAttachTargetTypeT3);
+      float const t3Type = attachStdz<20>(acc, kAttachTargetTypeT3);
 
       for (uint32_t g : cms::alpakatools::uniform_elements(acc, nTargets * nS)) {
         uint32_t t, sl;
@@ -361,7 +366,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
               float const dTanL = pp.tanLambda - cp.tanLambda;
               if (!attachEvalPairX(acc, pp, cp, dTanL, cfg, xT + nb, kB))
                 continue;
-              xT[18 * kB + nb] = t3Type;  // the ONLY feature that differs by target kind
+              xT[20 * kB + nb] = t3Type;  // the ONLY feature that differs by target kind
               rowB[nb] = static_cast<int32_t>(p);
               ++nb;
               if (nb == kB)

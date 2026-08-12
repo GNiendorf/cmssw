@@ -82,9 +82,11 @@ namespace lst {
                       // Row this chain occupies in TrackCandidatesBase, or -1 if it emits no TC.
                       SOA_COLUMN(int32_t, tcRow),
                       // ---- P2.4 (K8 pixel attach) ---------------------------------------------
-                      // The a2 2-class chain head's logit. NOT a gate and NOT in the order key; it
-                      // exists solely as attach pair feature 11 (prototype/PixelAttach.cc af_11).
-                      SOA_COLUMN(float, gateLogit2),
+                      // S3 DELETION (2026-08-12): `SOA_COLUMN(float, gateLogit2)` lived here to
+                      // carry the a2 2-class chain head's logit into attach pair feature 11. That
+                      // network is DELETED (no surrogate, no fitted stand-in); the attach head now
+                      // reads the 3-class gate's own three raw logits, which are already stored
+                      // below for the -G 6 kills and the K9 order key.
                       // Attach decision: the pLS row this chain owns after the head threshold, the
                       // one-pLS-one-owner contention and the -RD seed-family dedup, or -1.
                       SOA_COLUMN(int32_t, attachPls),

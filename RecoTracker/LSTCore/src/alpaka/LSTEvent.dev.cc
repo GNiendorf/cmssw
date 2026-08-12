@@ -994,6 +994,13 @@ void LSTEvent::buildChainEdges() {
   auto featBuf = cms::alpakatools::make_device_buffer<float[]>(
       queue_, wantFeat ? static_cast<size_t>(nEdges) * kChainEdgeFeatures : size_t{1});
 
+  // Resolve the per-edge-family weld bars on the HOST so the kernel takes two plain floats. A
+  // family left at its inherit sentinel resolves to thetaEdge, so both families then compare
+  // against the same number and the arithmetic is unchanged. With chainConfig_.edgeWpTable these
+  // two only feed the inert fallback: K5 then takes the bar from the head's own per-cell table.
+  float const weldThetaE1 = (chainConfig_.thetaEdgeE1 < 1e29f) ? chainConfig_.thetaEdgeE1 : chainConfig_.thetaEdge;
+  float const weldThetaE2 = (chainConfig_.thetaEdgeE2 < 1e29f) ? chainConfig_.thetaEdgeE2 : chainConfig_.thetaEdge;
+
   alpaka::exec<Acc1D>(queue_,
                       chainFlat_workDiv,
                       ChainEdgeInference{},
@@ -1005,6 +1012,9 @@ void LSTEvent::buildChainEdges() {
                       chainMdIncidenceDC_->const_view(),
                       chainLsIncidenceDC_->const_view(),
                       chainEdgesDC_->view(),
+                      weldThetaE1,
+                      weldThetaE2,
+                      chainConfig_.edgeWpTable,
                       wantFeat ? featBuf.data() : nullptr);
 
   auto const t3 = stamp();
@@ -1241,14 +1251,9 @@ void LSTEvent::buildChains() {
   alpaka::memset(queue_, outWeld_buf, 0xff);
   alpaka::memset(queue_, inWeld_buf, 0xff);
 
-  // Resolve the per-edge-family weld bars on the HOST so the kernels take two plain floats. A
-  // family left at its inherit sentinel resolves to thetaEdge, so both families then compare
-  // against the same number and the arithmetic is unchanged.
-  float const weldThetaE1 =
-      (chainConfig_.thetaEdgeE1 < 1e29f) ? chainConfig_.thetaEdgeE1 : chainConfig_.thetaEdge;
-  float const weldThetaE2 =
-      (chainConfig_.thetaEdgeE2 < 1e29f) ? chainConfig_.thetaEdgeE2 : chainConfig_.thetaEdge;
-
+  // S1: the weld eligibility bar is no longer a kernel argument. K5 resolved it per edge into
+  // ChainEdgesSoA::weldBar (from the head's per-family, per-cell table, or from the two per-family
+  // scalars when chainConfig_.edgeWpTable is false), so both weld kernels just read the edge row.
   for (int sweep = 0; sweep < kChainWeldSweeps; ++sweep) {
     // A fixed sweep count, no host sync: the reference's "break when nothing welded" early exit is
     // a CPU nicety and a zero-weld sweep is idempotent.
@@ -1261,9 +1266,7 @@ void LSTEvent::buildChains() {
                         outWeld_buf.data(),
                         inWeld_buf.data(),
                         bestOut_buf.data(),
-                        bestIn_buf.data(),
-                        weldThetaE1,
-                        weldThetaE2);
+                        bestIn_buf.data());
     alpaka::exec<Acc1D>(queue_,
                         chainFlat_workDiv,
                         ChainWeldMutual{},
@@ -1271,9 +1274,7 @@ void LSTEvent::buildChains() {
                         outWeld_buf.data(),
                         inWeld_buf.data(),
                         bestOut_buf.data(),
-                        bestIn_buf.data(),
-                        weldThetaE1,
-                        weldThetaE2);
+                        bestIn_buf.data());
   }
 
   auto const t1 = stamp();

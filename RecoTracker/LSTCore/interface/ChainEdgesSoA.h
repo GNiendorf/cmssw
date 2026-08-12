@@ -29,7 +29,18 @@ namespace lst {
                       SOA_COLUMN(uint32_t, outer),  // dense chain-node index of the outer triplet
                       SOA_COLUMN(uint8_t, type),    // 0 = hole, 1 = E1 (shared MD), 2 = E2 (shared LS)
                       SOA_COLUMN(float, logOdds),   // K5 edge-MLP logit; the quantity K6 will sum
-                      SOA_COLUMN(uint32_t, tie))  // K2 stable weld tie-break, see ChainWeld.h
+                      SOA_COLUMN(uint32_t, tie),  // K2 stable weld tie-break, see ChainWeld.h
+                      // S1. The weld ELIGIBILITY bar this edge must clear, materialized by K5 and
+                      // compared by K6a/K6b (`logOdds < weldBar` -> ineligible). It replaces the two
+                      // per-family scalars the weld kernels used to take as arguments: the bar is now
+                      // a per-cell table entry keyed on the edge FAMILY and on the inner node's
+                      // (pT, |eta|) cell (ChainNodesSoA::wpBin), and K5 is the one place that already
+                      // has both the family and the node row in registers. K6 runs
+                      // kChainWeldSweeps * 2 times over every edge, so resolving the bar there
+                      // instead would repeat the lookup ~8-16x per edge.
+                      // Rows with type == 0 (the K2 enumeration holes) are left UNSET: both weld
+                      // kernels test the type first and never reach this column for them.
+                      SOA_COLUMN(float, weldBar))
   // U5 DELETION: `SOA_SCALAR(uint32_t, nE1Exact)` and `SOA_SCALAR(uint32_t, nE2Exact)` stood here.
   // Both were WRITE-ONLY -- ChainBuildEdges' once_per_grid block set them (also removed) and NOTHING
   // in src/, interface/, standalone/code/ or RecoTracker/LST/ ever read them. The "consumer" the old

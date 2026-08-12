@@ -255,7 +255,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
   struct AttachTargetPre {
     float rtInner, zInner, chordPhi, tanLambda;
     float fitKappa;
-    float xs[5];  // head inputs 7..11, preprocessed (attachStdz<7..11>)
+    float xs[7];  // head inputs 7..13, preprocessed (attachStdz<7..13>)
     float rotSign, centerX, centerY;
     // U5 DELETION (2026-08-07): `float tcEta, tcPhi;` lived here to feed the -XC bare-chain arm's
     // pass-1 dR^2 window. That window was dropped in a2f81bb ("Drop the bare-chain crossclean's dR
@@ -599,7 +599,14 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         o.xs[1] = attachStdz<8>(acc, o.tanLambda);
         o.xs[2] = attachStdz<9>(acc, chains.features()[c][10]);  // innermostLayer
         o.xs[3] = attachStdz<10>(acc, chains.features()[c][1]);  // nLayers
-        o.xs[4] = attachStdz<11>(acc, chains.gateLogit2()[c]);   // chain gate logit
+        // S3: the THREE RAW 3-class gate logits, already stored per chain for the -G 6 kills
+        // and the K9 order key, so this costs no new chain-side arithmetic. They replaced the
+        // DELETED 2-class chainmlp logit and the head was retrained on them; nothing reduces or
+        // combines them by hand (max() would discard which class won, which is precisely the
+        // defect that made gateLogit2 score .336 -- inverted -- on displaced-vs-prompt).
+        o.xs[4] = attachStdz<11>(acc, chains.zFake()[c]);
+        o.xs[5] = attachStdz<12>(acc, chains.zPrompt()[c]);
+        o.xs[6] = attachStdz<13>(acc, chains.zDisp()[c]);
         out[t] = o;
       }
     }
@@ -729,7 +736,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
   // is decided exactly as the reference decides it. `dTanL` is passed in because the caller has
   // already computed it for the cheap early exit.
   //
-  // The 19 outputs are written to xOut[i * xStride], so the caller can stage a batch of pairs
+  // The 22 outputs are written to xOut[i * xStride], so the caller can stage a batch of pairs
   // TRANSPOSED (input-major) without a second pass. phiDirOut is the direction of motion at the
   // target radius, exported for the audit kernel.
   static_assert(dnn::attachmlp::kInput == kAttachFeatures,
@@ -758,22 +765,22 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     }
     float const zResid = pls.hit0z + pls.tanLambda * (cp.rtInner - pls.rt0) - cp.zInner;
 
-    // 0..6 per-pLS and 7..11 per-target: hoisted into the pre-records, copied here.
+    // 0..6 per-pLS and 7..13 per-target: hoisted into the pre-records, copied here.
     CMS_UNROLL_LOOP
     for (int i = 0; i < 7; ++i)
       xOut[i * xStride] = pls.xs[i];
     CMS_UNROLL_LOOP
-    for (int i = 0; i < 5; ++i)
+    for (int i = 0; i < 7; ++i)
       xOut[(7 + i) * xStride] = cp.xs[i];
-    xOut[12 * xStride] = attachStdz<12>(acc, chargeAgree);
-    xOut[13 * xStride] = attachStdz<13>(acc, dKappa);
-    xOut[14 * xStride] = attachStdz<14>(acc, dTanL);
-    xOut[15 * xStride] = attachStdz<15>(acc, dPhi);
-    xOut[16 * xStride] = attachStdz<16>(acc, centerDist);
-    xOut[17 * xStride] = attachStdz<17>(acc, zResid);
+    xOut[14 * xStride] = attachStdz<14>(acc, chargeAgree);
+    xOut[15 * xStride] = attachStdz<15>(acc, dKappa);
+    xOut[16 * xStride] = attachStdz<16>(acc, dTanL);
+    xOut[17 * xStride] = attachStdz<17>(acc, dPhi);
+    xOut[18 * xStride] = attachStdz<18>(acc, centerDist);
+    xOut[19 * xStride] = attachStdz<19>(acc, zResid);
     // targetType: chain target (-RT3 0, so the bare-T3 kind does not exist)
-    xOut[18 * xStride] = attachStdz<18>(acc, 0.f);
-    // 19 rphiResidInwards: the SEED's innermost anchor hit's signed residual to the TARGET's own
+    xOut[20 * xStride] = attachStdz<20>(acc, 0.f);
+    // 21 rphiResidInwards: the SEED's innermost anchor hit's signed residual to the TARGET's own
     // circle -- LST's rPhiChiSquaredInwards in content (PixelTriplet.h:330-339), one sqrt per pair.
     // An invalid target circle keeps the 0 flag value, exactly as slot 16 does.
     float residInw = 0.f;
@@ -782,7 +789,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
       float const rdy = pls.hit0y - cp.centerY;
       residInw = alpaka::math::sqrt(acc, rdx * rdx + rdy * rdy) - cp.radius;
     }
-    xOut[19 * xStride] = attachStdz<19>(acc, residInw);
+    xOut[21 * xStride] = attachStdz<21>(acc, residInw);
     return true;
   }
 

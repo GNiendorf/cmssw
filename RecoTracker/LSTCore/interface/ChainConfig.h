@@ -34,6 +34,16 @@ namespace lst {
     // both at the sentinel reproduces the single-bar behaviour exactly.
     float thetaEdgeE1 = 1e30f;
     float thetaEdgeE2 = -2.0f;
+    // S1 (on-policy edge retrain). The weld bar is a TABLE on LST's T3-DNN working-point binning --
+    // dnn::kPtBins (2, split at pT 5) x dnn::kEtaBins (10 x 0.25 in |eta|, last bin absorbing
+    // > 2.5), SEPARATELY for E1 and E2 -- shipped in EdgeNetworkWeights.h as dnn::edgemlp::kWpBar
+    // and keyed on the INNER node's cell (ChainNodesSoA::wpBin). The table is part of the head's own
+    // calibration artefact: every cell reproduces the SHIPPED head's measured true-edge acceptance
+    // in that cell, which is what makes swapping the head physics-neutral by construction and leaves
+    // only the false-edge rate free to move.
+    // false falls back to the two per-family SCALARS above, byte for byte: that is the A/B and the
+    // inertness proof for the plumbing, not a tuning knob.
+    bool edgeWpTable = true;
     // -L 3.0 : chain score length weight (ANCHOR said 0.5, the M19 block overrides).
     float lambdaLen = 3.f;
 
@@ -64,13 +74,13 @@ namespace lst {
 
     // -G 6 three-class margin kills. mP = zPrompt - zFake, mD = zDisp - zFake,
     // mX = max(zPrompt, zDisp) - zFake.
-    float m3Theta4 = 2.f;     // -M4  : T4-class IP    kill iff mX < m3Theta4
-    float m3Theta4D = -2.5f;  // -M4D : T4-class exempt kill iff mD < m3Theta4D
+    float m3Theta4 = 2.352515f; // -M4  : T4-class IP    kill iff mX < m3Theta4
+    float m3Theta4D = -2.255362f; // -M4D : T4-class exempt kill iff mD < m3Theta4D
     float m3Theta5 = 1e9f;    // -M5  : IP nLayers == 5 kill iff mP < m3Theta5 (inert at 1e9)
     float m3Theta6 = 1e9f;    // -M6  : IP nLayers >= 6 kill iff mP < m3Theta6 (inert at 1e9)
     float m3ThetaD = 1e9f;    // -MD  : exempt 5+       kill iff mD < m3ThetaD (inert at 1e9)
-    float m3ThetaRI = -0.5f;  // -MRI : IP-5+     OR-rescue floor on mX
-    float m3ThetaR = -1.8f;   // -MR  : exempt-5+ OR-rescue floor on mX (endcap + no-member fallback)
+    float m3ThetaRI = -0.2518739f; // -MRI : IP-5+     OR-rescue floor on mX
+    float m3ThetaR = -1.263387f; // -MR  : exempt-5+ OR-rescue floor on mX (endcap + no-member fallback)
     // -MRB / -MRT: band split of the exempt-5+ OR-rescue floor. Band on |eta| of the innermost
     // member T3 (the K10 TC eta), boundaries zEta1 / zEta2. Resolved values only -- the prototype's
     // kMrUnset sentinel is resolved on the host and never reaches a kernel.
@@ -82,19 +92,19 @@ namespace lst {
     // they bought was FAKE rate only (fakB -.0057, fakT -.0055), which is the lowest-priority
     // metric, so the trade is being unwound. The band machinery stays in place -- setting these two
     // fields is all it takes to put the bars back.
-    float m3ThetaRB = -1.2f;
-    float m3ThetaRT = -1.2f;
+    float m3ThetaRB = -1.108733f;
+    float m3ThetaRT = -0.8797723f;
     // -C25 0.0 / -C25D -2.0 : the (nNodes == 2, nLayers == 5) cell rule; kills only when BOTH
     // margins fail, and never re-kills an already-killed chain.
-    float c25Theta = 2.f;
-    float c25ThetaD = -1.5f;
+    float c25Theta = 1.999641f;
+    float c25ThetaD = -0.9891577f;
 
     // Transition-band levers. The band is keyed on |eta| of the chain's INNERMOST member T3
     // (the same quantity K10 gives the TC), and the deltas are ADDITIVE to the thresholds above.
     float zEta1 = 1.1f;      // -ZE1
     float zEta2 = 1.7f;      // -ZE2
-    float zdM4 = -0.5f;      // -ZM4  : added to -M4
-    float zdM4D = 1.2f;      // -ZM4D : added to -M4D
+    float zdM4 = -0.4565438f; // -ZM4  : added to -M4
+    float zdM4D = 1.451099f; // -ZM4D : added to -M4D
     float zdRI = 0.f;        // -ZRI  : added to -MRI
     float zdR = 0.f;         // -ZR   : added to -MR
     float zdR5 = 0.f;        // -ZR5  : added to -ZR for exempt nLayers == 5
@@ -174,18 +184,24 @@ namespace lst {
     // attach (conversion 0.6799 -> 0.7470), and loosening conversion is exactly what costs displaced
     // efficiency. These values hold conversion at the 19-input head's operating point and are not
     // independent of AttachNetworkWeights.h.
-    float attachTheta = 7.3f;   // -a   delivery margin, |eta| < 1.1
-    float attachThetaT = 7.0f;  // -a2  delivery margin, 1.1 <= |eta| < 1.7
-    float attachThetaE = 6.4f;  // -a3  delivery margin, |eta| >= 1.7
+    // S3 (2026-08-12) RE-FIT FOR THE 22-INPUT HEAD. Every bar on the attach logit scale below is
+    // set at FIXED per-band TRUE-PAIR acceptance: each value is the quantile of the new head's
+    // true-pair logits, in that bar's own universe x |seed eta| band, that reproduces the SHIPPED
+    // bar's true-pair acceptance in the same cell -- measured with the shipped head's own logit on
+    // the SAME on-policy rows, so the reference is in the data and the fit costs ZERO parameters.
+    // Still NOT independent of AttachNetworkWeights.h.
+    float attachTheta = 6.626049f;   // -a   delivery margin, |eta| < 1.1
+    float attachThetaT = 5.753662f;  // -a2  delivery margin, 1.1 <= |eta| < 1.7
+    float attachThetaE = 5.907102f;  // -a3  delivery margin, |eta| >= 1.7
     // -AT3 6.0: the bare-T3 (stage B) delivery margin, GLOBAL -- no eta bands. Also the T3-side
     // retirement bar of the -RPS predicate (-RPST was measured as a dead end and is deleted; the
     // bar is hardcoded to this value).
-    float attachThetaT3 = 6.450f;  // re-fitted with the 20-input head
+    float attachThetaT3 = 5.515511f;  // S3: re-fitted for the 22-input head
     // -RPSA 5.5: the chain-side RETIREMENT bar of the -RPS predicate. Global, deliberately NOT
     // banded (banded -RPSA measured dominated). The retirement kernels must read THIS, never
     // attachTheta -- reusing the delivery margin is the pre-A11 behaviour and is wrong now that
     // delivery is banded.
-    float rpsThetaChain = 6.084f;  // re-fitted with the 20-input head
+    float rpsThetaChain = 5.480793f;  // S3: re-fitted for the 22-input head
     // -T3F 0.10: stage-B target admission on the production T3 fake score (node feature 12 ==
     // triplets.fakeScore()). NaN-rejecting form !(fakeScore <= t3FakeMax). Applied to the bare
     // mask so cut targets are never scored and never write plsBestT3.
@@ -217,9 +233,10 @@ namespace lst {
     // score-only); -XC4T / -XCD / -XCG 1 are dead ends and are not ported.
     // Bars re-fitted for the 20-input head (its logit scale differs from the 19-input one; see
     // AttachNetworkWeights.h). These are NOT independent of the weights header.
-    float xcTheta = 4.5f;    // |seed eta| < 1.1
-    float xcThetaT = 4.0f;   // 1.1 <= |seed eta| < 1.7
-    float xcThetaE = 4.2f;   // |seed eta| >= 1.7
+    // S3: re-fitted for the 22-input head by the same fixed-acceptance rule as the -a bars.
+    float xcTheta = 3.430463f;   // |seed eta| < 1.1
+    float xcThetaT = 2.82865f;   // 1.1 <= |seed eta| < 1.7
+    float xcThetaE = 3.641699f;  // |seed eta| >= 1.7
     // -CC9 2: the T4-class crossclean against the delivered SEEDED rows -- drop a delivered type-9
     // bare chain sharing this many outer-tracker hits (2 = one full mini-doublet) with a delivered
     // type-7 or type-5 row. 0 disables it. See ChainCrossClean.h; measured fake barrel -.0037 with
@@ -266,7 +283,7 @@ namespace lst {
   static constexpr unsigned int kChainBareT3TCHeadroom = 4096u;
 
   // prototype/PixelAttach.h kAttachFeat: the frozen pair-feature contract.
-  static constexpr int kAttachFeatures = 20;
+  static constexpr int kAttachFeatures = 22;
   // prototype/PixelAttach.cc: only chain targets with at least this many layers bid for a pLS
   // (v1 scope decision -- chain + pLS is a pT5-class object).
   static constexpr int kAttachMinLayers = 5;
