@@ -620,7 +620,11 @@ rows, not columns, so successive posts stay comparable.
 
 # ==== P4 RUNNING SCOREBOARD (MAINTAINED IN PLACE -- I rewrite this block, nobody else edits it) ====
 
-Last update **[P4 04:20]**. Reference = SHIP `ec08aba9e5b` (md5 a1b9c2e8...). Rows are added as arms
+# ROUND OUTCOME: **NONE SHIPPED** -- maintainer decision, **2026-08-12**.
+# No arm ships. The crown jewels are not being spent on a discounted version of what the next
+# round's recipe fixes should buy cleanly. Rationale paragraph at the foot of this block.
+
+Last update **[P4 04:45]**. Reference = SHIP `ec08aba9e5b` (md5 a1b9c2e8...). Rows are added as arms
 land; columns are frozen. `D:<arm>` = arm minus SHIP, RAW delta (the `want` row gives the good sign).
 Jet rows are the HOLDOUT half (rows 500-999) unless the column says TUNE. Detail per arm in
 `p4_ref/board/<TAG>.txt`; regenerate with `python3 p4_ref/board.py SHIP <TAG> [...] --md`.
@@ -745,6 +749,41 @@ VERDICTS (one line per arm, mine). PROMOTION = jet HOLDOUT gain, paired, with ev
   sample for BOTH arms and the shipped binary, see [P4 04:20]). MAINTAINER CALL, not a referee reject.
 * `P2ZERO` / `P1ZERO` / `P1CTRL` / `P1CTRL2` -- inertness controls, all bit-identical to SHIP on the jet
   holdout; P1 also 35/35 identical on PU200. Not physics arms.
+
+## ROUND OUTCOME, FOR THE RECORD -- NONE SHIPPED, maintainer decision, 2026-08-12
+Every arm cleared the jet gate and every arm failed exactly one protected gate, and no two failed the
+same one; nothing shipped. The decision is NOT that the round failed -- it is that the round's gains
+were only available at a discount the project does not need to accept.
+**(1) P3's J25C is DEFERRED, not abandoned.** Its +.1081 jet-core efficiency and -.0864 jet fake are
+real, holdout-measured, reproduced to four decimals from my own build, and its two blockers are now
+DIAGNOSED as properties of the TRAINING RECIPE rather than of the mechanism: PU200/jet duplicates
+(bar-invariant across four bar variants, erratic in L) and cube50_highPt (bar-invariant, MONOTONE in L,
+with the low-pT cube moving the opposite way -- the signature of a "dense, high-pT, displaced-looking
+=> fake" prior). Both have named next-round experiments: **cube50_highPt rows in the training mix** (the
+same enrichment logic that bought the jet gain, applied to the sample now losing), a **dup-aware loss**
+(the duplicate is a same-sim-pair outcome the current per-chain loss cannot see), and
+**density-conditioning** per the new maintainer directive. The arm's ship surface is the smallest of the
+round (2 headers, 0 kernels, 0 config fields, no env knobs, reproducible across build environments).
+**(2) The C3 family is BANKED as the strictly-better-priced ranking form.** If displaced spend is ever
+authorised, the credited penalty -- not C1 -- is how to spend it: it buys jet core at
+**7.0-7.5e-04 per net displaced track against C1's 3.79e-04**, i.e. roughly half the price, with no
+single displaced cell resolved at either k (residual pooled z 2.5-2.7) and cubes bit-identical.
+Artifacts, md5 verified by me: `p2_ref/p2_orderkey_C3.patch` **97130d1272c55a11f0fc7539c2a2abc6**
+(byte-identical to my own extraction `p4_ref/p2_c3.patch`, so the judged binary came from the recorded
+artifact), the inert mechanism `p2_ref/p2_orderkey.patch` **10010815996b3c5cd296b6d45112820b**, env
+header `p4_ref/P2_ChainConfigEnv_c3.h` **199f3338558a3b28e814059cab1d722b**, judged binary md5
+**57d79f54abd6c0bf746c656ba83ddc0a**. Also banked: `p4_ref/p1_k8pre_v2.patch`
+**a77704ca54d1f9c052b11035cd6fe936** (K8-PRE, and the negative knowledge that its L1 ceiling was 10x
+optimistic because only 8% of gate-alive 5-layer candidates carry delivery-grade pixel evidence) and
+`p4_ref/p3_j10d.patch` **ee818efec93d6e1cad842442b8f01189** (the L=0.10 head, kept because it anchors
+the cube-cost-vs-L slope).
+**(3) TIMING DEBT REMAINS OPEN.** Not one arm was timed. The box carried 3-18 concurrent `lst_cpu`
+processes from the round's first run to its last, and `p4_ref/timing.sh` refuses to emit a number
+otherwise -- by design, because a contended wall time is not a measurement. Nothing here has a cost
+attached: P3's arm is weights-only and should be free, P2's is arithmetic in an existing kernel and
+should be near-free, P1's adds a grid build and a score pass and is the only one with a plausible
+regression (their own estimate ~1% of a jet event, unmeasured on PU200). **Any future ship of any of
+these three carries the timing measurement as a precondition, not a follow-up.**
 
 # ==== END P4 SCOREBOARD ====
 
@@ -3464,3 +3503,206 @@ Every cell of every arm on my scoreboard is now measured, with one honest gap: *
 J25D's PU200 confirmed theirs exactly, so I trust the pattern). Everything else in the nine rows is
 mine, from binaries I built, with provenance lines and md5s in the drv logs. `p4_ref/` is 2.3 GB and
 carries every ntuple, judge, json, plot and patch behind it.
+
+## [P4 04:45] ROUND CLOSED BY MAINTAINER DECISION: **NONE SHIPPED (2026-08-12).** The scoreboard block is stamped with the outcome and carries the rationale for the record. This is my last entry.
+
+The stamp and the three-point rationale live inside the maintained scoreboard block (between its two
+markers) so that anyone who reads the table reads the outcome with it, rather than finding the table and
+having to hunt for what happened to it. In one line each:
+* **J25C deferred, not abandoned** -- +.1081 core / -.0864 jet fake are real and reproduced; both
+  blockers are diagnosed TRAINING-RECIPE properties (dup bar-invariant and erratic in L; cube50_highPt
+  bar-invariant and MONOTONE in L) with named next-round experiments: cube50_highPt rows in the mix, a
+  dup-aware loss, density-conditioning.
+* **C3 banked as the strictly-better-priced ranking form** -- ~half C1's price per displaced track
+  (7.0-7.5e-04 vs 3.79e-04 core per net track), no single displaced cell resolved, cubes bit-identical;
+  patch md5s recorded, and my judged binary is byte-identical to P2's own recorded artifact.
+* **Timing debt open** -- zero arms timed, 3-18 concurrent `lst_cpu` from the first run to the last;
+  timing is a PRECONDITION of any future ship of these three, not a follow-up.
+
+One closing observation that belongs to the round rather than to any arm, and that I would want the next
+referee to inherit: **every arm this round was blocked by a cell it was not designed to touch, and in
+every case the blocking cell was found by a paired test on a sample nobody was tuning on** -- P2's and
+P1's displaced failures on PU200 `event_2000`, P3's cube50_highPt failure on a gun sample no arm's
+training mix has ever seen, and the union's antagonism only visible when the union was measured instead
+of summed. The gate set earned its cost four times over, and the two cheapest instruments in it
+(McNemar on identical sims, and `--intersect` for partial runs) did most of the work. Machinery,
+artifacts and the reproduce commands are indexed at [P4 19:10]; `p4_ref/` is self-contained and nothing
+in it depends on me.
+
+## [P3 CLOSED 19:30] NO-SHIP accepted. The hinge arms are KILLED UNFINISHED, the cube50 gate PASSED before the kill, and this is the complete handoff -- everything a next-round agent needs to retrain this head with a modified recipe without me.
+
+### 1. THE HINGE-PIN ARMS: killed unfinished, and the hypothesis was already dead
+`J10H` / `J25H` were **killed before deploying** (they were queued behind the L-scan; `requeue.sh`
+dropped that queue at [P3 18:47]). No measurement was taken and none is needed: **the hypothesis was
+already falsified at [P3 18:47] by `J50`**, which carries EXACTLY `J10`'s hinge fraction
+(`frac(mX < 5)` = .8954, deviation -.0063 from the shipped .9017) and `dup_barrel` +36.8 sigma against
+`J10`'s +249.7 -- same deviation, 7x different dup. The order-key hinge population is NOT the dup
+mechanism.
+**The tooling is nevertheless finished and banked**, so this costs a next-round agent one command and
+not a day: `barfit3.py --pin hinge` is implemented and verified (it lands `frac(mX<5)` at .9014 for
+the L=.10 head and .9015 for L=.25, against the shipped .9017, where the moment-matching pin left
+.8954 and .9010), and `bar_J10H.json` / `bar_J25H.json` are already fitted, with
+`models/chain3_{J10H,J25H}.pt` in place as copies of the corresponding heads. `bash p3_ref/arm.sh
+J25H J25H cnt` deploys and measures it.
+
+### 2. THE CUBE GATE: cube50 PASSED and is in fact BETTER; cube50_highPt was killed mid-run
+`J25CF` (a bit-identical redeploy of `J25C` -- 35/35 judge fields and both jet halves identical, and
+the same `bin/lst_cpu` md5 `a91d400021be5cb81855789ead466852`, which makes the whole
+export -> setbars -> build path reproducible rather than merely repeatable):
+
+    cube50 (5000 evt, -s 4)        BASE       J25C       delta
+    eff_vxy_1_5                   .30120     .32530    **+.02410**
+    eff_vxy_5_10                  .25040     .25990     +.00950
+    eff_vxy_10_30                 .06430     .06720     +.00290
+    eff_dxy_1_5                   .12942     .13937    **+.00995**
+    eff_dxy_5_10                  .08545     .09276     +.00731
+    eff_dxy_10_30                 .02908     .02951     +.00043
+    fake_overall / dup_overall  .00200/.00200  .00286/.00000
+    n_tc                            1002       1050
+
+**Every cube50 displaced cell is BETTER, including the two the S2 round had to report as costs.**
+`cube50_highPt` -- the sample whose `dxy[1,5)` cell S2 flagged as "THE ONE REAL CUBE REGRESSION" and
+"the most boundary-sensitive cell we score" -- was **killed mid-run and is UNMEASURED for this arm.**
+A next-round agent must run it (`bash p3_ref/cuberun.sh <TAG> <standalone-dir>`, ~7 min); BASE
+references are banked at `p3_ref/runs/BASE_cubehi.{judge,json}` (`eff_dxy_1_5 .07948`, 215 of 2705
+sims, clean at `-s 4`).
+
+### 3. THE DELIVERABLE, with hashes
+
+    p3_ref/p3_J25C.patch      md5 db8d37c074ef89cc65344832028ba627   309 added / 309 removed lines
+      applies on:  ec08aba9e5bf47c5c33b32aa1229687e80a8809a  (LST src/+interface/ clean)
+      touches EXACTLY two files, no kernel change, no new cell, no new constant, no new weights file:
+        src/alpaka/ChainNetworkWeights.h   (md5 of the generated header: 7072af5d47c32199f123caee03b13a95
+                                            = p3_ref/hdr_J25C.h; same 25->32->32->3 shape, same 2137
+                                            literals, affine pin baked into the output layer,
+                                            0 lines over 120 cols)
+        interface/ChainConfig.h            (TEN literals, values below; every other field untouched --
+                                            m3Theta4D2 / dcaSplit / dcaSplit2 / t4FarMaxResid /
+                                            m3Theta5 / m3Theta6 / m3ThetaD / zdRI / zdR / zdR5 / zdR6 /
+                                            zdCP / zdCD are NOT in the write list, so E1-B2's guarded
+                                            far cell stays the free pass it is)
+
+    field         ec08aba9e5b       J25C            field        ec08aba9e5b      J25C
+    m3Theta4        2.352515      2.268536          m3ThetaRB     -1.108733    -1.078733
+    m3Theta4D      -2.255362     -2.068684          m3ThetaRT    -0.8797723   -0.8988828
+    m3ThetaRI     -0.2518739     -0.2997463         c25Theta       1.999641     1.886263
+    m3ThetaR       -1.263387     -1.312006          c25ThetaD    -0.9891577    -1.074646
+    zdM4          -0.4565438     -0.4852142         zdM4D          1.451099      1.38305
+    affine pin baked into the header: a = 0.961583, b = -0.647127   (fitted on PU200 mX moments)
+
+    NOT ship-verified from a pristine tree: `finalize.sh` was killed at wrap-up. What IS proven is
+    stronger than nothing and weaker than a ship-verify: two independent deploy+build cycles of the
+    same recipe produced a BIT-IDENTICAL binary and 35/35 bit-identical judge fields. A next-round
+    agent should still run `bash p3_ref/shipverify3.sh J25C <worktree>` (it resets the tree, applies
+    the patch, rebuilds, reruns the PU200 tune and diffs all 35 fields against
+    `p3_ref/runs/J25CF_pu.json`).
+
+### 4. HOW TO RETRAIN THIS HEAD WITH A MODIFIED RECIPE (the whole pipeline, in order)
+
+    # (a) DUMPS -- on-policy, one writer per file (flocked), -s 1 is REQUIRED for record<->entry alignment
+    bash p3_ref/dumprun.sh pu1000 <standalone-dir> -i PU200RelVal -n 1000 -s 1 -p 0.8
+    bash p3_ref/dumprun.sh jet500 <standalone-dir> \
+         -i <standalone>/jet_ref/trackingNtuple_jets_1000.root -n 500 -s 1 -p 0.8 -J
+    #     ~1.5 MB/evt PU200, ~1.7 MB/evt jets; DELETE the .bin after labelling (/mnt/data1 is ~95% full)
+    # (b) LABEL (labelChainsHarness replicated; also emits aEtaC, dR, isCore)
+    python3 p3_ref/truth3.py dump/pu1000.bin  <event_1000.root> 1000 lab/pu
+    python3 p3_ref/truth3.py dump/jet500.bin  <jets_1000.root>   500 lab/jet --jets
+    # (c) TRAIN                       <-- the recipe knobs live here
+    python3 p3_ref/train3mix.py --lab pu=lab/pu --lab jet=lab/jet --tag TAG --jet-share 0.25
+    # (d) PIN + BARS on the PROTECTED sample's rows only
+    python3 p3_ref/barfit3.py --model models/chain3_TAG.pt --lab lab/pu --cfg base_ChainConfig.h \
+            --out bar_TAG.json --fit-on trval --fake-target -1   # [--pin hinge]
+    # (e) DEPLOY + MEASURE (PU200 tune + jets TUNE + jets HOLDOUT)
+    bash p3_ref/arm.sh ARMTAG TAG cnt          # variants: dual | dpin | ppin | cnt | fkm
+    bash p3_ref/cuberun.sh ARMTAG <standalone-dir>
+    bash p3_ref/mkpatch3.sh ARMTAG <worktree> && bash p3_ref/shipverify3.sh ARMTAG <worktree>
+
+**The L = 0.25 mix, constructed exactly.** `--jet-share L` sets the fraction of the TOTAL TRAIN LOSS
+WEIGHT carried by the jet rows, not the row count. Per sample the m12 convention is applied with that
+sample's OWN `pos_weight = n_fake/n_true` on the train split (PU200 1.328, jets **32.31**, because
+only 3.00% of jet chains are true), then the jet block is multiplied by
+`f = L/(1-L) * W_pu / W_jet`; at L = 0.25, `f = 0.364595`. The resulting shares are
+**sample: pu .7500 / jet .2500** and **class: fake .4725 / prompt .4360 / displaced .0915**.
+Row counts for reference: PU200 7,067,840 chains (fake 4,095,327 / prompt 2,935,302 / displaced
+37,211; 2,802,432 of the trues are pileup-only and therefore PROMPT by the shipped convention) and
+jets 4,130,169 (fake 4,006,165 / prompt 92,463 / displaced 31,541; **no pileup at all**, and 28,108
+chains are core-true). L = 0.50 is almost exactly the naive-concatenation point (`f` = 1.094).
+**The tiered displaced boost (x8 / x16 on vxy) is applied to the PU200 rows ONLY.** `--jet-tier`
+turns it on for jets and is a measured loser: it moves the displaced class from 10.4% to **38.2%** of
+the total gradient and costs both samples (`pu_D` .96690 -> .96261, jet_core AUC .9818 -> .9721).
+Standardization is fitted on the PU200 train split for EVERY arm, so L = 0 is a genuine nested case.
+Model selection is `min` over every sample in the mix of `(AUC(mP prompt-vs-fake),
+AUC(mD disp-vs-fake))`; at L = 0 that is bit-for-bit the shipped selector.
+
+**Dump provenance (both dumps, identical):** binary md5 `9e452dffe1bbb43cb65cefc6238f11bd`, git
+`ec08aba9e5bf47c5c33b32aa1229687e80a8809a`, LST `src/`+`interface/` clean,
+`ChainNetworkWeights.h` `6c822829700c5f6080044a8372c34ed9`,
+`EdgeNetworkWeights.h` `05b7f3f379aa5fa285538eba5b8b4d8a`,
+`AttachNetworkWeights.h` `ab7497aae202c8e6c9b0c917fdeec343`,
+`T3NeuralNetworkWeights.h` `9342cb8d54f5f883934316ce45785d28`,
+`ChainConfig.h` `0a060b33f36f05057f4be6d5e81c1d16`, `[CHAIN OVERFLOW]` count **0** in both.
+Stamps are at `p3_ref/dump/{pu1000,jet500}.prov`. **Any retrain that does not re-dump against its own
+binary is off-policy and invalid** -- and note that the head this round replaces was itself trained
+on the r2G dump whose census my fresh dump reproduces to ~20 chains in 7M, which is why the control
+arm had nothing left to recover.
+
+### 5. THE TWO NAMED RECIPE EXPERIMENTS, with the exact hooks
+
+**(A) cube50_highPt rows in the training mix.** Input file is
+`/data2/segmentlinking/CMSSW_12_2_0_pre2/trackingNtuple_10mu_10k_pt_0p5_50_50cm_cube.root`
+(the `-i cube50_highPt` sample). Dump and label it exactly like the others (no `--jets`; the cube
+ntuple has no genjet branches, so `dR`/`isCore` stay at their -999/0 defaults and nothing else
+changes). **One code change is needed:** `--jet-share` currently applies to ALL non-reference samples
+COLLECTIVELY -- for three samples you want per-sample shares, i.e. replace the single float with
+`--share NAME=frac` (repeatable) and rescale each non-reference block independently; the loop that
+does it is `train3mix.py` lines ~154-166, six lines. Two warnings from this round that transfer
+directly: the cube samples are **all displaced and have no pileup**, so their own `pos_weight` will
+be large and the tiering question recurs -- start with tiering OFF for them, as for jets; and the
+protected-sample discipline should be preserved (fit the pin and the bars on PU200 rows only).
+Expected value: it puts the ONE cell this round could not measure (`cube50_highPt dxy[1,5)`) inside
+the training distribution rather than outside it.
+
+**(B) A dup-penalising loss on same-sim chains.** This is the experiment aimed at the exact thing
+that blocked this arm, and the hook already exists: `lab/*/meta.npz` carries `evt` and `simIdx`, so
+the same-sim chain group key is one line, `key = evt * 1000000 + simIdx` (this is precisely what
+`dupproxy.py` uses). In `train3mix.py` the per-row weight vector `w` is built before the training
+tensors, so a group-aware term goes in there. Two concrete forms worth trying:
+ * **rank-within-group**: for each `(evt, sim)` group of TRUE chains, keep the best-scoring member in
+   the prompt/displaced class and re-label the REST as class 0 (fake). That teaches "one chain per
+   sim" directly in the existing 3-class head with NO architecture change and no new output.
+ * **group-normalised weight**: divide each true row's weight by the size of its same-sim group, so a
+   sim with eight redundant chains contributes the same total gradient as a sim with one.
+Judge it on PU200 `dup_barrel` / `dup_transition` FIRST (they are what failed: +21.7 and +43.8 sigma),
+and be warned by this round's central negative: **the TC duplicate rate is invisible to every
+chain-level proxy I built** (chain-level duplicate multiplicity moved +0.10% while the TC dup rate
+moved +167%), so this has to be judged by deployment, not offline.
+
+### 6. THE NEW MAINTAINER DIRECTIVE, and what it means for these artifacts
+**Density conditioning on LOCAL observables is now an allowed tool (dense-region-aware decisions);
+SAMPLE RECOGNITION is not; and cross-sample transfer -- QCD jets -> PU200 ttbar jet cores -- will be a
+MANDATORY GATE next round.** Three things from this round bear on that:
+ 1. The gate head already has one local density observable in its 25 inputs, `maxJunctionDegProduct`
+    (cf column 14, log10(1+x)-conditioned). Anything added should be of that kind -- per-MD degree,
+    local T3 multiplicity in a cone, local hit density -- and computable per chain from what
+    `ChainFeatures` already sees, so no new collection and no new kernel.
+ 2. **THE MANDATORY GATE IS NOT MEASURABLE WITH THE CURRENT PU200 NTUPLES, and someone must fix that
+    before the round starts:** I checked, and
+    `/data2/segmentlinking/CMSSW_12_5_0_pre3/RelValTTbar_14TeV_CMSSW_12_5_0_pre3/event_1000.root`
+    has **ZERO genjet branches** (no `sim_genjet_idx`, no `sim_genjet_deltaR`, no `genjet_pt/eta/phi`)
+    -- they exist only in `jet_ref/trackingNtuple_jets_1000.root`. There is therefore no way today to
+    define "a ttbar jet core" in the PU200 sample, and `m3_ref/jetphys.py` cannot run on it. Either
+    the PU200 tracking ntuples get regenerated with the jet branches on, or the transfer gate needs a
+    genjet-free core definition (a local-density proxy, which the new directive permits for decisions
+    but which would here be a MEASUREMENT definition and should be stated as such).
+ 3. My L-scan is itself weak evidence on transfer: the same head that gains +.108 on QCD jet cores is
+    neutral-or-better on all 11 PU200 efficiency cells, so the enrichment did not teach "recognise
+    the jet sample" -- but it also gained PU200 dup/fake, so it plausibly taught something
+    sample-specific in the ordering. **That is the question the transfer gate exists to answer, and my
+    labelled rows (`lab/pu`, `lab/jet`) are exactly the corpus to answer it on.**
+
+**FINAL STATUS: NO-SHIP, accepted. `J25C` = +.1080 jet-core efficiency and -.0864 jet fake on an
+untouched holdout, at neutral-or-better PU200 efficiency in all 11 cells and better cube50 displaced
+in all six, blocked by PU200 dup (+13.8 sigma overall, +43.8 transition) and fake (+6.5 sigma) that no
+lever inside this brief can reach. Deferred to a training-recipe fix, not abandoned. All P3
+background processes are stopped; the g1 worktree holds the J25C files (`git checkout --
+RecoTracker/LSTCore` restores it to ec08aba9e5b, the patch is banked).**
