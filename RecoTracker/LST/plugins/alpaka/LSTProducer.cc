@@ -86,6 +86,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     c.attachSuppressBarePLS = a.getParameter<bool>("suppressBarePLS");
     c.attachSeedDedup = a.getParameter<bool>("seedDedup");
     c.attachDcaMax = a.getParameter<double>("dcaMax");
+
+    // Not a physics working point, so it sits at the top of the chain PSet rather than inside one of
+    // the three groups: it is the resource guard on the edge enumeration (ChainConfig::degreeCap).
+    c.degreeCap = ps.getParameter<uint32_t>("degreeCap");
     return c;
   }
 
@@ -147,6 +151,13 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
       // most of which the M14-M18 scans measured as no-ops, bad trades or dead experiments, and
       // those are compile-time constants here rather than producer parameters.
       edm::ParameterSetDescription chainDesc;
+      chainDesc.add<uint32_t>("degreeCap", 256)
+          ->setComment(
+              "Resource guard, not a working point: a shared MiniDoublet / Segment key enumerates at "
+              "most this many in- and out-triplets. The edge count is sum_key degIn * degOut, which on "
+              "a collimated (jet) event reaches 400 M edges / 8.4 GB and overruns the 4 GiB alpaka "
+              "buffer extent; 1000000000 disables the cap and reproduces the unguarded behaviour. "
+              "Measured PU200 cost at 256: 0.074% of the enumerated edges pooled over 150 events.");
       {
         edm::ParameterSetDescription gateDesc;
         gateDesc.add<double>("thetaEdge", 0.0)->setComment("-e: edge-logit floor for K6 welding.");
