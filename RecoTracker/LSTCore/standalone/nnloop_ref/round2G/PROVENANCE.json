@@ -1,0 +1,9 @@
+{
+ "round": "2G",
+ "base": "4f1846078d9 + s1_arm_G_3class_balanced.patch",
+ "patch_md5": "67cee962245be3ea4b1206b11a255636",
+ "binary_md5": "90cc7cdefac35e427a328784f6a8ca1e",
+ "edge_weights_md5": "05b7f3f379aa5fa285538eba5b8b4d8a",
+ "sample": "event_1000.root via -i PU200RelVal n=1000 s=1",
+ "purpose": "stage-2 gate training rows, ON-POLICY for arm G edge head"
+}

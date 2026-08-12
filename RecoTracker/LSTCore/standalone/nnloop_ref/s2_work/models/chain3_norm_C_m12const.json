@@ -1,0 +1,159 @@
+{
+ "feature_names": [
+  "cf_nNodes",
+  "cf_nLayers",
+  "cf_sumEdgeLogit",
+  "cf_minEdgeLogit",
+  "cf_meanEdgeLogit",
+  "cf_fullFitChi2PerHit",
+  "cf_rzLineChi2PerHit",
+  "cf_fitKappa",
+  "cf_dKappaFitVsMedianT3",
+  "cf_ptEst",
+  "cf_innermostLayer",
+  "cf_layerSpan",
+  "cf_nPS",
+  "cf_nBarrel",
+  "cf_maxJunctionDegProduct",
+  "cf_chargeConsistency",
+  "cf_maxXyResid",
+  "cf_maxRzResid",
+  "cf_stdEdgeLogit",
+  "cf_minT3FakeScore",
+  "cf_maxT3FakeScore",
+  "cf_meanT3PromptScore",
+  "cf_minT3DisplacedScore",
+  "cf_meanT3DisplacedScore",
+  "cf_dcaXY"
+ ],
+ "conditioning": [
+  {
+   "feature": "cf_fullFitChi2PerHit",
+   "op": "log10_1p"
+  },
+  {
+   "feature": "cf_rzLineChi2PerHit",
+   "op": "log10_1p"
+  },
+  {
+   "feature": "cf_maxJunctionDegProduct",
+   "op": "log10_1p"
+  },
+  {
+   "feature": "cf_fitKappa",
+   "op": "clip",
+   "lo": -1.0,
+   "hi": 1.0
+  },
+  {
+   "feature": "cf_dKappaFitVsMedianT3",
+   "op": "clip",
+   "lo": -2.0,
+   "hi": 2.0
+  },
+  {
+   "feature": "cf_maxXyResid",
+   "op": "log10_1p"
+  },
+  {
+   "feature": "cf_maxRzResid",
+   "op": "log10_1p"
+  },
+  {
+   "feature": "cf_dcaXY",
+   "op": "log10_1p"
+  },
+  {
+   "feature": "cf_dcaXY",
+   "op": "clip",
+   "lo": 0.0,
+   "hi": 1.4913617
+  }
+ ],
+ "mean": [
+  2.2806482315063477,
+  4.584922790527344,
+  3.2551968097686768,
+  1.9929287433624268,
+  2.142435073852539,
+  0.029424544423818588,
+  0.26118406653404236,
+  -0.0005852943286299706,
+  0.0015057818964123726,
+  1.5747647285461426,
+  2.0528767108917236,
+  4.710546970367432,
+  2.5789544582366943,
+  3.3770923614501953,
+  0.8350862264633179,
+  0.8987191915512085,
+  0.08099804073572159,
+  0.3348824381828308,
+  0.1453338861465454,
+  0.18643110990524292,
+  0.41007062792778015,
+  0.3345866799354553,
+  0.2509228587150574,
+  0.3700077533721924,
+  0.44108259677886963
+ ],
+ "std": [
+  0.5136364102363586,
+  0.708764374256134,
+  4.505910873413086,
+  2.678373336791992,
+  2.73584246635437,
+  0.1258944422006607,
+  0.2562476396560669,
+  0.009492242708802223,
+  0.004365813918411732,
+  4.82149600982666,
+  1.6821001768112183,
+  2.017857313156128,
+  1.1052806377410889,
+  1.6212637424468994,
+  0.43136319518089294,
+  0.2939566969871521,
+  0.10916505753993988,
+  0.18092389404773712,
+  0.3559589385986328,
+  0.25188612937927246,
+  0.37072500586509705,
+  0.29537221789360046,
+  0.1795770823955536,
+  0.17825102806091309,
+  0.3754838705062866
+ ],
+ "seed": 42,
+ "class_spec": {
+  "0": "fake",
+  "1": "prompt-true (simVxy<1)",
+  "2": "displaced-true (simVxy>=1)"
+ },
+ "displaced_weighting": {
+  "convention": "m12 tiered",
+  "pos_weight": 1.332748497484586,
+  "displaced_weight_mid": 8.0,
+  "displaced_weight_hi": 16.0,
+  "n_mid_train": 5710,
+  "n_hi_train": 15807,
+  "train_loss_weight_share": [
+   0.4637977484901577,
+   0.45817551168257964,
+   0.07802673982726267
+  ]
+ },
+ "train_args": {
+  "epochs": 120,
+  "patience": 15,
+  "batch_size": 16384,
+  "lr": 0.001,
+  "hidden": 32,
+  "sched": "const",
+  "loss": "m12",
+  "inputs": [
+   "nnloop_ref/s2_work/lab/r1"
+  ],
+  "val_metric": "min(AUC(mP prompt-vs-fake), AUC(mD disp-vs-fake))"
+ }
+}

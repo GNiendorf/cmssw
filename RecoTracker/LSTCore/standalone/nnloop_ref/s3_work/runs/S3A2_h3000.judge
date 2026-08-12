@@ -1,0 +1,20 @@
+eff_overall_incut      0.8137
+eff_vxy_1_5            0.8020
+eff_vxy_5_10           0.7123
+eff_vxy_10_30          0.6978
+eff_dxy_0_1            0.8395
+eff_dxy_1_5            0.5771
+eff_dxy_5_10           0.2766
+eff_dxy_10_30          0.0454
+eff_barrel             0.9248
+eff_transition         0.8813
+eff_endcap             0.6886
+dup_overall_incut      0.0449
+fake_overall_incut     0.0442
+dup_barrel             0.0140
+fake_barrel            0.0497
+n_tc                   1591163
+n_tc_t4cl              62376
+n_sim_denom            75205
+n_evt                  1000
+{"n_sim_denom": 75205, "eff_overall_incut": 0.813669303902666, "eff_barrel": 0.9248217317487266, "n_eff_barrel": 29450, "eff_transition": 0.8813119395941482, "n_eff_transition": 12714, "eff_endcap": 0.6885687479192518, "n_eff_endcap": 33041, "eff_vxy_0_1": 0.8475387746910926, "n_eff_vxy_0_1": 69762, "eff_vxy_1_5": 0.8020283118529474, "n_eff_vxy_1_5": 4733, "eff_vxy_5_10": 0.7123425692695214, "n_eff_vxy_5_10": 1985, "eff_vxy_10_30": 0.6978281397544853, "n_eff_vxy_10_30": 4236, "eff_dxy_0_1": 0.8395319361405216, "n_eff_dxy_0_1": 78109, "eff_dxy_1_5": 0.5771410579345088, "n_eff_dxy_1_5": 3176, "eff_dxy_5_10": 0.2766169154228856, "n_eff_dxy_5_10": 1005, "eff_dxy_10_30": 0.045394736842105265, "n_eff_dxy_10_30": 1520, "n_tc": 1591163, "fake_overall_incut": 0.04417523534672438, "dup_overall_incut": 0.04494825482995771, "fake_barrel": 0.049735032110604836, "dup_barrel": 0.013994441055988316, "fake_transition": 0.04385163892770931, "dup_transition": 0.011505844238343286, "fake_endcap": 0.041225475469692414, "dup_endcap": 0.07162780486677604, "n_tc_t4cl": 62376, "n_evt": 1000}

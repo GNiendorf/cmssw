@@ -1,0 +1,15 @@
+{
+ "round": 1,
+ "git_head": "4ea386942caeee0c5d1318ac6fef29b640e27e8a",
+ "working_tree_patch": "instrument_featdump_allevents.patch",
+ "patch_md5": "c1d4be9b07a50ae22eef82b7c98502d9",
+ "binary_md5": "42564e7402a8eb423f0cf39d4aa52d8e",
+ "weights": {
+  "EdgeNetworkWeights.h": "1120f1a59eb7c56d8a2d00650b60985a",
+  "Chain3NetworkWeights.h": "ac78fb6978251acc9e5dc9d585517f85",
+  "Chain2NetworkWeights.h": "94384ac52c7dfe3248a482cbf60928f3",
+  "AttachNetworkWeights.h": "b6d3efe85a4f69482dbea0697501ef5e"
+ },
+ "sample": "/data2/segmentlinking/CMSSW_12_5_0_pre3/RelValTTbar_14TeV_CMSSW_12_5_0_pre3/event_1000.root (via -i PU200RelVal, n=1000)",
+ "command": "lst_cpu -i PU200RelVal -n 1000 -s 1 -p 0.8 -w 1 + EDGE/FEAT/NODE/CHAIN/TC dumps"
+}

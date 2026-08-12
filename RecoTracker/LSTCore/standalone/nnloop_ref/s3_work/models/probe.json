@@ -1,0 +1,101 @@
+{
+ "args": {
+  "lab": "/mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/nnloop_ref/s3_work/lab",
+  "out": "models/probe.pt",
+  "arm": "scalar",
+  "seed": 42,
+  "epochs": 3,
+  "patience": 3,
+  "hidden": 24,
+  "batch_size": 16384,
+  "lr": 0.001,
+  "sched": "const",
+  "lr_min": 1e-05,
+  "gamma_neg": 2.0,
+  "disp_mid": 8.0,
+  "disp_hi": 16.0,
+  "chain_weight": 1.0,
+  "class_weight": "m19",
+  "val_cap": 6000000,
+  "drop_aux": false,
+  "frac": 0.02
+ },
+ "best_epoch": 3,
+ "best_val_auc": 0.9980734783968087,
+ "z3_mean": [
+  -1.8036418555291591,
+  1.1456773732050607,
+  -1.0026990191051797
+ ],
+ "z3_std": [
+  1.6202871561220618,
+  1.2308604349289116,
+  1.0245674596647671
+ ],
+ "pos_weight": 35.20612348999513,
+ "W_pos": 431290.0,
+ "W_neg": 15184049.0,
+ "test": {
+  "ALL": {
+   "auc": 0.9963192737137485,
+   "n_true": 1305436,
+   "n_fake": 42390156
+  },
+  "chain5+ (stage 0)": {
+   "auc": 0.997997952536747,
+   "n_true": 822364,
+   "n_fake": 25595108
+  },
+  "bareT3 (stage 1)": {
+   "auc": 0.9960720968798451,
+   "n_true": 388012,
+   "n_fake": 13940623
+  },
+  "aux4L (stage 2)": {
+   "auc": 0.9976943173803066,
+   "n_true": 95060,
+   "n_fake": 2854425
+  },
+  "chain prompt vxy<1": {
+   "auc": 0.9970935888565656,
+   "n_true": 32102
+  },
+  "chain disp vxy[1,5)": {
+   "auc": 0.9942002908623775,
+   "n_true": 1260
+  },
+  "chain disp vxy>=5": {
+   "auc": 0.967849161293777,
+   "n_true": 127
+  },
+  "chain pileup-only": {
+   "auc": 0.9980456734469767,
+   "n_true": 788875
+  }
+ },
+ "history": [
+  {
+   "epoch": 1,
+   "loss": 1.748918605910801,
+   "val_auc": 0.9914900736283252
+  },
+  {
+   "epoch": 2,
+   "loss": 1.5506731554925917,
+   "val_auc": 0.9976245160638618
+  },
+  {
+   "epoch": 3,
+   "loss": 1.4758166752697848,
+   "val_auc": 0.9980734783968087
+  }
+ ],
+ "split": {
+  "train_events": 600,
+  "val_events": 200,
+  "test_events": 200,
+  "train_rows": 2637011,
+  "val_rows": 43216983,
+  "test_rows": 43695592
+ }
+}

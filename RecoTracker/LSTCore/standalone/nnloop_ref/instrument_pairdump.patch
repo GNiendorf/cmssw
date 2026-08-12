@@ -1,0 +1,365 @@
+diff --git a/RecoTracker/LSTCore/src/alpaka/ChainAttach.h b/RecoTracker/LSTCore/src/alpaka/ChainAttach.h
+index ed4534b8fc0..e5b69194da7 100644
+--- a/RecoTracker/LSTCore/src/alpaka/ChainAttach.h
++++ b/RecoTracker/LSTCore/src/alpaka/ChainAttach.h
+@@ -249,6 +249,49 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+     uint32_t pls;
+   };
+ 
++  // ------------------------------------------------------------------------------------------
++  // MEASUREMENT ONLY -- the LST_CHAIN_PAIR_DUMP attach pair row (PLAN_NN_LOOP.md step 3: the
++  // on-policy training rows for the attach head). One record per SCORED pair, i.e. per pair that
++  // attachEvalPairX accepted and that was therefore pushed through the head. Nothing in the
++  // algorithm reads it back; both scorers write it only when the row pointer is non-null, which
++  // happens only when the environment variable names an output file.
++  //
++  //   stage  0 chain target with nLayers >= kAttachMinLayers (the delivery-eligible stage-A list,
++  //            the one the [CHAIN K8] `scored=` census counts)
++  //          1 bare-T3 target (stage B, ChainAttachT3Score)
++  //          2 chain target from the aux 4-layer (-XC4) tail of the stage-A launch -- SCORE-ONLY
++  //            targets, outside the stage-A census, kept apart so a trainer can drop or keep them
++  //            deliberately
++  //   target stage 0 / 2: the CHAIN index, i.e. the row LST_CHAIN_CHAIN_DUMP enumerates;
++  //          stage 1: the SPARSE TRIPLET index (AttachTargetPre::chain for the bare-T3 kind)
++  //   pls    the pLS row (AttachPlsPre::row). The pre-record carries no seedIdx, so the join to the
++  //          ntuple goes through the pLS collection order.
++  //   x      the 20 STANDARDIZED head inputs AS CONSUMED, read back out of the batch stage after
++  //          any per-kind overwrite (stage B rewrites input 18); de-standardize offline with the
++  //          kFeatMean / kFeatStd / kClipLo / kClipHi / kLog10p1 constants of AttachNetworkWeights.h
++  //   logit  the head output for exactly that x
++  struct ChainAttachPairRow {
++    uint32_t stage;
++    uint32_t target;
++    uint32_t pls;
++    float logit;
++    float x[kAttachFeatures];
++  };
++
++  // Control block of the pair dump: [0] the append cursor (may run past the capacity), [1] the
++  // number of rows dropped because it did.
++  static constexpr uint32_t kAttachPairCtl = 2;
++
++  // Deterministic, LABEL-FREE and SCORE-FREE keep test for the pair dump. `keep == 1` keeps every
++  // pair; otherwise one pair in `keep` survives, chosen by a hash of the two identities the record
++  // itself carries, so the decision is reproducible bit-for-bit across reruns AND verifiable
++  // offline from the dump alone.
++  ALPAKA_FN_ACC ALPAKA_FN_INLINE bool attachPairKeep(uint32_t target, uint32_t pls, uint32_t keep) {
++    if (keep <= 1u)
++      return true;
++    return (((target * 2654435761u) ^ (pls * 40503u)) % keep) == 0u;
++  }
++
+   // Per-target record, prototype/PixelAttach.cc TargetPre restricted to the chain kind.
+   // xs[0..4] are head inputs 7..11 preprocessed; fitKappa and tanLambda stay raw as well because
+   // the per-pair features dKappa and dTanLambda are built from them.
+@@ -907,6 +950,13 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+                                   uint32_t* xcCursor,
+                                   uint32_t xcCap,
+                                   uint32_t* stats,
++                                  // MEASUREMENT ONLY, all four inert when pairRows == nullptr, which
++                                  // is the case unless LST_CHAIN_PAIR_DUMP names a file (same
++                                  // discipline as ChainEdgeInference's LST_CHAIN_FEAT_DUMP tap).
++                                  ChainAttachPairRow* pairRows,
++                                  uint32_t* pairCtl,
++                                  uint32_t pairCap,
++                                  uint32_t pairKeep,
+                                   uint32_t nSlices,
+                                   ChainConfig cfg) const {
+       constexpr bool kHost = cms::alpakatools::requires_single_thread_per_block_v<TAcc>;
+@@ -958,6 +1008,23 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+             float const lo = logits[b];
+             int32_t const p = rowB[b];
+             AttachPlsPre const& pq = *ppB[b];
++            // MEASUREMENT ONLY: the on-policy pair row. Emitted BEFORE any verdict so the row set
++            // is the SCORED stream, not the delivered one, and with no dependence on lo beyond
++            // copying it out.
++            if (pairRows != nullptr && attachPairKeep(cp.chain, static_cast<uint32_t>(p), pairKeep)) {
++              uint32_t const slot = alpaka::atomicAdd(acc, pairCtl, 1u, alpaka::hierarchy::Threads{});
++              if (slot < pairCap) {
++                ChainAttachPairRow& r = pairRows[slot];
++                r.stage = is4L ? 2u : 0u;
++                r.target = cp.chain;
++                r.pls = static_cast<uint32_t>(p);
++                r.logit = lo;
++                for (int i = 0; i < kIn; ++i)
++                  r.x[i] = xT[i * kB + b];
++              } else {
++                alpaka::atomicAdd(acc, pairCtl + 1u, 1u, alpaka::hierarchy::Threads{});
++              }
++            }
+             if (!is4L)
+               alpaka::atomicMax(
+                   acc, &plsBest[static_cast<uint32_t>(p)], chainOrderFloat(lo), alpaka::hierarchy::Threads{});
+diff --git a/RecoTracker/LSTCore/src/alpaka/ChainAttachT3.h b/RecoTracker/LSTCore/src/alpaka/ChainAttachT3.h
+index 807ccdd9c7d..99fd029d748 100644
+--- a/RecoTracker/LSTCore/src/alpaka/ChainAttachT3.h
++++ b/RecoTracker/LSTCore/src/alpaka/ChainAttachT3.h
+@@ -278,6 +278,12 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+                                   uint32_t* tgtScored,
+                                   uint32_t* plsBest,
+                                   uint32_t* stats,
++                                  // MEASUREMENT ONLY, inert when pairRows == nullptr (see
++                                  // ChainAttachPairRow in ChainAttach.h).
++                                  ChainAttachPairRow* pairRows,
++                                  uint32_t* pairCtl,
++                                  uint32_t pairCap,
++                                  uint32_t pairKeep,
+                                   float theta,
+                                   uint32_t nSlices,
+                                   ChainConfig cfg) const {
+@@ -313,6 +319,22 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+           for (int b = 0; b < nb; ++b) {
+             float const lo = logits[b];
+             int32_t const p = rowB[b];
++            // MEASUREMENT ONLY: the stage-B pair row, taken here so the captured x INCLUDES the
++            // input-18 overwrite above -- this is the vector the head actually consumed.
++            if (pairRows != nullptr && attachPairKeep(cp.chain, static_cast<uint32_t>(p), pairKeep)) {
++              uint32_t const slot = alpaka::atomicAdd(acc, pairCtl, 1u, alpaka::hierarchy::Threads{});
++              if (slot < pairCap) {
++                ChainAttachPairRow& r = pairRows[slot];
++                r.stage = 1u;
++                r.target = cp.chain;  // the SPARSE TRIPLET index for the bare-T3 kind
++                r.pls = static_cast<uint32_t>(p);
++                r.logit = lo;
++                for (int i = 0; i < kIn; ++i)
++                  r.x[i] = xT[i * kB + b];
++              } else {
++                alpaka::atomicAdd(acc, pairCtl + 1u, 1u, alpaka::hierarchy::Threads{});
++              }
++            }
+             alpaka::atomicMax(
+                 acc, &plsBest[static_cast<uint32_t>(p)], chainOrderFloat(lo), alpaka::hierarchy::Threads{});
+             if (lo >= theta)
+diff --git a/RecoTracker/LSTCore/src/alpaka/LSTEvent.dev.cc b/RecoTracker/LSTCore/src/alpaka/LSTEvent.dev.cc
+index 4bc6eabcd30..2606db0a163 100644
+--- a/RecoTracker/LSTCore/src/alpaka/LSTEvent.dev.cc
++++ b/RecoTracker/LSTCore/src/alpaka/LSTEvent.dev.cc
+@@ -127,6 +127,49 @@ namespace {
+     return n;
+   }
+ 
++  // ---- ATTACH PAIR DUMP (LST_CHAIN_PAIR_DUMP) -----------------------------------------------
++  // MEASUREMENT ONLY, default OFF. See ChainAttachPairRow in ChainAttach.h for the record and
++  // standalone/nnloop_ref/PAIRDUMP_FORMAT.md for the byte layout. With the variable unset every
++  // accessor below is dead: no buffer is allocated and both scorers receive nullptr.
++  char const* chainPairDumpPath() {
++    static char const* const p = []() {
++      char const* s = std::getenv("LST_CHAIN_PAIR_DUMP");
++      return (s != nullptr && *s != '\0') ? s : nullptr;
++    }();
++    return p;
++  }
++
++  // Row capacity of the per-event device buffer. Stage A whole plus stage B/16 measures 2.0e5
++  // rows/event MEAN at PU200 and 4.7e5 on the busiest of 30 events, so 1e6 rows (96 MB) is 5x the
++  // mean and 2.1x that peak; a production training dump should pass LST_CHAIN_PAIR_CAP=2000000. A
++  // pair that arrives after the cursor passes the capacity is DROPPED and counted in the header --
++  // never a partial record, never a crash, and read_pairs.py fails any file with a non-zero count.
++  uint32_t chainPairDumpCap() {
++    static uint32_t const n = []() {
++      char const* s = std::getenv("LST_CHAIN_PAIR_CAP");
++      if (s == nullptr)
++        return uint32_t{1000000};
++      long const v = std::atol(s);
++      return (v > 0) ? static_cast<uint32_t>(v) : uint32_t{1000000};
++    }();
++    return n;
++  }
++
++  // Device-side downsample factor of the STAGE-B rows (~1e6 scored pairs/event, against ~1.3e5 for
++  // stage A). Keep one in N by attachPairKeep's hash of the row's own two identities: label-free,
++  // score-free, deterministic, and recorded in the header so the trainer can weight. Stage A is
++  // always kept whole. LST_CHAIN_PAIR_DSB overrides it (1 = keep everything).
++  uint32_t chainPairDumpDsB() {
++    static uint32_t const n = []() {
++      char const* s = std::getenv("LST_CHAIN_PAIR_DSB");
++      if (s == nullptr)
++        return uint32_t{16};
++      int const v = std::atoi(s);
++      return (v > 0) ? static_cast<uint32_t>(v) : uint32_t{16};
++    }();
++    return n;
++  }
++
+   // Copies one single-byte device SoA column into a host vector. The wait is required because
+   // the very next kernel in the queue is the one that overwrites the column.
+   template <typename TQueue, typename TSpan>
+@@ -1473,8 +1516,16 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
+   }
+   auto const t1 = stamp();
+ 
+-  if (nChainCount_ == 0 || !chainsDC_.has_value())
++  if (nChainCount_ == 0 || !chainsDC_.has_value()) {
++    // MEASUREMENT ONLY: keep the pair dump's event index aligned with the chain dump's. dumpChains()
++    // emits a record for every event that has a chain collection, so this degenerate leg (no attach
++    // stage runs at all) emits an empty pair record for the same events. Inert with the env unset.
++    if (chainsDC_.has_value()) {
++      beginChainPairDump();
++      dumpChainPairs();
++    }
+     return;
++  }
+ 
+   unsigned int const nHits = static_cast<unsigned int>(lstInputDC_->const_view().hits().metadata().size());
+   unsigned int const nMDall = static_cast<unsigned int>(miniDoubletsDC_->view().miniDoublets().metadata().size());
+@@ -1643,6 +1694,9 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
+                         pixelSize_,
+                         chainConfig_);
+ 
++  // MEASUREMENT ONLY: arm the attach pair dump for this event (no-op unless LST_CHAIN_PAIR_DUMP).
++  beginChainPairDump();
++
+   // The stage-B TARGET UNIVERSE first: it depends only on the K9 accepted array, and the ONE
+   // grid both attach stages share needs both target sets to form its union hull. Stage B's
+   // SCORING still runs after stage A, because that is what honours the live ownership.
+@@ -1674,6 +1728,8 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
+                plsBestT3_buf.data(),
+                rdHashKey_buf.data(),
+                rdHashVal_buf.data());
++  // MEASUREMENT ONLY: both scoring stages have run, so the event's pair rows are complete.
++  dumpChainPairs();
+   // The shared grid has no reader left (the -CC sweep reads only the bareT3* owner arrays), so its
+   // ~10 MB items payload goes back to the caching allocator here -- the same point in the event at
+   // which the two per-stage grids used to be freed.
+@@ -2234,6 +2290,12 @@ void LSTEvent::attachPixels(unsigned int nHits,
+                       xcCursor,
+                       xcCap,
+                       stats_buf.data(),
++                      // MEASUREMENT ONLY: nullptr unless LST_CHAIN_PAIR_DUMP is set. Stage A is kept
++                      // WHOLE (keep factor 1); only stage B is downsampled.
++                      pairDumpRowPtr(),
++                      pairDumpCtlPtr(),
++                      chainPairDumpCap(),
++                      1u,
+                       attachSlices,
+                       chainConfig_);
+   alpaka::exec<Acc1D>(queue_,
+@@ -2776,6 +2838,12 @@ void LSTEvent::attachBareT3(unsigned int nHits,
+                       tgtScored_buf.data(),
+                       plsBestT3,
+                       stats_buf.data(),
++                      // MEASUREMENT ONLY: nullptr unless LST_CHAIN_PAIR_DUMP is set. Stage B is
++                      // downsampled 1-in-chainPairDumpDsB() by attachPairKeep's identity hash.
++                      pairDumpRowPtr(),
++                      pairDumpCtlPtr(),
++                      chainPairDumpCap(),
++                      chainPairDumpDsB(),
+                       theta,
+                       t3Slices,
+                       cfgT3);
+@@ -3077,6 +3145,79 @@ void LSTEvent::dumpChainTCs() {
+   std::fclose(f);
+ }
+ 
++void LSTEvent::beginChainPairDump() {
++  // MEASUREMENT ONLY (LST_CHAIN_PAIR_DUMP). Allocates the row buffer on first use and zeroes the
++  // control block for this event. Returns immediately -- with no allocation, no memset and no
++  // queue traffic -- when the variable is unset, which is the shipped configuration.
++  if (chainPairDumpPath() == nullptr)
++    return;
++  if (!pairDumpRows_.has_value()) {
++    pairDumpRows_.emplace(cms::alpakatools::make_device_buffer<ChainAttachPairRow[]>(queue_, chainPairDumpCap()));
++    pairDumpCtl_.emplace(cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, kAttachPairCtl));
++  }
++  alpaka::memset(queue_, *pairDumpCtl_, 0u);
++}
++
++void LSTEvent::dumpChainPairs() {
++  // MEASUREMENT ONLY (LST_CHAIN_PAIR_DUMP): the on-policy attach pair rows of PLAN_NN_LOOP.md
++  // step 3. Called after BOTH attach scoring stages, so one record holds the whole event. It only
++  // READS device memory the scorers wrote into a buffer nothing else touches; the ntuple and the
++  // track candidate collection are identical with and without it.
++  //
++  // Byte layout: standalone/nnloop_ref/PAIRDUMP_FORMAT.md, reader standalone/nnloop_ref/read_pairs.py.
++  char const* path = chainPairDumpPath();
++  if (path == nullptr || !pairDumpRows_.has_value() || !pairDumpCtl_.has_value())
++    return;
++
++  alpaka::wait(queue_);
++
++  uint32_t const cap = chainPairDumpCap();
++  uint32_t ctl[kAttachPairCtl] = {0u, 0u};
++  {
++    auto host_view = cms::alpakatools::make_host_view(ctl, kAttachPairCtl);
++    auto dev_view = cms::alpakatools::make_device_view(queue_, pairDumpCtl_->data(), kAttachPairCtl);
++    alpaka::memcpy(queue_, host_view, dev_view);
++    alpaka::wait(queue_);
++  }
++  uint32_t const nRows = std::min(ctl[0], cap);
++
++  std::vector<ChainAttachPairRow> rows(nRows);
++  if (nRows > 0) {
++    auto host_view = cms::alpakatools::make_host_view(rows.data(), nRows);
++    auto dev_view = cms::alpakatools::make_device_view(queue_, pairDumpRows_->data(), nRows);
++    alpaka::memcpy(queue_, host_view, dev_view);
++    alpaka::wait(queue_);
++  }
++
++  uint32_t const nT3 = static_cast<uint32_t>(tripletsDC_->view().triplets().metadata().size());
++
++  // Sequential event counter, as in every other sidecar here: the file is only unambiguous for a
++  // single-stream run, which is how the dump is taken.
++  static std::atomic<uint32_t> pairEventCounter{0};
++  uint32_t const ievt = pairEventCounter.fetch_add(1);
++  static std::mutex pairDumpMutex;
++  std::lock_guard<std::mutex> lock(pairDumpMutex);
++  std::FILE* f = std::fopen(path, (ievt == 0) ? "wb" : "ab");
++  if (f == nullptr)
++    return;
++  auto put32 = [&](uint32_t v) { std::fwrite(&v, sizeof(v), 1, f); };
++  put32(0x50414952u);  // 'PAIR'
++  put32(1u);           // format version
++  put32(ievt);
++  put32(nChainCount_);
++  put32(nT3);
++  put32(nRows);
++  put32(ctl[1]);  // rows dropped on capacity overflow
++  put32(1u);      // stage-A downsample factor (kept whole)
++  put32(chainPairDumpDsB());
++  put32(static_cast<uint32_t>(kAttachFeatures));
++  static_assert(sizeof(ChainAttachPairRow) == 4 * sizeof(uint32_t) + kAttachFeatures * sizeof(float),
++                "the pair record must be densely packed for the raw dump");
++  if (nRows > 0)
++    std::fwrite(rows.data(), sizeof(ChainAttachPairRow), nRows, f);
++  std::fclose(f);
++}
++
+ void LSTEvent::dumpChains() {
+   // Parity sidecar for the P2.2 gate. Off unless LST_CHAIN_CHAIN_DUMP names an output file; the
+   // ntuple and the track candidate collection are untouched either way. Record layout is
+diff --git a/RecoTracker/LSTCore/src/alpaka/LSTEvent.h b/RecoTracker/LSTCore/src/alpaka/LSTEvent.h
+index 2afa54b35d3..63e2ca5338f 100644
+--- a/RecoTracker/LSTCore/src/alpaka/LSTEvent.h
++++ b/RecoTracker/LSTCore/src/alpaka/LSTEvent.h
+@@ -47,6 +47,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+   struct AttachPlsPre;
+   struct AttachTargetPre;
+   struct ChainXcPair;
++  struct ChainAttachPairRow;
+ 
+   class LSTEvent {
+   private:
+@@ -292,6 +293,23 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+     std::vector<char> plsIsDupPass2_;  // after the second CheckHitspLS (both self-clean passes)
+     std::vector<char> plsIsDupFinal_;  // after CrossCleanpLS, before AddpLSasTrackCandidate
+ 
++    // ---- ATTACH PAIR DUMP (LST_CHAIN_PAIR_DUMP) ---------------------------------------------
++    // MEASUREMENT ONLY. On-policy training rows for the attach head (PLAN_NN_LOOP.md step 3): one
++    // record per scored (target, pLS) pair of BOTH attach scoring stages, carrying the 20
++    // standardized head inputs as consumed and the resulting logit. Both buffers stay empty and
++    // both scorers get nullptr unless LST_CHAIN_PAIR_DUMP names an output file, so with the
++    // variable unset nothing in this block is allocated, written or read.
++    //   rows  the append buffer, capacity chainPairDumpCap()
++    //   ctl   [0] append cursor (may run past the capacity), [1] rows dropped because it did
++    // Allocated once on first use and reused every event, for the same caching-allocator reason
++    // rdHashOwner_ is persistent.
++    std::optional<cms::alpakatools::device_buffer<Device, ChainAttachPairRow[]>> pairDumpRows_;
++    std::optional<cms::alpakatools::device_buffer<Device, uint32_t[]>> pairDumpCtl_;
++    void beginChainPairDump();
++    void dumpChainPairs();
++    ChainAttachPairRow* pairDumpRowPtr() { return pairDumpRows_.has_value() ? pairDumpRows_->data() : nullptr; }
++    uint32_t* pairDumpCtlPtr() { return pairDumpCtl_.has_value() ? pairDumpCtl_->data() : nullptr; }
++
+     // Env-gated (LST_CHAIN_TC_DUMP) TC-level parity sidecar; writes nothing otherwise.
+     void dumpChainTCs();
+     // Optional parity sidecar, enabled by the LST_CHAIN_CHAIN_DUMP environment variable.

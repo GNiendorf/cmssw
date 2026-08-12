@@ -1,0 +1,987 @@
+diff --git a/RecoTracker/LSTCore/interface/ChainConfig.h b/RecoTracker/LSTCore/interface/ChainConfig.h
+index 2d2026cf966..b3f36355a60 100644
+--- a/RecoTracker/LSTCore/interface/ChainConfig.h
++++ b/RecoTracker/LSTCore/interface/ChainConfig.h
+@@ -34,6 +34,16 @@ namespace lst {
+     // both at the sentinel reproduces the single-bar behaviour exactly.
+     float thetaEdgeE1 = 1e30f;
+     float thetaEdgeE2 = -2.0f;
++    // S1 (on-policy edge retrain). The weld bar is a TABLE on LST's T3-DNN working-point binning --
++    // dnn::kPtBins (2, split at pT 5) x dnn::kEtaBins (10 x 0.25 in |eta|, last bin absorbing
++    // > 2.5), SEPARATELY for E1 and E2 -- shipped in EdgeNetworkWeights.h as dnn::edgemlp::kWpBar
++    // and keyed on the INNER node's cell (ChainNodesSoA::wpBin). The table is part of the head's own
++    // calibration artefact: every cell reproduces the SHIPPED head's measured true-edge acceptance
++    // in that cell, which is what makes swapping the head physics-neutral by construction and leaves
++    // only the false-edge rate free to move.
++    // false falls back to the two per-family SCALARS above, byte for byte: that is the A/B and the
++    // inertness proof for the plumbing, not a tuning knob.
++    bool edgeWpTable = true;
+     // -L 3.0 : chain score length weight (ANCHOR said 0.5, the M19 block overrides).
+     float lambdaLen = 3.f;
+ 
+diff --git a/RecoTracker/LSTCore/interface/ChainEdgesSoA.h b/RecoTracker/LSTCore/interface/ChainEdgesSoA.h
+index 6b2ba2b533b..bdab792fc04 100644
+--- a/RecoTracker/LSTCore/interface/ChainEdgesSoA.h
++++ b/RecoTracker/LSTCore/interface/ChainEdgesSoA.h
+@@ -29,7 +29,18 @@ namespace lst {
+                       SOA_COLUMN(uint32_t, outer),  // dense chain-node index of the outer triplet
+                       SOA_COLUMN(uint8_t, type),    // 0 = hole, 1 = E1 (shared MD), 2 = E2 (shared LS)
+                       SOA_COLUMN(float, logOdds),   // K5 edge-MLP logit; the quantity K6 will sum
+-                      SOA_COLUMN(uint32_t, tie))  // K2 stable weld tie-break, see ChainWeld.h
++                      SOA_COLUMN(uint32_t, tie),  // K2 stable weld tie-break, see ChainWeld.h
++                      // S1. The weld ELIGIBILITY bar this edge must clear, materialized by K5 and
++                      // compared by K6a/K6b (`logOdds < weldBar` -> ineligible). It replaces the two
++                      // per-family scalars the weld kernels used to take as arguments: the bar is now
++                      // a per-cell table entry keyed on the edge FAMILY and on the inner node's
++                      // (pT, |eta|) cell (ChainNodesSoA::wpBin), and K5 is the one place that already
++                      // has both the family and the node row in registers. K6 runs
++                      // kChainWeldSweeps * 2 times over every edge, so resolving the bar there
++                      // instead would repeat the lookup ~8-16x per edge.
++                      // Rows with type == 0 (the K2 enumeration holes) are left UNSET: both weld
++                      // kernels test the type first and never reach this column for them.
++                      SOA_COLUMN(float, weldBar))
+   // U5 DELETION: `SOA_SCALAR(uint32_t, nE1Exact)` and `SOA_SCALAR(uint32_t, nE2Exact)` stood here.
+   // Both were WRITE-ONLY -- ChainBuildEdges' once_per_grid block set them (also removed) and NOTHING
+   // in src/, interface/, standalone/code/ or RecoTracker/LST/ ever read them. The "consumer" the old
+diff --git a/RecoTracker/LSTCore/interface/ChainNodesSoA.h b/RecoTracker/LSTCore/interface/ChainNodesSoA.h
+index 070aa23187b..089e768a5c3 100644
+--- a/RecoTracker/LSTCore/interface/ChainNodesSoA.h
++++ b/RecoTracker/LSTCore/interface/ChainNodesSoA.h
+@@ -64,7 +64,18 @@ namespace lst {
+                       // lookup on every edge. Stored once per node instead. Appended LAST so no
+                       // pre-existing column's offset within the row moves.
+                       SOA_COLUMN(uint32_t, mdKeyIn),
+-                      SOA_COLUMN(uint32_t, lsKeyIn))
++                      SOA_COLUMN(uint32_t, lsKeyIn),
++                      // S1 (edge weld working-point table). This node's cell in LST's T3-DNN
++                      // working-point binning, packed as ptbin * dnn::kEtaBins + etabin (0..19):
++                      //   ptbin  = (radius * k2Rinv1GeVf * 2 > 5)              (dnn::kPtBins  == 2)
++                      //   etabin = (|eta| > 2.5) ? 9 : |eta| / dnn::kEtaSize   (dnn::kEtaBins == 10)
++                      // with eta = mds.anchorEta()[md0] -- EXACTLY the two quantities
++                      // t3dnn::runInference bins its own working points on (NeuralNetwork.h:127).
++                      // Computed in K3, where the radius and md0 are already in registers, so the
++                      // per-edge cost in K5 is one byte load instead of a
++                      // triplet -> segment -> md index chase. Appended LAST so no pre-existing
++                      // column's offset within the row moves.
++                      SOA_COLUMN(uint8_t, wpBin))
+ 
+   using ChainNodesSoA = ChainNodesSoALayout<>;
+   using ChainNodes = ChainNodesSoA::View;
+diff --git a/RecoTracker/LSTCore/src/alpaka/ChainEdges.h b/RecoTracker/LSTCore/src/alpaka/ChainEdges.h
+index 01d6b00865d..d070fab000b 100644
+--- a/RecoTracker/LSTCore/src/alpaka/ChainEdges.h
++++ b/RecoTracker/LSTCore/src/alpaka/ChainEdges.h
+@@ -395,6 +395,19 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+         for (int i = 0; i < Params_ChainNode::kFeatures; ++i)
+           nodes.features()[n][i] = chainSanitize(f[i]);
+ 
++        // S1. This node's working-point cell, on LST's T3-DNN binning and built from the SAME two
++        // quantities t3dnn::runInference bins its own working points on (NeuralNetwork.h:127-129):
++        // the T3's radius-derived pT and the |eta| of the anchor hit of its FIRST MD. Both are free
++        // here -- radius is already in a register and m0 is already resolved -- while in the
++        // per-edge kernel they would cost a triplet -> segment -> md index chase. K5 turns this
++        // cell into the edge's weld eligibility bar.
++        float const wpPt = radius * k2Rinv1GeVf * 2.f;
++        float const wpEta = alpaka::math::abs(acc, mds.anchorEta()[m0]);
++        unsigned int const wpPtBin = (wpPt > 5.f) ? 1u : 0u;
++        unsigned int const wpEtaBin =
++            (wpEta > 2.5f) ? (dnn::kEtaBins - 1) : static_cast<unsigned int>(wpEta / dnn::kEtaSize);
++        nodes.wpBin()[n] = static_cast<uint8_t>(wpPtBin * dnn::kEtaBins + wpEtaBin);
++
+         // theta(c) = atan2(|c_xy|, c_z) in [0, pi]; the one fixed rz-angle definition, so the
+         // edge kink theta12(inner) - theta01(outer) lands in [-pi, pi] with no wrap needed.
+         nodes.phiC01()[n] = phi01;
+@@ -422,9 +435,14 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+                                   ChainIncidenceConst mdIncidence,
+                                   ChainIncidenceConst lsIncidence,
+                                   ChainEdges edges,
++                                  float thetaEdgeE1,
++                                  float thetaEdgeE2,
++                                  bool edgeWpTable,
+                                   float* edgeFeatOut) const {
+       static_assert(dnn::edgemlp::kInput == 2 * Params_ChainNode::kFeatures + kChainEdgeFeatures,
+                     "EdgeNetworkWeights.h input size does not match the frozen feature layout");
++      static_assert(dnn::edgemlp::kWpBins == dnn::kPtBins * dnn::kEtaBins,
++                    "the edge working-point table must be on LST's kPtBins x kEtaBins binning");
+ 
+       // P2.6b. On the host backends the head runs kB edges at a time: the 40 preprocessed inputs of
+       // each surviving edge are staged TRANSPOSED into xT and retired in blocks, which interleaves
+@@ -485,6 +503,17 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+         uint32_t const t3In = nodes.tripletIndex()[inner];
+         uint32_t const t3Out = nodes.tripletIndex()[outer];
+ 
++        // S1. Materialize this edge's weld ELIGIBILITY bar for K6a/K6b. With edgeWpTable the bar
++        // is a per-cell entry of the head's own calibration table, keyed on the edge FAMILY (E1 and
++        // E2 have separate tables: their logit distributions differ by ~4 units of median, see
++        // ChainConfig.h) and on the INNER node's (pT, |eta|) cell. With the flag false the two
++        // resolved per-family scalars stand, which is the pre-S1 arithmetic byte for byte.
++        // The bar is only ever compared against logOdds; the stored logOdds keep their meaning,
++        // so the chain features that aggregate edge logits (2/3/4/18) are untouched.
++        edges.weldBar()[e] = edgeWpTable
++                                 ? dnn::edgemlp::kWpBar[etype - 1u][nodes.wpBin()[inner]]
++                                 : ((etype == 1u) ? thetaEdgeE1 : thetaEdgeE2);
++
+         float const kIn = nodes.features()[inner][0];
+         float const kOut = nodes.features()[outer][0];
+         float const dKappa = kIn - kOut;
+diff --git a/RecoTracker/LSTCore/src/alpaka/ChainWeld.h b/RecoTracker/LSTCore/src/alpaka/ChainWeld.h
+index b409d0c8600..e439886513a 100644
+--- a/RecoTracker/LSTCore/src/alpaka/ChainWeld.h
++++ b/RecoTracker/LSTCore/src/alpaka/ChainWeld.h
+@@ -83,9 +83,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+                                   int32_t const* outWeld,
+                                   int32_t const* inWeld,
+                                   uint64_t* bestOut,
+-                                  uint64_t* bestIn,
+-                                  float thetaEdgeE1,
+-                                  float thetaEdgeE2) const {
++                                  uint64_t* bestIn) const {
+       uint32_t const nEdges = static_cast<uint32_t>(edges.metadata().size());
+ 
+       for (uint32_t e : cms::alpakatools::uniform_elements(acc, nEdges)) {
+@@ -95,10 +93,11 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+         if (etype == 0u)
+           continue;
+         float const lo = edges.logOdds()[e];
+-        // Per-family eligibility bar: type 1 (shared MD) welds give 5 layers, type 2 (shared LS)
+-        // give 4. The host collapses both to thetaEdge unless a family bar is set, so a
+-        // single-bar configuration takes the identical branch value on every edge.
+-        if (lo < ((etype == 1u) ? thetaEdgeE1 : thetaEdgeE2))
++        // S1: the per-edge eligibility bar, resolved once by K5 (ChainEdgesSoA::weldBar). It used
++        // to be a branch on the edge type between two kernel-argument scalars; the bar is now a
++        // per-family, per-(pT,|eta|)-cell table entry, so it travels on the edge row. A family
++        // whose whole table row holds one value reproduces the old single-scalar behaviour exactly.
++        if (lo < edges.weldBar()[e])
+           continue;  // eligibility gate
+         uint32_t const n = edges.inner()[e];
+         uint32_t const m = edges.outer()[e];
+@@ -120,7 +119,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+   // incident-edge list (chainWeldKey, see the header note), so at most one edge per node satisfies
+   // bestOut[n] == key and at most one satisfies bestIn[m] == key.
+   //
+-  // The type and thetaEdge gates mirror K6a exactly, so an ineligible row can never collide with
++  // The type and weldBar gates mirror K6a exactly, so an ineligible row can never collide with
+   // the 0 sentinel. The weld-slot gates are deliberately NOT repeated: an edge whose tail or head
+   // was welded in an earlier sweep was skipped by K6a, so that node's best-key is still 0 and the
+   // equality test rejects it anyway. Not reading the weld slots also removes the only
+@@ -131,9 +130,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+                                   int32_t* outWeld,
+                                   int32_t* inWeld,
+                                   uint64_t const* bestOut,
+-                                  uint64_t const* bestIn,
+-                                  float thetaEdgeE1,
+-                                  float thetaEdgeE2) const {
++                                  uint64_t const* bestIn) const {
+       uint32_t const nEdges = static_cast<uint32_t>(edges.metadata().size());
+ 
+       for (uint32_t e : cms::alpakatools::uniform_elements(acc, nEdges)) {
+@@ -149,7 +146,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+         if (bestKey == 0u)
+           continue;
+         float const lo = edges.logOdds()[e];
+-        if (lo < ((etype == 1u) ? thetaEdgeE1 : thetaEdgeE2))
++        if (lo < edges.weldBar()[e])
+           continue;
+         if (bestKey != chainWeldKey(lo, edges.tie()[e]))
+           continue;
+diff --git a/RecoTracker/LSTCore/src/alpaka/EdgeNetworkWeights.h b/RecoTracker/LSTCore/src/alpaka/EdgeNetworkWeights.h
+index d868fa1b4ef..c9cafae998f 100644
+--- a/RecoTracker/LSTCore/src/alpaka/EdgeNetworkWeights.h
++++ b/RecoTracker/LSTCore/src/alpaka/EdgeNetworkWeights.h
+@@ -1,62 +1,37 @@
+-// GENERATED by export_weights.py -- DO NOT EDIT BY HAND.
++// GENERATED by nnloop_ref/s1_work/export_edge.py -- DO NOT EDIT BY HAND.
+ // Sources:
+-//   model: edge_mlp_v3.pt
+-//   norm:  edge_norm_v3.json
+-// Command:
+-//   python3 export_weights.py --model edge_mlp_v3.pt --norm edge_norm_v3.json --out /mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/prototype/edge_mlp_weights.h
+-// Model meta: best_epoch=100 best_val_auc=0.9609942852434358
+-//             seed=42 arch=[40, 32, 32, 1]
++//   model: edge_C_cos3e3.pt
++//   table: wp_C_cos3e3.json
++// Model meta: best_epoch=387 best_val_auc=0.9612979506 lr=0.003 patience=400 seed=42 arch=[40, 32, 32, 1] train_rows_source=nnloop_ref/round1 (1000 evt, on-policy)
+ //
+ // Convention (mirrors src/alpaka/NeuralNetwork.h): weights are stored TRANSPOSED,
+ // wgt[in][out], so the inference inner loop is output[o] += input[i] * wgt[i][o].
+ //
+-// Per-input preprocessing, applied in this order (bakes in the norm json's
+-// "conditioning" spec; all no-ops for v1):
++// Per-input preprocessing, applied in this order:
+ //   1. if (kLog10p1[i]) x = log10(1 + x)
+ //   2. x = min(max(x, kClipLo[i]), kClipHi[i])   (+-1e30 = unclipped)
+ //   3. x = (x - kFeatMean[i]) / kFeatStd[i]
+ //
+ // Input feature order (ni_00..ni_12, no_00..no_12, ef_00..ef_13):
+-//  [ 0] ni_kappaSigned
+-//  [ 1] ni_log10R
+-//  [ 2] ni_tanLambda
+-//  [ 3] ni_chordEta
+-//  [ 4] ni_dphi01
+-//  [ 5] ni_dz01
+-//  [ 6] ni_dz12
+-//  [ 7] ni_drt01
+-//  [ 8] ni_drt12
+-//  [ 9] ni_innermostLayer
+-//  [10] ni_nBarrel
+-//  [11] ni_nPS
+-//  [12] ni_fakeScoreT3
+-//  [13] no_kappaSigned
+-//  [14] no_log10R
+-//  [15] no_tanLambda
+-//  [16] no_chordEta
+-//  [17] no_dphi01
+-//  [18] no_dz01
+-//  [19] no_dz12
+-//  [20] no_drt01
+-//  [21] no_drt12
+-//  [22] no_innermostLayer
+-//  [23] no_nBarrel
+-//  [24] no_nPS
+-//  [25] no_fakeScoreT3
+-//  [26] ef_etype
+-//  [27] ef_dKappa
+-//  [28] ef_dKappaRel
+-//  [29] ef_chargeAgree
+-//  [30] ef_dTanLambda
+-//  [31] ef_kinkPhi
+-//  [32] ef_kinkTheta
+-//  [33] ef_centerDist
+-//  [34] ef_centerDistRel
+-//  [35] ef_sharedLayer
+-//  [36] ef_sharedIsPS
+-//  [37] ef_sharedIsBarrel
+-//  [38] ef_degIn
+-//  [39] ef_degOut
++//  [ 0] ni_kappaSigned      [10] ni_nBarrel        [20] no_drt01          [30] ef_dTanLambda
++//  [ 1] ni_log10R           [11] ni_nPS            [21] no_drt12          [31] ef_kinkPhi
++//  [ 2] ni_tanLambda        [12] ni_fakeScoreT3    [22] no_innermostLayer [32] ef_kinkTheta
++//  [ 3] ni_chordEta         [13] no_kappaSigned    [23] no_nBarrel        [33] ef_centerDist
++//  [ 4] ni_dphi01           [14] no_log10R         [24] no_nPS            [34] ef_centerDistRel
++//  [ 5] ni_dz01             [15] no_tanLambda      [25] no_fakeScoreT3    [35] ef_sharedLayer
++//  [ 6] ni_dz12             [16] no_chordEta       [26] ef_etype          [36] ef_sharedIsPS
++//  [ 7] ni_drt01            [17] no_dphi01         [27] ef_dKappa         [37] ef_sharedIsBarrel
++//  [ 8] ni_drt12            [18] no_dz01           [28] ef_dKappaRel      [38] ef_degIn
++//  [ 9] ni_innermostLayer   [19] no_dz12           [29] ef_chargeAgree    [39] ef_degOut
++//
++// kWpBar is the weld WORKING POINT, not part of the network: kWpBar[fam][ptbin*kEtaBins+etabin]
++// is the log-odds an edge of family fam+1 (1 = E1 shared-MD, 2 = E2 shared-LS) must reach to be
++// eligible for the weld, on LST's T3-DNN binning keyed on the INNER node (ChainNodesSoA::wpBin).
++// Every cell is fitted so that this head's TRUE-edge acceptance in that cell equals the SHIPPED
++// head's acceptance there, measured on held-out events -- so a head swap moves the false-edge rate
++// and nothing else by construction. Fitting a threshold on labelled dumps is offline calibration;
++// no truth is read at reco time.
++// fitted on the 200 VAL events of the seed-42 60/20/20 event split of nnloop_ref/round1 (1000 evt, on-policy dump of the shipped binary); each cell reproduces the shipped head's true-edge acceptance in that cell. Cells with fewer than 20 true edges keep the shipped scalar.
+ #ifndef RecoTracker_LSTCore_src_alpaka_EdgeNetworkWeights_h
+ #define RecoTracker_LSTCore_src_alpaka_EdgeNetworkWeights_h
+ 
+@@ -64,527 +39,142 @@
+ 
+ #include "FWCore/Utilities/interface/HostDeviceConstant.h"
+ 
+-// PORTED VERBATIM from standalone/prototype/edge_mlp_weights.h (md5 087c1f61bce076209346734dedab6f89,
+-// the P2_PORT_MAP.md section 4 "SHIP" header for K5). The only edits are mechanical and were applied
+-// by a script that checked every numeric literal is unchanged (2656 literals, identical):
+-//   - the include guard and the two includes above
+-//   - namespace edgemlp -> namespace ALPAKA_ACCELERATOR_NAMESPACE::lst::dnn::edgemlp
+-//   - constexpr float/bool -> HOST_DEVICE_CONSTANT, so the arrays stay addressable in device code
+-//     (a constexpr array cannot be indexed outside a constexpr function on the CUDA / HIP backends)
+-// A retrained head replaces this file wholesale; only kInput == 40 is structural.
+-
+ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst::dnn::edgemlp {
+ 
+   constexpr int kInput = 40;
+   constexpr int kHidden = 32;
++  // 2 pT bins x 10 |eta| bins, LST's dnn::kPtBins x dnn::kEtaBins (asserted in ChainEdges.h).
++  constexpr int kWpBins = 20;
++
+ 
+   HOST_DEVICE_CONSTANT float kFeatMean[kInput] = {
+-      -0.000733342895f, 2.20188642f,      -0.0217354652f,   -0.0134139704f,  0.0112523064f,  -0.225401253f,
+-      -0.211630657f,    13.5797911f,      14.9960022f,      1.84853542f,     2.71562886f,    2.42032194f,
+-      0.466952413f,     -0.0010793237f,   2.20904303f,      -0.0220720153f,  -0.0140402401f, 0.0203308016f,
+-      -0.363107026f,    -0.243734285f,    15.9144268f,      18.1374397f,     3.83920121f,    2.44099045f,
+-      0.804320157f,     0.500875115f,     1.30738115f,      0.000346001994f, 0.447882921f,   0.748620629f,
+-      0.0003365507f,    -0.000229245547f, -0.000839718792f, 1.97422659f,     0.910607755f,   3.83920121f,
+-      0.622711718f,     0.881510019f,     12.7016249f,      18.5798645f};
++      -0.0006842506f, 2.21028f, -0.011864749f, -0.0031468184f, 0.010397113f, -0.059923157f, -0.058691263f,
++      13.6461525f, 15.122855f, 1.8452194f, 2.7288527f, 2.4084256f, 0.48221412f, -0.0010225076f, 2.213406f,
++      -0.0120016225f, -0.0037693235f, 0.019338109f, -0.18205555f, -0.017422102f, 15.942805f, 18.252626f, 3.8348377f,
++      2.4701126f, 0.77942413f, 0.51381963f, 1.2975608f, 0.00033803767f, 0.45942786f, 0.7376381f, 0.00013687395f,
++      -0.0020657445f, -0.00049912464f, 1.999024f, 0.9341265f, 3.8348377f, 0.6052012f, 0.88677377f, 19.692625f,
++      26.765776f};
+ 
+   HOST_DEVICE_CONSTANT float kFeatStd[kInput] = {
+-      0.00876497198f, 0.376758724f, 1.41131985f,  0.906895518f, 0.130185798f, 14.9862261f,  15.5580807f,
+-      3.06060648f,    3.43433928f,  1.3566879f,   0.761069655f, 0.660614431f, 0.369556546f, 0.00896882266f,
+-      0.391439825f,   1.38136697f,  0.89117676f,  0.162366658f, 16.5714531f,  18.4201965f,  3.73438215f,
+-      4.61596346f,    1.62899983f,  1.05049872f,  0.774401486f, 0.352875322f, 0.461408705f, 0.00873368979f,
+-      0.386655718f,   0.433806181f, 0.227124721f, 0.163095176f, 0.16857782f,  0.813024104f, 0.757459402f,
+-      1.62899983f,    0.484707981f, 0.323187411f, 23.1031609f,  34.1123085f};
++      0.008701431f, 0.38418496f, 1.3776854f, 0.88567936f, 0.12966885f, 14.633239f, 15.213013f, 3.0246139f,
++      3.4283657f, 1.3259469f, 0.74516666f, 0.6554799f, 0.3703132f, 0.008939699f, 0.39606673f, 1.3485334f,
++      0.87057394f, 0.16223556f, 16.16352f, 17.986937f, 3.6740108f, 4.565976f, 1.5948979f, 1.032272f, 0.7719088f,
++      0.35226893f, 0.45718527f, 0.008855869f, 0.38906178f, 0.43991834f, 0.22501263f, 0.16320172f, 0.17089446f,
++      0.8138338f, 0.76163405f, 1.5948979f, 0.48880744f, 0.31686914f, 44.89014f, 54.499928f};
+ 
+-  HOST_DEVICE_CONSTANT float kClipLo[kInput] = {-1.0f,
+-                                                0.0f,
+-                                                -1.00000002e+30f,
+-                                                -1.00000002e+30f,
+-                                                -1.00000002e+30f,
+-                                                -1.00000002e+30f,
+-                                                -1.00000002e+30f,
+-                                                -1.00000002e+30f,
+-                                                -1.00000002e+30f,
+-                                                -1.00000002e+30f,
+-                                                -1.00000002e+30f,
+-                                                -1.00000002e+30f,
+-                                                -1.00000002e+30f,
+-                                                -1.0f,
+-                                                0.0f,
+-                                                -1.00000002e+30f,
+-                                                -1.00000002e+30f,
+-                                                -1.00000002e+30f,
+-                                                -1.00000002e+30f,
+-                                                -1.00000002e+30f,
+-                                                -1.00000002e+30f,
+-                                                -1.00000002e+30f,
+-                                                -1.00000002e+30f,
+-                                                -1.00000002e+30f,
+-                                                -1.00000002e+30f,
+-                                                -1.00000002e+30f,
+-                                                -1.00000002e+30f,
+-                                                -2.0f,
+-                                                -1.00000002e+30f,
+-                                                -1.00000002e+30f,
+-                                                -1.00000002e+30f,
+-                                                -1.00000002e+30f,
+-                                                -1.00000002e+30f,
+-                                                -1.00000002e+30f,
+-                                                -1.00000002e+30f,
+-                                                -1.00000002e+30f,
+-                                                -1.00000002e+30f,
+-                                                -1.00000002e+30f,
+-                                                -1.00000002e+30f,
+-                                                -1.00000002e+30f};
++  HOST_DEVICE_CONSTANT float kClipLo[kInput] = {
++      -1.0f, 0.0f, -1e+30f, -1e+30f, -1e+30f, -1e+30f, -1e+30f, -1e+30f, -1e+30f, -1e+30f, -1e+30f, -1e+30f, -1e+30f,
++      -1.0f, 0.0f, -1e+30f, -1e+30f, -1e+30f, -1e+30f, -1e+30f, -1e+30f, -1e+30f, -1e+30f, -1e+30f, -1e+30f, -1e+30f,
++      -1e+30f, -2.0f, -1e+30f, -1e+30f, -1e+30f, -1e+30f, -1e+30f, -1e+30f, -1e+30f, -1e+30f, -1e+30f, -1e+30f,
++      -1e+30f, -1e+30f};
+ 
+-  HOST_DEVICE_CONSTANT float kClipHi[kInput] = {1.0f,
+-                                                9.0f,
+-                                                1.00000002e+30f,
+-                                                1.00000002e+30f,
+-                                                1.00000002e+30f,
+-                                                1.00000002e+30f,
+-                                                1.00000002e+30f,
+-                                                1.00000002e+30f,
+-                                                1.00000002e+30f,
+-                                                1.00000002e+30f,
+-                                                1.00000002e+30f,
+-                                                1.00000002e+30f,
+-                                                1.00000002e+30f,
+-                                                1.0f,
+-                                                9.0f,
+-                                                1.00000002e+30f,
+-                                                1.00000002e+30f,
+-                                                1.00000002e+30f,
+-                                                1.00000002e+30f,
+-                                                1.00000002e+30f,
+-                                                1.00000002e+30f,
+-                                                1.00000002e+30f,
+-                                                1.00000002e+30f,
+-                                                1.00000002e+30f,
+-                                                1.00000002e+30f,
+-                                                1.00000002e+30f,
+-                                                1.00000002e+30f,
+-                                                2.0f,
+-                                                1.00000002e+30f,
+-                                                1.00000002e+30f,
+-                                                1.00000002e+30f,
+-                                                1.00000002e+30f,
+-                                                1.00000002e+30f,
+-                                                1.00000002e+30f,
+-                                                1.00000002e+30f,
+-                                                1.00000002e+30f,
+-                                                1.00000002e+30f,
+-                                                1.00000002e+30f,
+-                                                1.00000002e+30f,
+-                                                1.00000002e+30f};
++  HOST_DEVICE_CONSTANT float kClipHi[kInput] = {
++      1.0f, 9.0f, 1e+30f, 1e+30f, 1e+30f, 1e+30f, 1e+30f, 1e+30f, 1e+30f, 1e+30f, 1e+30f, 1e+30f, 1e+30f, 1.0f, 9.0f,
++      1e+30f, 1e+30f, 1e+30f, 1e+30f, 1e+30f, 1e+30f, 1e+30f, 1e+30f, 1e+30f, 1e+30f, 1e+30f, 1e+30f, 2.0f, 1e+30f,
++      1e+30f, 1e+30f, 1e+30f, 1e+30f, 1e+30f, 1e+30f, 1e+30f, 1e+30f, 1e+30f, 1e+30f, 1e+30f};
+ 
+-  HOST_DEVICE_CONSTANT bool kLog10p1[kInput] = {false, false, false, false, false, false, false, false, false, false,
+-                                                false, false, false, false, false, false, false, false, false, false,
+-                                                false, false, false, false, false, false, false, false, false, false,
+-                                                false, false, false, true,  false, false, false, false, false, false};
++  HOST_DEVICE_CONSTANT bool kLog10p1[kInput] = {false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, true, false, false, false, false, false, false};
+ 
+   HOST_DEVICE_CONSTANT float wgt_l1[kInput][kHidden] = {
+-      {-0.251702189f,   0.00660566054f, -0.0350060277f,  0.489948183f,  0.1099208f,    0.0137460064f,
+-       0.0761416405f,   -0.0882427618f, 0.0569705702f,   -0.121041365f, 0.172857121f,  -0.0268275961f,
+-       -0.0607284829f,  0.0386189371f,  0.431727678f,    0.448264837f,  0.0228446107f, 0.00596983591f,
+-       -0.0212940872f,  -0.105091758f,  -0.00653110491f, 0.469481647f,  0.0656057224f, 0.0394474231f,
+-       0.000322350272f, 0.163010523f,   0.12493027f,     -0.110530861f, -1.14079702f,  -0.00737491483f,
+-       -0.106981009f,   -0.121120922f},
+-      {0.0979508907f,  -0.0056054513f, 0.015823165f,    -0.15856944f,   -0.0160746556f, -0.0257072393f,
+-       -0.0464373343f, -0.059727814f,  0.0110687036f,   -0.110940732f,  0.143511876f,   0.206089839f,
+-       0.23085767f,    -0.0955887288f, 0.0231685545f,   -0.0298022348f, -0.0241271108f, -0.0115276715f,
+-       0.00736143719f, -0.0107374592f, -0.00290841889f, 0.0163722895f,  0.0858947486f,  -0.00169650861f,
+-       -0.0151470443f, -0.0140206311f, -0.115737543f,   0.303718358f,   -0.0688748062f, -0.00518212607f,
+-       0.0184386764f,  -0.0578214228f},
+-      {-0.0265697837f, -0.00443741959f, 0.0845342353f,  -0.0380922146f, 0.0398961641f,  -0.00976019632f, 0.298009783f,
+-       0.0865220651f,  0.129885942f,    -0.0852483884f, 0.101666905f,   0.0230783187f,  -0.0178412963f,  0.0251974091f,
+-       0.0228065066f,  -0.0291276276f,  -0.0305264536f, -0.0893464014f, 0.0878059492f,  -0.0823650584f,  0.0480974168f,
+-       -0.0663612783f, 0.00486340374f,  -0.124727987f,  -0.0350077786f, -0.0499902107f, 0.0052289525f,   -0.0525727831f,
+-       -0.0558257997f, 0.0370854512f,   -0.0481282547f, -0.098700054f},
+-      {0.0250089895f,   -0.0134366769f, -0.0230912846f, -0.00671694148f, 0.034231361f,  0.0217564721f,  -0.565623939f,
+-       -0.0548005551f,  -0.121034488f,  0.161324918f,   0.0492653064f,   0.440034539f,  -0.0561097786f, 0.0565032065f,
+-       -0.0396878682f,  -0.0751131698f, 0.51101172f,    0.0779255703f,   0.132469192f,  -0.494793981f,  -0.463495046f,
+-       -0.13481541f,    0.0593956187f,  0.835940242f,   0.0653361753f,   0.0726851076f, -0.033489462f,  -0.193725899f,
+-       -0.00917791855f, 0.0970882475f,  -0.398020625f,  -0.0237760823f},
+-      {0.587925673f,  -0.000299744774f, -0.0144261252f, -0.278054506f,  0.0225416087f, -0.128456533f,  0.0164416339f,
+-       -0.118424445f, -0.0699084401f,   0.217229322f,   1.14922452f,    0.0423708558f, -0.0501735285f, 0.0405438095f,
+-       -0.660512447f, -0.6296736f,      0.0229379162f,  -0.0036717169f, 0.0317628235f, -0.0665527284f, 0.0323132016f,
+-       -0.547738194f, -0.881483555f,    0.020665573f,   0.285652608f,   0.102490179f,  -0.617356122f,  -0.154948026f,
+-       -0.77910167f,  -0.0307847168f,   -0.105565652f,  -0.265507102f},
+-      {0.000112767892f, -0.00156911823f, 0.000988262938f, 0.00803791825f,  -0.00160061568f,  0.0355973803f,
+-       -0.138094828f,   -0.00154941808f, 0.0111757498f,   -0.00578462658f, 0.0123413475f,    0.0316344388f,
+-       0.00569677446f,  0.0295173768f,   -0.00705203135f, 0.0048999195f,   -0.013789868f,    -0.000233273953f,
+-       0.159676522f,    -0.125532568f,   0.00461532734f,  0.0225699022f,   -0.000755082292f, 0.00856943615f,
+-       -0.0211355202f,  -0.00206349976f, 0.000363363535f, 0.0200002268f,   0.0129737845f,    0.00766833639f,
+-       0.0156053388f,   -0.000404150283f},
+-      {-0.00813350454f, -0.00823764224f, 0.00392421149f,  0.0488545559f,  -0.00348375808f, -0.00871010683f,
+-       -0.507933617f,   -0.0891143605f,  -0.0169033427f,  0.00640387321f, 0.0575229526f,   -0.0638183206f,
+-       0.155561417f,    -0.0185944978f,  -0.010122546f,   0.00362124178f, -0.0676238164f,  0.00453706272f,
+-       -0.133072555f,   0.0514066219f,   0.0385506079f,   0.0142879253f,  0.000864668982f, 0.0726778507f,
+-       -0.010931165f,   0.0381969549f,   -0.00538444892f, -0.0306208432f, 0.0137135806f,   -0.0252427068f,
+-       -0.0307784379f,  -0.0242724977f},
+-      {-0.0465567261f,  -0.0154630896f,  0.0117926756f,  0.0597302839f,  0.0145891476f,  0.0586994104f,
+-       -0.0144991484f,  0.12912637f,     -0.141417265f,  -0.128999218f,  0.24440816f,    0.0830163583f,
+-       0.0343251154f,   -0.00718702888f, 0.0353660323f,  0.0897848085f,  -0.0257080197f, -0.00607068324f,
+-       -0.00731106894f, 0.00789024122f,  0.0111389076f,  -0.0188378841f, 0.0485527255f,  0.0136298938f,
+-       -0.0376803949f,  0.0374005958f,   0.00771845039f, 0.0020571237f,  0.32899791f,    -0.00110580656f,
+-       -0.0222674925f,  -0.149310678f},
+-      {0.0384428166f,  0.00351257366f, 0.0131405182f,   0.0533393212f,  0.00266789226f, 0.0275472533f,
+-       0.00750001892f, 0.168647051f,   0.0391292274f,   0.0503805801f,  -0.0435108095f, -0.000967668951f,
+-       -0.0602470636f, 0.00388948875f, -0.00530675286f, 0.0637646094f,  0.0304618347f,  -0.0117571298f,
+-       -0.0488446541f, -0.0814082623f, 0.00162812043f,  0.0242993552f,  0.0242550354f,  0.0085815927f,
+-       0.0606089532f,  -0.0642630532f, -0.00638148142f, -0.0510059446f, 0.0217465255f,  0.00708195101f,
+-       0.075960815f,   0.0213435553f},
+-      {-0.0150202336f, -0.000604701636f, 0.00623372383f, 0.0865206793f,  0.00287529547f, -0.0732460096f,
+-       -0.0362159871f, 0.0381675735f,    0.0231458023f,  0.00506561063f, -0.0112896739f, -0.00182470086f,
+-       0.0521635935f,  -0.0297176074f,   0.024475392f,   0.0194275025f,  0.0531014539f,  0.00227661664f,
+-       0.0875606537f,  0.107048437f,     -0.0407785177f, 0.0160033461f,  0.00892856903f, -0.0195364133f,
+-       -0.0825707018f, 0.0224466119f,    0.0349391922f,  0.029557243f,   -0.0143906036f, 0.0437761545f,
+-       0.0843921378f,  -0.0611738823f},
+-      {0.123035543f,   0.0194988959f,  0.0554942228f,  0.200911984f,    0.0140321609f, -0.166094437f, 0.0980990753f,
+-       -0.0554553121f, 0.140625551f,   0.167963177f,   0.195201263f,    0.0617516078f, 0.216896474f,  0.077413924f,
+-       0.106904179f,   0.0281685814f,  -0.0218088925f, -0.00258546369f, 0.0453149863f, 0.106148817f,  0.0405088551f,
+-       0.160309076f,   0.00849347096f, 0.0781639069f,  0.0541843995f,   -0.206941068f, 0.0601887926f, 0.0987245888f,
+-       0.251386911f,   0.144938931f,   0.0870242491f,  -0.0185776036f},
+-      {-0.00986096729f, 0.0318865441f,  -0.0284196585f, 0.140879825f,   0.0122415135f, -0.0361317843f, 0.0348001048f,
+-       0.263217449f,    -0.0724620223f, 0.12239366f,    0.0106925871f,  -0.177146554f, -0.453473032f,  0.160709828f,
+-       0.0478600748f,   0.118031539f,   -0.0623347275f, 0.00782774575f, -0.323407143f, -0.460730195f,  0.167376637f,
+-       -0.0389352031f,  0.0364513621f,  0.0516068153f,  0.423024118f,   -0.114540532f, -0.0217192601f, 0.201173872f,
+-       0.329926997f,    -0.195939302f,  -0.131872728f,  -0.365785748f},
+-      {-0.316397697f,  -1.32445848f,  -0.0208607372f, -0.164289266f, 0.0264465511f,  -0.660021842f, -0.000462587748f,
+-       -0.695980787f,  0.215652272f,  -0.0257750563f, -0.13636972f,  -0.0813547522f, -0.381792158f, 0.0801579952f,
+-       -0.0772400424f, -0.11029195f,  0.0564621836f,  0.0504217781f, 0.0460098311f,  0.106179059f,  0.0149991335f,
+-       -0.139770195f,  -0.189806223f, 0.0527775288f,  0.0265071858f, -0.186890483f,  0.0676565468f, -0.278349161f,
+-       -0.204962909f,  0.02424963f,   0.107037015f,   -0.11737635f},
+-      {-0.0666297451f, 0.00628539128f, 0.0189546514f,  0.410955161f,  -0.0925520286f,  0.0768956244f, -0.0357677639f,
+-       -0.103503294f,  0.0140535738f,  -0.108394407f,  0.22314924f,   -0.00561353052f, -0.154665455f, 0.1909758f,
+-       -0.0243802443f, 0.327025026f,   -0.0270199496f, 0.0196374822f, -0.00467781303f, -0.123051733f, 0.0308405869f,
+-       0.231469169f,   -0.131225288f,  0.00951010548f, -0.271152109f, -0.132168472f,   0.218589917f,  0.0414620973f,
+-       -0.893338799f,  -0.041530069f,  0.115961567f,   -0.0397600122f},
+-      {0.0960367173f,  -0.0143470317f, -0.0124784959f,  -0.115787059f,   -0.0150930062f, 0.073297888f,   0.00434568664f,
+-       -0.19433178f,   0.0619822927f,  -0.0159795042f,  -0.00505988579f, -0.0879539177f, 0.0845307559f,  -0.0856664628f,
+-       0.0120540531f,  -0.0157519225f, -0.00383844273f, 0.011962058f,    -0.0222661272f, -0.0398713462f, 0.00177047669f,
+-       0.00223533786f, 0.0223928876f,  -0.00279600243f, -0.0287234746f,  -0.0225632526f, -0.13482365f,   0.291988611f,
+-       -0.103852756f,  -0.0117916735f, 0.0133196022f,   0.0256026872f},
+-      {0.0085498672f,  0.00484443642f,  -0.0659185275f,  -0.0923956335f, -0.0148264626f, -0.00768678542f,
+-       0.20266062f,    0.0370163247f,   -0.119260609f,   0.00424498552f, 0.0321817249f,  0.0243192539f,
+-       0.0810390636f,  -0.00874226168f, -0.00834683049f, 0.0810303986f,  0.046318952f,   0.088395074f,
+-       -0.0637599826f, 0.0594643354f,   -0.10826046f,    0.0932232291f,  0.00150381424f, -0.0541154593f,
+-       0.011671463f,   0.135062203f,    -0.0245946292f,  0.051504042f,   -0.14206925f,   -0.00530057214f,
+-       0.11926993f,    0.0117440009f},
+-      {0.00185389654f, 0.0151191438f,  0.00866954774f, 0.0912428945f,   -0.0500886515f, 0.000275143597f, -0.678572476f,
+-       -0.0892736688f, 0.0419511199f,  -0.0461473502f, -0.151945099f,   -0.434934884f,  0.00771460682f,  -0.0511834174f,
+-       0.0334634371f,  -0.016828848f,  -0.44446975f,   -0.0750738755f,  0.0146187246f,  0.474569798f,    0.491250545f,
+-       0.0794069469f,  -0.0705058128f, -0.628477097f,  -0.00424389867f, -0.205043271f,  0.134358734f,    0.196659267f,
+-       0.215795025f,   -0.141382977f,  0.255864471f,   0.0840794519f},
+-      {0.273087472f,  0.00026535432f,  -0.0168282483f, -0.308576733f, 0.0421282612f,  0.176054001f,  0.0189734939f,
+-       -0.212680742f, -0.0533910058f,  -0.202178776f,  0.407681346f,  -0.0497822054f, -0.124890991f, 0.100165926f,
+-       0.0863917395f, -0.0303378385f,  0.00250965636f, 0.0226283353f, -0.0673079863f, -0.205650687f, 0.00544882054f,
+-       -0.108830281f, -0.266016603f,   0.0138241732f,  0.648828089f,  0.373614252f,   -0.213147551f, 0.104370542f,
+-       -0.18619065f,  -0.00502960151f, 0.0425887071f,  -0.179253012f},
+-      {-0.00407160586f, 0.00790771283f,  0.00372720324f,  -0.0624221563f,   0.00424144277f,  -0.0338831656f,
+-       0.46174264f,     0.0846621394f,   0.0148296887f,   -0.0826315954f,   -0.0457432047f,  0.0277872365f,
+-       -0.0763552859f,  0.00444717659f,  0.0108465338f,   0.0425912887f,    -0.0186476894f,  -0.00757108536f,
+-       -0.163837358f,   -0.0143889533f,  -0.00280568167f, -0.000677488104f, -0.00391843589f, -0.0370595492f,
+-       -0.0329554006f,  -0.00907212589f, -0.0268643778f,  -0.00406735716f,  -0.0119802551f,  -0.009220968f,
+-       0.0417546965f,   0.010807218f},
+-      {0.00100358715f,  -0.00642377045f, 0.000318247039f, 0.0601836108f,   0.00139735383f, -0.0196947064f,
+-       -0.0965819061f,  -0.023089841f,   0.0386047363f,   0.0407127887f,   -0.0376635827f, -0.0174614545f,
+-       -0.0223926716f,  -0.00998423435f, -0.00691022305f, -0.00718031032f, -0.0114498762f, 0.00412801607f,
+-       0.0732093081f,   0.0640761778f,   -0.00332330749f, 0.000453396118f, 0.0097979717f,  0.0248545129f,
+-       0.0121245822f,   0.0369353853f,   -0.0361568443f,  0.00806420948f,  0.0156241162f,  0.0282449406f,
+-       -0.00387452194f, 0.036698129f},
+-      {0.119003579f,  -0.00955068227f, -0.0113016665f,  -0.0160468407f, -0.00827310514f, -0.0435840674f,
+-       0.0442987084f, 0.109071083f,    -0.00121549214f, 0.207541451f,   -0.188340783f,   -0.00543754222f,
+-       0.127749279f,  -0.00260414346f, -0.0464438684f,  -0.111151189f,  -0.00774906948f, 0.0335193351f,
+-       0.0571672544f, -0.0389437117f,  -0.00386601244f, 0.0776318535f,  0.0161304455f,   0.00430295151f,
+-       0.0873877332f, 0.0499604568f,   0.00570551958f,  -0.0805987716f, -0.320369542f,   -0.0407018438f,
+-       0.0100757275f, 0.15112488f},
+-      {-0.0868755654f, 0.00741204573f, 0.00582294539f, 0.08247675f,     -0.00449034432f, -0.0238718037f,
+-       -0.0134521043f, -0.0892632157f, 0.0554553382f,  -0.0695146993f,  0.0242490098f,   0.013325301f,
+-       -0.0332709141f, -0.0284661446f, 0.0014919485f,  0.015504133f,    -0.0138113396f,  -0.0112147518f,
+-       0.0102250921f,  0.0422034003f,  0.0171120111f,  0.000197775051f, 0.0029183384f,   0.0560701862f,
+-       -0.0545112453f, -0.0366460271f, 0.0134041654f,  -0.11142645f,    0.118911654f,    0.000365066488f,
+-       0.00652590906f, 0.00500338105f},
+-      {0.0978026018f, 0.105893202f,   0.0399943106f, 0.110652328f,   0.028564157f,  -0.0013972593f, 0.132513225f,
+-       -0.146798074f, 0.0252602752f,  0.0757329315f, 0.00290012942f, 0.0776029825f, 0.111755982f,   0.0811709836f,
+-       0.11271555f,   -0.0537365004f, -0.30819276f,  -0.10414397f,   -0.122946337f, -0.069398351f,  -0.112275407f,
+-       0.201679185f,  0.134140253f,   0.190015152f,  0.265481979f,   -0.303390831f, -0.0196110513f, -0.0421142206f,
+-       0.202219978f,  0.0507038906f,  0.212160334f,  0.0506399125f},
+-      {0.186268896f,   -0.0141242994f, -0.0694524571f, 0.163947284f,    -0.0896892399f, 0.0737748146f,  0.315981925f,
+-       -0.0755992681f, -0.0883132517f, 0.138606086f,   -0.0749425367f,  0.097115837f,   -0.0768921599f, -0.67734623f,
+-       0.0491610877f,  -0.0517031327f, 0.131174564f,   -0.00392336305f, 0.0951420739f,  0.206680596f,   0.100623325f,
+-       0.102552414f,   0.0921280831f,  0.235809207f,   0.274252832f,    -0.0107764173f, -0.0670840368f, -0.0987936109f,
+-       0.234012559f,   0.108099028f,   0.202876374f,   0.234139189f},
+-      {0.0804745331f,  -0.0545616224f,  0.0131406998f, -0.0498714522f, -0.0353761092f, 0.0299777947f,   -0.111186542f,
+-       -0.232329965f,  0.000641312916f, 0.0296623278f, -0.11902567f,   0.00566105964f, 0.777768135f,    -0.346886992f,
+-       -0.0185946133f, -0.156925038f,   0.101977363f,  -0.0346841924f, 0.332264155f,   0.526972353f,    -0.0317391641f,
+-       0.0316639468f,  0.0324994102f,   0.0248293616f, -0.202082276f,  0.0589270815f,  -0.00658264756f, -0.0413681008f,
+-       -0.257010996f,  0.097092174f,    0.0822781771f, 0.195681319f},
+-      {-0.0196808949f,  -0.0151838418f,  0.0636763647f, 0.061877057f,   0.0958079472f,  0.0184859168f, 0.00997497421f,
+-       0.671801686f,    -0.66335988f,    0.0719734132f, -0.0104777822f, -0.288404733f,  0.0498060025f, 0.0513388515f,
+-       -0.00540307304f, 0.0440774299f,   0.0103551857f, -1.0737251f,    -0.0474533215f, -0.126906857f, -0.0326146521f,
+-       0.00132983155f,  -0.00154315552f, 0.04691571f,   -0.0750125796f, 0.265789628f,   -0.040711958f, 0.650490344f,
+-       0.228783593f,    0.0248846952f,   0.119108573f,  -0.181271002f},
+-      {-0.973950744f, -0.0243511144f,  0.0255885124f, 0.165480554f,    0.169028729f,  -0.498086512f, -0.0956962705f,
+-       -0.244945243f, 0.695814967f,    -0.599528551f, -1.33796811f,    -0.156736121f, -0.66562891f,  0.314245522f,
+-       -1.38430667f,  -0.00195218483f, 0.0356383063f, -0.00715875486f, -0.214946479f, -0.208464518f, 0.0773563087f,
+-       0.568402767f,  -1.01294434f,    -0.634876728f, -0.942290962f,   0.373672158f,  -1.5266434f,   -0.211736828f,
+-       -0.673772871f, 1.29908407f,     0.272580534f,  0.079993926f},
+-      {-0.513245344f,  0.00631565833f, 0.0303743724f,  0.467458278f,   -0.0609722063f, -0.0421010144f, -0.051067315f,
+-       -0.0847253948f, -0.0658593625f, 0.133564189f,   -0.0448152162f, 0.0488452576f,  -0.057425987f,  0.236980319f,
+-       0.500430703f,   0.707645237f,   0.00993460324f, 0.0040692417f,  0.0463483594f,  0.0974833965f,  0.0177616253f,
+-       0.254929543f,   0.123394549f,   0.00493652327f, 0.500546277f,   0.205787241f,   -0.0320327505f, 0.0218969863f,
+-       -0.691805542f,  -0.031883914f,  0.12513122f,    -0.104461767f},
+-      {-0.493380606f, -0.135606557f, -0.250328422f, -0.661196768f, 0.164051592f,  -0.0817913264f, -0.432695627f,
+-       1.1759994f,    1.04399109f,   -0.203948662f, 0.11432007f,   0.368400604f,  -0.570696592f,  0.384677827f,
+-       -0.216946945f, 0.548549891f,  0.0748861134f, 0.106739238f,  -0.321977675f, 0.166531608f,   -0.0751634911f,
+-       -0.183870018f, -0.228727281f, -0.449418366f, 0.491903722f,  -0.181924507f, 0.00173244043f, -0.462105274f,
+-       -0.399245948f, 0.108432844f,  -0.207399651f, -0.0757445395f},
+-      {-0.0226163547f, -0.00664141215f, 0.00407238211f,  -0.0781062469f,  -0.00853526127f, -0.0521301106f,
+-       0.017307939f,   0.106275484f,    0.10999766f,     -0.0151309231f,  0.0544676892f,   0.0561302826f,
+-       0.0150982514f,  0.0457453094f,   -0.00820393115f, 0.0112907644f,   0.00593958376f,  -0.0125686442f,
+-       0.00698536308f, -0.00226231758f, 0.0040937243f,   0.000713749614f, -0.0106508005f,  0.00902743079f,
+-       0.0538001731f,  -0.0329396576f,  0.102705397f,    0.0403936021f,   0.037208125f,    -0.00445313891f,
+-       0.0137386592f,  0.000323143584f},
+-      {-0.00591225782f, 0.00960256532f, -0.00595109724f, 0.00298746396f,  -0.0210290775f,  0.0337721333f,
+-       -0.0726131871f,  0.0127131157f,  0.0542228967f,   -0.0125293462f,  -0.0712057129f,  0.540109277f,
+-       -0.00883009657f, -0.0754554197f, 0.00360292615f,  0.0496631265f,   -0.133696601f,   0.00637568627f,
+-       1.58508801f,     -1.49945545f,   0.0682373345f,   0.0189580433f,   -0.0113013154f,  -0.309028029f,
+-       0.00335354474f,  -0.0441412665f, 0.0183398351f,   -0.00758510921f, -0.00688969251f, 0.161438376f,
+-       0.327918947f,    0.00720034726f},
+-      {-1.03405714f,  0.012305744f,    0.0195717905f,  -1.11160147f,   -0.16543813f,    1.19795513f,    -0.0113540459f,
+-       -0.129669785f, 0.312983036f,    -1.85448682f,   -2.32932925f,   -0.0658326671f,  0.139187381f,   0.108455464f,
+-       1.09827733f,   1.26029897f,     -0.0215139184f, -0.0219978839f, 3.47268997e-06f, -0.0037340275f, -0.0228645727f,
+-       1.3072077f,    1.35225463f,     0.0029582635f,  -1.30090964f,   -1.41888332f,    1.24856603f,    -0.0598773025f,
+-       0.462134451f,  -0.00391038414f, 0.0648369044f,  1.37342191f},
+-      {0.00834928267f, 0.000809694349f, 0.00729734544f,   -0.0114102475f,  -0.0150195984f, 0.0335666239f,
+-       -0.103932381f,  -0.0514352731f,  0.042072393f,     -0.0140444348f,  0.0368988626f,  -0.1028817f,
+-       -0.0627727732f, -0.00942534301f, -0.000441255135f, -0.00421146583f, 0.717097223f,   -0.00591706578f,
+-       0.253175467f,   -0.688973248f,   -0.48403123f,     -0.015392255f,   0.00948528666f, 0.77328825f,
+-       0.00522597972f, -0.0160905588f,  -0.00815421343f,  -0.0324522927f,  -0.0672384948f, 0.324607134f,
+-       -0.6569435f,    -0.0241516121f},
+-      {0.0131751504f,  0.0220191684f,  -0.0216984674f,  0.300786614f,   0.021146426f,   0.010144121f,   0.000608610979f,
+-       0.218742147f,   -0.264793307f,  0.0650871992f,   -0.0238630157f, -0.0389368869f, -0.362712204f,  0.00352451089f,
+-       0.0181048214f,  0.133221015f,   0.00528638111f,  0.00935409684f, 0.0291321278f,  -0.0768289194f, 0.00751479017f,
+-       -0.0235478021f, -0.026443867f,  -0.00459579658f, 0.0244730879f,  0.149588317f,   0.27049157f,    -0.677399635f,
+-       0.27704975f,    -0.0103197945f, -0.0709770694f,  0.052843757f},
+-      {0.265131444f,  0.140551344f,  0.299295872f,   0.411750436f,   -0.135033652f,  -0.0436073057f, 0.465371042f,
+-       -0.802475274f, -0.908147573f, 0.0666961521f,  -0.073724106f,  -0.0297289304f, 0.711294472f,   -0.00744947884f,
+-       0.163221762f,  -0.537596703f, -0.0683091432f, -0.0950473025f, 0.331392616f,   -0.0050653005f, 0.091475077f,
+-       0.237271458f,  0.194750801f,  0.40774098f,    -0.382594138f,  0.0277833473f,  0.0767391101f,  0.509387314f,
+-       0.332652599f,  -0.111646347f, 0.193519175f,   0.119886674f},
+-      {0.25972864f,    -0.0665641576f, 0.00823566411f, -0.122783199f, -0.0355070159f, 0.110515572f,   -0.0184986237f,
+-       -0.0507601462f, 0.119451635f,   -0.0723303258f, 0.221362829f,  0.101235092f,   -0.046583131f,  0.00902258791f,
+-       -0.0316958539f, 0.0126335835f,  -0.0311939474f, 0.103909433f,  -0.269959897f,  -0.255928189f,  0.0559939183f,
+-       0.00526722101f, -0.0727963224f, 0.10661611f,    0.105596222f,  -0.0173514038f, -0.0860229358f, 0.115587272f,
+-       0.189643934f,   0.0606735907f,  0.0970593765f,  0.263636768f},
+-      {0.0542838834f,  0.00862208661f, 0.0283194557f, -0.0431459509f, 0.0172881819f,  -0.0203286652f,  0.0554383732f,
+-       -0.0384001061f, -0.0219664034f, -0.102122605f, 0.206443995f,   -0.0275685992f, -0.0504443124f,  0.123128474f,
+-       0.01831959f,    0.0599856675f,  1.2164253f,    0.0167187955f,  -0.123071112f,  0.0455675833f,   1.22076976f,
+-       0.094640404f,   0.0150787383f,  -0.112563401f, -0.100184515f,  -0.070169203f,  -0.00457432866f, -0.102524064f,
+-       0.0128855901f,  0.0774127916f,  -0.126952305f, 0.175576389f},
+-      {0.17654793f,     0.0255382732f,  0.020605864f,  -0.137479052f,   0.013444203f,   0.22879751f,   -0.0497862212f,
+-       -0.128712058f,   0.0748656243f,  -0.120795317f, -0.00115087198f, -0.0372153223f, -0.220393509f, 0.247880712f,
+-       -0.00515614683f, -0.0755823851f, -0.249590367f, 0.00367842359f,  -0.31969142f,   -0.284762442f, -0.104255259f,
+-       0.101938061f,    0.0526515022f,  0.117990904f,  0.346843392f,    -0.0744873881f, -0.146007285f, 0.0663896799f,
+-       -0.0570470765f,  0.00270477915f, 0.115573816f,  0.320225328f},
+-      {0.0034659279f,    -0.0200843085f, -0.0839934573f, 0.272144645f,   -2.42457199f,   -0.460021317f,
+-       -0.000892667915f, -0.0273514111f, 0.133682176f,   0.0507948026f,  0.242366955f,   -0.173542127f,
+-       0.00757295499f,   0.118659697f,   -0.0120002115f, 0.0572514273f,  0.00736804865f, -0.083793886f,
+-       -0.0449486002f,   -0.117767572f,  -0.0081687551f, 0.0174708795f,  -0.0157660171f, -0.00788343698f,
+-       -0.00432508672f,  0.0121648824f,  -0.0151911248f, -0.0868654177f, 0.459548026f,   0.00872887019f,
+-       0.0280811563f,    -0.0644171983f},
+-      {-0.0247410461f,  0.0589697845f, -3.15702677f,    0.000478881353f, 0.0314985737f,  -0.163254946f,
+-       0.0442064777f,   0.0404441208f, 0.0903389156f,   0.0115052434f,   0.158807218f,   -0.275868595f,
+-       -0.00170541985f, 0.134442315f,  0.000496418157f, -0.0263712946f,  0.0211603232f,  -0.357285202f,
+-       -0.00676423172f, 0.0102403508f, 0.008264306f,    0.0241740607f,   0.00783649646f, 0.0115993796f,
+-       0.00405734172f,  0.0264722388f, 0.0770744458f,   -0.254849017f,   0.0721079633f,  0.0185729694f,
+-       -0.0356947482f,  -0.0536652431f}};
++      {-1.3591261f, -0.012892099f, 0.025504034f, 0.50276786f, 0.18532184f, 0.051930003f, 0.5823406f, 0.049383324f, -0.35556918f, -1.1950811f, 2.5853071f, -0.24922015f, 0.19453369f, 0.44630185f, 0.5971813f, 1.2897046f, 0.050373405f, -0.04302294f, -0.09140897f, -0.03893039f, -0.050586503f, 1.7857443f, 0.022929296f, 0.38129947f, -0.08355626f, 0.05146128f, 0.75451374f, -0.33604103f, -3.271711f, 0.07901859f, 0.037868697f, -0.4513136f},
++      {0.19254626f, -0.03316734f, 0.07399176f, 0.092616044f, -0.11316338f, 0.032867804f, -0.23513786f, -0.2174673f, 0.2910182f, -0.009784875f, 0.033789985f, -0.03782025f, 0.14377835f, 0.013126346f, 0.32459438f, -0.26938477f, 0.0015692252f, -0.062068738f, 0.019204613f, 0.007825886f, 0.0017108346f, 0.06367841f, 0.00029148505f, -0.060308505f, -0.8743014f, -0.04468898f, -0.25990853f, 0.016708609f, 0.14571843f, -0.124356225f, -0.35438246f, 0.024766566f},
++      {0.022992754f, -0.009399487f, 0.082338855f, 0.0007211857f, 0.018940635f, -0.0035625908f, 0.030742498f, 0.05077669f, 0.12499486f, -0.027105048f, 0.020291202f, -0.1071462f, -0.031403627f, 0.0029289941f, 0.03996814f, -0.03148368f, -0.014285588f, -0.09818651f, 0.16193923f, -0.17883298f, 0.098195866f, -0.057187695f, -0.14062358f, -0.027717007f, -0.07649059f, -0.089045495f, 0.00027035916f, -0.08944328f, -0.0433537f, -0.0023251383f, -0.10380311f, -0.07243446f},
++      {0.34443766f, -0.11892437f, -0.078828484f, -0.091534846f, -0.063493535f, 0.30876833f, 0.2575822f, 0.35662854f, -0.32913056f, -0.3230603f, 0.10565635f, -0.12217136f, 0.5036988f, -0.13488688f, 0.13290401f, -0.26504993f, 0.07567708f, 0.16117142f, -0.6849716f, -1.5669557f, -4.0270667f, -0.101965755f, 3.5273564f, -0.6424458f, -0.023566594f, 0.2429724f, -0.22751498f, 0.66872436f, -0.17185663f, 0.034055654f, 0.23800154f, 0.06076779f},
++      {1.6522005f, -0.0039383485f, 0.112310566f, -0.20729737f, 0.31612855f, -0.19589777f, 0.62985873f, -0.22721872f, -0.27438444f, 1.6189924f, 2.2918224f, -0.47018194f, 0.3451758f, -0.5141876f, -1.7720335f, -0.76275766f, 0.024900848f, 0.012427916f, -0.0026772802f, 0.035278592f, -0.034358073f, -1.0985781f, -0.029539734f, 0.35946438f, -0.08467879f, 0.06742686f, -1.7661028f, 0.047127165f, -2.1750236f, -1.4329762f, -0.3121234f, -0.45467374f},
++      {-0.035226263f, -0.00082761317f, -0.0034388087f, 0.011523561f, -0.012559203f, -0.010980402f, -0.14680393f, 0.045552384f, 0.047345996f, 0.04157881f, -0.040839724f, 0.124650724f, -0.00676994f, -0.012505165f, -0.014051206f, 0.034179017f, -0.003036771f, -0.011463411f, 0.38369918f, -0.006732113f, -0.0015979077f, -0.017222414f, 0.043575812f, -0.08721954f, -0.108864814f, 0.007993804f, -0.013229841f, -0.111246005f, -0.03909362f, 0.050868545f, 0.0065439595f, 0.07192822f},
++      {0.025246846f, -0.02682512f, 0.27511075f, 0.023633072f, -0.08493171f, 0.036195274f, -0.081604764f, 0.016806481f, 0.018446924f, 0.009266317f, -0.05923747f, 0.042688984f, 0.017001873f, -0.020323077f, 0.019986367f, -0.027460996f, -0.004991927f, 0.013569457f, -0.2247886f, -0.017525421f, -0.041718602f, -0.026970956f, 0.078732625f, -0.10743607f, 0.06330958f, 0.046553083f, 0.006798863f, -0.011726352f, -0.12407891f, 0.0062783724f, -0.0124451695f, 0.09432626f},
++      {0.14620286f, -0.0068262657f, -0.06616843f, -0.043404102f, -0.011722291f, 0.022454614f, 0.042364083f, 0.6248986f, 0.037185088f, 0.15565772f, 0.41324234f, 0.54910606f, -0.22502585f, 0.027849853f, 0.15919663f, -0.018154336f, -0.00056598807f, -0.020582156f, 0.0878403f, 0.07855001f, 0.013672056f, 0.0018776009f, 0.033747032f, -0.15806994f, 0.19299786f, 0.067879505f, 0.19972558f, 0.0979197f, 0.33028263f, 0.36649564f, -0.030499568f, 0.08240231f},
++      {-0.07159372f, -0.035558492f, -0.11354684f, 0.16255523f, 0.542249f, 0.08854626f, 0.2914344f, 0.18985851f, 0.0933967f, 0.12951621f, 0.029897349f, 0.56803876f, -0.053880747f, -0.22391228f, -0.09673443f, 0.19207822f, 1.2998458e-07f, 0.02731194f, 0.11381938f, 0.069952935f, 0.03739335f, 0.18587846f, 0.063349254f, -0.11428053f, 0.622554f, 0.24384311f, 0.072687276f, 0.05034426f, 0.29094577f, -0.043221787f, -0.17267655f, 0.6221786f},
++      {0.09185353f, 0.032187443f, 0.1179135f, 0.14570394f, -0.022750983f, 0.1152927f, 0.043357726f, -0.033584237f, 0.034601167f, 0.0019839401f, 0.011607652f, 0.27134845f, 0.043614566f, 0.007926991f, -0.04585827f, -0.048519164f, 0.009936344f, -0.042284243f, 0.13509093f, -0.023811292f, 0.008266133f, -0.056584217f, -0.02687165f, -1.57373f, 0.45717156f, -0.017443221f, 0.035503168f, 0.10568771f, -0.038892608f, 0.053065006f, 0.049316924f, -0.098514594f},
++      {-0.08794338f, 0.098804116f, 0.18497846f, -0.02453698f, -0.50055f, 0.41279697f, -0.27491578f, -0.13909808f, -0.071812324f, -0.27628252f, 0.27172232f, 0.52916133f, 0.58865917f, 0.17501247f, -0.051782664f, -0.55577475f, 0.013652304f, -0.08696676f, -0.61096597f, 0.23460418f, -0.51736313f, -0.16693868f, -0.54957294f, 0.21389298f, 0.03716031f, -0.16711178f, 0.36607906f, 0.47890654f, 0.064495355f, -0.92920154f, 0.43726236f, 0.23235136f},
++      {0.11968942f, -0.015339358f, -0.08772188f, 0.34817287f, 0.21203786f, 0.107600465f, 0.5203377f, 0.64574516f, -0.02436106f, 0.25376797f, 0.35143942f, 1.509246f, 0.92757744f, -0.071935676f, 0.3675006f, 0.31758505f, 0.03534829f, 0.019777339f, -0.32559332f, -0.25644925f, -0.07968992f, 0.107622586f, -0.22805278f, 0.12811379f, 0.3774814f, 0.23643841f, -0.078229964f, -0.09234887f, 0.041914012f, 0.580057f, 0.24517381f, 0.12766029f},
++      {-0.58534676f, -3.6252475f, 0.35296768f, 0.052403342f, 0.7925618f, -0.40291488f, -0.050780397f, -1.1891419f, 0.13226356f, -0.16585276f, -0.0028433364f, -1.1978637f, 1.058863f, 0.0824805f, -0.2913365f, -0.34816027f, 0.049275808f, 0.23520324f, -0.05532209f, 0.03551734f, -0.009323112f, -0.45949796f, -0.015871428f, 0.15590522f, 0.030970259f, -3.9045649f, -0.15432072f, -0.26835963f, -0.19004476f, -0.3139636f, 0.10957921f, 0.17927898f},
++      {-0.8019967f, 0.010804546f, 0.05590791f, 0.86520284f, -0.00047399328f, 0.047987808f, -0.4063091f, 0.3473547f, -0.26347485f, -0.36660084f, 1.8267466f, -0.19316319f, 0.09489821f, 1.2666334f, -0.013841205f, 0.8112032f, -0.022884792f, 0.022613127f, 0.0019363603f, 0.011604946f, 0.02084988f, 0.91500366f, -0.05897614f, 0.30494413f, -0.085241295f, -0.07003552f, 0.29125446f, -0.6992092f, -2.5795689f, -0.03262083f, 0.5534551f, -0.40866807f},
++      {0.046571106f, -0.015607843f, -0.4557794f, -0.03787833f, -0.21779624f, -0.0011729306f, -0.21906394f, -0.5200948f, 0.12743768f, -0.24324608f, -0.01463022f, 0.08882352f, 0.0766872f, 0.07930654f, 0.18898678f, -0.31218508f, -0.0049130437f, 0.025717521f, -0.00669173f, 0.0016897419f, 0.00031598174f, -0.007262737f, -0.012671374f, 0.035371475f, -0.8832389f, -0.02376861f, -0.1514558f, 0.08387283f, -0.10275178f, -0.18130772f, -0.31420746f, -0.029575076f},
++      {0.053150535f, -0.0026587103f, -0.0434932f, -0.060223054f, -0.040264744f, 0.0048018666f, -0.08021097f, 0.03940114f, -0.12978093f, 0.04937291f, -0.071121015f, -0.048239134f, 0.06397656f, 0.0024822329f, 0.013580437f, 0.07393703f, 0.019810025f, 0.0778752f, -0.32166648f, 0.12917647f, -0.103043504f, 0.10514817f, 0.2123118f, -0.012671656f, -0.036207493f, 0.09464707f, -0.036299184f, 0.03458863f, -0.12154564f, -0.045549147f, 0.11053863f, 0.03917351f},
++      {-0.43751663f, 0.13402492f, 0.02752846f, 0.11151777f, 0.06467004f, -0.28195098f, 0.04520948f, -0.47825238f, 0.22141135f, 0.26824838f, 0.006814277f, -0.018537512f, -0.5618341f, 0.16697209f, -0.15909564f, 0.18385568f, -0.079383954f, -0.12930721f, 0.65289104f, 1.6774573f, 3.9513133f, 0.0047367006f, -3.6285396f, 0.8198412f, 0.20362438f, -0.27293724f, 0.30321306f, -0.45180807f, 0.44442484f, -0.033595715f, -0.27259228f, -0.08205645f},
++      {0.19242562f, 0.00696617f, -0.05360318f, -0.781446f, -0.10092591f, 0.16788685f, 1.3246529f, -0.516657f, -0.08332079f, 0.10980317f, 0.23746157f, -0.083185196f, -0.2983056f, -1.7036511f, -0.06646596f, 0.55675155f, 0.009440232f, -0.04076547f, -0.062202185f, -0.037586346f, -0.011069621f, -0.2966073f, -0.013896301f, 0.13820358f, -0.09140916f, -0.1920522f, -0.026620902f, 1.0868293f, -0.23854837f, 0.31149018f, -0.8219377f, -0.050441496f},
++      {-0.025672097f, 0.017208839f, -0.31317943f, 0.012882548f, 0.09557736f, -0.013475438f, 0.04674113f, -0.01757297f, 0.101035975f, 0.0029997525f, 0.0069602863f, 0.021934954f, 0.024024576f, 0.0035211837f, -0.015383872f, 0.023805497f, 0.005626876f, -0.022791402f, -0.1471416f, -0.095042765f, 0.00049848214f, 0.04339297f, -0.032495353f, 0.058567736f, -0.008990728f, -0.038221903f, -0.00083736546f, -0.053886905f, 0.1295385f, -0.049869604f, -0.018674383f, -0.05362155f},
++      {0.076452725f, 0.005365535f, 0.03458866f, -0.012632149f, 0.01959536f, -0.024228944f, -0.078848034f, 0.015082125f, -0.020752104f, -0.012843432f, 0.03186828f, 0.093436584f, -0.0010230532f, -0.009766011f, -0.0036392563f, 0.012904707f, 0.0032853903f, 0.007294818f, 0.2086185f, 0.0247235f, 0.051557403f, 0.05006689f, 0.016855884f, -0.02040736f, -0.052486025f, 0.0067653777f, -0.03658538f, -0.009469303f, -0.08497518f, 0.052521914f, 0.04300873f, -0.06298423f},
++      {-0.14987347f, 0.029781463f, 0.20120329f, 0.13113347f, -0.3449454f, 0.038223457f, 0.24396971f, -0.26427603f, -0.094458684f, -0.25951406f, -0.40952563f, 0.4210583f, 0.07282287f, -0.14363766f, -0.23329182f, 0.24006836f, 0.0055381116f, 0.03271495f, 0.054809887f, -0.0041663297f, 0.057964962f, 0.27082232f, 0.07526443f, 0.4797321f, -0.35269013f, -0.066318415f, -0.25852922f, 0.15477248f, -0.05236376f, -0.6011358f, 0.3511795f, -0.34008402f},
++      {0.042741057f, 0.007378614f, 0.07274959f, -0.11914459f, 0.032100927f, -0.04573902f, -0.09181401f, 0.007739919f, 0.039526355f, 0.042057447f, 0.12235508f, 0.26355404f, 0.26505506f, 0.16830237f, -0.0058034286f, 0.10280348f, 0.00033446995f, -0.0039605973f, 0.15028574f, 0.1100131f, 0.04251263f, 0.00018838776f, 0.076111756f, 0.047472823f, -0.041793816f, -0.00080344104f, 0.031067971f, -0.007954739f, 0.21722206f, 0.1561699f, -0.008200988f, 0.02995056f},
++      {-0.16783859f, 0.08441208f, -0.0789634f, -0.24011636f, -0.12981923f, -0.19763659f, -0.5554718f, -0.19202499f, -0.1779607f, -0.0125340205f, 0.04469991f, 0.88000727f, 0.38920614f, 0.09281479f, 0.15194333f, -0.23858233f, -0.15286341f, -0.06750592f, -0.976461f, -0.059617553f, -0.69307107f, 0.22747582f, -0.72861767f, 0.63933754f, 0.25996152f, -0.20453875f, 0.27462402f, 0.05553696f, 0.04817418f, -0.8265699f, 0.29321003f, 0.6350769f},
++      {0.20327984f, -0.073946126f, -0.060842816f, -1.6732553f, -0.3564759f, -0.5621244f, -1.6500261f, -0.44115877f, 0.36284304f, -0.16983597f, -0.2517233f, 1.5243089f, -0.028416168f, 0.2655564f, 0.10698872f, 0.013586218f, -0.017004365f, -0.026089942f, 0.43380272f, 0.35454398f, 0.10716027f, 0.2321614f, 0.20434342f, 0.39867613f, 1.0383999f, -0.01120175f, -0.08662593f, -0.74720097f, 0.07758906f, -0.31610528f, -0.24683532f, 0.57875204f},
++      {-0.09802542f, 0.010584961f, -0.086875014f, -0.7110315f, -0.55612683f, 0.010925776f, -0.6625999f, -0.4399797f, 0.06986339f, 0.027718019f, -0.0023811136f, 0.18911067f, -0.18501225f, 0.28741527f, -0.07985092f, -0.31416178f, -0.038470637f, -0.13435689f, -0.3017879f, 0.4104588f, 0.28205317f, -0.018987734f, 0.5691435f, -1.3309485f, 0.45739776f, -0.34088847f, 0.08082754f, 0.031831324f, 0.19550584f, -0.23590176f, -0.44890824f, 0.054703362f},
++      {-0.00017581283f, 0.037330113f, -0.53198886f, 0.0937151f, 0.35229972f, 0.19443007f, 0.58858156f, 0.9665181f, -0.08708128f, -0.011662195f, 0.07256917f, -0.07258409f, -1.7291616f, -0.17878847f, -0.03048206f, 0.0644149f, 0.011009354f, -2.8764298f, 0.0059566614f, 0.11958319f, -0.04057893f, -0.014589603f, -0.029540014f, 0.36259502f, -0.2758182f, 0.22418073f, 0.038722593f, -0.19453335f, -0.11340682f, 0.37414834f, 0.7025617f, -0.1698908f},
++      {-0.7013371f, -0.19965467f, 2.1012523f, 2.1073198f, 1.2419186f, 0.368847f, 1.4768595f, -1.7825198f, 0.66687757f, -3.5143013f, -2.316069f, -1.7051024f, -2.2871106f, 0.06871915f, -2.6186745f, 0.36853924f, 0.101023436f, -0.22657445f, -0.7523898f, -0.8793447f, -1.9148812f, -0.82277143f, -2.2920942f, -1.5624168f, -1.1430701f, -0.041995835f, -3.733906f, -3.4020643f, -0.60414684f, 0.85329366f, 1.2322495f, -1.5508428f},
++      {-0.8733355f, -0.010862339f, -0.03350524f, -0.79300797f, -0.05682495f, 0.048826043f, 0.9861288f, -0.6397316f, -0.20276816f, -1.137357f, 1.4314015f, -0.23200348f, -0.1356183f, -0.9335046f, 0.90055203f, 1.4475284f, -0.028231515f, 0.008105262f, 0.035628002f, 0.024270814f, 0.011722576f, 1.1106781f, -0.064557195f, 0.13243231f, 0.015213823f, 0.038421083f, 0.74302566f, 0.77350193f, -1.9392501f, 0.33549532f, -0.36293936f, -0.2290664f},
++      {-0.33648077f, -0.36893377f, 0.09696558f, 0.4985036f, -0.86237913f, -0.1628557f, -0.1193745f, 2.452297f, 2.7757783f, -1.5917277f, -2.371074f, 2.2886374f, 0.30593115f, 0.54621077f, -0.98132473f, 1.7634135f, 0.1411233f, 0.82755035f, -0.061575633f, 0.33301827f, -0.23710658f, -0.58011353f, -0.2092026f, -2.1884897f, 6.2768373f, 0.5834527f, -2.0938306f, 1.9336306f, -0.42231312f, 1.2271272f, -1.0857638f, -0.986213f},
++      {0.004698788f, -0.026797459f, -0.10424531f, 0.12027235f, -0.11148014f, 0.1201065f, -0.015945105f, 0.067325234f, 0.19333541f, 0.008817233f, 0.12685995f, 0.10797402f, -0.045010116f, -0.03650274f, -0.07566524f, 0.06214556f, -0.0050186883f, -0.019580761f, -0.04737192f, -0.016473703f, 0.0019232612f, 0.00907019f, -0.0037316547f, -0.08220164f, -0.0011867961f, 0.0037299467f, 0.10413568f, -0.055687692f, 0.0005598425f, -0.02815766f, -0.050673913f, 0.0932187f},
++      {-0.042699292f, 0.014348233f, -0.05054626f, 0.009950379f, 0.003468759f, 0.008889819f, 0.025754666f, -0.1353804f, 0.14071594f, 0.0318106f, 0.034194462f, -0.05183772f, -0.033703517f, 0.017656868f, -0.024553241f, 0.033475377f, -0.011401633f, 0.01426164f, 3.320189f, -2.2484522f, 0.68057656f, 0.0405851f, -1.8096251f, 0.04226238f, -0.036678664f, -0.03684785f, 0.022296377f, -0.07949014f, 0.06205443f, 0.020567376f, -0.087455876f, -0.010704219f},
++      {-4.888225f, -0.121699564f, -0.029502597f, 2.2199504f, -0.3032994f, -0.01561419f, -2.9394996f, 0.671429f, 0.028629838f, -3.136521f, -1.1902591f, 0.19576883f, 0.241458f, 4.672441f, 3.2764266f, 2.1511536f, -0.021444216f, 0.08643403f, -0.034230947f, -0.014166688f, 0.021599071f, 4.4580007f, 0.008147662f, 0.5125797f, -0.023529513f, 0.35176897f, 2.218773f, -1.1965003f, 1.1498451f, 2.2884955f, 1.9100848f, -0.19446287f},
++      {0.003297832f, 0.017464846f, 3.3998594f, -0.006627743f, -0.04920975f, -0.13700955f, 0.016239254f, 0.030405182f, -0.023823489f, -0.044559162f, 0.016834814f, -0.111949585f, 0.09472432f, -0.0055293683f, 0.019902358f, -0.011116877f, -0.0027818654f, 0.024790715f, 0.64798176f, -2.4990873f, -1.0882573f, -0.005982096f, 0.28338298f, 0.06960891f, 0.0013207832f, -0.010356579f, -0.048102275f, 0.012971411f, 0.005912924f, 0.062878035f, 0.049716808f, -0.14583606f},
++      {0.14578491f, 0.04531684f, 0.36652014f, 0.02374257f, 0.647904f, -0.29438904f, 0.22551452f, 0.6874576f, -0.46250686f, 0.22491884f, 0.019973895f, -0.0402772f, -0.026950445f, -0.023150958f, 0.045742407f, 0.42057437f, 0.02015817f, 0.09727984f, 0.033152312f, -0.040746927f, -0.033406243f, 0.0062562167f, -0.004166457f, 0.33592865f, 2.1670282f, 0.18616104f, 0.043696977f, -0.17227103f, 0.14651372f, 0.54693806f, 0.49927515f, -0.123544216f},
++      {0.19898005f, 0.32382482f, -0.13718742f, -0.41646317f, 0.68350434f, 0.49643326f, 0.36227176f, -1.7376688f, -2.4601517f, 1.7601471f, 2.5217788f, -2.1343226f, -0.33860943f, -0.6427627f, 0.393863f, -1.5218285f, -0.14588955f, -0.7759793f, 0.0012092941f, -0.3550076f, 0.27045485f, 0.60298145f, 0.2224741f, 1.7481569f, -6.681954f, -0.46260333f, 2.3572888f, -1.9534594f, 0.51890296f, -1.2278473f, 1.3353229f, 1.134752f},
++      {-0.0059205503f, -0.088045664f, -0.11072229f, -0.47355518f, -0.19388871f, -0.08572419f, -0.7064967f, -0.095985465f, -0.08377325f, -0.16059524f, 0.26316044f, 0.9036385f, 0.23086365f, 0.020669308f, 0.0075305915f, -0.17221461f, 0.12413868f, 0.1405479f, -1.123465f, -0.24615625f, -0.524802f, 0.031067962f, -0.93555456f, 0.555935f, 0.10007137f, 0.08149589f, 0.20821153f, 0.21323162f, 0.035597738f, -0.8166015f, 0.17811662f, 0.84807956f},
++      {0.02746528f, 0.006094199f, 0.07248723f, 0.00091690605f, 0.13344894f, -0.1483995f, -0.25903705f, -0.065536395f, -0.021485787f, -0.19371f, -0.24810456f, -0.21245414f, -0.49573022f, -0.06968698f, -0.16393685f, -0.12403983f, -0.0017531655f, 0.078405246f, 0.26867235f, -0.24306692f, -0.13034873f, 0.028237194f, -0.24625573f, 0.545086f, -0.1724477f, -0.017620334f, 0.1784989f, 0.23934713f, -0.031421985f, -0.5853499f, 0.062145248f, 0.17577797f},
++      {-0.13884449f, -0.058064666f, -0.21183091f, 0.16372359f, 0.13589013f, -0.3290936f, -0.47429752f, -0.03323953f, -0.3830779f, -0.017693795f, 0.09452762f, 0.29608858f, 0.03799645f, 0.02457402f, 0.12190716f, 0.32360917f, -0.02429477f, 0.11072691f, -1.1087644f, -0.22301619f, -0.70431006f, 0.5545095f, -0.9484397f, 0.817474f, 0.6360321f, 0.036323264f, 0.16516891f, 0.13886787f, -0.1277679f, -0.60244447f, 0.14474073f, 0.6829384f},
++      {-0.074003376f, -0.17916314f, -0.13712835f, 0.008426841f, -1.0385269f, -1.6153318f, 0.22716533f, 0.29922247f, -8.332016f, 0.2764526f, 0.23772109f, 0.19869752f, 0.76969177f, -0.03907074f, -0.079777464f, 0.020680834f, -6.808825f, -0.26486224f, 0.14891322f, -0.03931888f, 0.061594136f, -0.033720247f, 0.10728247f, -0.48760423f, -0.048930287f, -0.14818552f, 0.09758963f, -0.13436761f, 0.3290572f, -0.018478375f, -0.29667586f, 0.6957393f},
++      {-0.0062259487f, 0.07568383f, 0.11559884f, -0.015345546f, -5.360235f, -9.817165f, 0.72832036f, 0.47901458f, 0.82954943f, 0.05810591f, 0.11262299f, 0.028378332f, 0.5665124f, 0.034071896f, -0.01846837f, 0.0668931f, 0.018088592f, -1.5565093f, 0.03288014f, 0.053838793f, 0.061675508f, -0.004964283f, 0.05052224f, 0.07692369f, 0.14775655f, 0.4536619f, 0.19812386f, 0.11969005f, 0.21766232f, 0.028582036f, 0.28040716f, 0.52467585f}};
+ 
+   HOST_DEVICE_CONSTANT float bias_l1[kHidden] = {
+-      -1.4905349f,   -1.37864649f,  -1.36774099f,  0.311922044f,  -0.92163837f,   0.0321523435f, -0.393755734f,
+-      1.14842284f,   0.299563885f,  -0.39539355f,  -0.241434321f, 1.044842f,      0.3503111f,    0.760451376f,
+-      -1.14699471f,  0.483938903f,  -0.717476606f, -1.33474636f,  0.11799439f,    0.492493063f,  -0.89457494f,
+-      0.125100181f,  -0.995586872f, 0.0861932784f, -0.776549339f, 0.00602910994f, -0.508803427f, 0.328122795f,
+-      -0.227836192f, 1.14661121f,   0.863773704f,  0.412950456f};
++      -1.1902792f, -4.2228074f, -3.483026f, 1.540546f, -0.81731766f, -2.9973423f, 3.8912313f, 0.59277165f,
++      -0.31885245f, -1.0348574f, -1.8856723f, -0.13335314f, -1.737794f, -0.70614135f, -3.348183f, 0.12164374f,
++      -2.650579f, -3.6107533f, -1.0278329f, 0.014846045f, -1.4181249f, -1.7679753f, -1.8054484f, 0.91201335f,
++      -0.3360713f, -3.207668f, -1.5427463f, -0.50526255f, -0.59127635f, 0.6761264f, 3.3232105f, 2.2267604f};
+ 
+   HOST_DEVICE_CONSTANT float wgt_l2[kHidden][kHidden] = {
+-      {0.176018968f,  -1.31312454f,   -0.758665204f, -1.31142151f,  -0.606716692f, -0.125017911f,  -0.217201665f,
+-       -5.7006588f,   0.198129833f,   -0.812515974f, -1.47663403f,  0.101362795f,  -0.0573166497f, 0.121387459f,
+-       0.685907185f,  -1.11624765f,   1.10589409f,   1.25291407f,   -0.361904621f, -0.261707991f,  -0.423324376f,
+-       0.0413671955f, -0.0313630104f, -0.13175793f,  -0.137852922f, 0.0455190726f, 0.177115992f,   -0.313246369f,
+-       -0.582187057f, -1.20848179f,   -0.259796292f, 0.208403796f},
+-      {-0.206980869f, 1.99195457f,   0.847868502f,  -1.03225946f, 1.1850456f,    -0.0492539927f, 2.16629148f,
+-       3.9676435f,    0.502954781f,  1.23309243f,   1.65202761f,  -0.627463996f, 1.74146795f,    -0.334930748f,
+-       1.59042656f,   -0.20935531f,  -0.982121587f, -0.85984534f, 0.0140163777f, -2.31709862f,   -0.0705744997f,
+-       0.739068151f,  0.0555408783f, -1.90713394f,  0.17120862f,  -1.77744842f,  -1.94184828f,   -0.753144443f,
+-       1.80792511f,   1.52698421f,   0.950440586f,  0.575106323f},
+-      {2.66262531f,   0.289182067f,  -0.446980983f,  -0.154719576f, 0.0513284206f, 0.41537714f,  -1.73390079f,
+-       -0.711939156f, 0.17062144f,   -1.35307956f,   0.035780549f,  0.497497082f,  -2.41839361f, 0.208161592f,
+-       -2.16523051f,  0.653904974f,  -0.380344898f,  0.504447877f,  0.314003944f,  0.266687512f, -0.808976233f,
+-       -0.829153657f, -0.355108947f, 0.697059274f,   -2.31923079f,  -0.275665313f, 0.3401815f,   -0.239868581f,
+-       -0.423440129f, -1.37883544f,  -0.0364088789f, -0.87111026f},
+-      {-0.131730661f, 0.0490516089f,  -0.246137068f,  0.144858852f,  -0.0192948971f, -0.620252848f, -0.160180852f,
+-       0.0677003488f, 0.231851533f,   0.0989537165f,  -0.142385334f, 0.32410565f,    0.194975197f,  0.0465593711f,
+-       -0.415664434f, -0.0321551412f, 0.0239443183f,  0.475182146f,  0.238297954f,   0.248635054f,  -0.101922363f,
+-       -0.302067399f, -0.10107857f,   -0.0619486272f, -0.050784193f, -0.152617693f,  0.05995588f,   -0.0102613559f,
+-       0.252255797f,  -0.110843018f,  0.584526598f,   -0.0500202142f},
+-      {-0.251062721f, 0.544603527f,  -0.187096223f, -0.176065579f, -0.0442187712f, 0.893987f,     -0.225345016f,
+-       -0.2157958f,   0.102287784f,  0.0416879989f, 0.97993058f,   0.200595319f,   -1.30533874f,  0.201680422f,
+-       0.109865189f,  -0.476796031f, -0.13902691f,  0.456395745f,  -0.321296632f,  -0.446432859f, 0.141455784f,
+-       -0.274106801f, 0.0911134332f, 0.135449752f,  0.531899035f,  1.84298515f,    0.189817026f,  2.29686737f,
+-       0.561425388f,  -0.520803452f, 0.519448876f,  0.0248673111f},
+-      {0.103755161f,  0.376183391f,   -0.522648811f,  -0.471167266f, 0.024497347f,  -0.0930065289f, 0.157064617f,
+-       0.315144181f,  -0.0173341222f, 0.250259221f,   -0.336549938f, 0.359837413f,  0.128678173f,   -0.0633828118f,
+-       0.0198100805f, -0.202591792f,  0.288550526f,   0.822542846f,  -0.155253261f, -0.0964719057f, -0.432667792f,
+-       0.315408885f,  0.126537368f,   -0.0348986015f, 0.078996025f,  -0.173688859f, -0.156133085f,  -0.15971154f,
+-       0.449010193f,  -0.306952387f,  0.0830036476f,  0.064653106f},
+-      {-0.0967120826f, -0.220470697f,  -0.0161676276f, -0.0215321612f, -0.12738499f,   0.185533598f,  0.131637603f,
+-       -0.208222032f,  -0.072131142f,  -0.167268336f,  -0.287062407f,  -0.0713667423f, 0.445774972f,  0.480611891f,
+-       -0.285331726f,  0.0545179732f,  -0.237411439f,  0.345522463f,   -0.0820380822f, 0.196936563f,  -0.0455925576f,
+-       -0.154601768f,  -0.0102761257f, 0.0250301231f,  -0.211813182f,  0.0112371072f,  -0.028104296f, 0.06345696f,
+-       -0.354930401f,  -0.0246290658f, -0.262105912f,  -0.0701097101f},
+-      {0.0644720718f, 0.278586894f, 0.196968347f,  0.243152037f, 0.669792116f,  -0.184805259f,  -0.0538257062f,
+-       0.404287308f,  0.578830957f, 0.686203897f,  0.535932302f, -0.375571221f, -0.105248995f,  -0.121403039f,
+-       0.466987491f,  0.339793324f, 0.622465074f,  0.462467909f, -0.11349757f,  -0.266061366f,  0.217411384f,
+-       0.406556755f,  0.299323618f, 0.0851140171f, 0.132392541f, 0.0777340308f, -0.0374008045f, -0.0412766747f,
+-       0.637884021f,  0.463668108f, 0.793681264f,  0.0621457025f},
+-      {0.0817601979f, 0.480099559f,   0.445897341f, -0.0409675539f, -0.166372702f, 0.213104993f,   0.614951134f,
+-       0.235732049f,  -0.0796330646f, 0.456194907f, 0.0255006868f,  -0.271560401f, -0.144988567f,  -0.183831766f,
+-       0.0875706524f, 0.0510382429f,  0.472920001f, -0.0162580237f, -0.252788603f, 0.0355062895f,  0.293858796f,
+-       0.272403032f,  0.090413563f,   0.638976693f, -0.0453882329f, 0.218779951f,  -0.0370658226f, 0.133939624f,
+-       0.182058156f,  -0.401679218f,  0.473538578f, -0.0216404516f},
+-      {0.0589487776f, -0.324350387f, 0.711834371f,  0.0783575103f, -0.238369271f,  0.122335717f,   0.0186504032f,
+-       -0.347404748f, -0.493949413f, -0.53726846f,  0.200251758f,  -0.317382395f,  0.746309757f,   0.0643889308f,
+-       0.0366913192f, -0.186611846f, -0.295333356f, 0.55008918f,   0.254451007f,   -0.0431578979f, 0.148975566f,
+-       0.226990744f,  0.0484975763f, 0.269585043f,  0.0852605999f, -0.0123961093f, -0.0628416762f, -0.0112601295f,
+-       -0.790771544f, 0.0194341317f, -1.18460512f,  -0.0472477153f},
+-      {-0.110146053f, 0.527597487f,   -0.523430765f, -0.0777908862f, 0.031108873f,  -0.738599181f,  -0.0752150491f,
+-       -0.218490168f, 0.180486351f,   0.0837265551f, -0.41528517f,   0.0635295585f, -0.0157800205f, -0.0491021536f,
+-       0.561584592f,  -0.0948358104f, 0.356075376f,  0.198690683f,   -0.115503222f, -0.0460375361f, 0.0890783668f,
+-       0.0282775126f, -0.0742119104f, -0.349320829f, -0.176101133f,  -0.151346341f, 0.524613798f,   -0.209907934f,
+-       0.608959377f,  -0.166719258f,  0.890939653f,  -0.0880026966f},
+-      {-0.156507984f, 0.0682609305f,   0.124836765f,   -0.325747699f, -0.292067915f, -0.0808426067f, -0.0598017164f,
+-       0.0149327181f, -0.599392712f,   -0.201727778f,  0.274832278f,  0.238834932f,  -0.159055024f,  -0.067266345f,
+-       0.361865997f,  -0.00419249572f, -0.0421643555f, 0.750145674f,  0.347945452f,  -0.0126478979f, 0.268084109f,
+-       0.233204663f,  -0.100332528f,   -0.400178909f,  -0.132482246f, 0.0526265167f, -0.0438141674f, 0.0304820724f,
+-       -0.102463499f, -0.654032886f,   -0.0978362858f, -0.0262597371f},
+-      {-0.135144204f,   0.108429112f,   0.162203014f,  -0.0396119952f, -0.366592288f, 0.321811616f,  0.0842787325f,
+-       0.244628131f,    -0.0967842266f, -0.427289665f, 0.0630361512f,  -0.256061763f, 0.490190744f,  0.514836669f,
+-       -0.00461797882f, 0.022165563f,   0.109689124f,  0.474607199f,   0.0132869016f, 0.0872391984f, -0.44954586f,
+-       -0.123031884f,   -0.47769478f,   -0.24860841f,  -0.186458275f,  -0.130174503f, -0.249029592f, -0.0191956144f,
+-       -0.0561946929f,  -0.123372726f,  0.0300519112f, 0.0917394832f},
+-      {-0.394485533f,  -0.233033627f,  -0.328620136f, 0.189738438f,  0.164485961f,  0.18065393f,    -0.472429872f,
+-       -0.36421445f,   -0.140319556f,  0.0247263797f, -0.08120583f,  -0.675155222f, 0.546832025f,   0.231100991f,
+-       -0.209428623f,  0.0750242323f,  -0.431860924f, 0.414383769f,  -0.363714129f, 0.330866218f,   -0.335332245f,
+-       -0.0770820156f, -0.0474810563f, 0.125689387f,  -0.291126341f, -0.250589728f, -0.0926480889f, -0.388336957f,
+-       -0.193992704f,  -0.0782262459f, -0.589556336f, -0.1395825f},
+-      {0.0452820249f, -3.09828496f,  -0.991475642f, -0.77773875f,  0.08299876f,  0.202985719f,  -0.630343497f,
+-       -0.806619525f, 0.760899603f,  -1.64352632f,  -0.194593534f, -2.0993247f,  -0.596092939f, 0.12735644f,
+-       0.701530695f,  -1.19867194f,  0.82169199f,   0.817818463f,  0.866091967f, -0.847236335f, 1.54463065f,
+-       0.407537043f,  0.140747085f,  0.876530051f,  -0.607907176f, -0.11206881f, 0.261596352f,  -0.237179101f,
+-       -0.861357808f, -0.680108786f, -0.662595332f, 0.332087219f},
+-      {-0.0650308207f, 0.0102320658f, 0.295406908f,  -0.232314646f, -0.300021321f,  0.0130176451f, 0.156510487f,
+-       0.0752382129f,  0.192631215f,  0.122413285f,  -0.305255592f, 0.838831127f,   0.1320301f,    -0.101093799f,
+-       0.0244999416f,  -0.136759102f, -0.254834294f, 0.383859158f,  -0.468060225f,  0.26791656f,   0.322841018f,
+-       0.231575385f,   0.158803627f,  0.624578059f,  0.19708842f,   -0.0285529569f, 0.517502725f,  0.0524584576f,
+-       -0.571399212f,  0.607735574f,  -0.814366162f, -0.190351605f},
+-      {-0.0494459756f, 0.162179083f,  -0.170060039f,  -0.170411721f,  0.303824693f,  -0.0621538982f, 0.00583778787f,
+-       -0.105844744f,  -0.23790656f,  -0.29934448f,   -0.0103824539f, -0.048862163f, -0.103107907f,  0.759700835f,
+-       -0.177627116f,  -0.506093144f, -0.218561724f,  0.664363503f,   -0.742303789f, 0.219162524f,   -0.592503428f,
+-       0.453741908f,   -0.953407049f, 0.148734808f,   -0.147753015f,  0.0113614528f, 0.0110952239f,  -0.0354386903f,
+-       -0.138622835f,  -0.745848835f, -0.0700322464f, -0.24715063f},
+-      {-0.178106844f, -1.5089972f,   0.44036755f,  1.05950713f,  1.07032669f,    -0.273779452f,  0.578198314f,
+-       2.90121818f,   0.131728247f,  1.49057746f,  -1.25708294f, -0.0154508557f, 1.08414245f,    0.370139688f,
+-       0.0993053168f, 0.275504589f,  0.276855052f, 0.682317376f, -0.113562956f,  -0.0190433711f, 0.744128585f,
+-       -0.515856802f, -0.666692436f, 1.29173636f,  0.958235443f, -0.0885655954f, -1.39863443f,   0.538613439f,
+-       0.389927894f,  0.788753331f,  0.136833116f, -0.763485551f},
+-      {0.112714268f,  -0.276297927f, -0.219027311f, 0.597031176f,  0.414690346f,  -0.159656182f,  0.591823041f,
+-       0.0365098119f, 0.344768614f,  0.49658221f,   -0.419056654f, 0.0295586344f, 0.0910413638f,  0.229175314f,
+-       -0.119904332f, 0.25499931f,   0.367398083f,  0.181785658f,  0.343456715f,  0.250599295f,   0.533093512f,
+-       0.0709970146f, 1.05417573f,   0.347648621f,  0.096567221f,  0.05928896f,   -0.0012941889f, 0.0546961688f,
+-       -0.122285701f, 0.534113467f,  0.13315095f,   -0.0227304921f},
+-      {-0.00872401986f, -0.123630702f, -0.278559715f,  0.35881421f,    0.244186878f,  -0.290990204f,  0.0562342443f,
+-       0.0856662393f,   0.0327497497f, 0.36137414f,    -0.0625356361f, 0.212307647f,  -0.0966622159f, -0.244930148f,
+-       0.0407522023f,   0.128286675f,  0.500537157f,   0.164773539f,   0.45037657f,   0.152462244f,   0.630667031f,
+-       0.35542801f,     -0.229383022f, 0.306172162f,   0.0715025365f,  0.0296160504f, 0.00899989437f, -0.00377821992f,
+-       -0.132513285f,   0.195751548f,  -0.0257866438f, 0.881664991f},
+-      {-0.0582643412f, 0.197634667f,  -0.269409925f, -0.596475959f, 0.00211394299f, 0.109768726f,  0.195837155f,
+-       -0.404403031f,  -0.213452831f, -0.549518526f, -0.512209654f, -0.179888412f,  -0.115519755f, 1.4826349f,
+-       -0.361023277f,  -0.128944919f, -0.179926425f, 1.55686951f,   -1.84796131f,   0.0450288951f, -1.20483029f,
+-       0.148376137f,   0.642013729f,  0.261210918f,  -0.816236079f, 0.216235861f,   0.0661929697f, -0.0312280767f,
+-       -0.478157759f,  -0.869870007f, -0.111167751f, -1.20539379f},
+-      {0.209347144f,   -0.012379366f, -1.79996479f,  -0.156623974f,  -0.0676155612f, -0.36596337f,  0.949222982f,
+-       -0.0627631396f, -0.227165595f, -0.24562797f,  0.238203049f,   0.212083966f,   -0.273345739f, -0.271808267f,
+-       0.439651996f,   0.204823986f,  -0.446409911f, 0.756295562f,   0.151376724f,   -0.542149723f, -0.402916193f,
+-       0.0312782973f,  -0.220038131f, -0.259245962f, -0.309069037f,  0.201672465f,   -0.671637416f, 0.00908612181f,
+-       -0.108825125f,  -0.319439918f, -3.99272037f,  -0.00131253083f},
+-      {0.576276064f,  1.90467823f,   1.82110512f,   0.963294923f, -0.572976589f, 0.129143611f,  0.270350009f,
+-       -1.50215113f,  -1.29395974f,  -0.737390995f, 0.361326396f, -2.14906693f,  0.803019822f,  0.07686387f,
+-       1.19785738f,   0.205151841f,  -0.984290302f, 0.710894465f, -0.115268983f, 0.483071327f,  -1.76654875f,
+-       0.808523357f,  -0.101413809f, -1.31785023f,  0.593621433f, 0.207672298f,  -0.696969986f, 0.0653298274f,
+-       -0.553124964f, -0.302625209f, -2.86746287f,  -0.109494999f},
+-      {-0.0400535464f, 0.00348234316f, -0.0689973235f, 0.07110589f,   -0.276635528f, -0.0163601451f, 0.289548993f,
+-       -0.248861611f,  -0.150646433f,  -0.474190533f,  -0.238710165f, 0.0306295883f, -0.0916301087f, 1.16109967f,
+-       -0.234556273f,  -0.107220359f,  -0.40295577f,   0.878771782f,  -0.445225924f, -0.112956569f,  -0.412445307f,
+-       -0.090971075f,  0.0271317009f,  0.326063544f,   0.0867876261f, 0.0767066926f, -0.0801171139f, 0.0448215939f,
+-       -0.326024741f,  -0.352617174f,  -0.104747429f,  0.325780064f},
+-      {0.0121676447f,  0.0818222389f,  0.229873225f, 0.711355805f,  0.181385428f,  0.27074939f,    0.319149822f,
+-       0.712262988f,   -0.391883731f,  0.140400484f, -0.203037053f, 0.0910180062f, -0.0912824422f, -0.0606506243f,
+-       -0.464773208f,  0.229255557f,   -0.23262465f, -0.645697057f, 0.633609593f,  -0.318165809f,  -0.742656887f,
+-       -0.403242022f,  -0.0416934751f, 0.38235417f,  0.260672033f,  0.0411329828f, -0.100085177f,  -3.4490757f,
+-       -0.0108248601f, 0.453126758f,   0.382473409f, -0.17148447f},
+-      {0.130232856f,   0.211492136f,   -0.194423541f, -0.119357973f,  -0.43870014f,  0.0560679063f, 0.242079079f,
+-       0.109931476f,   0.323360294f,   0.227080047f,  -0.47327736f,   0.0507420562f, 0.154226139f,  0.0661671162f,
+-       -0.0574892797f, -0.0237502363f, 0.260488093f,  -0.475271851f,  -1.23347759f,  0.419721812f,  0.166952848f,
+-       0.129856527f,   -0.0423418954f, -0.102146216f, -0.0666279644f, -0.111874931f, -0.837019444f, -0.0642599538f,
+-       -0.233367383f,  -0.0405790806f, -0.518874824f, 0.296438366f},
+-      {-0.133488566f, -0.738681793f, 0.0236117784f, -0.194083601f, 0.507692814f,   -0.0586798526f, -0.126456097f,
+-       -0.761683702f, 0.260405391f,  0.923639774f,  0.512494624f,  -3.26016951f,   -0.296913803f,  0.109226853f,
+-       -0.147254094f, 0.624307871f,  -1.18974292f,  0.459380656f,  0.30765444f,    0.343483508f,   -0.472623974f,
+-       -0.872658789f, -0.199325845f, -0.178728119f, 0.349213541f,  -0.0283089969f, 0.39523074f,    0.111496553f,
+-       -0.118928917f, 0.270774215f,  -1.18933725f,  -0.0203476418f},
+-      {-0.200536937f,   0.0671451986f, 0.0677805096f, 0.385681093f,  0.632210612f,   -0.0945722163f, 0.233671129f,
+-       0.105622895f,    -0.386899531f, -0.563263953f, -0.1202517f,   -0.595573962f,  -0.194762796f,  -0.112897001f,
+-       -0.00679243729f, 0.292204767f,  -0.484462142f, 0.563064158f,  0.672752023f,   0.101854533f,   0.211701065f,
+-       -0.585341692f,   -0.103502378f, -0.719654202f, 0.0717595592f, 0.00985408481f, -0.275505304f,  -0.0279852338f,
+-       -0.0970882848f,  -0.394394815f, -0.218786716f, -0.124585114f},
+-      {-0.0965188742f, -0.346085399f, 0.431923211f,   0.259557694f, 0.122169554f,   0.684990048f,  -0.0363416038f,
+-       0.0398338139f,  0.258467615f,  0.106955685f,   0.25709945f,  -0.428558141f,  0.383258104f,  -0.00868428126f,
+-       0.0745797008f,  0.520474732f,  0.00739769079f, 0.458128989f, -0.0016774924f, 0.101068355f,  0.116987407f,
+-       0.0471819043f,  -0.11312861f,  0.0916825756f,  0.179582521f, -0.0328589007f, -0.247586384f, 0.0755775049f,
+-       -0.0557149276f, 0.541228235f,  -0.456217766f,  -0.245659322f},
+-      {-0.272853553f,  -0.0881752074f, -0.773926437f,  0.0734822378f, 0.386233658f,  -0.146767095f, -1.42613709f,
+-       0.207941815f,   0.135904402f,   0.402534068f,   0.353234261f,  0.0771673247f, -0.047309164f, -2.06435251f,
+-       0.123069808f,   0.00162625103f, 0.465019256f,   0.474775255f,  -0.423959166f, 0.133412525f,  0.171163872f,
+-       0.0998388156f,  0.384686232f,   0.00737674255f, 0.0559540801f, -0.295304179f, 0.143345058f,  -0.312826127f,
+-       0.00474412274f, 0.385311484f,   -0.593534172f,  0.290833414f},
+-      {-0.0698634014f, 0.0848390907f,  -0.351659149f, 0.0833435804f,  -0.164541706f,   -0.115012921f,  -0.351261109f,
+-       -0.256355643f,  0.0225922149f,  -0.44060266f,  -0.0593208186f, -0.00723110558f, -0.138440326f,  0.367292792f,
+-       -0.284081817f,  -0.380565912f,  -0.331795454f, 0.0863761306f,  -0.84632045f,    -0.109902866f,  -0.672560215f,
+-       -0.14025721f,   -0.0914453864f, 0.343504399f,  0.167123273f,   -0.0963995978f,  0.00165590993f, -0.106826037f,
+-       -0.194708377f,  -0.138224974f,  -0.254445612f, 0.0229229573f},
+-      {-0.278629512f, 0.00690550404f, 0.713824749f,  0.20168969f,   -0.176681846f, 0.213660747f, -0.502462983f,
+-       -0.325350881f, -0.0331465751f, -0.292148292f, 0.0152894352f, 0.109553255f,  0.242949322f, 0.101489961f,
+-       -0.198959336f, -0.218593627f,  -0.322807759f, 0.278902948f,  0.26586017f,   0.400664568f, 0.321311325f,
+-       -0.499686927f, 0.00516313454f, -0.13852188f,  0.105136424f,  -0.128954872f, 0.323122174f, 0.19994393f,
+-       -0.395943731f, -0.190336689f,  0.633380771f,  -0.0623435304f}};
++      {-0.71903634f, 0.5996522f, -0.29589576f, 0.45437545f, 0.54699165f, -4.2086487f, 0.2670528f, -0.30660588f, -0.069088705f, -5.9053974f, 1.0945395f, 0.03370536f, 0.17214996f, 0.8998347f, 0.38746068f, -0.7535968f, 1.3446909f, 0.28647384f, -0.12954774f, 0.36795104f, -1.2826381f, -0.11966712f, 1.128535f, -0.23752373f, -0.025439566f, 0.43452412f, -1.3659599f, 0.1437776f, 0.24654715f, -0.21411517f, -0.6828516f, 0.024380142f},
++      {0.34360012f, 1.415789f, 0.18164547f, -1.6022683f, 0.4643828f, 3.8805003f, 4.5682516f, 5.9968467f, -0.94125277f, -0.31599697f, 0.42950806f, -1.1341782f, 1.5229568f, -0.39033496f, -0.46352556f, -0.68523467f, 0.92359334f, 0.47902894f, 0.22507146f, -2.6905873f, 2.4995184f, -4.66224f, 0.812673f, 0.038197275f, 1.0405613f, -0.7573239f, -0.4441256f, 1.1497825f, 0.7285483f, 0.9880362f, 1.4826425f, 0.535436f},
++      {-0.17117596f, -0.8555553f, 0.5740892f, -0.5981943f, 0.8752428f, 0.080684505f, -0.12231121f, -0.16273294f, 0.7275825f, 0.07357059f, -0.27605838f, -0.1297026f, 0.50136185f, 0.45118296f, -0.012551192f, -0.16749395f, 1.8235632f, -0.73673254f, 0.0060664047f, -0.29765394f, -0.3465001f, 1.2884653f, -0.1156955f, -1.1970998f, -0.38676232f, 1.1186246f, -0.43210655f, -3.4056463f, -0.20741439f, -0.43586445f, -0.1795863f, 0.49124473f},
++      {0.109716706f, 0.040301926f, 0.09170574f, -0.29273844f, -0.25387135f, 0.24930276f, 0.061961506f, -0.05233653f, 0.0045841043f, 0.452057f, 0.07872488f, 0.008242037f, -0.14720687f, 0.61037666f, -11.516013f, -0.10537742f, 0.587094f, -0.18152237f, -0.37778133f, 0.14674973f, 0.4708104f, -0.14626558f, 0.95815307f, -0.072340555f, -0.095907494f, 0.23446588f, 0.19616185f, -0.4182029f, -0.60822743f, 0.38927037f, -0.37241718f, 0.3750621f},
++      {-0.06870127f, -0.38432413f, -0.12756503f, 0.35238427f, 0.0074236123f, -0.6106918f, -0.31434417f, -0.47211567f, -0.55207247f, -0.1337077f, 0.42621684f, 0.18676378f, 0.32620633f, -0.45142582f, -0.1714603f, 1.2196773f, -0.72495836f, 0.37445197f, -0.08642237f, 0.70171523f, -0.025908925f, 0.20541008f, 0.14543f, 0.057542242f, 0.5541934f, 0.05478625f, 0.0050253407f, 0.6434372f, 0.15805307f, -0.06883371f, -0.12873939f, -1.5753316f},
++      {0.14450377f, -0.018328296f, 0.22631745f, -0.21972272f, -0.34081885f, 0.004980373f, -0.011427836f, 0.22029945f, -0.004278794f, -0.067205794f, -0.04080068f, -0.20332667f, 0.0704927f, 0.3698137f, 0.1606014f, -0.088255465f, -1.075595f, -0.62490076f, -0.0898802f, 0.19172308f, 0.2213874f, 0.14316913f, -0.32326356f, 0.06366104f, 2.5864909f, 0.3889552f, 0.079012156f, 0.2513271f, -0.044602558f, -0.864014f, 0.039974514f, -2.5504816f},
++      {-0.4881129f, -0.020789687f, 0.004215236f, -0.047604643f, 0.41008857f, 0.14428936f, -0.20099401f, -0.1505487f, 0.29258254f, -0.6686526f, -0.19578183f, -0.022550384f, 0.21042922f, -0.43288204f, -0.29555756f, 0.26517367f, 1.5371269f, -0.031177673f, -1.4148953f, 0.20757948f, -0.7058805f, -0.09650551f, 0.5904635f, -0.041923586f, 0.00063677423f, 0.053722735f, 0.16792335f, 0.092385426f, 0.17924462f, 0.40254763f, -0.13913463f, 0.7755008f},
++      {0.28496414f, 0.02349194f, -0.44169876f, -0.020095455f, 0.15174407f, 0.12436502f, 0.7506558f, 0.5465583f, 0.12198804f, 1.2766585f, -0.15481965f, -0.3520695f, -0.071021244f, 0.5552144f, -0.15445712f, -0.4610327f, 0.26570803f, 0.6691179f, 0.66289073f, 0.6624223f, -0.019272605f, 0.11725144f, 0.81649923f, 0.046467714f, 0.10966947f, -0.017357433f, -0.5349811f, -0.7487004f, 0.86180586f, 0.56023335f, 0.90307593f, 0.0525027f},
++      {-0.07260048f, 0.015661601f, 0.22513776f, 0.0740837f, -0.1680716f, -0.5130841f, 0.29713607f, -0.0057116346f, 0.3152255f, -0.028266402f, 0.42487642f, -0.18577842f, 0.30805504f, 0.28248018f, -0.04014954f, -0.10723857f, 1.8764448f, -0.09347849f, -0.011917028f, 0.07067722f, -0.12712492f, 1.0023793f, -0.027055083f, 0.040842175f, 0.65920854f, -0.038639665f, -0.3952873f, 0.9119976f, 0.292087f, -0.2632006f, 0.0062462967f, 0.74882084f},
++      {0.6793904f, -1.113318f, 0.17170948f, 0.4955652f, -0.44002867f, -1.1273215f, 0.74843043f, -2.2169194f, -0.20127644f, -0.47845826f, -0.5251701f, -0.14736967f, 0.095705956f, -0.89964205f, -0.4565672f, 0.53176296f, 0.87043244f, -0.07411235f, 0.30242342f, -0.90972114f, 0.71318406f, 0.41604933f, 0.102550276f, 0.084735066f, 0.059088666f, 0.5394371f, -0.6564072f, -0.35673794f, 1.2833896f, -0.52127695f, 1.1892502f, 0.6217601f},
++      {0.43126026f, 0.45805138f, -0.22334215f, 2.1809464f, -0.18002532f, -1.1832658f, -0.93087715f, -0.6089791f, 0.33841208f, -0.85285735f, -0.8730344f, 0.023802586f, 0.28943804f, 0.20680994f, 0.5787739f, -0.0228427f, 0.41525057f, 1.8386444f, 0.12009605f, 0.42533904f, 0.6164204f, -0.6981429f, 0.7912998f, 0.08603551f, -0.117404655f, -0.60189074f, -0.23037484f, -2.3711667f, -0.17762087f, 0.052807853f, 0.8546044f, 0.2220181f},
++      {-0.33057535f, 1.4606892f, -1.1539153f, -0.67297983f, 0.10576419f, 0.57918984f, 0.84514886f, -0.061171643f, 0.6298568f, 0.44387725f, -0.10474976f, 0.42243946f, 0.058932725f, 0.21924779f, -0.013015901f, 0.26345465f, 0.4858004f, -0.46548283f, -0.03997476f, -0.24404322f, -0.10574673f, -0.44348562f, -0.6511321f, -0.160731f, 0.039343443f, 0.9469817f, -0.87111026f, -0.48611042f, 0.5367367f, -0.53388906f, 0.5468422f, -0.077714f},
++      {0.10079091f, 1.0174494f, -0.7543575f, 0.24749795f, 0.79169416f, -0.15653542f, 0.27888966f, -1.3954084f, -0.04412951f, 0.6449304f, -0.029927673f, -0.25436938f, -0.17444383f, -0.9024236f, 0.5525225f, 0.14461584f, 0.74880934f, 0.0540894f, 0.91344255f, 0.8100966f, -0.35681129f, -0.62020236f, -0.5092117f, -0.04988343f, 0.16230024f, 0.24270748f, 0.087981746f, 0.47350648f, 0.45757422f, 0.30020913f, 0.0922501f, 0.35071826f},
++      {-0.48779717f, -0.63296276f, 0.36180845f, 0.07891524f, 0.34688768f, -0.2982001f, 0.09823733f, 0.04189393f, -0.05482948f, -0.39960113f, 0.14029501f, -0.2638673f, 0.057030816f, 0.24991804f, -9.030661f, -0.14204755f, -0.40389985f, 0.2625915f, -1.552169f, 0.35650086f, -0.55531013f, 0.036132373f, -1.404792f, -0.105785355f, -0.01889341f, 0.116681784f, 0.85083216f, 0.9844233f, -0.1687762f, 0.06884064f, -0.58648336f, -0.10996176f},
++      {-0.6121173f, 0.5878792f, -0.22737673f, -1.5146389f, 0.7983674f, 0.7881261f, 0.9271641f, -3.8945928f, -0.29936132f, -5.8920426f, 1.045525f, 0.97016454f, 1.1151804f, 0.46492592f, 0.044239976f, -0.8646215f, 2.1574242f, -1.9096143f, 1.2369143f, -0.035601083f, -0.49292764f, -0.99703723f, 0.020839525f, 0.12766904f, 0.20307584f, 0.43503842f, -0.9053913f, -5.4634223f, 1.150708f, -1.0417771f, -11.998827f, 0.31070435f},
++      {0.30305514f, -0.4439012f, 0.08363463f, 0.3060019f, -0.03258879f, 0.38206634f, -0.4976748f, 0.33123294f, -0.4178474f, 0.53786314f, 0.04143552f, 0.16999914f, -0.29807135f, -1.1681969f, -0.48226693f, 0.62921745f, 0.21658438f, -0.03205614f, 2.07594f, -0.11554336f, 0.4887528f, 0.040723838f, 0.3719059f, 0.041934248f, -0.13884094f, -0.37738302f, 0.17503725f, -0.0038477532f, -0.62037283f, -0.22453457f, -4.8985667f, 0.04834352f},
++      {1.7006584f, 0.8341393f, 0.70930725f, 3.4470575f, -1.4730036f, -5.8188686f, 2.5592308f, -0.52247477f, -0.51016295f, -0.771632f, 4.3081164f, 1.7569394f, -18.151299f, 5.8329487f, -0.18657723f, 2.15746f, -0.4221929f, -2.176061f, -1.7417322f, 2.0847914f, -0.48867944f, 6.762727f, 4.4292464f, 1.4808338f, 3.3277483f, 3.8017492f, 2.4715936f, -0.7742747f, 1.3305048f, -1.8759751f, -3.5524058f, 0.8688111f},
++      {-0.8079345f, 2.753172f, 1.5554726f, -0.55854946f, 3.0283148f, 0.07407266f, 0.22474127f, 2.032693f, 0.60369515f, -0.79417443f, -0.009699966f, -0.96759874f, -1.3728024f, -1.0859101f, 0.86064994f, -0.63101393f, 0.9984957f, 1.2002225f, 0.80755913f, -0.9403398f, -0.8203029f, -0.4601419f, -0.14641367f, 0.33655885f, 0.31372336f, 0.4693854f, 0.6662024f, 0.47606474f, 0.052456696f, 1.468107f, 0.054144852f, 1.6097693f},
++      {-2.1909795f, -0.25980026f, 0.010254065f, 0.10791231f, 0.47725177f, -0.019315606f, 0.07760021f, -0.07509751f, 1.1859089f, 0.2726219f, -0.060389698f, 1.7996887f, -0.27007687f, -1.4001291f, 0.064909466f, 1.1313403f, -0.19611539f, 0.6198332f, 0.115440235f, 0.046510875f, -0.094835475f, 0.026020827f, 0.2992611f, -0.39993522f, -0.038491506f, 0.17302476f, 0.3541173f, -0.052873373f, 0.14195564f, 0.9096395f, 0.112538815f, -0.05034784f},
++      {0.1896247f, -0.2091672f, -0.32285395f, 0.18972026f, 0.20305972f, -0.102220505f, -0.14652473f, 0.21370041f, 0.090785146f, 0.05872747f, 0.03072248f, 0.09175078f, -0.266366f, -0.6086793f, 0.075952165f, 0.31562278f, -0.42043284f, 0.4671561f, 0.030473856f, -0.20305926f, 0.10686792f, 0.12680542f, 0.046348643f, -1.760316f, -0.044976167f, 0.08026108f, -0.08907678f, 0.07167344f, 0.108757235f, 0.29857826f, -0.013870432f, -0.16466838f},
++      {-3.6425936f, 2.2850082f, 7.307662f, -0.8231983f, -0.4693535f, 0.288058f, 0.5623546f, -2.18838f, -0.76385f, -0.22200806f, -0.143959f, 0.7273215f, 1.0890017f, 1.8619682f, -0.046075404f, -0.96758276f, 1.9094276f, -1.1291238f, 0.073266566f, 1.7959509f, -1.4222314f, -0.33275858f, -0.04271631f, 6.445078f, 0.482603f, -0.86053336f, -0.0942588f, -0.70513445f, -0.761192f, -0.96776795f, 0.10700638f, 1.1717945f},
++      {-0.57806957f, 0.65063757f, -0.26221672f, -0.41542906f, 0.39445415f, -0.2509893f, 0.94640476f, -0.37129664f, 0.056577377f, -1.559425f, -0.8420942f, -0.25554863f, -0.06936644f, 1.3818738f, -0.29333016f, -0.6202219f, -0.24372283f, 0.036322046f, -2.0153294f, 0.2986141f, -0.27140957f, -0.031997748f, 0.10831474f, -0.19088398f, 0.25226822f, -0.36171722f, -0.8261965f, 0.025597526f, -6.0634694f, 0.07333156f, -19.039055f, -0.008794928f},
++      {-6.584427f, -0.2695549f, 3.6923518f, 0.08045694f, 0.8448247f, 0.33587f, 0.33306152f, -1.3394954f, 1.9176233f, 0.32120335f, -0.13893515f, 5.812869f, -0.067423165f, -2.3125954f, -0.1548096f, 1.6983922f, 0.23982282f, 0.5480074f, -0.5592765f, 1.4350542f, -0.4801796f, -0.39901868f, 0.772959f, 4.0612464f, 0.29629698f, -0.09469796f, 1.1799619f, 0.6110967f, -0.012199925f, 0.5283268f, 0.0012757303f, -0.04636692f},
++      {0.5167237f, -0.1354815f, -0.9152253f, -0.052931517f, -0.48752984f, -0.6779437f, 0.5820031f, -0.6688182f, 0.83224684f, 0.7231198f, 0.17497586f, -0.50484496f, -0.20580512f, 0.69385207f, 1.1025906f, -0.035927106f, 0.6984666f, 0.54188085f, -0.30089605f, -0.30007076f, 0.41424042f, 0.6113315f, -0.106801875f, 0.084458716f, 0.2749624f, 1.1863807f, 0.30052418f, 0.56012833f, 0.09756882f, 0.15391338f, 0.49399772f, 0.5641004f},
++      {-0.4641874f, 1.7517395f, -0.98170626f, 0.05413233f, 0.44472978f, -0.06422539f, -0.01487231f, -0.254847f, 1.3991936f, 0.127241f, -0.22781107f, 0.38928783f, -0.13840602f, -1.0819429f, 0.29143333f, 1.0668586f, -1.6614534f, 1.3381765f, 0.72633094f, 0.11753524f, -0.28239885f, 0.010338285f, -0.3865919f, -0.0016772869f, 0.22955117f, -0.13756792f, 0.25971234f, -0.40028784f, -0.23906219f, 3.7942564f, 0.093487546f, 0.30954236f},
++      {-0.2171141f, 0.78679484f, 1.5237176f, 0.0022867564f, -0.29644847f, -0.28458416f, 0.28747055f, 0.8558073f, -0.051479697f, -0.07021985f, -0.048024435f, 0.40075964f, 2.0876894f, 0.4468451f, 0.07531823f, 0.16490483f, -0.9601476f, 0.6280347f, -0.3007902f, -2.5106056f, -0.22324052f, -1.1236956f, 0.25617042f, -0.08671469f, 0.0006541249f, -0.019042173f, 0.63323367f, -0.49950787f, 0.5089751f, 0.63355297f, 0.7385491f, -0.24928908f},
++      {0.53941065f, -1.8688761f, 0.43573004f, -2.376558f, -0.39738435f, 0.10371806f, 0.54847765f, -1.6505427f, -0.39944342f, 0.5300962f, 0.45573255f, -0.45495713f, -0.29949948f, -1.0469893f, 0.31753668f, 0.8869375f, 0.49282768f, -1.3446923f, 0.24963327f, -1.2171606f, -0.06867265f, 0.98660374f, -0.30621853f, -0.00096942525f, -0.019253585f, 0.78566897f, 1.1798147f, -5.779978f, -0.48289356f, 0.1641915f, -0.9859968f, 0.67143303f},
++      {0.6497644f, 0.27684724f, -0.24663365f, 0.6108312f, -0.5066927f, -0.43206477f, 0.46705765f, -0.41919905f, 0.09733186f, 0.5177518f, -0.19100331f, -0.24727243f, 1.030347f, 0.6139122f, 0.3931195f, -0.3453828f, 0.8310089f, 0.6191375f, 1.0929002f, 0.36163506f, 0.50106764f, 0.13397981f, 0.75744164f, 0.028117318f, -0.03502733f, 0.066885754f, -1.1959991f, 0.30231112f, 0.21278659f, 0.24133344f, 0.3594288f, 0.21776935f},
++      {-0.16706267f, -0.46860132f, 0.05173692f, -0.4914279f, 0.35869235f, 1.417043f, -1.0567778f, 0.32263452f, -0.061463367f, -0.10137388f, 1.4386374f, -0.05366955f, -0.42395097f, -0.6920898f, -0.122351594f, 0.61593443f, 0.2114513f, 0.07475402f, -0.49853137f, 0.12759379f, -0.10809411f, -0.22753172f, 0.02047283f, 0.03219141f, -0.11540127f, -0.5254383f, 1.6261965f, -0.60985583f, -1.4891721f, 0.41527557f, -0.59505415f, -0.08529682f},
++      {0.33043182f, 0.3900356f, -0.23438114f, 0.17391817f, 0.24992645f, -0.33128256f, -0.034207072f, -0.0764934f, 0.25943068f, -0.54294974f, 0.33082432f, 0.009106896f, 0.21661633f, -0.18730797f, -1.1268115f, 0.16994393f, 0.82548165f, 0.3585673f, -1.0325336f, 0.48759943f, 0.030437047f, 0.046882458f, 0.6924321f, -0.0059892223f, -0.107433155f, -0.24497041f, -0.4489989f, -0.32524434f, -0.28536236f, 0.21728756f, -2.362421f, -0.052989457f},
++      {0.2427032f, 0.4821132f, -0.4269166f, 0.10718381f, -0.24184221f, -0.0629084f, -0.8298178f, -0.23522766f, 0.4043662f, -1.1625521f, 0.06938257f, 0.28529024f, 0.37137112f, -1.2915121f, -0.64412755f, 0.3580348f, 1.008547f, -0.010697091f, 0.52403104f, -0.028243892f, -0.4890995f, -0.04024791f, 0.12615313f, -0.0014114972f, -0.20319535f, -0.77608985f, -0.15110129f, -0.55126035f, -0.6877789f, -0.13853037f, -0.6414639f, 0.6673919f},
++      {0.7183024f, -1.0285351f, -0.7708693f, 0.48823336f, -0.41676748f, -0.007079376f, -0.40829813f, 1.0253577f, -0.22545333f, -0.26715308f, 0.045294613f, -0.38135475f, -0.057450544f, 0.8668392f, 0.02529464f, -0.6031978f, 0.3592546f, -0.6129195f, -0.5785074f, 0.7333501f, 0.07102564f, -0.325394f, 0.40526208f, -0.32094985f, -0.11200993f, -0.06890427f, -0.289546f, 0.47115144f, -0.03933357f, -0.2570412f, -0.5558368f, 0.1875051f}};
+ 
+   HOST_DEVICE_CONSTANT float bias_l2[kHidden] = {
+-      0.757268012f,  -0.746543825f, 0.565507114f,  0.400764108f, 0.224429309f, -0.162151635f, 0.0220634732f,
+-      -0.849074244f, 0.400682598f,  0.662804961f,  0.551618874f, 0.530713737f, 0.0550063401f, -1.12119913f,
+-      0.0710161701f, 0.318450451f,  0.770609558f,  0.393407822f, 0.407754391f, -0.700868487f, 0.654431939f,
+-      0.057774689f,  0.432167232f,  0.618238926f,  0.549070656f, 0.379352242f, 0.176305741f,  -0.00870035123f,
+-      0.658302546f,  0.87140739f,   -0.021444235f, 0.427636027f};
++      -2.0290544f, -0.5623589f, 0.30761585f, 0.48586038f, 2.318174f, 1.9406507f, 0.17702381f, 1.6294957f,
++      -2.1373904f, 0.5356523f, 1.1223904f, 0.22383595f, 0.49726897f, 0.9733038f, -2.6558645f, -0.24662451f,
++      1.7528827f, 0.43400186f, 0.2616262f, 0.93618065f, 2.669948f, -2.80376f, -0.4929101f, -0.21794674f,
++      -0.28269488f, -1.9748212f, 1.1720122f, -1.6752499f, 1.4237691f, 0.20004891f, -1.0106329f, 1.2111323f};
+ 
+   HOST_DEVICE_CONSTANT float wgt_out[kHidden] = {
+-      -2.46041465f, 1.60409307f,   1.38745511f,   -0.765711606f, -0.838400483f, -1.09725595f, -1.33712709f,
+-      1.67982864f,  -1.22138226f,  1.17120564f,   -0.987838864f, -0.835540116f, -1.3398056f,  -3.50716615f,
+-      -1.3847661f,  -0.748014629f, 1.02231288f,   0.854725122f,  1.14565742f,   -1.1649785f,  1.39162576f,
+-      -1.08854258f, -0.954086661f, -0.863604784f, -0.930150151f, -1.90803277f,  -1.06572461f, -8.74401283f,
+-      1.03877223f,  1.73325491f,   -3.04434586f,  -0.918062508f};
++      -0.37071523f, 0.32733783f, 0.54322535f, -0.40231842f, -0.5104461f, -0.30098072f, -0.5735884f, 0.6183919f,
++      -0.616077f, 0.48872375f, -0.48784083f, 0.4810614f, -0.7783464f, 0.39738867f, -1.3010631f, -0.53023225f,
++      1.371438f, 0.43232992f, 0.5774402f, -0.7004183f, 0.47306818f, -0.41195178f, -0.7752811f, -1.2008601f,
++      -0.68567187f, -0.5092174f, -0.22991198f, -0.21101348f, 0.4307546f, 0.9195783f, -0.7197415f, -1.6685072f};
++
++  HOST_DEVICE_CONSTANT float bias_out = 1.3916934f;
+ 
+-  HOST_DEVICE_CONSTANT float bias_out = -0.00567823043f;
++  // kWpBar[fam][ptbin * 10 + etabin]; fam 0 = E1 (shared MD), fam 1 = E2 (shared LS)
++  HOST_DEVICE_CONSTANT float kWpBar[2][kWpBins] = {
++      {0.025333472f, 0.034956217f, 0.038740255f, 0.012858309f, 0.046666905f, 0.02181775f, -0.045167845f, -0.090389155f, -0.062106844f, -0.3409191f, 0.06256127f, 0.05907954f, 0.0057276096f, -0.057088137f, -0.07517052f, -0.071784735f, -0.22301134f, -0.11060423f, 0.009426111f, 0.104686975f},
++      {-2.0342486f, -2.0161576f, -2.0110564f, -1.992059f, -1.9295328f, -1.9516866f, -1.9826066f, -1.9767588f, -2.5238304f, -2.222736f, -1.9364278f, -1.9395934f, -1.9410584f, -1.98137f, -1.9073231f, -1.99657f, -1.9347281f, -1.872688f, -2.2336154f, -2.5882418f}};
+ 
+ }  // namespace ALPAKA_ACCELERATOR_NAMESPACE::lst::dnn::edgemlp
+ 
+diff --git a/RecoTracker/LSTCore/src/alpaka/LSTEvent.dev.cc b/RecoTracker/LSTCore/src/alpaka/LSTEvent.dev.cc
+index 4bc6eabcd30..c22228a412b 100644
+--- a/RecoTracker/LSTCore/src/alpaka/LSTEvent.dev.cc
++++ b/RecoTracker/LSTCore/src/alpaka/LSTEvent.dev.cc
+@@ -991,6 +991,13 @@ void LSTEvent::buildChainEdges() {
+   auto featBuf = cms::alpakatools::make_device_buffer<float[]>(
+       queue_, wantFeat ? static_cast<size_t>(nEdges) * kChainEdgeFeatures : size_t{1});
+ 
++  // Resolve the per-edge-family weld bars on the HOST so the kernel takes two plain floats. A
++  // family left at its inherit sentinel resolves to thetaEdge, so both families then compare
++  // against the same number and the arithmetic is unchanged. With chainConfig_.edgeWpTable these
++  // two only feed the inert fallback: K5 then takes the bar from the head's own per-cell table.
++  float const weldThetaE1 = (chainConfig_.thetaEdgeE1 < 1e29f) ? chainConfig_.thetaEdgeE1 : chainConfig_.thetaEdge;
++  float const weldThetaE2 = (chainConfig_.thetaEdgeE2 < 1e29f) ? chainConfig_.thetaEdgeE2 : chainConfig_.thetaEdge;
++
+   alpaka::exec<Acc1D>(queue_,
+                       chainFlat_workDiv,
+                       ChainEdgeInference{},
+@@ -1002,6 +1009,9 @@ void LSTEvent::buildChainEdges() {
+                       chainMdIncidenceDC_->const_view(),
+                       chainLsIncidenceDC_->const_view(),
+                       chainEdgesDC_->view(),
++                      weldThetaE1,
++                      weldThetaE2,
++                      chainConfig_.edgeWpTable,
+                       wantFeat ? featBuf.data() : nullptr);
+ 
+   auto const t3 = stamp();
+@@ -1233,14 +1243,9 @@ void LSTEvent::buildChains() {
+   alpaka::memset(queue_, outWeld_buf, 0xff);
+   alpaka::memset(queue_, inWeld_buf, 0xff);
+ 
+-  // Resolve the per-edge-family weld bars on the HOST so the kernels take two plain floats. A
+-  // family left at its inherit sentinel resolves to thetaEdge, so both families then compare
+-  // against the same number and the arithmetic is unchanged.
+-  float const weldThetaE1 =
+-      (chainConfig_.thetaEdgeE1 < 1e29f) ? chainConfig_.thetaEdgeE1 : chainConfig_.thetaEdge;
+-  float const weldThetaE2 =
+-      (chainConfig_.thetaEdgeE2 < 1e29f) ? chainConfig_.thetaEdgeE2 : chainConfig_.thetaEdge;
+-
++  // S1: the weld eligibility bar is no longer a kernel argument. K5 resolved it per edge into
++  // ChainEdgesSoA::weldBar (from the head's per-family, per-cell table, or from the two per-family
++  // scalars when chainConfig_.edgeWpTable is false), so both weld kernels just read the edge row.
+   for (int sweep = 0; sweep < kChainWeldSweeps; ++sweep) {
+     // A fixed sweep count, no host sync: the reference's "break when nothing welded" early exit is
+     // a CPU nicety and a zero-weld sweep is idempotent.
+@@ -1253,9 +1258,7 @@ void LSTEvent::buildChains() {
+                         outWeld_buf.data(),
+                         inWeld_buf.data(),
+                         bestOut_buf.data(),
+-                        bestIn_buf.data(),
+-                        weldThetaE1,
+-                        weldThetaE2);
++                        bestIn_buf.data());
+     alpaka::exec<Acc1D>(queue_,
+                         chainFlat_workDiv,
+                         ChainWeldMutual{},
+@@ -1263,9 +1266,7 @@ void LSTEvent::buildChains() {
+                         outWeld_buf.data(),
+                         inWeld_buf.data(),
+                         bestOut_buf.data(),
+-                        bestIn_buf.data(),
+-                        weldThetaE1,
+-                        weldThetaE2);
++                        bestIn_buf.data());
+   }
+ 
+   auto const t1 = stamp();

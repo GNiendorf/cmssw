@@ -1,0 +1,7 @@
+{
+ "round": "3",
+ "pipeline": "shipped+armG+GM12F+pairdump-instrument",
+ "binary_md5": "0a49ac71980c8d85a2b8c4f17d2f1d44",
+ "sample": "event_1000 n=1000 s=1",
+ "purpose": "stage-3 attach pair rows, fully on-policy"
+}

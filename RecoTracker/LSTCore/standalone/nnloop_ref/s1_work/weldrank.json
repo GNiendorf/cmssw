@@ -1,0 +1,18 @@
+{
+ "shipped v3": {
+  "n_elig_disp_contested": 147330,
+  "weld_rate_disp": 0.1144777031154551,
+  "n_elig_prompt_contested": 951646,
+  "weld_rate_prompt": 0.12169125914468196,
+  "slotwin_out_disp": 0.33437181836693136,
+  "slotwin_in_disp": 0.3119120342089188
+ },
+ "C_cos3e3": {
+  "n_elig_disp_contested": 147032,
+  "weld_rate_disp": 0.11456009576146689,
+  "n_elig_prompt_contested": 951936,
+  "weld_rate_prompt": 0.12025283212316794,
+  "slotwin_out_disp": 0.3357160346047119,
+  "slotwin_in_disp": 0.3130747048261603
+ }
+}

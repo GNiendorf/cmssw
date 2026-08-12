@@ -1,0 +1,17 @@
+Traceback (most recent call last):
+  File "/mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/d3_ref/pu_judge.py", line 81, in <module>
+    m = judge(p)
+        ^^^^^^^^
+  File "/mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/d3_ref/pu_judge.py", line 32, in judge
+    t = uproot.open(path)["tree"]
+        ~~~~~~~~~~~~~~~~~^^^^^^^^
+  File "/cvmfs/cms.cern.ch/el9_amd64_gcc13/external/py3-uproot/5.7.1-93ea2308aedd69c6f733fe1d419ef890/lib/python3.12/site-packages/uproot/reading.py", line 2123, in __getitem__
+    return self.key(where).get()
+           ^^^^^^^^^^^^^^^
+  File "/cvmfs/cms.cern.ch/el9_amd64_gcc13/external/py3-uproot/5.7.1-93ea2308aedd69c6f733fe1d419ef890/lib/python3.12/site-packages/uproot/reading.py", line 2065, in key
+    raise uproot.KeyInFileError(
+uproot.exceptions.KeyInFileError: not found: 'tree' (with any cycle number)
+
+    Available keys: 'input;1', 'gitdiff;1', 'make_log;1', 'tracklooper_path;1', 'code_tag_data;1', 'full_cmd_line;1'
+
+in file /mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/nnloop_ref/s1_work/runs/S1E_cubehi_s2.root

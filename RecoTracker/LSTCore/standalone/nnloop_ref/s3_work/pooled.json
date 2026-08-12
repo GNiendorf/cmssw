@@ -1,0 +1,38 @@
+{
+ "SHIPPED4NN": {
+  "dup_overall_incut": 0.045097223709026746,
+  "fake_overall_incut": 0.045325926052768785,
+  "dup_barrel": 0.015219145532685475,
+  "fake_barrel": 0.050943788085609114,
+  "dup_transition": 0.013959743262405821,
+  "fake_transition": 0.048340128149867725,
+  "dup_endcap": 0.07052869319793183,
+  "fake_endcap": 0.04137485073479715,
+  "n_tc": 9518923,
+  "n_tc_t4cl": 383355
+ },
+ "GM12F": {
+  "dup_overall_incut": 0.044906094827447514,
+  "fake_overall_incut": 0.044776970023382316,
+  "dup_barrel": 0.014748348612604302,
+  "fake_barrel": 0.049589593662989116,
+  "dup_transition": 0.013191258617857896,
+  "fake_transition": 0.04584786284732137,
+  "dup_endcap": 0.07057680618132739,
+  "fake_endcap": 0.04184144782121856,
+  "n_tc": 9510179,
+  "n_tc_t4cl": 372410
+ },
+ "S3A2": {
+  "dup_overall_incut": 0.04464811402438838,
+  "fake_overall_incut": 0.04376059237678129,
+  "dup_barrel": 0.013841615023745904,
+  "fake_barrel": 0.04916243084316316,
+  "dup_transition": 0.011165347761027355,
+  "fake_transition": 0.04371774401129596,
+  "dup_endcap": 0.0712599358605322,
+  "fake_endcap": 0.04081930798038406,
+  "n_tc": 9506247,
+  "n_tc_t4cl": 371071
+ }
+}
