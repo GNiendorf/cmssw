@@ -1,0 +1,207 @@
+diff --git a/RecoTracker/LST/plugins/alpaka/LSTProducer.cc b/RecoTracker/LST/plugins/alpaka/LSTProducer.cc
+index 8e67d2124d2..7c63bee178a 100644
+--- a/RecoTracker/LST/plugins/alpaka/LSTProducer.cc
++++ b/RecoTracker/LST/plugins/alpaka/LSTProducer.cc
+@@ -60,6 +60,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
+     auto const& k = ps.getParameter<edm::ParameterSet>("claim");
+     c.orderAlpha = k.getParameter<double>("orderAlpha");
+     c.orderHinge = k.getParameter<double>("orderHinge");
++    auto const ow = k.getParameter<std::vector<double>>("orderRankWeights");
++    c.orderT3FakeMinW = ow.at(0);
++    c.orderT3FakeMaxW = ow.at(1);
++    c.orderEdgeLogitW = ow.at(2);
+     c.maxClaimedFrac = k.getParameter<double>("maxClaimedFrac");
+     c.maxClaimedMDs = k.getParameter<int32_t>("maxClaimedMDs");
+     c.braidFrac = k.getParameter<double>("braidFrac");
+@@ -176,6 +180,11 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
+         edm::ParameterSetDescription claimDesc;
+         claimDesc.add<double>("orderAlpha", 10.0)->setComment("-B: weight of the mX hinge in the K9 order key.");
+         claimDesc.add<double>("orderHinge", 5.0)->setComment("-BT: hinge point of the same key.");
++        claimDesc.add<std::vector<double>>("orderRankWeights", {0.0, 0.0, 0.0})
++            ->setComment(
++                "K9 order-key rank weights on (minT3FakeScore, maxT3FakeScore, sumEdgeLogit). "
++                "RANKING ONLY -- no acceptance threshold, tolerance or count depends on them, and "
++                "all-zero reproduces the frozen key bit for bit. See ChainConfig.h.");
+         claimDesc.add<double>("maxClaimedFrac", 0.20)->setComment("-F: candidate-relative claim tolerance.");
+         claimDesc.add<int32_t>("maxClaimedMDs", 1)->setComment("-FC: absolute claim tolerance, MiniDoublet units.");
+         claimDesc.add<double>("braidFrac", 0.50)->setComment("-W: owner-relative braid kill fraction.");
+diff --git a/RecoTracker/LSTCore/interface/ChainConfig.h b/RecoTracker/LSTCore/interface/ChainConfig.h
+index 8597e3e36dc..01127e6be11 100644
+--- a/RecoTracker/LSTCore/interface/ChainConfig.h
++++ b/RecoTracker/LSTCore/interface/ChainConfig.h
+@@ -291,6 +291,42 @@ namespace lst {
+     // trained inputs, and capping them would move PU200 scores for no memory saving at all.
+     uint32_t degreeCap = 256u;
+ 
++    // ------------------------------------------------------------------------------------------
++    // JET ROUND (P2) -- ORDER-KEY RANK TERMS. Ranking only: not one acceptance threshold, claim
++    // tolerance, braid fraction or count is touched by any of them, and every one is INERT AT 0,
++    // which reproduces the frozen key bit for bit (that is the A/B, not an approximation).
++    // ------------------------------------------------------------------------------------------
++    // The K9 claim is the primary selector in a jet core, not a tie-breaker: it keeps 6.69% of
++    // gate-alive chains there against 39.4% at PU200, and 43% of the whole jet-core efficiency loss
++    // is its doing (FINDINGS_JETPHYS.md). It ordered on `score - orderAlpha*hinge(marginX)` alone,
++    // and measured over the pairs that actually contend for hits (a candidate is rejected as soon
++    // as 3 of its hits are owned, so contention means >= 3 shared hit rows), the two ingredients of
++    // that key rank a core-TRUE chain above a core-FAKE one with AUC .717 (marginX) and .464
++    // (score) -- the second is worse than a coin flip, because `score`'s edge-logit content comes
++    // from a head applied where 1 edge in 1,270 is true instead of 1 in 8. Each core-true candidate
++    // must beat a MEDIAN OF 7 fake contenders, so a per-duel rate near .5 is fatal.
++    //
++    // These weights add per-chain purity evidence the key was missing, from columns K7 has already
++    // written into ChainsSoA::features when K9 runs -- zero new compute, no retrained head:
++    //   features[20] minT3FakeScore   AUC .884   features[21] maxT3FakeScore  AUC .838
++    //   features[2]  sumEdgeLogit     AUC .449 (so its contribution is worth REMOVING or inverting)
++    // Both T3 scores come from LST's own T3 fake head, which is why they are displaced-SAFE: the
++    // same network's prompt head separates better still (AUC .910) and the chain dcaXY better again
++    // (.886), and BOTH were refused after measurement -- a dcaXY rank term buys jet core +.078 and
++    // costs the PU200 dxy[0.1,1) band -.031 with PU200 fakes +8.2%, i.e. it is paid for out of the
++    // displaced advantage. See [P2] in standalone/FINDINGS_JETROUND.md for the full tables.
++    //
++    // Shape: a penalty, never a bonus, so a clean chain's key is EXACTLY its old value:
++    //   orderKey -= orderT3FakeMinW * clamp01(features[20])
++    //   orderKey -= orderT3FakeMaxW * clamp01(features[21])
++    //   orderKey -= orderEdgeLogitW * max(0, features[2])
++    // The clamp is what makes a NaN or an out-of-range logit unable to poison the rank comparator
++    // (the two T3 scores are sigmoid outputs and were measured strictly inside (0,1) over 287k
++    // chains on both samples, so the clamp never fires; it is a guard, not a working point).
++    float orderT3FakeMinW = 0.f;
++    float orderT3FakeMaxW = 0.f;
++    float orderEdgeLogitW = 0.f;
++
+     // True iff any band delta is live; reproduces the reference's `zOn` short-circuit exactly.
+     constexpr bool etaBandActive() const {
+       return zEta2 > zEta1 && (zdRI != 0.f || zdR != 0.f || zdR5 != 0.f || zdR6 != 0.f || zdM4 != 0.f || zdM4D != 0.f ||
+diff --git a/RecoTracker/LSTCore/src/alpaka/ChainArbitrate.h b/RecoTracker/LSTCore/src/alpaka/ChainArbitrate.h
+index 6af3ed7ebc6..a35a8ab794c 100644
+--- a/RecoTracker/LSTCore/src/alpaka/ChainArbitrate.h
++++ b/RecoTracker/LSTCore/src/alpaka/ChainArbitrate.h
+@@ -64,6 +64,38 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+   //   7 K10 layer-slot fallbacks    8 K10 rows that ran out of slots
+   static constexpr uint32_t kChainArbStats = 16u;
+ 
++  // ------------------------------------------------------------------------------------------
++  // THE K9 PRIORITY KEY. One expression, one call site (ChainClaimPrep, phase (b) below).
++  //
++  //   orderKey = score - orderAlpha * max(0, orderHinge - marginX)     the frozen key
++  //              - orderT3FakeMinW * clamp01(features[20])            } the P2 rank terms,
++  //              - orderT3FakeMaxW * clamp01(features[21])            } all inert at weight 0
++  //              - orderEdgeLogitW * max(0, features[2])              }
++  //
++  // It is NEVER a threshold -- acceptance cuts on chains.score, which none of this touches (the M9
++  // cross-scale-inversion lesson). Every added term is a PENALTY clamped at >= 0, so a chain with
++  // clean member T3s keeps exactly its frozen key and the weights are a pure re-ranking.
++  // See the ChainConfig.h block for the measurement behind each term and for the two better-
++  // separating columns (the T3 prompt head, the chain dcaXY) that were refused as displaced-hostile.
++  //
++  // KEPT AS A FUNCTION ON PURPOSE (P2/P1 coordination, FINDINGS_JETROUND.md): the key used to be one
++  // inline expression inside the claim-prep loop, and two arms of the jet round want to add terms to
++  // it. Anything else that wants to weigh in on the claim priority -- pixel-attach evidence, for
++  // instance -- extends THIS function's argument list rather than adding a second write to the
++  // orderKey column, so the tree keeps exactly one definition of the priority.
++  ALPAKA_FN_ACC ALPAKA_FN_INLINE float chainOrderKeyOf(ChainConfig const& cfg,
++                                                      float score,
++                                                      float marginX,
++                                                      Params_ChainFeat::ArrayFxFeat const& feats) {
++    float key = score - cfg.orderAlpha * chainMaxf(0.f, cfg.orderHinge - marginX);
++    // clamp01 written as min(1, max(0, x)) in this order so a NaN input yields a 0 penalty rather
++    // than propagating into the rank comparator.
++    key -= cfg.orderT3FakeMinW * chainMinf(1.f, chainMaxf(0.f, feats[20]));
++    key -= cfg.orderT3FakeMaxW * chainMinf(1.f, chainMaxf(0.f, feats[21]));
++    key -= cfg.orderEdgeLogitW * chainMaxf(0.f, feats[2]);
++    return key;
++  }
++
+   // ------------------------------------------------------------------------------------------
+   // K9-0 + K9-1. Everything the claim needs to know about a chain BEFORE the owner map exists.
+   // Four passes that used to be four launches; each one is per-chain elementwise and reads nothing
+@@ -138,7 +170,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+         float const score = chains.score()[c];
+         int const nL = chains.nLayers()[c];
+ 
+-        chains.orderKey()[c] = score - cfg.orderAlpha * chainMaxf(0.f, cfg.orderHinge - chains.marginX()[c]);
++        chains.orderKey()[c] = chainOrderKeyOf(cfg, score, chains.marginX()[c], chains.features()[c]);
+ 
+         bool const exempt = (chains.flags()[c] & kChainFlagExempt) != 0u;
+         float const thr =
+diff --git a/RecoTracker/LSTCore/src/alpaka/ChainConfigEnv.h b/RecoTracker/LSTCore/src/alpaka/ChainConfigEnv.h
+new file mode 100644
+index 00000000000..050d9f09653
+--- /dev/null
++++ b/RecoTracker/LSTCore/src/alpaka/ChainConfigEnv.h
+@@ -0,0 +1,52 @@
++#ifndef RecoTracker_LSTCore_src_alpaka_ChainConfigEnv_h
++#define RecoTracker_LSTCore_src_alpaka_ChainConfigEnv_h
++
++#include <cstdio>
++#include <cstdlib>
++
++#include "RecoTracker/LSTCore/interface/ChainConfig.h"
++
++// Env-knob tuning instrument, restored for the jet round from the A4 original
++// (standalone/nnloop_ref/b1_saved_ChainConfigEnv.h). Applied in the LSTEvent CONSTRUCTOR, not in
++// LST::run: the standalone driver (standalone/bin/lst.cc) constructs LSTEvent DIRECTLY and never
++// calls LST::run, so a hook there is invisible to every standalone measurement.
++//
++// Physics-inert with nothing set -- it is a sequence of "if the variable exists, overwrite" and the
++// CMSSW path sets none of them. Every override PRINTS ONCE, so the ABSENCE of a print is the signal
++// that the variable you thought you set never reached a kernel (that failure mode has cost this
++// project a full tuning cycle before).
++//
++// Shared instrument: any arm adding a ChainConfig knob for a sweep adds its envFloat line HERE
++// rather than inventing a second mechanism.
++namespace lst::chainenv {
++
++  inline void envFloat(char const* name, float& dst) {
++    if (char const* v = std::getenv(name)) {
++      float const before = dst;
++      dst = static_cast<float>(std::atof(v));
++      unsigned h = 0;
++      for (char const* p = name; *p; ++p)
++        h = h * 131u + static_cast<unsigned char>(*p);
++      static bool seen[128] = {};
++      if (!seen[h % 128u]) {
++        seen[h % 128u] = true;
++        std::printf("[chainenv] %s: %g -> %g\n", name, static_cast<double>(before), static_cast<double>(dst));
++        std::fflush(stdout);
++      }
++    }
++  }
++
++  inline void apply(ChainConfig& cfg) {
++    // P2 (jet round): the K9 order-key rank terms. Ranking only -- see the ChainConfig.h block.
++    envFloat("LSTCHAIN_orderT3FakeMinW", cfg.orderT3FakeMinW);
++    envFloat("LSTCHAIN_orderT3FakeMaxW", cfg.orderT3FakeMaxW);
++    envFloat("LSTCHAIN_orderEdgeLogitW", cfg.orderEdgeLogitW);
++    // The two frozen key weights, so that "is the key mis-weighted?" stays answerable without a
++    // rebuild. Measured answer, jets: no -- every alpha other than 10 is neutral-to-negative.
++    envFloat("LSTCHAIN_orderAlpha", cfg.orderAlpha);
++    envFloat("LSTCHAIN_orderHinge", cfg.orderHinge);
++  }
++
++}  // namespace lst::chainenv
++
++#endif
+diff --git a/RecoTracker/LSTCore/src/alpaka/LSTEvent.h b/RecoTracker/LSTCore/src/alpaka/LSTEvent.h
+index 95a6d505d7e..04345b89d40 100644
+--- a/RecoTracker/LSTCore/src/alpaka/LSTEvent.h
++++ b/RecoTracker/LSTCore/src/alpaka/LSTEvent.h
+@@ -37,6 +37,8 @@
+ #include "RecoTracker/LSTCore/interface/alpaka/ObjectRangesDeviceCollection.h"
+ #include "RecoTracker/LSTCore/interface/alpaka/EndcapGeometryDevDeviceCollection.h"
+ 
++#include "ChainConfigEnv.h"
++
+ #include "HeterogeneousCore/AlpakaInterface/interface/host.h"
+ #include "HeterogeneousCore/AlpakaInterface/interface/memory.h"
+ 
+@@ -156,6 +158,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+         throw std::invalid_argument("Minimum pT cut must be at least 0.6 GeV. Provided value: " +
+                                     std::to_string(ptCut));
+       }
++      // Tuning instrument, inert unless an LSTCHAIN_* variable is set (ChainConfigEnv.h). It has to
++      // sit here, not in LST::run: the standalone driver constructs LSTEvent directly.
++      lst::chainenv::apply(chainConfig_);
+     }
+     void initSync();        // synchronizes, for standalone usage
+     void resetEventSync();  // synchronizes, for standalone usage

@@ -1,0 +1,531 @@
+diff --git a/RecoTracker/LSTCore/interface/ChainConfig.h b/RecoTracker/LSTCore/interface/ChainConfig.h
+index 8597e3e36dc..2c8e5994f78 100644
+--- a/RecoTracker/LSTCore/interface/ChainConfig.h
++++ b/RecoTracker/LSTCore/interface/ChainConfig.h
+@@ -136,6 +136,51 @@ namespace lst {
+     float orderAlpha = 10.f;
+     float orderHinge = 5.f;
+ 
++    // JET ROUND (P1) -- PIXEL-SEED CONFIRMATION AS AN INPUT TO THE ORDER KEY, not a reward after it.
++    // K8-PRE (LSTEvent::seedConfirmChains) runs the frozen attach scorer over the K9 CANDIDATE set
++    // -- the same target predicate as ChainTargetFlags with candKeep in place of the accepted array
++    // -- and adds this to the order key of every candidate whose best pair reached its seed's banded
++    // delivery margin and won the one-pLS-one-owner contention. It is NOT a threshold and it does NOT
++    // admit anything: candKeep is neither read nor written by the bonus, so the claim walks the same
++    // candidate set in a different order. 0 skips the pre-pass entirely and the binary is
++    // bit-identical to the pre-P1 tree (independently verified 35/35 on PU200 and on the jet holdout),
++    // which is what makes both arms of the A/B one binary. LST_CHAIN_SEED_BONUS overrides it.
++    //
++    // Motivation, measured (FINDINGS_JETPHYS.md): only 94.6 of the 1,015 gate-alive 5-layer chains per
++    // jet event were ever offered a pixel seed, the K9 claim owns .434 of the jet-core efficiency loss,
++    // and the fake that steals a core track's hits out-ranks it on orderKey 73.8% of the time.
++    //
++    // THE DEFAULT IS 0, i.e. the mechanism ships INERT and the tier is a one-line change (or an env
++    // override). Same discipline as P2's arm: it keeps "no knobs set" a valid inertness control for the
++    // referee's harness and keeps the CMSSW-side default a no-op.
++    // The measured working point is 200, and 200 is a TIER rather than a tuned weight: the flat term
++    // saturates once it exceeds the key's own p10-p90 spread (91.3 on jets, P2 [18:00]) -- measured jet
++    // core .6620 / .6676 / .6681 / .6694 at 3 / 10 / 30 / 1e5, with 200 reproducing the 1e5 arm to one
++    // track -- and 200 keeps float resolution inside the tier, which 1e5 does not (its ULP is .008).
++    // IN A UNION with a companion additive term the spread widens (C1: 226.0), so the tier value has to
++    // clear that too: 200 is no longer strictly tiering under C1 and 1000 is the union value.
++    float orderSeedBonus = 0.f;
++    // Resolve the one-pLS-one-owner contention INSIDE the pre-pass, so only the chain that would
++    // actually be granted the seed is promoted. Without it every runner-up for the same pLS is
++    // promoted too, spends a claim slot and takes hits from another true track while still delivering
++    // a BARE TC -- the pT5 count is bounded by DISTINCT seeds, not by confirmed chains.
++    bool orderSeedContend = true;
++    // THE DISPLACED CREDIT (1e9 = off). A promotion is also a demotion of everything that does not get
++    // it, and a displaced track's pixel seed is exactly what does not exist -- so the flat term costs
++    // PU200 displaced efficiency (measured, no credit: dxy[1,5) -.0029, dxy[10,30) -.0025,
++    // vxy[5,10) -.0025, vxy[10,30) -.0029). A candidate whose member T3s ALL score at or above this on
++    // LST's own T3-network DISPLACED class (chains.features()[23] = min over members of
++    // triplets.displacedScore()) takes the same flat term, so positive displaced evidence holds a
++    // chain's place in the order.
++    // Why this axis and not dcaXY: 59% of jet-core FAKES sit in the large-dcaXY exempt branch
++    // (FINDINGS_JETPHYS.md Q2), so a dcaXY-keyed hold promotes the fakes wholesale -- measured, and it
++    // is exactly what happened: holding the whole exempt branch gave jet core .6665 -> .5928 with core
++    // fake .674, and holding dcaXY >= 12 / >= 5 was worse than no hold on BOTH samples. A stitched
++    // core fake is built from T3s of unrelated PROMPT tracks, so it scores low on the displaced class;
++    // that is the axis that separates the two populations rather than confusing them (the same
++    // reasoning P4 applied to P2's fakeScore term, FINDINGS_JETROUND.md [P4 20:35]).
++    float orderSeedHoldDispMin = 1e9f;
++
+     // -F 0.20 / -FC 1 / -FCX 0: the candidate-relative claim tolerance. -FC is expressed in MD
+     // units for physics readability; the claim universe is HITS (-H 1 is compile-time true) and
+     // every MD contributes 2 of them, so the budget doubles.
+diff --git a/RecoTracker/LSTCore/src/alpaka/ChainArbitrate.h b/RecoTracker/LSTCore/src/alpaka/ChainArbitrate.h
+index 6af3ed7ebc6..56ac2b6e628 100644
+--- a/RecoTracker/LSTCore/src/alpaka/ChainArbitrate.h
++++ b/RecoTracker/LSTCore/src/alpaka/ChainArbitrate.h
+@@ -172,6 +172,42 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+     }
+   };
+ 
++  // K8-PRE, second half (jet round, P1). The pixel-seed evidence entering the order key.
++  //
++  // One pass over the K8-PRE target positions: a candidate chain whose best (chain, pLS) pair reached
++  // its seed's banded delivery margin AND won the pre-pass contention -- i.e. one that WOULD be granted
++  // a seed if it won the claim -- has `orderSeedBonus` added to the key the claim ranks on.
++  // `tgtPls[t] >= 0` is exactly that predicate: ChainAttachScore keeps only pairs at or above
++  // `pq.attachThr`, ChainAttachUnpackBest parks a target with none at -1, and ChainAttachResolve clears
++  // the losers of the contention. No new bar is introduced, which is what keeps the FROZEN attach head
++  // and its FROZEN bars frozen.
++  //
++  // `holdDispMin` is the displaced credit; its whole argument is at ChainConfig::orderSeedHoldDispMin.
++  //
++  // Why a separate kernel rather than a term inside ChainClaimPrep: the evidence does not exist yet
++  // when ChainClaimPrep runs (the pre-pass needs its candidate mask). The term is ADDITIVE and the base
++  // key is untouched, so this composes with any other change to the key's composition -- see the
++  // P1/P2 contract in standalone/FINDINGS_JETROUND.md.
++  //
++  // The key stays a pure ORDER: nothing here is compared against a threshold, and candKeep -- the one
++  // thing that decides admission -- is not touched (the M9 cross-scale-inversion lesson).
++  struct ChainOrderSeedBonus {
++    ALPAKA_FN_ACC void operator()(Acc1D const& acc,
++                                  Chains chains,
++                                  uint32_t const* targets,
++                                  int32_t const* tgtPls,
++                                  uint32_t nTargets,
++                                  float bonus,
++                                  float holdDispMin) const {
++      for (uint32_t t : cms::alpakatools::uniform_elements(acc, nTargets)) {
++        uint32_t const c = targets[t];
++        if (tgtPls[t] < 0 && !(chains.features()[c][23] >= holdDispMin))
++          continue;
++        chains.orderKey()[c] = chains.orderKey()[c] + bonus;
++      }
++    }
++  };
++
+   // Counts and offsets are separate arrays: a worker's last key would otherwise read the count of
+   // the next worker's first key after that worker had already overwritten it with an offset.
+   struct ChainSegPrefix {
+diff --git a/RecoTracker/LSTCore/src/alpaka/ChainAttach.h b/RecoTracker/LSTCore/src/alpaka/ChainAttach.h
+index a051e6ed79e..41579f8f3e8 100644
+--- a/RecoTracker/LSTCore/src/alpaka/ChainAttach.h
++++ b/RecoTracker/LSTCore/src/alpaka/ChainAttach.h
+@@ -1222,6 +1222,36 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+     }
+   };
+ 
++  // K8-PRE (jet round, P1). The SAME keep predicate as ChainTargetFlags, over the K9 CANDIDATE mask
++  // instead of the K9 accepted array: it is what makes pixel-seed evidence an INPUT to the claim's
++  // order rather than a reward handed to whatever the claim already accepted.
++  //
++  // Two deliberate differences from ChainTargetFlags, both structural:
++  //   * it is keyed by CHAIN ROW, not by accepted position, so `ChainCompactSelect` is called with
++  //     `src == nullptr` and the compacted list carries chain indices in ascending row order. The
++  //     pre-pass has no contention and no -RD walk, so no consumer of that list reads its ORDER (the
++  //     per-target pick is an argmax whose tie-break is the pLS row); ascending-row is therefore
++  //     free and deterministic.
++  //   * `candKeep` is READ-ONLY here. The pre-pass must not change what the claim admits -- only the
++  //     order in which it walks it -- so nothing in this arm writes candKeep or any acceptance
++  //     threshold.
++  // The dcaXY half is inert at the frozen attachDcaMax (1e9) and is kept only so the two target
++  // selections cannot diverge if it is ever turned on.
++  struct ChainSeedCandFlags {
++    ALPAKA_FN_ACC void operator()(Acc1D const& acc,
++                                  ChainsConst chains,
++                                  uint32_t const* candKeep,
++                                  uint32_t nBound,
++                                  uint32_t* keep,
++                                  ChainConfig cfg) const {
++      for (uint32_t c : cms::alpakatools::uniform_elements(acc, nBound)) {
++        bool const k = (candKeep[c] != 0u) && (chains.nLayers()[c] >= kAttachMinLayers) &&
++                       !(chains.dcaXY()[c] >= cfg.attachDcaMax);
++        keep[c] = k ? 1u : 0u;
++      }
++    }
++  };
++
+   // K8c contention. The reference walks the target positions and lets a later target take a
+   // contested pLS only on a STRICTLY higher logit -- which is the argmax over the positions that
+   // picked that pLS, with the EARLIER position keeping an exact tie. An argmax has no order, so it
+diff --git a/RecoTracker/LSTCore/src/alpaka/LSTEvent.dev.cc b/RecoTracker/LSTCore/src/alpaka/LSTEvent.dev.cc
+index 514b2eda550..43994280840 100644
+--- a/RecoTracker/LSTCore/src/alpaka/LSTEvent.dev.cc
++++ b/RecoTracker/LSTCore/src/alpaka/LSTEvent.dev.cc
+@@ -149,6 +149,57 @@ namespace {
+     return (env <= 0) ? kChainDegreeCapOff : static_cast<uint32_t>(env);
+   }
+ 
++  // JET ROUND (P1). Overrides of the three K8-PRE knobs, so ONE binary supplies every arm of the A/B.
++  // Unset means "use the configured value"; orderSeedBonus == 0 means OFF, which skips the pre-pass
++  // entirely and is today's behaviour bit for bit. The C++ defaults live in ChainConfig.h.
++  //
++  // EVERY read is ANNOUNCED, override or not (FINDINGS_JETROUND.md [P4 20:15] item 2): an env knob that
++  // silently does nothing -- a misspelled prefix, a variable that never reaches a kernel -- produces a
++  // number that is real, reproducible and attributed to the wrong configuration. `[chainenv]` is P2's
++  // prefix, deliberately, so one grep counts the override lines of BOTH arms in a union log; the
++  // `P1 K8-PRE` line then states the whole resolved configuration, including the untouched fields.
++  void chainSeedAnnounce(std::string const& text) {
++    lstWarning(std::format("[chainenv] {}", text));
++  }
++
++  float chainSeedBonus(float configured) {
++    static double const env = []() {
++      char const* s = std::getenv("LST_CHAIN_SEED_BONUS");
++      if (s != nullptr && *s != '\0') {
++        chainSeedAnnounce(std::format("LST_CHAIN_SEED_BONUS: default -> {}", s));
++        return std::atof(s);
++      }
++      return -1e30;
++    }();
++    return (env <= -1e29) ? configured : static_cast<float>(env);
++  }
++
++  // The pre-pass contention switch and the displaced credit, same contract: unset means "use the
++  // configured value".
++  bool chainSeedContend(bool configured) {
++    static long const env = []() {
++      char const* s = std::getenv("LST_CHAIN_SEED_CONTEND");
++      if (s != nullptr && *s != '\0') {
++        chainSeedAnnounce(std::format("LST_CHAIN_SEED_CONTEND: default -> {}", s));
++        return std::atol(s);
++      }
++      return -1L;
++    }();
++    return (env < 0) ? configured : (env != 0);
++  }
++
++  float chainSeedHoldDisp(float configured) {
++    static double const env = []() {
++      char const* s = std::getenv("LST_CHAIN_SEED_HOLDDISP");
++      if (s != nullptr && *s != '\0') {
++        chainSeedAnnounce(std::format("LST_CHAIN_SEED_HOLDDISP: default -> {}", s));
++        return std::atof(s);
++      }
++      return -1e30;
++    }();
++    return (env <= -1e29) ? configured : static_cast<float>(env);
++  }
++
+   // An overflowing event is SKIPPED (loudly) rather than fatal, because one unallocatable event in
+   // a thousand must not take the other 999 with it -- 9.0% of jet events are over the GPU ceiling
+   // and the process currently dies on the first of them. This makes the failure a hard error again
+@@ -1703,6 +1754,28 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
+                       chainConfig_);
+   auto const t2 = stamp();
+ 
++  // JET ROUND (P1). K8-PRE, the seed-confirmation pre-pass: the frozen attach head over the K9
++  // CANDIDATE set, publishing only the orderSeedBonus term of the order key the claim ranks on.
++  // It has to sit HERE -- after ChainClaimPrep, which computes candKeep and the base key, and before
++  // ChainCandScatter, which freezes the key into the rank records.
++  //
++  // The per-pLS records are built here rather than in the attach block below because BOTH passes
++  // read them and this is now the earlier of the two. The kernel depends only on the pixel seed
++  // collections, so moving it earlier changes nothing it computes.
++  uint32_t const nPls = std::max(1u, pixelSize_);
++  auto plsPre_buf = cms::alpakatools::make_device_buffer<AttachPlsPre[]>(queue_, nPls);
++  if (pixelSize_ > 0)
++    alpaka::exec<Acc1D>(queue_,
++                        chainFlat_workDiv,
++                        ChainAttachPlsPre{},
++                        lstInputDC_->const_view().pixelSeeds(),
++                        pixelSegmentsDC_->const_view(),
++                        plsPre_buf.data(),
++                        pixelSize_,
++                        chainConfig_);
++  seedConfirmChains(candKeep_buf.data(), plsPre_buf.data());
++  auto const t2b = stamp();
++
+   // K9a / K9b / K9c: pre-claim, greedy claim, braid, as conflict-free rounds (see ChainArbitrate.h).
+   auto owner_buf = cms::alpakatools::make_device_buffer<int32_t[]>(queue_, nHits);
+   auto order_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, nChainCount_);
+@@ -1711,7 +1784,7 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
+   alpaka::memset(queue_, stats_buf, 0u);
+ 
+   // T4 INSTRUMENT (timing only): the K9-claim block is seven things, and the map lumps them.
+-  auto k9a = t2, k9b = t2, k9c = t2, k9d = t2, k9e = t2;
++  auto k9a = t2b, k9b = t2b, k9c = t2b, k9d = t2b, k9e = t2b;
+   uint32_t nCandDiag = 0u;
+   auto nCand_buf = cms::alpakatools::make_device_buffer<uint32_t>(queue_);
+   {
+@@ -1814,8 +1887,7 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
+   //   hashKey/Val   the -RD seed-family table stage A fills and stage B's -RDT reuses
+   //   xcPairs       the -XC bare-chain-arm pass-1 filtered pair compaction
+   //   xcRetired     the -XC verdict, consumed by the final retirement
+-  uint32_t const nPls = std::max(1u, pixelSize_);
+-  auto plsPre_buf = cms::alpakatools::make_device_buffer<AttachPlsPre[]>(queue_, nPls);
++  // (nPls and plsPre_buf are declared above the claim: P1's K8-PRE is the first reader of both.)
+   auto plsOwned_buf = cms::alpakatools::make_device_buffer<uint8_t[]>(queue_, nPls);
+   auto plsBestChain_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, nPls);
+   auto plsBestT3_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, nPls);
+@@ -1833,15 +1905,6 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
+   alpaka::memset(queue_, rdHashKey_buf, 0xFF);  // chainattach::kSeedHashEmpty everywhere
+   alpaka::memset(queue_, xcCursor_buf, 0u);
+   alpaka::memset(queue_, xcRetired_buf, 0u);
+-  if (pixelSize_ > 0)
+-    alpaka::exec<Acc1D>(queue_,
+-                        chainFlat_workDiv,
+-                        ChainAttachPlsPre{},
+-                        lstInputDC_->const_view().pixelSeeds(),
+-                        pixelSegmentsDC_->const_view(),
+-                        plsPre_buf.data(),
+-                        pixelSize_,
+-                        chainConfig_);
+ 
+   // The stage-B TARGET UNIVERSE first: it depends only on the K9 accepted array, and the ONE
+   // grid both attach stages share needs both target sets to form its union hull. Stage B's
+@@ -2229,16 +2292,19 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
+                     s[11],
+                     s[12],
+                     s[13]));
++    if (!seedPreSummary_.empty())
++      lstWarning(std::format("[CHAIN K8PRE] {}", seedPreSummary_));
+     if (timing) {
+       auto ms = [](auto a, auto b) { return std::chrono::duration<double, std::milli>(b - a).count(); };
+       lstWarning(
+-          std::format("[CHAIN TIMING] compact {:.3f} ms | K9 prep {:.3f} ms | K9 claim {:.3f} ms | "
++          std::format("[CHAIN TIMING] compact {:.3f} ms | K9 prep {:.3f} ms | K8pre {:.3f} ms | K9 claim {:.3f} ms | "
+                       "K8 attach {:.3f} ms | K10 rows {:.3f} ms | "
+                       "K10 emit {:.3f} ms | T3CC {:.3f} ms | XC {:.3f} ms | suppress {:.3f} ms | "
+                       "total {:.3f} ms",
+                       ms(t0, t1),
+                       ms(t1, t2),
+-                      ms(t2, t3),
++                      ms(t2, t2b),
++                      ms(t2b, t3),
+                       ms(t3, t3b),
+                       ms(t4, t4b),
+                       ms(t4b, t4c),
+@@ -2262,7 +2328,7 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
+           nDelivDiag,
+           post_h.data()[6],
+           post_h.data()[21],
+-          ms(t2, k9a),
++          ms(t2b, k9a),
+           ms(k9a, k9b),
+           ms(k9b, k9c),
+           ms(k9c, k9d),
+@@ -2278,6 +2344,207 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
+   }
+ }
+ 
++// JET ROUND (P1). K8-PRE: pixel-seed evidence as an INPUT to the K9 arbitration.
++//
++// THE ARCHITECTURAL FACT THIS UNDOES (FINDINGS_JETPHYS.md, measured on 250 jet events):
++// ChainTargetFlags draws the attach target list from `accepted`, the K9 output, so of the 1,015
++// gate-alive 5-layer chains per jet event only 94.6 are ever OFFERED a pixel seed -- while LST master
++// pixel-confirms its whole T5 pool BEFORE its final selection and takes .778 core efficiency out of
++// pT5 (74.4/evt against our 39.8). We reserved pixel confirmation for chains that had already won the
++// arbitration; master uses it to decide the arbitration. This function is that inversion, and nothing
++// more: it runs the SAME frozen head over the SAME predicate with `candKeep` where `accepted` used to
++// be, and its single publication is the orderSeedBonus term of chains.orderKey().
++//
++// SCORE-ONLY, and that is load-bearing rather than incidental:
++//   * plsBest goes to a SCRATCH buffer. The real plsBestChain -- the -RPSA retirement evidence -- is
++//     still the max over the pairs of ACCEPTED targets only, so not one extra bare-pLS row is
++//     retired. Bare pLS rows are 16.5 TC/evt on jets at .969 non-fake; enlarging that max would have
++//     cost efficiency, silently, on both samples.
++//   * xcPairs is nullptr, so the -XC pass-1 stream and its cap are untouched.
++//   * neither attachPls nor attachLogit is written. Writing attachPls here would be a live BUG:
++//     ChainEmitTCs reads it for every emitted chain and would publish a type-7 row whose pixel seed
++//     was never granted, never contended and never deduped.
++// So the only chain-visible effect of this pass is the ORDER the claim walks its candidates in --
++// candKeep is read and never written, so admission is bit-identical -- and orderSeedBonus == 0 skips
++// the pass entirely, which is what makes both arms of the A/B one binary.
++void LSTEvent::seedConfirmChains(uint32_t const* candKeep, AttachPlsPre const* plsPre) {
++  seedPreSummary_.clear();
++  float const bonus = chainSeedBonus(chainConfig_.orderSeedBonus);
++  bool const contend = chainSeedContend(chainConfig_.orderSeedContend);
++  float const holdDisp = chainSeedHoldDisp(chainConfig_.orderSeedHoldDispMin);
++  // The whole resolved P1 configuration, once per job, so a log states it rather than implying it.
++  {
++    static std::once_flag once;
++    std::call_once(once, [&]() {
++      chainSeedAnnounce(std::format("P1 K8-PRE resolved: orderSeedBonus={} orderSeedContend={} orderSeedHoldDispMin={}",
++                                    bonus,
++                                    contend ? 1 : 0,
++                                    holdDisp));
++    });
++  }
++  if (bonus == 0.f)
++    return;
++  if (nChainCount_ == 0 || !chainsDC_.has_value() || pixelSize_ == 0)
++    return;
++
++  bool const timing = chainTimingEnabled();
++  auto const chainFlat_workDiv = cms::alpakatools::make_workdiv<Acc1D>(max_blocks, 256);
++  auto const chainScan_workDiv = cms::alpakatools::make_workdiv<Acc1D>(1, kChainScanBlockThreads);
++  uint32_t const nPls = std::max(1u, pixelSize_);
++
++  // The candidate target list: the ChainTargetFlags predicate over candKeep, compacted in ascending
++  // CHAIN ROW order (ChainCompactSelect with src == nullptr writes the index itself). No consumer
++  // below reads the order -- the per-target pick is an argmax and there is no contention here.
++  auto keep_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, nChainCount_);
++  auto offs_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, nChainCount_ + 1u);
++  auto nCands_buf_d = cms::alpakatools::make_device_buffer<uint32_t>(queue_);
++  auto cands_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, nChainCount_);
++  alpaka::exec<Acc1D>(queue_,
++                      chainFlat_workDiv,
++                      ChainSeedCandFlags{},
++                      chainsDC_->const_view(),
++                      candKeep,
++                      nChainCount_,
++                      keep_buf.data(),
++                      chainConfig_);
++  chainScanTimed(timing, __LINE__,
++      queue_, chainScan_workDiv, ChainSegPrefix{}, keep_buf.data(), offs_buf.data(), nCands_buf_d.data(), nChainCount_);
++  alpaka::exec<Acc1D>(queue_,
++                      chainFlat_workDiv,
++                      ChainCompactSelect{},
++                      keep_buf.data(),
++                      offs_buf.data(),
++                      nChainCount_,
++                      static_cast<uint32_t const*>(nullptr),  // the chain row IS the payload
++                      cands_buf.data(),
++                      nullptr);  // the prefix above already published the count
++  auto nCands_buf_h = cms::alpakatools::make_host_buffer<uint32_t>(queue_);
++  alpaka::memcpy(queue_, nCands_buf_h, nCands_buf_d);
++  alpaka::wait(queue_);  // the candidate count sizes every buffer below
++  uint32_t const nCands = *nCands_buf_h.data();
++  if (nCands == 0)
++    return;
++
++  auto tgtPre_buf = cms::alpakatools::make_device_buffer<AttachTargetPre[]>(queue_, nCands);
++  alpaka::exec<Acc1D>(queue_,
++                      chainFlat_workDiv,
++                      ChainAttachTargetPre{},
++                      miniDoubletsDC_->const_view().miniDoublets(),
++                      chainItemsDC_->const_view(),
++                      chainsDC_->const_view(),
++                      cands_buf.data(),
++                      nCands,
++                      tgtPre_buf.data());
++
++  // Its own grid, over the candidate hull alone: the bare-T3 target universe does not exist yet (it
++  // is defined against the K9-accepted array), so this grid cannot be the union one and is released
++  // again below. Phase 2 of the design collapses the two builds; see FINDINGS_JETROUND.md.
++  buildAttachGrid(plsPre, tgtPre_buf.data(), nCands, static_cast<AttachTargetPre const*>(nullptr), 0u);
++  if (!attachGridOffs_.has_value())
++    return;
++
++  auto stats_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, chainattach::kStats);
++  auto tgtKey_buf = cms::alpakatools::make_device_buffer<uint64_t[]>(queue_, nCands);
++  auto tgtPls_buf = cms::alpakatools::make_device_buffer<int32_t[]>(queue_, nCands);
++  auto tgtLogit_buf = cms::alpakatools::make_device_buffer<float[]>(queue_, nCands);
++  // The -RPSA evidence array of this pass, written and thrown away: see the header comment.
++  auto plsBestScratch_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, nPls);
++  alpaka::memset(queue_, stats_buf, 0u);
++  alpaka::memset(queue_, tgtKey_buf, 0);  // key 0 = "no pair reached the margin"
++  alpaka::memset(queue_, plsBestScratch_buf, 0u);
++  uint32_t const attachSlices =
++      cms::alpakatools::requires_single_thread_per_block_v<Acc1D> ? 1u : chainAttachScoreSlices();
++  auto const attachScore_workDiv = cms::alpakatools::make_workdiv<Acc1D>(
++      std::max<uint32_t>(max_blocks, (nCands * attachSlices + 255u) / 256u), 256);
++  alpaka::exec<Acc1D>(queue_,
++                      attachScore_workDiv,
++                      ChainAttachScore{},
++                      plsPre,
++                      tgtPre_buf.data(),
++                      nCands,
++                      nCands,  // no aux 4-layer tail: every candidate here is a 5+ layer target
++                      attachGridOffs_->data(),
++                      attachGridItems_->data(),
++                      tgtKey_buf.data(),
++                      plsBestScratch_buf.data(),
++                      static_cast<ChainXcPair*>(nullptr),  // no -XC append from the pre-pass
++                      static_cast<uint32_t*>(nullptr),
++                      0u,
++                      stats_buf.data(),
++                      attachSlices,
++                      chainConfig_);
++  alpaka::exec<Acc1D>(queue_,
++                      chainFlat_workDiv,
++                      ChainAttachUnpackBest{},
++                      tgtKey_buf.data(),
++                      static_cast<uint32_t const*>(nullptr),
++                      tgtPls_buf.data(),
++                      tgtLogit_buf.data(),
++                      nCands,
++                      stats_buf.data());
++  // The one-pLS-one-owner contention, resolved HERE on scratch arrays so that the flat term promotes
++  // only the chain that would really be granted the seed. `targets == nullptr` is the stage-B calling
++  // convention of ChainAttachResolve: the verdicts stay on the position arrays and NOTHING is written
++  // to a chain row -- which is exactly what the pre-pass needs (attachPls must stay -1 until the real
++  // stage A decides it). plsKey is nPls-wide and starts at 0, the "no owner" key.
++  if (contend) {
++    auto plsKey_buf = cms::alpakatools::make_device_buffer<uint64_t[]>(queue_, nPls);
++    auto keep_scratch = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, nCands);
++    alpaka::memset(queue_, plsKey_buf, 0);
++    alpaka::exec<Acc1D>(queue_,
++                        chainFlat_workDiv,
++                        ChainAttachArgmax{},
++                        tgtPls_buf.data(),
++                        tgtLogit_buf.data(),
++                        nCands,
++                        plsKey_buf.data());
++    alpaka::exec<Acc1D>(queue_,
++                        chainFlat_workDiv,
++                        ChainAttachResolve{},
++                        chainsDC_->view(),
++                        static_cast<uint32_t const*>(nullptr),  // do NOT publish onto the chain rows
++                        tgtPls_buf.data(),
++                        tgtLogit_buf.data(),
++                        nCands,
++                        plsKey_buf.data(),
++                        keep_scratch.data());
++  }
++  alpaka::exec<Acc1D>(queue_,
++                      chainFlat_workDiv,
++                      ChainOrderSeedBonus{},
++                      chainsDC_->view(),
++                      cands_buf.data(),
++                      tgtPls_buf.data(),
++                      nCands,
++                      bonus,
++                      holdDisp);
++
++  // The post-K9 attach builds THE grid (stage-A + bare-T3 union hull) from scratch, so this one has
++  // no reader left: its ~10 MB items payload goes back to the caching allocator before that build,
++  // which is why the peak is unchanged.
++  attachGridOffs_.reset();
++  attachGridItems_.reset();
++  attachGridEntries_ = 0;
++
++  if (timing || objectsStatistics_) {
++    auto stats_h = cms::alpakatools::make_host_buffer<uint32_t[]>(queue_, chainattach::kStats);
++    alpaka::memcpy(queue_, stats_h, stats_buf);
++    alpaka::wait(queue_);
++    uint32_t const* s = stats_h.data();
++    // `confirmed` is the PRE-contention count (ChainAttachUnpackBest's own census); the promoted set is
++    // that minus the contention losers.
++    seedPreSummary_ = std::format("bonus={} contend={} holdDisp={} cands={} confirmed={} cand={} pairs={} dup={}",
++                                  bonus,
++                                  contend ? 1 : 0,
++                                  holdDisp,
++                                  nCands,
++                                  s[3],
++                                  s[1],
++                                  s[2],
++                                  s[10]);
++  }
++}
++
+ void LSTEvent::attachPixels(unsigned int nHits,
+                             uint32_t const* accepted,
+                             AttachPlsPre const* plsPre,
+diff --git a/RecoTracker/LSTCore/src/alpaka/LSTEvent.h b/RecoTracker/LSTCore/src/alpaka/LSTEvent.h
+index 95a6d505d7e..6e758c2e21a 100644
+--- a/RecoTracker/LSTCore/src/alpaka/LSTEvent.h
++++ b/RecoTracker/LSTCore/src/alpaka/LSTEvent.h
+@@ -221,6 +221,17 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+                       ChainXcPair* xcPairs,
+                       uint32_t* xcCursor,
+                       uint32_t xcCap);
++    // JET ROUND (P1). K8-PRE: the seed-confirmation PRE-PASS, run inside arbitrateChains between
++    // ChainClaimPrep and the K9 claim. It scores the FROZEN attach head over the K9 CANDIDATE set
++    // (candKeep + the ChainTargetFlags predicate) and publishes exactly one thing -- the
++    // orderSeedBonus term of chains.orderKey() -- so that a core-true chain with a matching pixel
++    // seed can out-rank the bare fake that currently steals its hits. SCORE-ONLY: plsBest goes to a
++    // scratch buffer, xcPairs is nullptr and neither attachPls nor attachLogit is written, so no
++    // retirement, no crossclean and no delivery sees anything from this pass. It builds and
++    // immediately frees its own grid, over the candidate hull.
++    void seedConfirmChains(uint32_t const* candKeep, AttachPlsPre const* plsPre);
++    // Per-event K8-PRE counters, formatted for the [CHAIN K8PRE] printout.
++    std::string seedPreSummary_;
+     // THE ONE K8a GRID, built from the UNION of the two stages' per-r-bin radial hulls and shared
+     // by BOTH attach stages. It used to be built twice -- same plsPre, same ChainConfig, same cell
+     // layout, only a different hull -- which cost a second GridCount + prefix + GridScatter, a
