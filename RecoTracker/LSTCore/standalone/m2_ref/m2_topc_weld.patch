@@ -1,0 +1,984 @@
+diff --git a/RecoTracker/LSTCore/interface/ChainConfig.h b/RecoTracker/LSTCore/interface/ChainConfig.h
+index afd0367f667..1bed4d4031d 100644
+--- a/RecoTracker/LSTCore/interface/ChainConfig.h
++++ b/RecoTracker/LSTCore/interface/ChainConfig.h
+@@ -47,6 +47,28 @@ namespace lst {
+     // -L 3.0 : chain score length weight (ANCHOR said 0.5, the M19 block overrides).
+     float lambdaLen = 3.f;
+ 
++    // ---- M2 (jet speed/memory round): the per-NODE top-C edge cap -----------------------------
++    // Keep, per chain node, only its nodeTopC highest-keyed ELIGIBLE out-edges and its nodeTopC
++    // highest-keyed eligible in-edges; weld over the union. See the long K4 note in
++    // src/alpaka/ChainEdges.h for the mechanism and for the exactness condition (C >= the largest
++    // rank any sweep's argmax reaches inside a node's own eligible list -- a MEASURED quantity,
++    // LST_CHAIN_RANK_CENSUS, not a consequence of kChainWeldSweeps).
++    //
++    // WHY IT EXISTS: the weld gives each node one out-slot and one in-slot, so the number of edges it
++    // can possibly use is O(nNodes); on a collimated (jet) event the enumeration hands it
++    // sum_key degIn*degOut = up to 3.8e8 rows, 8.4 GB, past both the 1 GiB device-allocator bin and
++    // the 4 GiB alpaka Idx byte extent, of which 0.018% are ever welded. Under the cap the edge array
++    // is bounded by 2*C*nNodes rows: exact, and sample independent.
++    //
++    // nodeTopC == 0 turns the cap OFF and restores the single flat exactly-sized edge array with no
++    // tiling, byte for byte. That is the A arm of every measurement.
++    uint32_t nodeTopC = 8;
++    // Rows of the transient tile the capped path enumerates and scores into. Purely a memory and
++    // locality knob: every tiling enumerates the same global rows in the same order and therefore
++    // inserts the same keys. The tile is allocated at min(this, total rows), so PU200 -- whose whole
++    // edge list is 124k rows -- never pays for it.
++    uint32_t edgeTileRows = 4u * 1024u * 1024u;
++
+     // -TR 1 / -TT 1.2 / -TA 1.0 / -TL 5 / -TP 1 : terminal trim.
+     bool terminalTrim = true;
+     float trimFactor = 1.2f;
+diff --git a/RecoTracker/LSTCore/src/alpaka/ChainEdges.h b/RecoTracker/LSTCore/src/alpaka/ChainEdges.h
+index 0fa0177a314..89673f10f81 100644
+--- a/RecoTracker/LSTCore/src/alpaka/ChainEdges.h
++++ b/RecoTracker/LSTCore/src/alpaka/ChainEdges.h
+@@ -15,6 +15,7 @@
+ #include "RecoTracker/LSTCore/interface/SegmentsSoA.h"
+ #include "RecoTracker/LSTCore/interface/TripletsSoA.h"
+ 
++#include "ChainGraph.h"
+ #include "EdgeNetworkWeights.h"
+ #include "NeuralNetwork.h"
+ 
+@@ -245,6 +246,33 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+     return lo;
+   }
+ 
++  // ------------------------------------------------------------------------------------------
++  // The packed weld order key. MOVED HERE from ChainWeld.h (which includes this file) by M2: the
++  // per-node top-C cap below selects edges by this key and the weld takes its argmax by this key, and
++  // the whole exactness argument for the cap is that those are the SAME order. One definition only.
++  //
++  //   high word = the standard monotone float -> uint32 map, so a larger float is a larger word;
++  //   low  word = ChainEdgesSoA::tie, the stable XOR of the two endpoints' stableId, larger wins.
++  // Key 0 is the weld's "no edge" sentinel and the cap's "empty slot" sentinel; it is reachable only
++  // by the single negative NaN pattern 0xffffffff paired with tie == 0, which is the same assumption
++  // K6a already makes.
++  ALPAKA_FN_ACC ALPAKA_FN_INLINE uint32_t chainOrderFloat(float x) {
++    uint32_t const b = std::bit_cast<uint32_t>(x);
++    return (b >> 31) ? (b ^ 0xffffffffu) : (b ^ 0x80000000u);
++  }
++
++  // Its exact inverse: a value that went through an atomicMax on the order key comes back unchanged.
++  // (Sign 0: k = b ^ 0x80000000 has its top bit set, so the mask recovers b. Sign 1: k = ~b has its
++  // top bit clear, so ~k recovers b. Bit for bit, both ways.)
++  ALPAKA_FN_ACC ALPAKA_FN_INLINE float chainUnorderFloat(uint32_t k) {
++    uint32_t const b = (k & 0x80000000u) ? (k & 0x7fffffffu) : ~k;
++    return std::bit_cast<float>(b);
++  }
++
++  ALPAKA_FN_ACC ALPAKA_FN_INLINE uint64_t chainWeldKey(float logOdds, uint32_t tie) {
++    return (static_cast<uint64_t>(chainOrderFloat(logOdds)) << 32) | static_cast<uint64_t>(tie);
++  }
++
+   // ------------------------------------------------------------------------------------------
+   // K2. Exact-count edge enumeration.
+   //
+@@ -257,6 +285,15 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+   // slice (triplets ending at the key) and the OUTER endpoint from the "out" slice (triplets
+   // starting at the key), with the "in" slice as the outer loop, so the row split is
+   //   (i, j) = (rem / degOut, rem % degOut).
++  //
++  // M2 (jet round) WINDOWING. The kernel now writes a WINDOW of the global row space: row r of the
++  // destination carries global edge e = eBase + r, for r in [0, nRows). The flat path passes
++  // eBase = 0, nRows = nE1 + nE2 and is then the previous kernel statement for statement (r == e).
++  // The tiled path passes one window per tile into a small reusable buffer, which is what lets the
++  // full degIn*degOut product never exist at once. Rows whose global index is past the end (only the
++  // last tile, when nRows does not divide the total) are stamped as type-0 holes, which every
++  // downstream kernel already skips -- so K5 needs no window argument and its code generation does
++  // not move.
+   struct ChainBuildEdges {
+     ALPAKA_FN_ACC void operator()(Acc1D const& acc,
+                                   TripletsConst triplets,
+@@ -266,7 +303,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+                                   ChainIncidenceConst lsIncidence,
+                                   ChainEdges edges,
+                                   uint32_t nE1,
+-                                  uint32_t nE2) const {
++                                  uint32_t nE2,
++                                  uint32_t eBase,
++                                  uint32_t nRows) const {
+       uint32_t const nMDKeys = static_cast<uint32_t>(mdIncidence.metadata().size()) - 1u;
+       uint32_t const nLSKeys = static_cast<uint32_t>(lsIncidence.metadata().size()) - 1u;
+ 
+@@ -277,7 +316,12 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+       // itself. The two SOA_SCALARs are LEFT IN ChainEdgesSoA on purpose (see ChainsSoA.h:100-104 on
+       // why removing a layout member is not free).
+ 
+-      for (uint32_t e : cms::alpakatools::uniform_elements(acc, nE1 + nE2)) {
++      for (uint32_t r : cms::alpakatools::uniform_elements(acc, nRows)) {
++        uint32_t const e = eBase + r;
++        if (e >= nE1 + nE2) {
++          edges.type()[r] = 0u;  // past-the-end tail of the last tile
++          continue;
++        }
+         bool const isE1 = (e < nE1);
+ 
+         uint32_t const* prodPrefix = (isE1 ? mdIncidence.edgeProdPrefix() : lsIncidence.edgeProdPrefix()).data();
+@@ -312,14 +356,16 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+             type = 0u;
+         }
+ 
+-        edges.inner()[e] = inner;
+-        edges.outer()[e] = outer;
+-        edges.type()[e] = type;
+-        edges.logOdds()[e] = 0.f;
++        edges.inner()[r] = inner;
++        edges.outer()[r] = outer;
++        edges.type()[r] = type;
++        edges.logOdds()[r] = 0.f;
+         // The stable weld tie-break (ChainWeld.h). XOR is a bijection in each argument, so with a
+         // collision-free node stableId the tie word is distinct for any two edges that share an
+-        // endpoint - which is exactly the uniqueness the argmax needs, in either direction.
+-        edges.tie()[e] = nodes.stableId()[inner] ^ nodes.stableId()[outer];
++        // endpoint - which is exactly the uniqueness the argmax needs, in either direction. The
++        // per-node top-C cap leans on the SAME uniqueness a second time, to name a surviving edge by
++        // its tie word inside its endpoint's slot list (see ChainTopCMatch).
++        edges.tie()[r] = nodes.stableId()[inner] ^ nodes.stableId()[outer];
+       }
+     }
+   };
+@@ -639,6 +685,368 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+     }
+   };
+ 
++  // ==========================================================================================
++  // K4. THE PER-NODE TOP-C CAP (M2, jet speed/memory round).
++  //
++  // WHAT IT IS. The weld (K6a/K6b) gives every node ONE out-slot and ONE in-slot and fills them by
++  // mutual-best matching on the packed key (logOdds, tie). A node can therefore never consume more
++  // than a few of its incident edges, but on a collimated sample it is HANDED millions of them: the
++  // shared-MD junction degree reaches 2303 on the jet sample against 2.08 at PU200, and E1 =
++  // sum_key degIn*degOut hits 3.8e8 edges in one event, 8.4 GB of ChainEdges rows, past both the
++  // 1 GiB device-allocator bin and the 4 GiB alpaka Idx byte extent. 0.018% of those rows are ever
++  // welded.
++  //
++  // So: keep, per node, only its C highest-keyed ELIGIBLE out-edges and its C highest-keyed eligible
++  // in-edges, and weld over the UNION of those two families. The edge array is then bounded by
++  // 2*C*nNodes rows -- an EXACT, sample-independent bound -- instead of by sum_key degIn*degOut.
++  //
++  // WHY THE UNION AND NOT ONE SIDE. An edge that is its head's best in-edge but not its tail's best
++  // out-edge still BLOCKS: K6a sets bestIn[head] to it, K6b finds no mutual pair, and the head welds
++  // nothing that sweep. Delete it and the head welds a lower edge instead. Both sides are needed.
++  //
++  // WHY IT IS ELIGIBILITY-FILTERED. K6a skips `logOdds < weldBar` rows outright, so an ineligible
++  // edge can never be an argmax and never needs a slot. Ranking only the eligible edges makes the
++  // slots ~3-5x deeper in the quantity that matters (~20% of E1 / ~53% of E2 are eligible, see
++  // ChainConfig.h:20-31) and lets the emitted rows carry a permanently-open bar.
++  //
++  // EXACTNESS, stated as the falsifiable claim it is. Let R be the largest rank, over every node,
++  // direction and sweep, of that sweep's argmax within the node's own descending list of ELIGIBLE
++  // edges on that side. Then C >= R gives a BIT-IDENTICAL welded edge set, by induction on the sweep:
++  // sweep 1's argmax is always rank 1 hence kept; if sweeps 1..s-1 matched then the weld slots match,
++  // so sweep s ranges over the same eligible/free edge set, its argmax has rank <= R <= C and is
++  // therefore in the kept set, and no spurious edge can outrank it because the kept set is a SUBSET.
++  // R is NOT bounded by kChainWeldSweeps: the rank a node reaches in sweep s is
++  // 1 + #{higher-keyed eligible out-edges whose head was welded earlier}, which the sweep count does
++  // not bound. R is measured, not argued -- LST_CHAIN_RANK_CENSUS in LSTEvent.dev.cc reports it per
++  // sweep -- and the shipped C is chosen from that measurement plus a bit-identity gate.
++  //
++  // THE FIVE PASSES. Tiles of the row space are enumerated (K2) and scored (K5) into one small
++  // reusable buffer, so peak memory is tile + slots + the final compacted array:
++  //   K4a Insert  per tile: cascading atomicMax of the eligible rows' keys into the two slot lists
++  //   K4b Match   per tile, second time round (K2 only, NO MLP): give each surviving key its
++  //               endpoint and family, by finding its tie word in the endpoint's slot list
++  //   K4c Sort    order each list descending, so the emitted row order is a function of the KEPT SET
++  //               and not of the atomic interleaving
++  //   K4d Count   per-node survivor count, with the out-list/in-list duplicate removed
++  //   K4e Prefix  exclusive prefix -> each node's row base and the exact total
++  //   K4f Emit    write the compacted ChainEdges rows
++  //
++  // Slot addressing throughout: out-slot j of node n is `n*C + j`, in-slot j is `C*nNodes + n*C + j`.
++
++  // Concurrent top-C insertion by cascading atomicMax, and the reason no lock or 128-bit atomic is
++  // needed anywhere.
++  //
++  // At slot j the caller atomically installs max(slot[j], x) and carries min(slot[j], x) down to
++  // j+1. CORRECTNESS UNDER ANY INTERLEAVING: the multiset {slots} u {values still being carried} is
++  // invariant except when a carried value falls off the end at j == C, and a value that fell off was,
++  // at each of the C slots it passed, <= that slot's value AFTER the exchange. Slot values only ever
++  // increase, so a dropped value is <= every FINAL slot value. Mass conservation plus that ordering
++  // means the final slots hold exactly the C largest inserted keys -- in unspecified positions, which
++  // is why K4c sorts before anything reads them positionally.
++  template <typename TAcc>
++  ALPAKA_FN_ACC ALPAKA_FN_INLINE void chainTopCInsertKey(TAcc const& acc,
++                                                        uint64_t* slots,
++                                                        uint32_t topC,
++                                                        uint64_t key) {
++    uint64_t x = key;
++    for (uint32_t j = 0; j < topC && x != 0ull; ++j) {
++      uint64_t const prev = alpaka::atomicMax(acc, &slots[j], x, alpaka::hierarchy::Threads{});
++      if (prev < x)
++        x = prev;  // x took the slot; carry the value it displaced downwards
++    }
++  }
++
++  // K4a. Insert one tile's eligible rows into both endpoints' slot lists.
++  //
++  // The two gates are character for character the ones K6a applies (type != 0, then
++  // `logOdds < weldBar`), so "eligible here" and "eligible in the weld" are the same predicate.
++  struct ChainTopCInsert {
++    ALPAKA_FN_ACC void operator()(Acc1D const& acc,
++                                  ChainEdgesConst tile,
++                                  uint32_t nRows,
++                                  uint32_t nNodes,
++                                  uint32_t topC,
++                                  uint64_t* slotKey,
++                                  uint32_t* census,
++                                  bool doCensus) const {
++      size_t const inBase = static_cast<size_t>(topC) * nNodes;
++
++      for (uint32_t r : cms::alpakatools::uniform_elements(acc, nRows)) {
++        if (tile.type()[r] == 0u)
++          continue;
++        float const lo = tile.logOdds()[r];
++        if (lo < tile.weldBar()[r])
++          continue;
++        uint64_t const key = chainWeldKey(lo, tile.tie()[r]);
++        uint32_t const n = tile.inner()[r];
++        uint32_t const m = tile.outer()[r];
++        ALPAKA_ASSERT_ACC(n < nNodes && m < nNodes);
++        chainTopCInsertKey(acc, slotKey + static_cast<size_t>(n) * topC, topC, key);
++        chainTopCInsertKey(acc, slotKey + inBase + static_cast<size_t>(m) * topC, topC, key);
++        if (doCensus)
++          alpaka::atomicAdd(acc, &census[0], 1u, alpaka::hierarchy::Threads{});
++      }
++    }
++  };
++
++  // K4b. Give every surviving key its endpoint and its family.
++  //
++  // Runs over the SAME tiles a second time, enumerated by K2 and NOT scored -- K5 is 70% of the CPU
++  // chain block and this pass does not need a single logit, which is the whole reason the cap costs a
++  // K2 and not a K5. (It therefore MUST NOT look at logOdds or weldBar: on this pass those columns
++  // hold K2's 0 and whatever the previous pass left behind.) The identification is by the tie word
++  // alone: `tie = stableId[inner] ^ stableId[outer]` is distinct for any two edges sharing an
++  // endpoint -- the property the weld argmax already rests on -- so within one node's slot list the
++  // low 32 bits of a key name the edge, and an INELIGIBLE row simply matches nothing because its tie
++  // is not any node's kept key.
++  //
++  // Idempotent and order-free: every write stores the same value the tile that produced the key would
++  // have stored, so re-running it, or running it while other rows are matching, cannot disagree.
++  struct ChainTopCMatch {
++    ALPAKA_FN_ACC void operator()(Acc1D const& acc,
++                                  ChainEdgesConst tile,
++                                  uint32_t nRows,
++                                  uint32_t nNodes,
++                                  uint32_t topC,
++                                  uint64_t const* slotKey,
++                                  uint32_t* slotEnd,
++                                  uint8_t* slotType) const {
++      size_t const inBase = static_cast<size_t>(topC) * nNodes;
++
++      for (uint32_t r : cms::alpakatools::uniform_elements(acc, nRows)) {
++        uint8_t const type = tile.type()[r];
++        if (type == 0u)
++          continue;
++        uint32_t const tie = tile.tie()[r];
++        uint32_t const n = tile.inner()[r];
++        uint32_t const m = tile.outer()[r];
++
++        size_t const outSlot = static_cast<size_t>(n) * topC;
++        for (uint32_t j = 0; j < topC; ++j)
++          if (static_cast<uint32_t>(slotKey[outSlot + j]) == tie) {
++            slotEnd[outSlot + j] = m;
++            slotType[outSlot + j] = type;
++            break;
++          }
++        size_t const inSlot = inBase + static_cast<size_t>(m) * topC;
++        for (uint32_t j = 0; j < topC; ++j)
++          if (static_cast<uint32_t>(slotKey[inSlot + j]) == tie) {
++            slotEnd[inSlot + j] = n;
++            slotType[inSlot + j] = type;
++            break;
++          }
++      }
++    }
++  };
++
++  // K4c. Sort each node's two lists descending, carrying the endpoint and family with the key.
++  //
++  // The cascade leaves the right SET in unspecified positions, and the positions depend on the atomic
++  // interleaving. Sorting makes the emitted row order a function of the kept set alone, which keeps
++  // the edge array itself reproducible run to run and backend to backend (nothing downstream depends
++  // on a row index, but a reproducible intermediate is worth C^2/2 <= 32 compares per list). Empty
++  // slots hold key 0 and therefore sort to the end.
++  struct ChainTopCSort {
++    ALPAKA_FN_ACC void operator()(Acc1D const& acc,
++                                  uint32_t nNodes,
++                                  uint32_t topC,
++                                  uint64_t* slotKey,
++                                  uint32_t* slotEnd,
++                                  uint8_t* slotType) const {
++      size_t const inBase = static_cast<size_t>(topC) * nNodes;
++
++      for (uint32_t n : cms::alpakatools::uniform_elements(acc, nNodes)) {
++        for (int side = 0; side < 2; ++side) {
++          size_t const b = (side == 0) ? static_cast<size_t>(n) * topC : inBase + static_cast<size_t>(n) * topC;
++          for (uint32_t i = 1; i < topC; ++i) {
++            uint64_t const k = slotKey[b + i];
++            uint32_t const e = slotEnd[b + i];
++            uint8_t const t = slotType[b + i];
++            uint32_t j = i;
++            while (j > 0 && slotKey[b + j - 1] < k) {
++              slotKey[b + j] = slotKey[b + j - 1];
++              slotEnd[b + j] = slotEnd[b + j - 1];
++              slotType[b + j] = slotType[b + j - 1];
++              --j;
++            }
++            slotKey[b + j] = k;
++            slotEnd[b + j] = e;
++            slotType[b + j] = t;
++          }
++        }
++      }
++    }
++  };
++
++  // K4d. How many rows each node contributes, and the duplicate rule.
++  //
++  // An edge kept on both sides must be emitted ONCE: a repeated row would make two rows carry the
++  // same key at the same node, and K6b would then have two winners racing on outWeld[n]. The rule is
++  // "the out-list owns the edge": an in-slot is emitted only if its edge is absent from its INNER
++  // node's out-list, tested on the same tie word K4b matched on. Both lists are final here, so the
++  // test is a pure function of the kept set.
++  //
++  // A slot whose endpoint never got matched (`slotEnd == kChainTopCNoEnd`) is impossible unless two
++  // chain nodes share a stableId, which would already have broken the weld tie-break; it is counted
++  // into census[1] and skipped rather than trusted.
++  static constexpr uint32_t kChainTopCNoEnd = 0xffffffffu;
++
++  // The duplicate rule, shared verbatim by K4d and K4f -- they MUST agree row for row, since K4d's
++  // count is what sizes the array K4f writes into.
++  //
++  // "Does the inner node's out-list already own this edge?" The peer list is sorted descending (K4c)
++  // and an edge carries the SAME 64-bit key in both lists, so the scan stops at the first key below
++  // the one being looked for: typically one or two compares rather than topC. The endpoint is checked
++  // as well as the key, so the answer stays right even if two chain nodes were ever to share a
++  // stableId and collide their tie words.
++  ALPAKA_FN_ACC ALPAKA_FN_INLINE bool chainTopCOwnedByOutList(
++      uint64_t const* slotKey, uint32_t const* slotEnd, size_t peer, uint32_t topC, uint64_t key, uint32_t outerNode) {
++    for (uint32_t q = 0; q < topC; ++q) {
++      uint64_t const pk = slotKey[peer + q];
++      if (pk < key)
++        return false;  // sorted descending: the key is not in this list
++      if (pk == key && slotEnd[peer + q] == outerNode)
++        return true;
++    }
++    return false;
++  }
++
++  struct ChainTopCCount {
++    ALPAKA_FN_ACC void operator()(Acc1D const& acc,
++                                  uint32_t nNodes,
++                                  uint32_t topC,
++                                  uint64_t const* slotKey,
++                                  uint32_t const* slotEnd,
++                                  uint32_t* nodeCount,
++                                  uint32_t* census) const {
++      size_t const inBase = static_cast<size_t>(topC) * nNodes;
++
++      for (uint32_t n : cms::alpakatools::uniform_elements(acc, nNodes)) {
++        uint32_t kept = 0u;
++        size_t const outBase = static_cast<size_t>(n) * topC;
++        for (uint32_t j = 0; j < topC; ++j) {
++          if (slotKey[outBase + j] == 0ull)
++            break;  // sorted descending: the rest are empty too
++          if (slotEnd[outBase + j] == kChainTopCNoEnd) {
++            alpaka::atomicAdd(acc, &census[1], 1u, alpaka::hierarchy::Threads{});
++            continue;
++          }
++          ++kept;
++        }
++        size_t const myInBase = inBase + static_cast<size_t>(n) * topC;
++        for (uint32_t j = 0; j < topC; ++j) {
++          uint64_t const key = slotKey[myInBase + j];
++          if (key == 0ull)
++            break;
++          uint32_t const innerNode = slotEnd[myInBase + j];
++          if (innerNode == kChainTopCNoEnd) {
++            alpaka::atomicAdd(acc, &census[1], 1u, alpaka::hierarchy::Threads{});
++            continue;
++          }
++          if (!chainTopCOwnedByOutList(slotKey, slotEnd, static_cast<size_t>(innerNode) * topC, topC, key, n))
++            ++kept;
++        }
++        nodeCount[n] = kept;
++      }
++    }
++  };
++
++  // K4e. Exclusive prefix of the per-node counts: each node's row base, plus the exact total. Same
++  // one-block shape and the same primitive as ChainPrefixChains, over the same key space.
++  struct ChainTopCPrefix {
++    ALPAKA_FN_ACC void operator()(
++        Acc1D const& acc, uint32_t nNodes, uint32_t const* nodeCount, uint32_t* nodeBase, uint32_t* total) const {
++      // 1-block kernel
++      ALPAKA_ASSERT_ACC((alpaka::getWorkDiv<alpaka::Grid, alpaka::Blocks>(acc)[0u] == 1));
++
++      auto& partial = alpaka::declareSharedVar<uint32_t[2 * kChainScanBlockThreads], __COUNTER__>(acc);
++
++      uint32_t const nWorkers = chainScanWorkerCount(acc);
++      uint32_t const worker = chainScanWorkerIndex(acc);
++      ALPAKA_ASSERT_ACC(nWorkers <= kChainScanBlockThreads);
++
++      uint32_t const chunk = (nNodes + nWorkers - 1u) / nWorkers;
++      uint32_t const begin = (worker * chunk < nNodes) ? worker * chunk : nNodes;
++      uint32_t const end = (begin + chunk < nNodes) ? begin + chunk : nNodes;
++
++      uint32_t local[1] = {0u};
++      for (uint32_t n = begin; n < end; ++n)
++        local[0] += nodeCount[n];
++
++      uint32_t base[1], grand[1];
++      chainScanBlockExclusive<1>(acc, &partial[0], nWorkers, worker, local, base, grand);
++
++      uint32_t running = base[0];
++      for (uint32_t n = begin; n < end; ++n) {
++        nodeBase[n] = running;
++        running += nodeCount[n];
++      }
++
++      alpaka::syncBlockThreads(acc);
++      if (cms::alpakatools::once_per_block(acc))
++        *total = grand[0];
++    }
++  };
++
++  // K4f. Write the compacted edge rows, node-major: a node's out-slots in descending key order, then
++  // its surviving in-slots in descending key order.
++  //
++  // logOdds comes back through chainUnorderFloat, the exact inverse of the packing, so the stored
++  // float is the same bit pattern K5 produced. weldBar is stamped permanently open: every emitted row
++  // already passed `!(logOdds < weldBar)` in K4a, and -1e30 is 14 orders of magnitude below any
++  // reachable logit margin (the head's inputs are clipped, so |logit| stays microscopic next to that),
++  // so K6a's gate keeps the same verdict on every row it can see. NaN keeps its old verdict too --
++  // `NaN < x` is false for any x.
++  struct ChainTopCEmit {
++    ALPAKA_FN_ACC void operator()(Acc1D const& acc,
++                                  uint32_t nNodes,
++                                  uint32_t topC,
++                                  uint64_t const* slotKey,
++                                  uint32_t const* slotEnd,
++                                  uint8_t const* slotType,
++                                  uint32_t const* nodeBase,
++                                  ChainEdges edges) const {
++      size_t const inBase = static_cast<size_t>(topC) * nNodes;
++      uint32_t const nRows = static_cast<uint32_t>(edges.metadata().size());
++
++      for (uint32_t n : cms::alpakatools::uniform_elements(acc, nNodes)) {
++        uint32_t w = nodeBase[n];
++        auto put = [&](uint32_t inner, uint32_t outer, uint8_t type, uint64_t key) {
++          ALPAKA_ASSERT_ACC(w < nRows);
++          edges.inner()[w] = inner;
++          edges.outer()[w] = outer;
++          edges.type()[w] = type;
++          edges.logOdds()[w] = chainUnorderFloat(static_cast<uint32_t>(key >> 32));
++          edges.tie()[w] = static_cast<uint32_t>(key);
++          edges.weldBar()[w] = -1e30f;
++          ++w;
++        };
++
++        size_t const outBase = static_cast<size_t>(n) * topC;
++        for (uint32_t j = 0; j < topC; ++j) {
++          uint64_t const key = slotKey[outBase + j];
++          if (key == 0ull)
++            break;
++          if (slotEnd[outBase + j] == kChainTopCNoEnd)
++            continue;
++          put(n, slotEnd[outBase + j], slotType[outBase + j], key);
++        }
++        size_t const myInBase = inBase + static_cast<size_t>(n) * topC;
++        for (uint32_t j = 0; j < topC; ++j) {
++          uint64_t const key = slotKey[myInBase + j];
++          if (key == 0ull)
++            break;
++          uint32_t const innerNode = slotEnd[myInBase + j];
++          if (innerNode == kChainTopCNoEnd)
++            continue;
++          if (!chainTopCOwnedByOutList(slotKey, slotEnd, static_cast<size_t>(innerNode) * topC, topC, key, n))
++            put(innerNode, n, slotType[myInBase + j], key);
++        }
++        ALPAKA_ASSERT_ACC(w <= nRows);  // K4d counted exactly these rows, so this cannot overrun
++      }
++    }
++  };
++
+ }  // namespace ALPAKA_ACCELERATOR_NAMESPACE::lst
+ 
+ #endif
+diff --git a/RecoTracker/LSTCore/src/alpaka/ChainWeld.h b/RecoTracker/LSTCore/src/alpaka/ChainWeld.h
+index e439886513a..ba4593440d6 100644
+--- a/RecoTracker/LSTCore/src/alpaka/ChainWeld.h
++++ b/RecoTracker/LSTCore/src/alpaka/ChainWeld.h
+@@ -60,20 +60,12 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+   //
+   // The key is no longer decodable back to an edge index. It does not need to be: K6b is now
+   // edge-parallel and each edge tests whether it is itself the argmax at both of its endpoints.
+-  ALPAKA_FN_ACC ALPAKA_FN_INLINE uint32_t chainOrderFloat(float x) {
+-    uint32_t const b = std::bit_cast<uint32_t>(x);
+-    return (b >> 31) ? (b ^ 0xffffffffu) : (b ^ 0x80000000u);
+-  }
+-
+-  // Its exact inverse: a value that went through an atomicMax on the order key comes back unchanged.
+-  ALPAKA_FN_ACC ALPAKA_FN_INLINE float chainUnorderFloat(uint32_t k) {
+-    uint32_t const b = (k & 0x80000000u) ? (k & 0x7fffffffu) : ~k;
+-    return std::bit_cast<float>(b);
+-  }
+-
+-  ALPAKA_FN_ACC ALPAKA_FN_INLINE uint64_t chainWeldKey(float logOdds, uint32_t tie) {
+-    return (static_cast<uint64_t>(chainOrderFloat(logOdds)) << 32) | static_cast<uint64_t>(tie);
+-  }
++  //
++  // M2 (jet round): chainOrderFloat / chainUnorderFloat / chainWeldKey MOVED to ChainEdges.h, which
++  // this file includes. The per-node top-C cap there selects edges by EXACTLY this key, and the one
++  // thing that makes the cap defensible is that the selection order and the weld's argmax order are
++  // the same function -- so there must be exactly one definition of it, and it has to live in the
++  // header the earlier stage can see. Nothing about the values changed.
+ 
+   // ------------------------------------------------------------------------------------------
+   // K6a. Per-sweep argmax over a frozen snapshot of the weld slots.
+@@ -110,6 +102,45 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+     }
+   };
+ 
++  // M2 MEASUREMENT INSTRUMENT, off unless LST_CHAIN_RANK_CENSUS is set, and never a headline number.
++  //
++  // It measures the ONE quantity that decides whether a per-node top-C cap is lossless: for each node
++  // and each direction, how deep into its OWN descending list of eligible edges this sweep's argmax
++  // sits. Run straight after K6a (which fixes bestOut / bestIn) and before K6b, it counts, per node,
++  // the eligible incident edges that OUTRANK the argmax -- i.e. rank - 1, zero-based. A node whose
++  // slot was already welded, or which has no eligible free-slot edge this sweep, has a 0 sentinel key
++  // and is excluded.
++  //
++  // The maximum of this over every node, direction and sweep is the R of the exactness argument at the
++  // K4 block in ChainEdges.h: C >= R is bit-identical, and C < R is not guaranteed to be.
++  struct ChainWeldRankCensus {
++    ALPAKA_FN_ACC void operator()(Acc1D const& acc,
++                                  ChainEdgesConst edges,
++                                  uint64_t const* bestOut,
++                                  uint64_t const* bestIn,
++                                  uint32_t* rankOut,
++                                  uint32_t* rankIn) const {
++      uint32_t const nEdges = static_cast<uint32_t>(edges.metadata().size());
++
++      for (uint32_t e : cms::alpakatools::uniform_elements(acc, nEdges)) {
++        if (edges.type()[e] == 0u)
++          continue;
++        float const lo = edges.logOdds()[e];
++        if (lo < edges.weldBar()[e])
++          continue;
++        uint64_t const key = chainWeldKey(lo, edges.tie()[e]);
++        uint32_t const n = edges.inner()[e];
++        uint32_t const m = edges.outer()[e];
++        uint64_t const bo = bestOut[n];
++        if (bo != 0ull && key > bo)
++          alpaka::atomicAdd(acc, &rankOut[n], 1u, alpaka::hierarchy::Threads{});
++        uint64_t const bi = bestIn[m];
++        if (bi != 0ull && key > bi)
++          alpaka::atomicAdd(acc, &rankIn[m], 1u, alpaka::hierarchy::Threads{});
++      }
++    }
++  };
++
+   // K6b. Apply the mutual-best pairs, edge-parallel: an edge is welded exactly when it is the
+   // argmax of its tail's out-slot AND of its head's in-slot, which is the definition of a mutual
+   // best pair. Walking edges instead of nodes is what lets the packed key carry a stable tie word
+diff --git a/RecoTracker/LSTCore/src/alpaka/LSTEvent.dev.cc b/RecoTracker/LSTCore/src/alpaka/LSTEvent.dev.cc
+index d2a14a81c9d..a6101b53b7f 100644
+--- a/RecoTracker/LSTCore/src/alpaka/LSTEvent.dev.cc
++++ b/RecoTracker/LSTCore/src/alpaka/LSTEvent.dev.cc
+@@ -127,6 +127,34 @@ namespace {
+     return n;
+   }
+ 
++  // M2. Measurement overrides of the two per-node top-C cap knobs (ChainConfig::nodeTopC and
++  // ::edgeTileRows), so that ONE binary can sweep C -- including C = 0, which restores the flat
++  // exactly-sized edge array byte for byte and is the A arm of every gate. -1 means "no override,
++  // take the configured value".
++  int chainNodeTopCOverride() {
++    static int const v = []() {
++      char const* s = std::getenv("LST_CHAIN_NODE_TOPC");
++      return (s == nullptr || *s == '\0') ? -1 : std::atoi(s);
++    }();
++    return v;
++  }
++
++  int chainEdgeTileOverride() {
++    static int const v = []() {
++      char const* s = std::getenv("LST_CHAIN_EDGE_TILE");
++      return (s == nullptr || *s == '\0') ? -1 : std::atoi(s);
++    }();
++    return v;
++  }
++
++  // M2. Per-sweep weld ARGMAX RANK census (ChainWeld.h ChainWeldRankCensus). It adds a kernel and two
++  // device-to-host copies per sweep, so it is an instrument and never a timing arm; with the variable
++  // unset the weld loop is exactly the loop it was.
++  bool chainRankCensusEnabled() {
++    static bool const enabled = (std::getenv("LST_CHAIN_RANK_CENSUS") != nullptr);
++    return enabled;
++  }
++
+   // Copies one single-byte device SoA column into a host vector. The wait is required because
+   // the very next kernel in the queue is the one that overwrites the column.
+   template <typename TQueue, typename TSpan>
+@@ -962,27 +990,6 @@ void LSTEvent::buildChainEdges() {
+   if (nEdges == 0)
+     return;
+ 
+-  chainEdgesDC_.emplace(queue_, nEdges);
+-  if (objectsStatistics_) {
+-    double mb = alpaka::getExtentProduct(chainEdgesDC_->buffer()) / 1e6;
+-    memoryAllocatedMB_ += mb;
+-    lstWarning(std::format("[MEM] ChainEdges: {} allocated ({:.1f} MB)", nEdges, mb));
+-  }
+-
+-  alpaka::exec<Acc1D>(queue_,
+-                      chainFlat_workDiv,
+-                      ChainBuildEdges{},
+-                      tripletsDC_->const_view().triplets(),
+-                      segmentsDC_->const_view().segments(),
+-                      chainNodesDC_->const_view(),
+-                      chainMdIncidenceDC_->const_view(),
+-                      chainLsIncidenceDC_->const_view(),
+-                      chainEdgesDC_->view(),
+-                      nChainE1Edges_,
+-                      nChainE2Edges_);
+-
+-  auto const t2 = stamp();
+-
+   // Debug tap: with LST_CHAIN_FEAT_DUMP set, K5 also stores its 14 edge floats so the parity
+   // comparison can localize a mismatch to a feature instead of only seeing the logit.
+   // NN-loop training dump (2026-08-10): was first-event-only (a parity tap); now emits EVERY event
+@@ -991,8 +998,20 @@ void LSTEvent::buildChainEdges() {
+   static std::atomic<uint32_t> featDumpEvent{0};
+   char const* featPath = std::getenv("LST_CHAIN_FEAT_DUMP");
+   bool const wantFeat = (featPath != nullptr && *featPath != '\0');
+-  auto featBuf = cms::alpakatools::make_device_buffer<float[]>(
+-      queue_, wantFeat ? static_cast<size_t>(nEdges) * kChainEdgeFeatures : size_t{1});
++
++  // M2. Per-node top-C cap. 0 == off == the flat exactly-sized array, which is the path below.
++  // The feature dump indexes its output buffer by the edge ROW, so it is only meaningful on the flat
++  // path; asking for both silently getting a tile-local dump would be a trap, so the dump wins and
++  // the cap turns itself off (loudly, once).
++  uint32_t topC = (chainNodeTopCOverride() >= 0) ? static_cast<uint32_t>(chainNodeTopCOverride())
++                                                 : chainConfig_.nodeTopC;
++  if (topC > 0u && wantFeat) {
++    static std::once_flag warned;
++    std::call_once(warned, []() {
++      lstWarning("[CHAIN] LST_CHAIN_FEAT_DUMP is set: the per-node top-C cap is disabled for this run");
++    });
++    topC = 0u;
++  }
+ 
+   // Resolve the per-edge-family weld bars on the HOST so the kernel takes two plain floats. A
+   // family left at its inherit sentinel resolves to thetaEdge, so both families then compare
+@@ -1001,34 +1020,220 @@ void LSTEvent::buildChainEdges() {
+   float const weldThetaE1 = (chainConfig_.thetaEdgeE1 < 1e29f) ? chainConfig_.thetaEdgeE1 : chainConfig_.thetaEdge;
+   float const weldThetaE2 = (chainConfig_.thetaEdgeE2 < 1e29f) ? chainConfig_.thetaEdgeE2 : chainConfig_.thetaEdge;
+ 
+-  alpaka::exec<Acc1D>(queue_,
+-                      chainFlat_workDiv,
+-                      ChainEdgeInference{},
+-                      modules_.const_view().modules(),
+-                      miniDoubletsDC_->const_view().miniDoublets(),
+-                      segmentsDC_->const_view().segments(),
+-                      tripletsDC_->const_view().triplets(),
+-                      chainNodesDC_->const_view(),
+-                      chainMdIncidenceDC_->const_view(),
+-                      chainLsIncidenceDC_->const_view(),
+-                      chainEdgesDC_->view(),
+-                      weldThetaE1,
+-                      weldThetaE2,
+-                      chainConfig_.edgeWpTable,
+-                      wantFeat ? featBuf.data() : nullptr);
++  auto featBuf = cms::alpakatools::make_device_buffer<float[]>(
++      queue_, wantFeat ? static_cast<size_t>(nEdges) * kChainEdgeFeatures : size_t{1});
++
++  // K2 over one WINDOW [eBase, eBase + nRows) of the global row space, and K5 over a destination
++  // buffer. Both paths go through these two, so they cannot drift in how an edge is built or scored:
++  // the flat path calls them once with the whole range, the capped path once per tile.
++  auto k2Enumerate = [&](ChainEdges dst, uint32_t eBase, uint32_t nRows) {
++    alpaka::exec<Acc1D>(queue_,
++                        chainFlat_workDiv,
++                        ChainBuildEdges{},
++                        tripletsDC_->const_view().triplets(),
++                        segmentsDC_->const_view().segments(),
++                        chainNodesDC_->const_view(),
++                        chainMdIncidenceDC_->const_view(),
++                        chainLsIncidenceDC_->const_view(),
++                        dst,
++                        nChainE1Edges_,
++                        nChainE2Edges_,
++                        eBase,
++                        nRows);
++  };
++  auto k5Score = [&](ChainEdges dst) {
++    alpaka::exec<Acc1D>(queue_,
++                        chainFlat_workDiv,
++                        ChainEdgeInference{},
++                        modules_.const_view().modules(),
++                        miniDoubletsDC_->const_view().miniDoublets(),
++                        segmentsDC_->const_view().segments(),
++                        tripletsDC_->const_view().triplets(),
++                        chainNodesDC_->const_view(),
++                        chainMdIncidenceDC_->const_view(),
++                        chainLsIncidenceDC_->const_view(),
++                        dst,
++                        weldThetaE1,
++                        weldThetaE2,
++                        chainConfig_.edgeWpTable,
++                        wantFeat ? featBuf.data() : nullptr);
++  };
++
++  uint32_t nKeptEdges = nEdges;
++  double msK2 = 0., msK5 = 0., msK4 = 0.;  // stage attribution, LST_CHAIN_TIMING only
++  auto const msSince = [](auto a, auto b) { return std::chrono::duration<double, std::milli>(b - a).count(); };
++
++  if (topC == 0u) {
++    // ---- FLAT PATH (cap off): one exactly-sized array, every enumerated row materialized. -------
++    chainEdgesDC_.emplace(queue_, nEdges);
++    if (objectsStatistics_) {
++      double mb = alpaka::getExtentProduct(chainEdgesDC_->buffer()) / 1e6;
++      memoryAllocatedMB_ += mb;
++      lstWarning(std::format("[MEM] ChainEdges: {} allocated ({:.1f} MB)", nEdges, mb));
++    }
++    k2Enumerate(chainEdgesDC_->view(), 0u, nEdges);
++    auto const tK2 = stamp();
++    k5Score(chainEdgesDC_->view());
++    auto const tK5 = stamp();
++    msK2 = msSince(t1, tK2);
++    msK5 = msSince(tK2, tK5);
++  } else {
++    // ---- CAPPED PATH: tiled enumerate / score / reduce, then a compacted emit. ------------------
++    // Peak footprint is tile + slots + the emitted array, and the slot term is the EXACT bound
++    // 2 * topC * nNodes rather than anything the sample gets to choose. See the K4 block in
++    // src/alpaka/ChainEdges.h.
++    uint32_t const tileCap = (chainEdgeTileOverride() > 0) ? static_cast<uint32_t>(chainEdgeTileOverride())
++                                                           : chainConfig_.edgeTileRows;
++    uint32_t const tileRows = std::min(nEdges, std::max(1u, tileCap));
++    size_t const nSlots = 2u * static_cast<size_t>(topC) * nChainNodes_;
++
++    ChainEdgesDeviceCollection tileDC(queue_, tileRows);
++    auto slotKey_buf = cms::alpakatools::make_device_buffer<uint64_t[]>(queue_, nSlots);
++    auto slotEnd_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, nSlots);
++    auto slotType_buf = cms::alpakatools::make_device_buffer<uint8_t[]>(queue_, nSlots);
++    auto nodeCount_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, nChainNodes_);
++    auto nodeBase_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, nChainNodes_);
++    auto census_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, 2u);
++    auto total_buf_d = cms::alpakatools::make_device_buffer<uint32_t>(queue_);
++    alpaka::memset(queue_, slotKey_buf, 0);      // 0 == the empty-slot / no-edge sentinel
++    alpaka::memset(queue_, slotEnd_buf, 0xff);   // kChainTopCNoEnd
++    alpaka::memset(queue_, slotType_buf, 0);
++    alpaka::memset(queue_, census_buf, 0);
++
++    if (objectsStatistics_) {
++      double mb = (alpaka::getExtentProduct(tileDC.buffer()) + alpaka::getExtentProduct(slotKey_buf) +
++                   alpaka::getExtentProduct(slotEnd_buf) + alpaka::getExtentProduct(slotType_buf)) /
++                  1e6;
++      memoryAllocatedMB_ += mb;
++      lstWarning(std::format("[MEM] ChainTopC: tile {} rows + {} slots (C={}) allocated ({:.1f} MB)",
++                             tileRows,
++                             nSlots,
++                             topC,
++                             mb));
++    }
++
++    // Pass 1: enumerate, score, insert. Pass 2: enumerate again (no MLP) and attach endpoints.
++    // Two passes because the cascade moves keys BETWEEN slots as later tiles arrive, so a (key,
++    // endpoint) pairing written while tile t was live would not survive tile t+1.
++    auto tPrev = t1;
++    for (uint32_t base = 0; base < nEdges; base += tileRows) {
++      k2Enumerate(tileDC.view(), base, tileRows);
++      auto const tK2 = stamp();
++      msK2 += msSince(tPrev, tK2);
++      k5Score(tileDC.view());
++      auto const tK5 = stamp();
++      msK5 += msSince(tK2, tK5);
++      alpaka::exec<Acc1D>(queue_,
++                          chainFlat_workDiv,
++                          ChainTopCInsert{},
++                          tileDC.const_view(),
++                          tileRows,
++                          nChainNodes_,
++                          topC,
++                          slotKey_buf.data(),
++                          census_buf.data(),
++                          objectsStatistics_);
++      tPrev = stamp();
++      msK4 += msSince(tK5, tPrev);
++    }
++    for (uint32_t base = 0; base < nEdges; base += tileRows) {
++      k2Enumerate(tileDC.view(), base, tileRows);
++      auto const tK2 = stamp();
++      msK2 += msSince(tPrev, tK2);
++      alpaka::exec<Acc1D>(queue_,
++                          chainFlat_workDiv,
++                          ChainTopCMatch{},
++                          tileDC.const_view(),
++                          tileRows,
++                          nChainNodes_,
++                          topC,
++                          slotKey_buf.data(),
++                          slotEnd_buf.data(),
++                          slotType_buf.data());
++      tPrev = stamp();
++      msK4 += msSince(tK2, tPrev);
++    }
++
++    alpaka::exec<Acc1D>(queue_,
++                        chainFlat_workDiv,
++                        ChainTopCSort{},
++                        nChainNodes_,
++                        topC,
++                        slotKey_buf.data(),
++                        slotEnd_buf.data(),
++                        slotType_buf.data());
++    alpaka::exec<Acc1D>(queue_,
++                        chainFlat_workDiv,
++                        ChainTopCCount{},
++                        nChainNodes_,
++                        topC,
++                        slotKey_buf.data(),
++                        slotEnd_buf.data(),
++                        nodeCount_buf.data(),
++                        census_buf.data());
++    chainScanTimed(timing, __LINE__, queue_,
++                        cms::alpakatools::make_workdiv<Acc1D>(1, kChainScanBlockThreads),
++                        ChainTopCPrefix{},
++                        nChainNodes_,
++                        nodeCount_buf.data(),
++                        nodeBase_buf.data(),
++                        total_buf_d.data());
++
++    auto total_buf_h = cms::alpakatools::make_host_buffer<uint32_t>(queue_);
++    auto census_buf_h = cms::alpakatools::make_host_buffer<uint32_t[]>(queue_, 2u);
++    alpaka::memcpy(queue_, total_buf_h, total_buf_d);
++    alpaka::memcpy(queue_, census_buf_h, census_buf);
++    alpaka::wait(queue_);  // the survivor count sizes the edge collection exactly
++    nKeptEdges = *total_buf_h.data();
++
++    if (census_buf_h.data()[1] != 0u)
++      lstWarning(std::format(
++          "[CHAIN] top-C: {} surviving slots had no endpoint match -- two chain nodes share a stableId,"
++          " which also breaks the weld tie-break; those slots were dropped",
++          census_buf_h.data()[1]));
++    if (objectsStatistics_)
++      lstWarning(std::format("[CHAIN TOPC] C={} enumerated={} eligible={} kept={} ({:.4f}% of enumerated)",
++                             topC,
++                             nEdges,
++                             census_buf_h.data()[0],
++                             nKeptEdges,
++                             100.0 * nKeptEdges / std::max(1u, nEdges)));
++
++    if (nKeptEdges == 0u)
++      return;
++    chainEdgesDC_.emplace(queue_, nKeptEdges);
++    if (objectsStatistics_) {
++      double mb = alpaka::getExtentProduct(chainEdgesDC_->buffer()) / 1e6;
++      memoryAllocatedMB_ += mb;
++      lstWarning(std::format("[MEM] ChainEdges: {} allocated ({:.1f} MB)", nKeptEdges, mb));
++    }
++    alpaka::exec<Acc1D>(queue_,
++                        chainFlat_workDiv,
++                        ChainTopCEmit{},
++                        nChainNodes_,
++                        topC,
++                        slotKey_buf.data(),
++                        slotEnd_buf.data(),
++                        slotType_buf.data(),
++                        nodeBase_buf.data(),
++                        chainEdgesDC_->view());
++    msK4 += msSince(tPrev, stamp());
++  }
+ 
+   auto const t3 = stamp();
+   if (timing) {
+-    auto ms = [](auto a, auto b) { return std::chrono::duration<double, std::milli>(b - a).count(); };
+     lstWarning(
+-        std::format("[CHAIN TIMING] nodes={} edges={} | K3 nodeFeatures {:.3f} ms | "
+-                    "K2 buildEdges {:.3f} ms | K5 edgeInference {:.3f} ms | total {:.3f} ms",
++        std::format("[CHAIN TIMING] nodes={} edges={} kept={} | K3 nodeFeatures {:.3f} ms | "
++                    "K2 buildEdges {:.3f} ms | K5 edgeInference {:.3f} ms | K4 topC {:.3f} ms | "
++                    "total {:.3f} ms",
+                     nChainNodes_,
+                     nEdges,
+-                    ms(t0, t1),
+-                    ms(t1, t2),
+-                    ms(t2, t3),
+-                    ms(t0, t3)));
++                    nKeptEdges,
++                    msSince(t0, t1),
++                    msK2,
++                    msK5,
++                    msK4,
++                    msSince(t0, t3)));
+   }
+ 
+   if (wantFeat) {
+@@ -1254,6 +1459,16 @@ void LSTEvent::buildChains() {
+   // S1: the weld eligibility bar is no longer a kernel argument. K5 resolved it per edge into
+   // ChainEdgesSoA::weldBar (from the head's per-family, per-cell table, or from the two per-family
+   // scalars when chainConfig_.edgeWpTable is false), so both weld kernels just read the edge row.
++  // M2 instrument, LST_CHAIN_RANK_CENSUS only: the two per-node counters of "eligible incident edges
++  // that outrank this sweep's argmax". Their maximum over every node, direction and sweep is the R
++  // that decides the safe per-node top-C (see the K4 block in ChainEdges.h). Allocated only when the
++  // instrument is on.
++  bool const rankCensus = chainRankCensusEnabled();
++  auto rankOut_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, rankCensus ? nChainNodes_ : 1u);
++  auto rankIn_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, rankCensus ? nChainNodes_ : 1u);
++  auto rankOut_buf_h = cms::alpakatools::make_host_buffer<uint32_t[]>(queue_, rankCensus ? nChainNodes_ : 1u);
++  auto rankIn_buf_h = cms::alpakatools::make_host_buffer<uint32_t[]>(queue_, rankCensus ? nChainNodes_ : 1u);
++
+   for (int sweep = 0; sweep < kChainWeldSweeps; ++sweep) {
+     // A fixed sweep count, no host sync: the reference's "break when nothing welded" early exit is
+     // a CPU nicety and a zero-weld sweep is idempotent.
+@@ -1267,6 +1482,44 @@ void LSTEvent::buildChains() {
+                         inWeld_buf.data(),
+                         bestOut_buf.data(),
+                         bestIn_buf.data());
++    if (rankCensus) {
++      alpaka::memset(queue_, rankOut_buf, 0);
++      alpaka::memset(queue_, rankIn_buf, 0);
++      alpaka::exec<Acc1D>(queue_,
++                          chainFlat_workDiv,
++                          ChainWeldRankCensus{},
++                          chainEdgesDC_->const_view(),
++                          bestOut_buf.data(),
++                          bestIn_buf.data(),
++                          rankOut_buf.data(),
++                          rankIn_buf.data());
++      alpaka::memcpy(queue_, rankOut_buf_h, rankOut_buf);
++      alpaka::memcpy(queue_, rankIn_buf_h, rankIn_buf);
++      alpaka::wait(queue_);
++      uint32_t maxOut = 0, maxIn = 0, live = 0, over[4] = {0, 0, 0, 0};
++      uint32_t const thresh[4] = {8u, 16u, 32u, 64u};
++      for (uint32_t n = 0; n < nChainNodes_; ++n) {
++        for (uint32_t const r : {rankOut_buf_h.data()[n], rankIn_buf_h.data()[n]}) {
++          if (r == 0u)
++            continue;  // rank 1 (or an excluded node); the interesting tail starts at 2
++          ++live;
++          for (int t = 0; t < 4; ++t)
++            over[t] += (r + 1u > thresh[t]) ? 1u : 0u;
++        }
++        maxOut = std::max(maxOut, rankOut_buf_h.data()[n] + 1u);
++        maxIn = std::max(maxIn, rankIn_buf_h.data()[n] + 1u);
++      }
++      lstWarning(std::format(
++          "[CHAIN RANK] sweep={} maxRankOut={} maxRankIn={} slotsDeeperThan1={} over8={} over16={} over32={} over64={}",
++          sweep,
++          maxOut,
++          maxIn,
++          live,
++          over[0],
++          over[1],
++          over[2],
++          over[3]));
++    }
+     alpaka::exec<Acc1D>(queue_,
+                         chainFlat_workDiv,
+                         ChainWeldMutual{},

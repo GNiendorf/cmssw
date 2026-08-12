@@ -1,0 +1,45 @@
+##### gpeC0
+dir=m2_ref/gpeC0  events 0..99 : completed 88, missing/crashed 12 [5, 25, 28, 42, 64, 71, 74, 81, 85, 91, 92, 97]
+stage          mean     median        p90        max
+Hits           12.8       12.8       13.0       14.2
+MD              0.2        0.2        0.3        0.3
+LS              0.3        0.2        0.4        0.7
+T3              2.7        1.9        5.8       15.8
+Graph           8.2        4.7       21.4       33.0
+pLS             0.0        0.0        0.1        0.1
+Chain           1.7        1.5        2.4        3.2
+TC              0.1        0.1        0.2        0.2
+Reset           0.0        0.0        0.0        0.0
+Total          26.1       21.4       42.1       54.0
+Total(short)       13.3        8.6       29.3       41.2
+RSS           530.7      533.9      536.6      538.3   MB (peak RSS)
+##### gpeC8
+dir=m2_ref/gpeC8  events 0..99 : completed 100, missing/crashed 0 []
+stage          mean     median        p90        max
+Hits           12.7       12.7       12.9       14.2
+MD              0.2        0.2        0.3        0.3
+LS              0.3        0.2        0.5        0.7
+T3              3.8        2.3        9.1       24.9
+Graph          21.9        7.7       52.3      261.6
+pLS             0.0        0.0        0.0        0.1
+Chain           2.2        1.6        4.0       10.5
+TC              0.1        0.1        0.2        0.2
+Reset           0.0        0.0        0.0        0.0
+Total          41.3       24.8       79.7      303.9
+Total(short)       28.5       12.0       66.9      291.2
+RSS           530.8      533.8      536.6      539.9   MB (peak RSS)
+##### gpeC32
+dir=m2_ref/gpeC32  events 0..99 : completed 100, missing/crashed 0 []
+stage          mean     median        p90        max
+Hits           12.7       12.7       12.9       13.2
+MD              0.2        0.2        0.3        0.3
+LS              0.3        0.2        0.5        0.7
+T3              3.8        2.3        9.1       25.3
+Graph          57.9       17.1      141.8      751.4
+pLS             0.0        0.0        0.1        0.1
+Chain           2.2        1.6        3.9       10.4
+TC              0.1        0.1        0.2        0.2
+Reset           0.0        0.0        0.0        0.0
+Total          77.3       34.5      166.4      793.8
+Total(short)       64.6       21.9      153.8      781.0
+RSS           530.8      534.0      536.5      538.0   MB (peak RSS)

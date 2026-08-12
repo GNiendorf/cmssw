@@ -4,6 +4,7 @@
 #include "HeterogeneousCore/AlpakaInterface/interface/workdivision.h"
 
 #include "RecoTracker/LSTCore/interface/alpaka/Common.h"
+#include "RecoTracker/LSTCore/interface/ChainConfig.h"
 #include "RecoTracker/LSTCore/interface/ChainIncidenceSoA.h"
 #include "RecoTracker/LSTCore/interface/ChainNodesSoA.h"
 #include "RecoTracker/LSTCore/interface/MiniDoubletsSoA.h"
@@ -43,6 +44,14 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
   template <typename TAcc>
   ALPAKA_FN_ACC ALPAKA_FN_INLINE uint32_t chainScanWorkerIndex(TAcc const& acc) {
     return static_cast<uint32_t>(alpaka::getIdx<alpaka::Block, alpaka::Threads>(acc)[0u]);
+  }
+
+  // JET ROUND: the per-shared-key degree cap (ChainConfig::degreeCap). ONE expression, used by the
+  // K1b lane-2 product and by the K2 index decode, so the two can never disagree about how many of
+  // a key's triplets exist -- which they must not, since the decode inverts the prefix the scan
+  // wrote. At kChainDegreeCapOff this is the identity on every reachable degree.
+  ALPAKA_FN_ACC ALPAKA_FN_INLINE uint32_t chainCappedDegree(uint32_t deg, uint32_t cap) {
+    return (deg < cap) ? deg : cap;
   }
 
   // Block-wide exclusive scan over ONE value per worker, for NLanes independent value streams at
@@ -267,6 +276,13 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
   // per-key edge products degIn * degOut, which yields the exact enumerable edge count for this key
   // family (E1 for the MD-keyed instance, E2 for the Segment-keyed one).
   //
+  // JET ROUND: lane 2 (and lane 2 ONLY) carries the CAPPED product
+  // min(degIn, degCap) * min(degOut, degCap) -- see ChainConfig::degreeCap. Lanes 0 and 1 stay the
+  // full tallies, because they are the CSR offsets that K1c fills against and its slices must keep
+  // room for every triplet. K2 inverts this prefix, so it applies the identical cap to the
+  // out-degree it divides by (both go through chainCappedDegree). At kChainDegreeCapOff the
+  // expression is the identity and every word written is what the uncapped form wrote.
+  //
   // This REPLACES a single-block form that had the same three prefixes and the same values but gave
   // each of 1024 workers a contiguous chunk of ceil(nKeys/1024) keys. Here the work is spread over
   // nTiles blocks and read COALESCED.
@@ -297,9 +313,29 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
   // member allocated once -- not a per-event device buffer (see the rdHashOwner_ note in LSTEvent.h
   // for why that distinction is worth 26 ms on the CPU backend). The MD and LS instances share it
   // because their launches are queue-ordered.
+  // JET ROUND, phase 2: THE 64-BIT RECOUNT that keeps the allocation guard honest. `nEdgesExact` is
+  // a uint32 sum of uint32 products, so at 2^32 edges it WRAPS SILENTLY (FINDINGS_JET.md ceiling 3)
+  // and a guard fed the wrapped value would wave a corrupting event through. The certificate that
+  // the uint32 count is exact is `min(nT3, C) * nT3 < 2^32` -- because sum_k degIn*degOut <=
+  // (sum_k degIn) * max_k degOut <= nT3 * min(nT3, C) -- and the HOST evaluates it for free. It
+  // holds for every PU200 event and for every capped event, so this phase does not run in the
+  // shipping configuration at all; it exists for the cap-off jet arm, which is exactly the arm whose
+  // count cannot be trusted.
+  //
+  // It rides in this kernel rather than in a new one so the ptxas entry count does not move (`phase`
+  // is already an argument, so the argument PACK is unchanged too, which is the thing alpaka forks
+  // on). Worker 0 of each block walks its whole tile serially and writes one uint64 as lo/hi into
+  // lanes 0 and 1 of the scratch, which the host sums: no cross-worker 64-bit reduction, no atomic,
+  // no new buffer. The other workers return immediately, and no barrier is executed on this path, so
+  // the divergence is safe.
   struct ChainPrefixIncidenceTiled {
-    ALPAKA_FN_ACC void operator()(
-        Acc1D const& acc, ChainIncidence incidence, uint32_t nKeys, uint32_t* tileSums, uint32_t nTiles, uint32_t phase) const {
+    ALPAKA_FN_ACC void operator()(Acc1D const& acc,
+                                  ChainIncidence incidence,
+                                  uint32_t nKeys,
+                                  uint32_t* tileSums,
+                                  uint32_t nTiles,
+                                  uint32_t phase,
+                                  uint32_t degCap) const {
       ALPAKA_ASSERT_ACC(static_cast<uint32_t>(incidence.metadata().size()) == nKeys + 1u);
       constexpr uint32_t kLanes = 3u;
       auto& scratch =
@@ -316,6 +352,20 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
       uint32_t const begin = (tile * span < nKeys) ? tile * span : nKeys;
       uint32_t const end = (begin + span < nKeys) ? begin + span : nKeys;
 
+      if (phase == 2u) {
+        if (worker != 0u)
+          return;
+        uint64_t sum = 0;
+        for (uint32_t k = begin; k < end; ++k) {
+          uint64_t const degOut = chainCappedDegree(incidence.t3OutCounts()[k], degCap);
+          uint64_t const degIn = chainCappedDegree(incidence.t3InCounts()[k], degCap);
+          sum += degIn * degOut;
+        }
+        tileSums[tile] = static_cast<uint32_t>(sum & 0xffffffffu);
+        tileSums[kChainScanTilesMax + tile] = static_cast<uint32_t>(sum >> 32);
+        return;
+      }
+
       if (phase == 0u) {
         uint32_t local[kLanes] = {0u, 0u, 0u};
         for (uint32_t k = begin + worker; k < end; k += nWorkers) {
@@ -323,7 +373,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
           uint32_t const degIn = incidence.t3InCounts()[k];
           local[0] += degOut;
           local[1] += degIn;
-          local[2] += degIn * degOut;
+          local[2] += chainCappedDegree(degIn, degCap) * chainCappedDegree(degOut, degCap);
         }
         uint32_t base[kLanes], total[kLanes];
         chainScanBlockExclusive<kLanes, kChainScanTileThreads>(
@@ -360,7 +410,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
           uint32_t const degIn = incidence.t3InCounts()[k];
           local[0] = degOut;
           local[1] = degIn;
-          local[2] = degIn * degOut;
+          local[2] = chainCappedDegree(degIn, degCap) * chainCappedDegree(degOut, degCap);
         }
         uint32_t base[kLanes], total[kLanes];
         chainScanBlockExclusive<kLanes, kChainScanTileThreads>(

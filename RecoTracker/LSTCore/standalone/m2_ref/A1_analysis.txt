@@ -1,0 +1,51 @@
+=== M2A1 rc=0 ===
+d41d8cd98f00b204e9800998ecf8427e  /mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/m2_ref/frozenC/MD5
+daaae9f9321f8f022f3b51a76c3addcb  /mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/m2_ref/frozenC/liblst_cpu.so
+9ca4ddebac3fbe501f9ee3bfee7293a8  /mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/m2_ref/frozenC/liblst_cuda.so
+add74afb4a9fa1212141c16518879305  /mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/m2_ref/frozenC/lst_cpu
+22f6d2b59bde18ff0631f414279f101d  /mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/m2_ref/frozenC/lst_cuda
+
+############ [1] INERTNESS: mine C=0 vs frozen HEAD, PU200 100 evt s=1 ############
+  mine C=0  rc=0 size=10855450
+  HEAD      rc=0 size=10855418
+
+############ [2] R on PU200: rank census, cap OFF, 100 evt ############
+  rc=0  [CHAIN RANK] lines: 300
+
+############ [3] THE GATE: ntuples at C = 4/8/16/32/64, PU200 100 evt s=1 ############
+  C=4 rc=0 size=10855470
+[CHAIN TOPC] C=4 enumerated=124420 eligible=62446 kept=54229 (43.5854% of enumerated)
+  C=8 rc=0 size=10855450
+[CHAIN TOPC] C=8 enumerated=124420 eligible=62446 kept=58963 (47.3903% of enumerated)
+  C=16 rc=0 size=10855472
+[CHAIN TOPC] C=16 enumerated=124420 eligible=62446 kept=61283 (49.2549% of enumerated)
+  C=32 rc=0 size=10855472
+[CHAIN TOPC] C=32 enumerated=124420 eligible=62446 kept=62446 (50.1897% of enumerated)
+  C=64 rc=0 size=10855472
+[CHAIN TOPC] C=64 enumerated=124420 eligible=62446 kept=62446 (50.1897% of enumerated)
+
+=== timing tails (context only, this job is not a timing arm) ===
+   avg     14.6     90.3     75.5     64.8     30.5    357.7    133.2     38.2      0.4     805.1     432.8+/- 112.0     908.4   explicit[s=1]
+   avg     14.6     90.4     74.2     64.3     39.6    358.0    133.3     38.2      0.4     812.8     440.2+/- 114.5     916.5   explicit[s=1]
+   avg     14.6     90.3     76.2     66.1     52.8    358.0    132.8     38.2      2.1     831.1     458.4+/- 123.3     936.0   explicit[s=1]
+DONE M2A1
+
+=== RANK CENSUS PU200 (cap off) ===
+records=300  (100 events x 3 sweeps)
+sweep  maxRankOut  maxRankIn  slots>rank1       >8      >16      >32      >64
+    0           1          1            0        0        0        0        0
+    1          12          9       816540       12        0        0        0
+    2          14         13       453745      125        0        0        0
+
+R (max argmax rank over everything) = 14
+slots deeper than rank 1: 1270285; deeper than 8: 137; 16: 0; 32: 0; 64: 0
+=> C >= R is bit-identical by the induction argument; any C below the '>C' column above has at least that many chances to differ.
+
+=== INERTNESS + GATE (PU200 100 evt) ===
+ref pu_C0.root : 100 entries, 35 branches
+pu_HEAD.root                   35/35 IDENTICAL
+pu_C4.root                     15/35 IDENTICAL  DIFFER: sim_tcIdx,sim_tcIdxAll,sim_tcIdxAllFrac,sim_tcIdxBest,sim_tcIdxBestFrac,tc_eta,tc_hitIdx,tc_hitType,tc_isDuplicate,tc_isFake,tc_nhitOT,tc_nhits,tc_nlayers,tc_pMatched,tc_phi,tc_pt,tc_simIdx,tc_simIdxAll,tc_simIdxAllFrac,tc_type
+pu_C8.root                     35/35 IDENTICAL
+pu_C16.root                    35/35 IDENTICAL
+pu_C32.root                    35/35 IDENTICAL
+pu_C64.root                    35/35 IDENTICAL

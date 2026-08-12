@@ -258,12 +258,51 @@ namespace lst {
     float attachPrefDPhi = 0.4f;
     float attachPrefDTanL = 0.6f;
 
+    // ------------------------------------------------------------------------------------------
+    // JET ROUND (M1) -- the per-shared-key incidence degree cap. NOT a physics working point.
+    // ------------------------------------------------------------------------------------------
+    // The edge families are the full cross product at each shared key, so the enumerated count is
+    // exactly sum_key degIn(key) * degOut(key). On a collimated (jet) event the number of distinct
+    // shared MDs SATURATES near 1000 while the triplet count grows unbounded, so the mean per-key
+    // degree goes from PU200's 2.08 to 62-272 and that ratio SQUARES into the edge count: measured
+    // 5500x more edges than PU200 at the tail, 8.4 GB of edge rows on one event of 1000, and past
+    // two hard allocation ceilings (FINDINGS_JET.md). Meanwhile the weld consumes at most
+    // kChainWeldSweeps edges per node-slot and only 0.018% of a jet event's edges are ever welded.
+    //
+    // So a key keeps at most this many in- and out-triplets: the enumerated count at that key
+    // becomes min(degIn, C) * min(degOut, C). Measured cost on PU200: 0.074% of E1 pooled over 150
+    // events at C = 256 (max per-key degree ever seen on PU200 is 554, on jets 2303), against 3.0x
+    // fewer edges pooled on jets and 6.0x on the big events.
+    //
+    // kChainDegreeCapOff reproduces today's behaviour BIT FOR BIT rather than approximately: the
+    // implementation is a min() against this value and min(deg, 1e9) == deg for every reachable
+    // degree, so the capped and the uncapped path are the same arithmetic. That is what makes the
+    // cap-off bit-identity gate a real test of the plumbing.
+    //
+    // WHICH triplets a key keeps is CSR arrival order (the first C to land), which on a host backend
+    // is ascending node index and on a device backend is atomicAdd race order. A deterministic or
+    // score-ranked keep-rule needs a per-slice ranking (O(sum_key deg^2), i.e. the very cost this
+    // removes) or a sort with two nT3-sized buffers; the cheap high-quality selection is a per-NODE
+    // top-C at enumeration time, which is a separate change.
+    //
+    // NOTE the two things this deliberately does NOT touch: the CSR offsets stay UNCAPPED (so the
+    // K1c fill and its bounds are unchanged), and so do the degIn / degOut values that reach the
+    // edge head (features 12/13) and the chain head (ChainGate's shared-key degrees) -- those are
+    // trained inputs, and capping them would move PU200 scores for no memory saving at all.
+    uint32_t degreeCap = 256u;
+
     // True iff any band delta is live; reproduces the reference's `zOn` short-circuit exactly.
     constexpr bool etaBandActive() const {
       return zEta2 > zEta1 && (zdRI != 0.f || zdR != 0.f || zdR5 != 0.f || zdR6 != 0.f || zdM4 != 0.f || zdM4D != 0.f ||
                                zdCP != 0.f || zdCD != 0.f);
     }
   };
+
+  // The value of ChainConfig::degreeCap that means "no cap". It is not a sentinel the code tests
+  // for: it is simply larger than any degree a min() can ever see (a degree is bounded by the
+  // triplet count, and 2^32 / 21 B = 204 M edge rows is the hard allocation wall long before that),
+  // so the capped expressions collapse to the uncapped ones with no branch.
+  static constexpr uint32_t kChainDegreeCapOff = 1000000000u;
 
   // prototype/Stages.h kWeldSweeps.
   static constexpr int kChainWeldSweeps = 3;

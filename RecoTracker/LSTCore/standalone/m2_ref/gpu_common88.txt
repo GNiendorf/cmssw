@@ -1,0 +1,15 @@
+common events (C=0 could run): 88 | the 12 the GPU cannot run today are excluded by construction
+
+--- Graph, ONLY the 88 common events ---
+  gpeC0    mean     8.23 median     4.72 p90    21.36 max    33.01
+  gpeC8    mean     9.73 median     5.95 p90    24.19 max    38.93
+  gpeC32   mean    23.73 median    13.62 p90    65.09 max   109.29
+
+--- Total, ONLY the 88 common events ---
+  gpeC0    mean    26.10 median    21.38 p90    42.12 max    53.97
+  gpeC8    mean    27.49 median    22.42 p90    46.05 max    59.45
+  gpeC32   mean    41.49 median    30.14 p90    86.20 max   129.38
+
+--- the 12 events the GPU CANNOT RUN at cap-off, on the capped arms (Graph ms) ---
+  gpeC8    n=12 mean   110.79 median    90.31 max   261.55
+  gpeC32   n=12 mean   308.48 median   251.50 max   751.42

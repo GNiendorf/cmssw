@@ -15,6 +15,7 @@
 #include "RecoTracker/LSTCore/interface/SegmentsSoA.h"
 #include "RecoTracker/LSTCore/interface/TripletsSoA.h"
 
+#include "ChainGraph.h"  // chainCappedDegree: K2's decode must apply the SAME cap K1b's prefix did
 #include "EdgeNetworkWeights.h"
 #include "NeuralNetwork.h"
 
@@ -257,6 +258,13 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
   // slice (triplets ending at the key) and the OUTER endpoint from the "out" slice (triplets
   // starting at the key), with the "in" slice as the outer loop, so the row split is
   //   (i, j) = (rem / degOut, rem % degOut).
+  //
+  // JET ROUND: `degOut` and the implied `degIn` bound are the CAPPED degrees
+  // (ChainConfig::degreeCap, applied through the same chainCappedDegree K1b's lane-2 prefix used),
+  // so this stays the exact inverse of that prefix -- which it must be, or a thread decodes a row
+  // that was never counted. The CSR OFFSETS are uncapped, so `i < min(degIn, C)` and
+  // `j < min(degOut, C)` simply address the FIRST C entries of each of the key's two full slices and
+  // every read is in bounds by construction. At kChainDegreeCapOff both calls are the identity.
   struct ChainBuildEdges {
     ALPAKA_FN_ACC void operator()(Acc1D const& acc,
                                   TripletsConst triplets,
@@ -266,7 +274,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                   ChainIncidenceConst lsIncidence,
                                   ChainEdges edges,
                                   uint32_t nE1,
-                                  uint32_t nE2) const {
+                                  uint32_t nE2,
+                                  uint32_t degCap) const {
       uint32_t const nMDKeys = static_cast<uint32_t>(mdIncidence.metadata().size()) - 1u;
       uint32_t const nLSKeys = static_cast<uint32_t>(lsIncidence.metadata().size()) - 1u;
 
@@ -290,8 +299,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
 
         uint32_t const key = chainDecodeKey(prodPrefix, nKeys, local);
         uint32_t const rem = local - prodPrefix[key];
-        uint32_t const degOut = outOffsets[key + 1u] - outOffsets[key];
+        uint32_t const degOut = chainCappedDegree(outOffsets[key + 1u] - outOffsets[key], degCap);
         ALPAKA_ASSERT_ACC(degOut > 0u);
+        ALPAKA_ASSERT_ACC(rem / degOut < chainCappedDegree(inOffsets[key + 1u] - inOffsets[key], degCap));
 
         uint32_t const inner = inItems[inOffsets[key] + rem / degOut];
         uint32_t const outer = outItems[outOffsets[key] + rem % degOut];

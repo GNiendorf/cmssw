@@ -1,0 +1,16 @@
+dir=jetrecon_ref/pe1000  events 0..99 : completed 98, missing/crashed 2 [5, 85]
+stage          mean     median        p90        max
+Hits            1.1        1.1        1.4        1.7
+MD              1.0        0.9        1.4        1.8
+LS              3.2        2.8        5.7       10.8
+T3             57.6       35.6      141.9      359.0
+Graph        3538.3     1346.9     8936.8    33175.6
+pLS             0.4        0.3        0.7        1.5
+Chain          19.0        9.7       52.3      118.2
+TC              0.4        0.4        0.6        0.8
+Reset          33.9       11.8       86.2      337.7
+Total        3621.0     1395.6     9075.1    33630.5
+Total(short)     3653.4     1406.3     9159.5    33962.3
+RSS           770.8      513.4     1427.4     4200.3   MB (peak RSS)
+MEMtot        469.6      202.2     1156.9     4096.7   MB ([MEM] Total, LST buffers)
+enumerated E: n=98 mean 20775495 median 8450442 max 188537483 (evt 42)

@@ -1,0 +1,63 @@
+--- evt 0 ---
+ref C0_evt0.root : 1 entries, 35 branches
+C4_evt0.root                   16/35 IDENTICAL  DIFFER: sim_tcIdx,sim_tcIdxAll,sim_tcIdxAllFrac,sim_tcIdxBest,sim_tcIdxBestFrac,tc_eta,tc_hitIdx,tc_hitType,tc_isFake,tc_nhitOT,tc_nhits,tc_nlayers,tc_pMatched,tc_phi,tc_pt,tc_simIdx,tc_simIdxAll,tc_simIdxAllFrac,tc_type
+C8_evt0.root                   35/35 IDENTICAL
+C16_evt0.root                  35/35 IDENTICAL
+C32_evt0.root                  35/35 IDENTICAL
+C64_evt0.root                  35/35 IDENTICAL
+--- evt 1 ---
+ref C0_evt1.root : 1 entries, 35 branches
+C4_evt1.root                   16/35 IDENTICAL  DIFFER: sim_tcIdx,sim_tcIdxAll,sim_tcIdxAllFrac,sim_tcIdxBest,sim_tcIdxBestFrac,tc_eta,tc_hitIdx,tc_hitType,tc_isFake,tc_nhitOT,tc_nhits,tc_nlayers,tc_pMatched,tc_phi,tc_pt,tc_simIdx,tc_simIdxAll,tc_simIdxAllFrac,tc_type
+C8_evt1.root                   35/35 IDENTICAL
+C16_evt1.root                  35/35 IDENTICAL
+C32_evt1.root                  35/35 IDENTICAL
+C64_evt1.root                  35/35 IDENTICAL
+--- evt 2 ---
+ref C0_evt2.root : 1 entries, 35 branches
+C4_evt2.root                   16/35 IDENTICAL  DIFFER: sim_tcIdx,sim_tcIdxAll,sim_tcIdxAllFrac,sim_tcIdxBest,sim_tcIdxBestFrac,tc_eta,tc_hitIdx,tc_hitType,tc_isFake,tc_nhitOT,tc_nhits,tc_nlayers,tc_pMatched,tc_phi,tc_pt,tc_simIdx,tc_simIdxAll,tc_simIdxAllFrac,tc_type
+C8_evt2.root                   35/35 IDENTICAL
+C16_evt2.root                  35/35 IDENTICAL
+C32_evt2.root                  35/35 IDENTICAL
+C64_evt2.root                  35/35 IDENTICAL
+--- evt 3 ---
+ref C0_evt3.root : 1 entries, 35 branches
+C4_evt3.root                   15/35 IDENTICAL  DIFFER: sim_tcIdx,sim_tcIdxAll,sim_tcIdxAllFrac,sim_tcIdxBest,sim_tcIdxBestFrac,tc_eta,tc_hitIdx,tc_hitType,tc_isDuplicate,tc_isFake,tc_nhitOT,tc_nhits,tc_nlayers,tc_pMatched,tc_phi,tc_pt,tc_simIdx,tc_simIdxAll,tc_simIdxAllFrac,tc_type
+C8_evt3.root                   35/35 IDENTICAL
+C16_evt3.root                  35/35 IDENTICAL
+C32_evt3.root                  35/35 IDENTICAL
+C64_evt3.root                  35/35 IDENTICAL
+--- evt 4 ---
+ref C0_evt4.root : 1 entries, 35 branches
+C4_evt4.root                   17/35 IDENTICAL  DIFFER: sim_tcIdx,sim_tcIdxAll,sim_tcIdxBest,tc_eta,tc_hitIdx,tc_hitType,tc_isDuplicate,tc_isFake,tc_nhitOT,tc_nhits,tc_nlayers,tc_pMatched,tc_phi,tc_pt,tc_simIdx,tc_simIdxAll,tc_simIdxAllFrac,tc_type
+C8_evt4.root                   35/35 IDENTICAL
+C16_evt4.root                  35/35 IDENTICAL
+C32_evt4.root                  35/35 IDENTICAL
+C64_evt4.root                  35/35 IDENTICAL
+--- evt 6 ---
+ref C0_evt6.root : 1 entries, 35 branches
+C4_evt6.root                   15/35 IDENTICAL  DIFFER: sim_tcIdx,sim_tcIdxAll,sim_tcIdxAllFrac,sim_tcIdxBest,sim_tcIdxBestFrac,tc_eta,tc_hitIdx,tc_hitType,tc_isDuplicate,tc_isFake,tc_nhitOT,tc_nhits,tc_nlayers,tc_pMatched,tc_phi,tc_pt,tc_simIdx,tc_simIdxAll,tc_simIdxAllFrac,tc_type
+C8_evt6.root                   35/35 IDENTICAL
+C16_evt6.root                  35/35 IDENTICAL
+C32_evt6.root                  35/35 IDENTICAL
+C64_evt6.root                  35/35 IDENTICAL
+--- evt 7 ---
+ref C0_evt7.root : 1 entries, 35 branches
+C4_evt7.root                   16/35 IDENTICAL  DIFFER: sim_tcIdx,sim_tcIdxAll,sim_tcIdxAllFrac,sim_tcIdxBest,sim_tcIdxBestFrac,tc_eta,tc_hitIdx,tc_hitType,tc_isFake,tc_nhitOT,tc_nhits,tc_nlayers,tc_pMatched,tc_phi,tc_pt,tc_simIdx,tc_simIdxAll,tc_simIdxAllFrac,tc_type
+C8_evt7.root                   16/35 IDENTICAL  DIFFER: sim_tcIdx,sim_tcIdxAll,sim_tcIdxAllFrac,sim_tcIdxBest,sim_tcIdxBestFrac,tc_eta,tc_hitIdx,tc_hitType,tc_isFake,tc_nhitOT,tc_nhits,tc_nlayers,tc_pMatched,tc_phi,tc_pt,tc_simIdx,tc_simIdxAll,tc_simIdxAllFrac,tc_type
+C16_evt7.root                  35/35 IDENTICAL
+C32_evt7.root                  35/35 IDENTICAL
+C64_evt7.root                  35/35 IDENTICAL
+--- evt 8 ---
+ref C0_evt8.root : 1 entries, 35 branches
+C4_evt8.root                   35/35 IDENTICAL
+C8_evt8.root                   35/35 IDENTICAL
+C16_evt8.root                  35/35 IDENTICAL
+C32_evt8.root                  35/35 IDENTICAL
+C64_evt8.root                  35/35 IDENTICAL
+--- evt 9 ---
+ref C0_evt9.root : 1 entries, 35 branches
+C4_evt9.root                   15/35 IDENTICAL  DIFFER: sim_tcIdx,sim_tcIdxAll,sim_tcIdxAllFrac,sim_tcIdxBest,sim_tcIdxBestFrac,tc_eta,tc_hitIdx,tc_hitType,tc_isDuplicate,tc_isFake,tc_nhitOT,tc_nhits,tc_nlayers,tc_pMatched,tc_phi,tc_pt,tc_simIdx,tc_simIdxAll,tc_simIdxAllFrac,tc_type
+C8_evt9.root                   35/35 IDENTICAL
+C16_evt9.root                  35/35 IDENTICAL
+C32_evt9.root                  35/35 IDENTICAL
+C64_evt9.root                  35/35 IDENTICAL

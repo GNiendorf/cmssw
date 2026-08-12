@@ -71,6 +71,13 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     unsigned int nChainNodes_ = 0;        // dense triplet-node count (K0)
     unsigned int nChainE1Edges_ = 0;      // exact MD-keyed edge count (K1b)
     unsigned int nChainE2Edges_ = 0;      // exact LS-keyed edge count (K1b)
+    // The SAME two counts in 64 bit, and the ONLY versions the allocation guard is allowed to read.
+    // `nEdgesExact` is a uint32 accumulation, so above 2^32 edges the two members above hold a
+    // WRAPPED value and a guard fed one of them would pass a corrupting event (FINDINGS_JET.md
+    // ceiling 3). These are equal to them whenever the host-side exactness certificate holds and
+    // come from the K1b phase-2 64-bit recount otherwise; the guard vetoes on any inequality.
+    uint64_t nChainE1Edges64_ = 0;
+    uint64_t nChainE2Edges64_ = 0;
     unsigned int nChainCount_ = 0;        // welded chain count (K6d)
     unsigned int nChainWeldedNodes_ = 0;  // total member nodes over all chains (K6d)
     // Frozen chain-tracking configuration. P2.3 will fill this from the producer parameter set;

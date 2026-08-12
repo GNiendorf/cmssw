@@ -1,0 +1,582 @@
+diff --git a/RecoTracker/LST/plugins/alpaka/LSTProducer.cc b/RecoTracker/LST/plugins/alpaka/LSTProducer.cc
+index 8e67d2124d2..8ebfe9beb12 100644
+--- a/RecoTracker/LST/plugins/alpaka/LSTProducer.cc
++++ b/RecoTracker/LST/plugins/alpaka/LSTProducer.cc
+@@ -86,6 +86,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
+     c.attachSuppressBarePLS = a.getParameter<bool>("suppressBarePLS");
+     c.attachSeedDedup = a.getParameter<bool>("seedDedup");
+     c.attachDcaMax = a.getParameter<double>("dcaMax");
++
++    // Not a physics working point, so it sits at the top of the chain PSet rather than inside one of
++    // the three groups: it is the resource guard on the edge enumeration (ChainConfig::degreeCap).
++    c.degreeCap = ps.getParameter<uint32_t>("degreeCap");
+     return c;
+   }
+ 
+@@ -147,6 +151,13 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
+       // most of which the M14-M18 scans measured as no-ops, bad trades or dead experiments, and
+       // those are compile-time constants here rather than producer parameters.
+       edm::ParameterSetDescription chainDesc;
++      chainDesc.add<uint32_t>("degreeCap", 256)
++          ->setComment(
++              "Resource guard, not a working point: a shared MiniDoublet / Segment key enumerates at "
++              "most this many in- and out-triplets. The edge count is sum_key degIn * degOut, which on "
++              "a collimated (jet) event reaches 400 M edges / 8.4 GB and overruns the 4 GiB alpaka "
++              "buffer extent; 1000000000 disables the cap and reproduces the unguarded behaviour. "
++              "Measured PU200 cost at 256: 0.074% of the enumerated edges pooled over 150 events.");
+       {
+         edm::ParameterSetDescription gateDesc;
+         gateDesc.add<double>("thetaEdge", 0.0)->setComment("-e: edge-logit floor for K6 welding.");
+diff --git a/RecoTracker/LSTCore/interface/ChainConfig.h b/RecoTracker/LSTCore/interface/ChainConfig.h
+index afd0367f667..8597e3e36dc 100644
+--- a/RecoTracker/LSTCore/interface/ChainConfig.h
++++ b/RecoTracker/LSTCore/interface/ChainConfig.h
+@@ -258,6 +258,39 @@ namespace lst {
+     float attachPrefDPhi = 0.4f;
+     float attachPrefDTanL = 0.6f;
+ 
++    // ------------------------------------------------------------------------------------------
++    // JET ROUND (M1) -- the per-shared-key incidence degree cap. NOT a physics working point.
++    // ------------------------------------------------------------------------------------------
++    // The edge families are the full cross product at each shared key, so the enumerated count is
++    // exactly sum_key degIn(key) * degOut(key). On a collimated (jet) event the number of distinct
++    // shared MDs SATURATES near 1000 while the triplet count grows unbounded, so the mean per-key
++    // degree goes from PU200's 2.08 to 62-272 and that ratio SQUARES into the edge count: measured
++    // 5500x more edges than PU200 at the tail, 8.4 GB of edge rows on one event of 1000, and past
++    // two hard allocation ceilings (FINDINGS_JET.md). Meanwhile the weld consumes at most
++    // kChainWeldSweeps edges per node-slot and only 0.018% of a jet event's edges are ever welded.
++    //
++    // So a key keeps at most this many in- and out-triplets: the enumerated count at that key
++    // becomes min(degIn, C) * min(degOut, C). Measured cost on PU200: 0.074% of E1 pooled over 150
++    // events at C = 256 (max per-key degree ever seen on PU200 is 554, on jets 2303), against 3.0x
++    // fewer edges pooled on jets and 6.0x on the big events.
++    //
++    // kChainDegreeCapOff reproduces today's behaviour BIT FOR BIT rather than approximately: the
++    // implementation is a min() against this value and min(deg, 1e9) == deg for every reachable
++    // degree, so the capped and the uncapped path are the same arithmetic. That is what makes the
++    // cap-off bit-identity gate a real test of the plumbing.
++    //
++    // WHICH triplets a key keeps is CSR arrival order (the first C to land), which on a host backend
++    // is ascending node index and on a device backend is atomicAdd race order. A deterministic or
++    // score-ranked keep-rule needs a per-slice ranking (O(sum_key deg^2), i.e. the very cost this
++    // removes) or a sort with two nT3-sized buffers; the cheap high-quality selection is a per-NODE
++    // top-C at enumeration time, which is a separate change.
++    //
++    // NOTE the two things this deliberately does NOT touch: the CSR offsets stay UNCAPPED (so the
++    // K1c fill and its bounds are unchanged), and so do the degIn / degOut values that reach the
++    // edge head (features 12/13) and the chain head (ChainGate's shared-key degrees) -- those are
++    // trained inputs, and capping them would move PU200 scores for no memory saving at all.
++    uint32_t degreeCap = 256u;
++
+     // True iff any band delta is live; reproduces the reference's `zOn` short-circuit exactly.
+     constexpr bool etaBandActive() const {
+       return zEta2 > zEta1 && (zdRI != 0.f || zdR != 0.f || zdR5 != 0.f || zdR6 != 0.f || zdM4 != 0.f || zdM4D != 0.f ||
+@@ -265,6 +298,12 @@ namespace lst {
+     }
+   };
+ 
++  // The value of ChainConfig::degreeCap that means "no cap". It is not a sentinel the code tests
++  // for: it is simply larger than any degree a min() can ever see (a degree is bounded by the
++  // triplet count, and 2^32 / 21 B = 204 M edge rows is the hard allocation wall long before that),
++  // so the capped expressions collapse to the uncapped ones with no branch.
++  static constexpr uint32_t kChainDegreeCapOff = 1000000000u;
++
+   // prototype/Stages.h kWeldSweeps.
+   static constexpr int kChainWeldSweeps = 3;
+   // prototype/K9K10.cc k10AssembleChainTCs: a chain shorter than this emits no TC.
+diff --git a/RecoTracker/LSTCore/src/alpaka/ChainEdges.h b/RecoTracker/LSTCore/src/alpaka/ChainEdges.h
+index 0fa0177a314..eecc0dc38fd 100644
+--- a/RecoTracker/LSTCore/src/alpaka/ChainEdges.h
++++ b/RecoTracker/LSTCore/src/alpaka/ChainEdges.h
+@@ -15,6 +15,7 @@
+ #include "RecoTracker/LSTCore/interface/SegmentsSoA.h"
+ #include "RecoTracker/LSTCore/interface/TripletsSoA.h"
+ 
++#include "ChainGraph.h"  // chainCappedDegree: K2's decode must apply the SAME cap K1b's prefix did
+ #include "EdgeNetworkWeights.h"
+ #include "NeuralNetwork.h"
+ 
+@@ -257,6 +258,13 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+   // slice (triplets ending at the key) and the OUTER endpoint from the "out" slice (triplets
+   // starting at the key), with the "in" slice as the outer loop, so the row split is
+   //   (i, j) = (rem / degOut, rem % degOut).
++  //
++  // JET ROUND: `degOut` and the implied `degIn` bound are the CAPPED degrees
++  // (ChainConfig::degreeCap, applied through the same chainCappedDegree K1b's lane-2 prefix used),
++  // so this stays the exact inverse of that prefix -- which it must be, or a thread decodes a row
++  // that was never counted. The CSR OFFSETS are uncapped, so `i < min(degIn, C)` and
++  // `j < min(degOut, C)` simply address the FIRST C entries of each of the key's two full slices and
++  // every read is in bounds by construction. At kChainDegreeCapOff both calls are the identity.
+   struct ChainBuildEdges {
+     ALPAKA_FN_ACC void operator()(Acc1D const& acc,
+                                   TripletsConst triplets,
+@@ -266,7 +274,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+                                   ChainIncidenceConst lsIncidence,
+                                   ChainEdges edges,
+                                   uint32_t nE1,
+-                                  uint32_t nE2) const {
++                                  uint32_t nE2,
++                                  uint32_t degCap) const {
+       uint32_t const nMDKeys = static_cast<uint32_t>(mdIncidence.metadata().size()) - 1u;
+       uint32_t const nLSKeys = static_cast<uint32_t>(lsIncidence.metadata().size()) - 1u;
+ 
+@@ -290,8 +299,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+ 
+         uint32_t const key = chainDecodeKey(prodPrefix, nKeys, local);
+         uint32_t const rem = local - prodPrefix[key];
+-        uint32_t const degOut = outOffsets[key + 1u] - outOffsets[key];
++        uint32_t const degOut = chainCappedDegree(outOffsets[key + 1u] - outOffsets[key], degCap);
+         ALPAKA_ASSERT_ACC(degOut > 0u);
++        ALPAKA_ASSERT_ACC(rem / degOut < chainCappedDegree(inOffsets[key + 1u] - inOffsets[key], degCap));
+ 
+         uint32_t const inner = inItems[inOffsets[key] + rem / degOut];
+         uint32_t const outer = outItems[outOffsets[key] + rem % degOut];
+diff --git a/RecoTracker/LSTCore/src/alpaka/ChainGraph.h b/RecoTracker/LSTCore/src/alpaka/ChainGraph.h
+index 82c52d00640..aa3bb431a7d 100644
+--- a/RecoTracker/LSTCore/src/alpaka/ChainGraph.h
++++ b/RecoTracker/LSTCore/src/alpaka/ChainGraph.h
+@@ -4,6 +4,7 @@
+ #include "HeterogeneousCore/AlpakaInterface/interface/workdivision.h"
+ 
+ #include "RecoTracker/LSTCore/interface/alpaka/Common.h"
++#include "RecoTracker/LSTCore/interface/ChainConfig.h"
+ #include "RecoTracker/LSTCore/interface/ChainIncidenceSoA.h"
+ #include "RecoTracker/LSTCore/interface/ChainNodesSoA.h"
+ #include "RecoTracker/LSTCore/interface/MiniDoubletsSoA.h"
+@@ -45,6 +46,14 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+     return static_cast<uint32_t>(alpaka::getIdx<alpaka::Block, alpaka::Threads>(acc)[0u]);
+   }
+ 
++  // JET ROUND: the per-shared-key degree cap (ChainConfig::degreeCap). ONE expression, used by the
++  // K1b lane-2 product and by the K2 index decode, so the two can never disagree about how many of
++  // a key's triplets exist -- which they must not, since the decode inverts the prefix the scan
++  // wrote. At kChainDegreeCapOff this is the identity on every reachable degree.
++  ALPAKA_FN_ACC ALPAKA_FN_INLINE uint32_t chainCappedDegree(uint32_t deg, uint32_t cap) {
++    return (deg < cap) ? deg : cap;
++  }
++
+   // Block-wide exclusive scan over ONE value per worker, for NLanes independent value streams at
+   // once. Every single-block scan in the chain path used to close with
+   //     for (uint32_t w = 0; w < nWorkers; ++w) { if (w == worker) base = total; total += partial[w]; }
+@@ -267,6 +276,13 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+   // per-key edge products degIn * degOut, which yields the exact enumerable edge count for this key
+   // family (E1 for the MD-keyed instance, E2 for the Segment-keyed one).
+   //
++  // JET ROUND: lane 2 (and lane 2 ONLY) carries the CAPPED product
++  // min(degIn, degCap) * min(degOut, degCap) -- see ChainConfig::degreeCap. Lanes 0 and 1 stay the
++  // full tallies, because they are the CSR offsets that K1c fills against and its slices must keep
++  // room for every triplet. K2 inverts this prefix, so it applies the identical cap to the
++  // out-degree it divides by (both go through chainCappedDegree). At kChainDegreeCapOff the
++  // expression is the identity and every word written is what the uncapped form wrote.
++  //
+   // This REPLACES a single-block form that had the same three prefixes and the same values but gave
+   // each of 1024 workers a contiguous chunk of ceil(nKeys/1024) keys. Here the work is spread over
+   // nTiles blocks and read COALESCED.
+@@ -297,9 +313,29 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+   // member allocated once -- not a per-event device buffer (see the rdHashOwner_ note in LSTEvent.h
+   // for why that distinction is worth 26 ms on the CPU backend). The MD and LS instances share it
+   // because their launches are queue-ordered.
++  // JET ROUND, phase 2: THE 64-BIT RECOUNT that keeps the allocation guard honest. `nEdgesExact` is
++  // a uint32 sum of uint32 products, so at 2^32 edges it WRAPS SILENTLY (FINDINGS_JET.md ceiling 3)
++  // and a guard fed the wrapped value would wave a corrupting event through. The certificate that
++  // the uint32 count is exact is `min(nT3, C) * nT3 < 2^32` -- because sum_k degIn*degOut <=
++  // (sum_k degIn) * max_k degOut <= nT3 * min(nT3, C) -- and the HOST evaluates it for free. It
++  // holds for every PU200 event and for every capped event, so this phase does not run in the
++  // shipping configuration at all; it exists for the cap-off jet arm, which is exactly the arm whose
++  // count cannot be trusted.
++  //
++  // It rides in this kernel rather than in a new one so the ptxas entry count does not move (`phase`
++  // is already an argument, so the argument PACK is unchanged too, which is the thing alpaka forks
++  // on). Worker 0 of each block walks its whole tile serially and writes one uint64 as lo/hi into
++  // lanes 0 and 1 of the scratch, which the host sums: no cross-worker 64-bit reduction, no atomic,
++  // no new buffer. The other workers return immediately, and no barrier is executed on this path, so
++  // the divergence is safe.
+   struct ChainPrefixIncidenceTiled {
+-    ALPAKA_FN_ACC void operator()(
+-        Acc1D const& acc, ChainIncidence incidence, uint32_t nKeys, uint32_t* tileSums, uint32_t nTiles, uint32_t phase) const {
++    ALPAKA_FN_ACC void operator()(Acc1D const& acc,
++                                  ChainIncidence incidence,
++                                  uint32_t nKeys,
++                                  uint32_t* tileSums,
++                                  uint32_t nTiles,
++                                  uint32_t phase,
++                                  uint32_t degCap) const {
+       ALPAKA_ASSERT_ACC(static_cast<uint32_t>(incidence.metadata().size()) == nKeys + 1u);
+       constexpr uint32_t kLanes = 3u;
+       auto& scratch =
+@@ -316,6 +352,20 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+       uint32_t const begin = (tile * span < nKeys) ? tile * span : nKeys;
+       uint32_t const end = (begin + span < nKeys) ? begin + span : nKeys;
+ 
++      if (phase == 2u) {
++        if (worker != 0u)
++          return;
++        uint64_t sum = 0;
++        for (uint32_t k = begin; k < end; ++k) {
++          uint64_t const degOut = chainCappedDegree(incidence.t3OutCounts()[k], degCap);
++          uint64_t const degIn = chainCappedDegree(incidence.t3InCounts()[k], degCap);
++          sum += degIn * degOut;
++        }
++        tileSums[tile] = static_cast<uint32_t>(sum & 0xffffffffu);
++        tileSums[kChainScanTilesMax + tile] = static_cast<uint32_t>(sum >> 32);
++        return;
++      }
++
+       if (phase == 0u) {
+         uint32_t local[kLanes] = {0u, 0u, 0u};
+         for (uint32_t k = begin + worker; k < end; k += nWorkers) {
+@@ -323,7 +373,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+           uint32_t const degIn = incidence.t3InCounts()[k];
+           local[0] += degOut;
+           local[1] += degIn;
+-          local[2] += degIn * degOut;
++          local[2] += chainCappedDegree(degIn, degCap) * chainCappedDegree(degOut, degCap);
+         }
+         uint32_t base[kLanes], total[kLanes];
+         chainScanBlockExclusive<kLanes, kChainScanTileThreads>(
+@@ -360,7 +410,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+           uint32_t const degIn = incidence.t3InCounts()[k];
+           local[0] = degOut;
+           local[1] = degIn;
+-          local[2] = degIn * degOut;
++          local[2] = chainCappedDegree(degIn, degCap) * chainCappedDegree(degOut, degCap);
+         }
+         uint32_t base[kLanes], total[kLanes];
+         chainScanBlockExclusive<kLanes, kChainScanTileThreads>(
+diff --git a/RecoTracker/LSTCore/src/alpaka/LSTEvent.dev.cc b/RecoTracker/LSTCore/src/alpaka/LSTEvent.dev.cc
+index d2a14a81c9d..514b2eda550 100644
+--- a/RecoTracker/LSTCore/src/alpaka/LSTEvent.dev.cc
++++ b/RecoTracker/LSTCore/src/alpaka/LSTEvent.dev.cc
+@@ -1,3 +1,4 @@
++#include "HeterogeneousCore/AlpakaInterface/interface/AllocatorConfig.h"
+ #include "HeterogeneousCore/AlpakaInterface/interface/memory.h"
+ #include "HeterogeneousCore/AlpakaInterface/interface/workdivision.h"
+ #include "HeterogeneousCore/AlpakaInterface/interface/CopyToDevice.h"
+@@ -25,7 +26,11 @@
+ #include <cstdio>
+ #include <cstdlib>
+ #include <format>
++#include <limits>
+ #include <mutex>
++#include <stdexcept>
++#include <string>
++#include <type_traits>
+ #include <vector>
+ 
+ using Device = ALPAKA_ACCELERATOR_NAMESPACE::Device;
+@@ -127,6 +132,73 @@ namespace {
+     return n;
+   }
+ 
++  // ------------------------------------------------------------------------------------------
++  // JET ROUND (M1). The per-shared-key degree cap, and the allocation guard.
++  // ------------------------------------------------------------------------------------------
++
++  // Override of ChainConfig::degreeCap, so ONE binary can supply both arms of the A/B. 0 or a
++  // negative value means OFF (kChainDegreeCapOff), which is today's behaviour bit for bit.
++  // The C++ default lives in ChainConfig.h; this only ever overrides it.
++  uint32_t chainDegreeCap(uint32_t configured) {
++    static long const env = []() {
++      char const* s = std::getenv("LST_CHAIN_DEG_CAP");
++      return (s == nullptr || *s == '\0') ? -1L : std::atol(s);
++    }();
++    if (env < 0)
++      return configured;
++    return (env <= 0) ? kChainDegreeCapOff : static_cast<uint32_t>(env);
++  }
++
++  // An overflowing event is SKIPPED (loudly) rather than fatal, because one unallocatable event in
++  // a thousand must not take the other 999 with it -- 9.0% of jet events are over the GPU ceiling
++  // and the process currently dies on the first of them. This makes the failure a hard error again
++  // for anyone who wants that instead.
++  bool chainOverflowThrows() {
++    static bool const enabled = (std::getenv("LST_CHAIN_OVERFLOW_THROW") != nullptr);
++    return enabled;
++  }
++
++  // Every event-sized chain buffer is a PortableCollection, i.e. ONE
++  // `make_device_buffer<std::byte[]>(queue, Layout::computeDataSize(rows))`, and there are three
++  // ceilings on that single call. All three are read from the platform headers rather than
++  // hardcoded, so a platform change moves the guard with it.
++  //
++  //  1. `Layout::computeDataSize` takes `cms::soa::size_type` = int32_t.
++  //  2. THE DANGEROUS ONE. A buffer extent is `alpaka_common::Idx` = uint32_t
++  //     (HeterogeneousCore/AlpakaInterface/interface/config.h), so the byte count is TRUNCATED
++  //     MODULO 2^32 with no diagnostic: measured, a 4,647,903,488 B request became a 352,936,192 B
++  //     buffer that the next kernel then wrote 4 GiB past the end of (SIGSEGV on the host backend,
++  //     cudaErrorIllegalAddress on CUDA). `computeDataSize` itself returns std::size_t and is fine;
++  //     the loss is entirely in the conversion to an extent.
++  //  3. The CMS caching allocator refuses anything above binGrowth^maxBin = 1 GiB
++  //     ("allocations larger than binGrowth^maxBin are set to fail", AllocatorConfig.h). This one
++  //     THROWS, so it is not a corruption risk -- it is here so the event can be skipped with a
++  //     census instead of aborting the job. It applies to DEVICE allocations only: the host backend
++  //     was measured allocating 4,039 MB in this very path.
++  constexpr uint64_t chainAllocatorMaxBinBytes() {
++    cms::alpakatools::AllocatorConfig const cfg{};
++    uint64_t bytes = 1;
++    for (unsigned int i = 0; i < cfg.maxBin; ++i)
++      bytes *= cfg.binGrowth;
++    return bytes;
++  }
++
++  // Returns nullptr if a collection of `rows` rows can be allocated, or a string naming the ceiling
++  // it breaks. `bytes` is always set to the 64-bit byte size the layout would ask for (0 if the row
++  // count cannot even be expressed), so the caller can report the number that was refused.
++  template <typename TLayout>
++  char const* chainAllocationVeto(uint64_t rows, bool deviceIsHost, uint64_t& bytes) {
++    bytes = 0;
++    if (rows > static_cast<uint64_t>(std::numeric_limits<int32_t>::max()))
++      return "SoA row count exceeds cms::soa::size_type (int32)";
++    bytes = static_cast<uint64_t>(TLayout::computeDataSize(static_cast<int32_t>(rows)));
++    if (bytes > static_cast<uint64_t>(std::numeric_limits<alpaka_common::Idx>::max()))
++      return "alpaka Idx (uint32_t) buffer byte extent -- WOULD TRUNCATE SILENTLY AND CORRUPT";
++    if (!deviceIsHost && bytes > chainAllocatorMaxBinBytes())
++      return "CMS caching allocator max bin (binGrowth^maxBin) -- allocation would throw";
++    return nullptr;
++  }
++
+   // Copies one single-byte device SoA column into a host vector. The wait is required because
+   // the very next kernel in the queue is the one that overwrites the column.
+   template <typename TQueue, typename TSpan>
+@@ -193,6 +265,8 @@ void LSTEvent::resetEventSync() {
+   nChainNodes_ = 0;
+   nChainE1Edges_ = 0;
+   nChainE2Edges_ = 0;
++  nChainE1Edges64_ = 0;
++  nChainE2Edges64_ = 0;
+   nChainCount_ = 0;
+   nChainWeldedNodes_ = 0;
+ 
+@@ -793,10 +867,42 @@ void LSTEvent::buildChainIncidence(uint32_t const* chainMdKeyBias, uint32_t cons
+   uint32_t const nTiles = std::max(1u, std::min(chainScanTiles(), (nLowerModules_ + 1u) / 3u));
+   auto const chainTile_workDiv = cms::alpakatools::make_workdiv<Acc1D>(nTiles, kChainScanTileThreads);
+   uint32_t* const chainTileSums = moduleNodeOffsets_buf.data();
+-  chainScanTimed(timing, __LINE__, queue_, chainTile_workDiv, ChainPrefixIncidenceTiled{}, chainMdIncidenceDC_->view(), nMDKeys, chainTileSums, nTiles, 0u);
+-  chainScanTimed(timing, __LINE__, queue_, chainTile_workDiv, ChainPrefixIncidenceTiled{}, chainMdIncidenceDC_->view(), nMDKeys, chainTileSums, nTiles, 1u);
+-  chainScanTimed(timing, __LINE__, queue_, chainTile_workDiv, ChainPrefixIncidenceTiled{}, chainLsIncidenceDC_->view(), nLSKeys, chainTileSums, nTiles, 0u);
+-  chainScanTimed(timing, __LINE__, queue_, chainTile_workDiv, ChainPrefixIncidenceTiled{}, chainLsIncidenceDC_->view(), nLSKeys, chainTileSums, nTiles, 1u);
++  uint32_t const degCap = chainDegreeCap(chainConfig_.degreeCap);
++  chainScanTimed(timing, __LINE__, queue_, chainTile_workDiv, ChainPrefixIncidenceTiled{}, chainMdIncidenceDC_->view(), nMDKeys, chainTileSums, nTiles, 0u, degCap);
++  chainScanTimed(timing, __LINE__, queue_, chainTile_workDiv, ChainPrefixIncidenceTiled{}, chainMdIncidenceDC_->view(), nMDKeys, chainTileSums, nTiles, 1u, degCap);
++  chainScanTimed(timing, __LINE__, queue_, chainTile_workDiv, ChainPrefixIncidenceTiled{}, chainLsIncidenceDC_->view(), nLSKeys, chainTileSums, nTiles, 0u, degCap);
++  chainScanTimed(timing, __LINE__, queue_, chainTile_workDiv, ChainPrefixIncidenceTiled{}, chainLsIncidenceDC_->view(), nLSKeys, chainTileSums, nTiles, 1u, degCap);
++
++  // JET ROUND P0b. Is the uint32 edge count `nEdgesExact` the TRUE count, or a wrapped one? The
++  // host can certify it for free: sum_key degIn * degOut <= (sum_key degIn) * max_key degOut, both
++  // degrees are capped at degCap and every degree is at most the node count, so the count is bounded
++  // by nT3 * min(nT3, degCap). Under that bound below 2^32 no wrap is arithmetically possible. This
++  // holds for EVERY PU200 event (nT3 max ~53k) and for every capped event (256 * 601,655 = 154 M),
++  // so the recount below does not run in the shipping configuration -- only on a cap-off jet event,
++  // which is exactly the case whose count cannot be trusted. Two extra launches over the key range
++  // and one 8 kB copy, read at the sync that is already there.
++  uint64_t const countBound = static_cast<uint64_t>(nChainNodes_) * std::min<uint64_t>(nChainNodes_, degCap);
++  bool const needRecount = countBound >= (1ull << 32);
++  std::vector<uint32_t> recount;
++  if (needRecount) {
++    // The recount borrows lanes 3-6 of the same dead scratch (phases 0 and 1 have consumed lanes
++    // 0-2 by now, and the queue is ordered). A geometry with fewer than 7 * 512 lower modules would
++    // not have room; that is a build-time invariant of this detector (13,200), not a data condition.
++    if (static_cast<uint64_t>(nLowerModules_) + 1u < 7ull * kChainScanTilesMax)
++      throw std::runtime_error(
++          std::format("[CHAIN] the K1b 64-bit recount needs {} scratch words but only {} are borrowed; "
++                      "give ChainPrefixIncidenceTiled phase 2 a buffer of its own",
++                      7u * kChainScanTilesMax,
++                      nLowerModules_ + 1u));
++    uint32_t* const recountMd = chainTileSums + 3u * kChainScanTilesMax;
++    uint32_t* const recountLs = chainTileSums + 5u * kChainScanTilesMax;
++    chainScanTimed(timing, __LINE__, queue_, chainTile_workDiv, ChainPrefixIncidenceTiled{}, chainMdIncidenceDC_->view(), nMDKeys, recountMd, nTiles, 2u, degCap);
++    chainScanTimed(timing, __LINE__, queue_, chainTile_workDiv, ChainPrefixIncidenceTiled{}, chainLsIncidenceDC_->view(), nLSKeys, recountLs, nTiles, 2u, degCap);
++    recount.resize(4u * kChainScanTilesMax);
++    auto recount_h = cms::alpakatools::make_host_view(recount.data(), recount.size());
++    auto recount_d = cms::alpakatools::make_device_view(queue_, recountMd, recount.size());
++    alpaka::memcpy(queue_, recount_h, recount_d);
++  }
+ 
+   // The K1a tallies are now captured in the offset columns; reuse them as the K1c write cursors.
+   resetChainIncidenceCounts();
+@@ -824,6 +930,22 @@ void LSTEvent::buildChainIncidence(uint32_t const* chainMdKeyBias, uint32_t cons
+   nChainE1Edges_ = *nE1_buf_h.data();
+   nChainE2Edges_ = *nE2_buf_h.data();
+ 
++  // The 64-bit counts the allocation guard reads. Equal to the two above unless the uint32
++  // accumulation wrapped, which is what the recount is for; the guard vetoes on any inequality, so
++  // no wrapped count can reach an emplace.
++  nChainE1Edges64_ = nChainE1Edges_;
++  nChainE2Edges64_ = nChainE2Edges_;
++  if (!recount.empty()) {
++    auto sum64 = [&](uint32_t const* base) {
++      uint64_t s = 0;
++      for (uint32_t t = 0; t < nTiles; ++t)
++        s += (static_cast<uint64_t>(base[kChainScanTilesMax + t]) << 32) | base[t];
++      return s;
++    };
++    nChainE1Edges64_ = sum64(&recount[0]);
++    nChainE2Edges64_ = sum64(&recount[2u * kChainScanTilesMax]);
++  }
++
+   if (timing) {
+     alpaka::wait(queue_);
+     double const ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - tStart).count();
+@@ -862,7 +984,13 @@ void LSTEvent::chainIncidenceStatistics() {
+     std::vector<uint32_t> const outItems = pull(outItemsCol, nChainNodes_);
+     std::vector<uint32_t> const inItems = pull(inItemsCol, nChainNodes_);
+ 
++    // `edges` is the CAPPED count, i.e. what K1b's prefix claims and what K2 will enumerate;
++    // `edgesUncapped` is what the same event would have produced with the cap off, so the two
++    // together are the per-event measurement of what the cap removed. With the cap off they are
++    // equal by construction and this reproduces the pre-cap output exactly.
++    uint32_t const degCap = chainDegreeCap(chainConfig_.degreeCap);
+     unsigned long long edges = 0;
++    unsigned long long edgesUncapped = 0;
+     unsigned int nonEmptyKeys = 0;
+     unsigned int maxDegIn = 0, maxDegOut = 0;
+     bool monotonic = true;
+@@ -871,7 +999,8 @@ void LSTEvent::chainIncidenceStatistics() {
+           monotonic && outOff[k + 1] >= outOff[k] && inOff[k + 1] >= inOff[k] && prodPrefix[k + 1] >= prodPrefix[k];
+       unsigned int const degOut = outOff[k + 1] - outOff[k];
+       unsigned int const degIn = inOff[k + 1] - inOff[k];
+-      edges += static_cast<unsigned long long>(degIn) * degOut;
++      edges += static_cast<unsigned long long>(std::min<uint32_t>(degIn, degCap)) * std::min<uint32_t>(degOut, degCap);
++      edgesUncapped += static_cast<unsigned long long>(degIn) * degOut;
+       nonEmptyKeys += (degIn != 0 || degOut != 0);
+       maxDegIn = std::max(maxDegIn, degIn);
+       maxDegOut = std::max(maxDegOut, degOut);
+@@ -902,7 +1031,7 @@ void LSTEvent::chainIncidenceStatistics() {
+     bool const permutationOk = !duplicated && !outOfBounds && coveredOut == nChainNodes_ && coveredIn == nChainNodes_;
+     lstWarning(
+         std::format("[CHAIN] {}: keys={} used={} sumDegOut={} sumDegIn={} nT3={} maxDegIn={} maxDegOut={} "
+-                    "E={} prefixE={} degreeSum={} monotonic={} permutation={}",
++                    "E={} Euncapped={} cap={} prefixE={} degreeSum={} monotonic={} permutation={}",
+                     name,
+                     nKeys,
+                     nonEmptyKeys,
+@@ -912,17 +1041,22 @@ void LSTEvent::chainIncidenceStatistics() {
+                     maxDegIn,
+                     maxDegOut,
+                     edges,
++                    edgesUncapped,
++                    degCap,
+                     prodPrefix[nKeys],
+                     degreeOk ? "ok" : "FAIL",
+                     monotonic ? "ok" : "FAIL",
+                     permutationOk ? "ok" : "FAIL"));
+-    if (edges != prodPrefix[nKeys])
++    // The prefix column is uint32, so the comparison is modulo 2^32 -- otherwise this line would
++    // cry "mismatch" on exactly the events where the count wraps, which is a real condition the
++    // allocation guard handles rather than a CSR defect.
++    if ((edges & 0xffffffffull) != prodPrefix[nKeys])
+       lstWarning(std::format("[CHAIN] {}: EDGE PREFIX MISMATCH", name));
+-    return static_cast<unsigned int>(edges);
++    return edges;
+   };
+ 
+-  unsigned int const e1 = checkFamily("MD/E1", mdInc, nodes.mdT3OutItems(), nodes.mdT3InItems());
+-  unsigned int const e2 = checkFamily("LS/E2", lsInc, nodes.lsT3OutItems(), nodes.lsT3InItems());
++  unsigned long long const e1 = checkFamily("MD/E1", mdInc, nodes.mdT3OutItems(), nodes.mdT3InItems());
++  unsigned long long const e2 = checkFamily("LS/E2", lsInc, nodes.lsT3OutItems(), nodes.lsT3InItems());
+   lstWarning(std::format("[CHAIN] nodes(nT3)={} E1={} E2={} E={}", nChainNodes_, e1, e2, e1 + e2));
+ }
+ 
+@@ -959,8 +1093,48 @@ void LSTEvent::buildChainEdges() {
+   // Exact allocation by pure degree arithmetic (K1b), so there is no capped reservation and no
+   // ungated-writer hazard: every row below is written by exactly one thread at its own index.
+   uint32_t const nEdges = nChainE1Edges_ + nChainE2Edges_;
+-  if (nEdges == 0)
++
++  // ------------------------------------------------------------------------------------------
++  // JET ROUND P0. THE ALLOCATION GUARD. Everything is decided on the 64-BIT counts and the 64-bit
++  // byte size; the uint32 `nEdges` above is only used after the guard has proved it is the true
++  // count and that it can be allocated. Both facts have failed in practice: on the jet sample 8
++  // events of 1000 asked for more than 4 GiB and had the byte extent silently truncated modulo 2^32
++  // (SIGSEGV / cudaErrorIllegalAddress inside ChainBuildEdges, ending the whole job) and 90 of 1000
++  // are over the 1 GiB device allocator bin. There was no check of any kind here.
++  // ------------------------------------------------------------------------------------------
++  uint64_t const nEdges64 = nChainE1Edges64_ + nChainE2Edges64_;
++  if (nEdges64 == 0)
++    return;
++  uint64_t edgeBytes = 0;
++  char const* veto = chainAllocationVeto<ChainEdgesDeviceCollection::Layout>(
++      nEdges64, std::is_same_v<Device, alpaka::DevCpu>, edgeBytes);
++  if (veto == nullptr && nEdges64 != static_cast<uint64_t>(nEdges))
++    veto = "uint32 edge count WRAPPED (the K1b 64-bit recount disagrees with nEdgesExact)";
++  if (veto != nullptr) {
++    // The event's chain block is skipped, not the job. This is the same state as `nChainNodes_ == 0`:
++    // chainEdgesDC_ stays empty, so buildChains() returns on its `!chainEdgesDC_.has_value()` test
++    // and every later chain stage on `nChainCount_ == 0`. The event still gets its non-chain track
++    // candidates; it does not get chain ones, which is a real physics loss and is why this is LOUD
++    // and counted rather than silent.
++    static std::atomic<uint32_t> overflowCensus{0};
++    uint32_t const nSoFar = overflowCensus.fetch_add(1) + 1;
++    std::string const msg = std::format(
++        "[CHAIN OVERFLOW] ChainEdges needs {} rows ({} B) for nT3={} (E1={} E2={}): {}. "
++        "SKIPPING the chain block for this event ({} skipped in this process so far). "
++        "Lower ChainConfig::degreeCap (LST_CHAIN_DEG_CAP, currently {}) to bring the edge count down.",
++        nEdges64,
++        edgeBytes,
++        nChainNodes_,
++        nChainE1Edges64_,
++        nChainE2Edges64_,
++        veto,
++        nSoFar,
++        chainDegreeCap(chainConfig_.degreeCap));
++    if (chainOverflowThrows())
++      throw std::runtime_error(msg);
++    lstWarning(msg);
+     return;
++  }
+ 
+   chainEdgesDC_.emplace(queue_, nEdges);
+   if (objectsStatistics_) {
+@@ -979,7 +1153,8 @@ void LSTEvent::buildChainEdges() {
+                       chainLsIncidenceDC_->const_view(),
+                       chainEdgesDC_->view(),
+                       nChainE1Edges_,
+-                      nChainE2Edges_);
++                      nChainE2Edges_,
++                      chainDegreeCap(chainConfig_.degreeCap));
+ 
+   auto const t2 = stamp();
+ 
+@@ -990,7 +1165,23 @@ void LSTEvent::buildChainEdges() {
+   // it. With the env var unset the behaviour is byte-identical to the old code (wantFeat false).
+   static std::atomic<uint32_t> featDumpEvent{0};
+   char const* featPath = std::getenv("LST_CHAIN_FEAT_DUMP");
+-  bool const wantFeat = (featPath != nullptr && *featPath != '\0');
++  bool wantFeat = (featPath != nullptr && *featPath != '\0');
++  // JET ROUND P0, second site: this tap is 56 B/edge, i.e. 2.7x the edge row itself, so it hits the
++  // same uint32 extent wall at 76.7 M edges -- a quarter of where ChainEdges hits it -- and it is a
++  // RAW buffer, so nothing downstream would notice the truncation. The tap is a debug/training
++  // instrument, so the right action here is to drop the tap for this event and say so, rather than
++  // to lose the event.
++  if (wantFeat) {
++    uint64_t const featBytes = static_cast<uint64_t>(nEdges) * kChainEdgeFeatures * sizeof(float);
++    if (featBytes > static_cast<uint64_t>(std::numeric_limits<alpaka_common::Idx>::max())) {
++      lstWarning(std::format(
++          "[CHAIN OVERFLOW] LST_CHAIN_FEAT_DUMP wants {} B for {} edges, over the alpaka Idx extent; "
++          "the feature tap is DISABLED for this event (its edges are still built and scored)",
++          featBytes,
++          nEdges));
++      wantFeat = false;
++    }
++  }
+   auto featBuf = cms::alpakatools::make_device_buffer<float[]>(
+       queue_, wantFeat ? static_cast<size_t>(nEdges) * kChainEdgeFeatures : size_t{1});
+ 
+diff --git a/RecoTracker/LSTCore/src/alpaka/LSTEvent.h b/RecoTracker/LSTCore/src/alpaka/LSTEvent.h
+index 2afa54b35d3..95a6d505d7e 100644
+--- a/RecoTracker/LSTCore/src/alpaka/LSTEvent.h
++++ b/RecoTracker/LSTCore/src/alpaka/LSTEvent.h
+@@ -71,6 +71,13 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+     unsigned int nChainNodes_ = 0;        // dense triplet-node count (K0)
+     unsigned int nChainE1Edges_ = 0;      // exact MD-keyed edge count (K1b)
+     unsigned int nChainE2Edges_ = 0;      // exact LS-keyed edge count (K1b)
++    // The SAME two counts in 64 bit, and the ONLY versions the allocation guard is allowed to read.
++    // `nEdgesExact` is a uint32 accumulation, so above 2^32 edges the two members above hold a
++    // WRAPPED value and a guard fed one of them would pass a corrupting event (FINDINGS_JET.md
++    // ceiling 3). These are equal to them whenever the host-side exactness certificate holds and
++    // come from the K1b phase-2 64-bit recount otherwise; the guard vetoes on any inequality.
++    uint64_t nChainE1Edges64_ = 0;
++    uint64_t nChainE2Edges64_ = 0;
+     unsigned int nChainCount_ = 0;        // welded chain count (K6d)
+     unsigned int nChainWeldedNodes_ = 0;  // total member nodes over all chains (K6d)
+     // Frozen chain-tracking configuration. P2.3 will fill this from the producer parameter set;

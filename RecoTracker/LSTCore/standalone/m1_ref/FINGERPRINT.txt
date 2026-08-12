@@ -1,0 +1,44 @@
+M1 DELIVERABLE FINGERPRINT -- jet speed/memory round, 2026-08-12
+================================================================
+
+PATCH          m1_ref/m1_guard_and_cap.patch
+BASE COMMIT    81a9afe2d00  ("Integrate the NN-loop pipeline: 4 networks -> 3, all heads on-policy")
+APPLY WITH     cd <tree>/src && git apply -3 m1_guard_and_cap.patch
+WORKTREE       /mnt/data1/gsn27/here/gpu_wt/g2  (clean at the base commit before the patch)
+
+PATCH MD5      81a81d3a2eec8d8b796aea583ddc4a78   (6 files, 327 insertions, 19 deletions)
+
+FILES TOUCHED (6), and what is in each -- this is the merge surface for M2/M3:
+  RecoTracker/LSTCore/interface/ChainConfig.h        + uint32_t degreeCap = 256
+                                                     + kChainDegreeCapOff = 1000000000
+  RecoTracker/LSTCore/src/alpaka/ChainGraph.h        + chainCappedDegree()
+                                                     K1b: lane 2 product capped; new phase == 2
+                                                     (64-bit recount); +1 kernel argument
+  RecoTracker/LSTCore/src/alpaka/ChainEdges.h        K2: decode divides by the CAPPED out-degree;
+                                                     +1 kernel argument; + #include "ChainGraph.h"
+  RecoTracker/LSTCore/src/alpaka/LSTEvent.h         + nChainE1Edges64_ / nChainE2Edges64_
+  RecoTracker/LSTCore/src/alpaka/LSTEvent.dev.cc    + chainDegreeCap(), chainOverflowThrows(),
+                                                     chainAllocatorMaxBinBytes(),
+                                                     chainAllocationVeto<>(); the guard at the
+                                                     ChainEdges emplace; the recount plumbing; the
+                                                     feature-dump extent check; -v2 census columns
+  RecoTracker/LST/plugins/alpaka/LSTProducer.cc     + the `degreeCap` producer parameter
+
+NOT TOUCHED (deliberately, so this composes with the structural fix):
+  ChainWeld.h, ChainGate.h, ChainAttach*.h, ChainArbitrate.h, ChainCrossClean.h, every network
+  weights header, every working point. No head is retrained and no threshold moves.
+
+KERNEL COUNT: 273 ptxas entries before, 273 after, and the 91 unique mangled entry names are
+identical except for the two that gained one `j` (uint32_t) each -- ChainBuildEdges and
+ChainPrefixIncidenceTiled. No argument-pack fork.
+
+RUNTIME KNOBS
+  ChainConfig::degreeCap        256 = ship default; 1000000000 (kChainDegreeCapOff) = today's
+                                behaviour, bit for bit.
+  LST_CHAIN_DEG_CAP=<n>        overrides it; <= 0 means OFF. This is how one binary supplies both
+                                arms of every A/B below.
+  LST_CHAIN_OVERFLOW_THROW=1   turn the skip-with-census into a hard std::runtime_error.
+
+MD5 OF THE MEASURED BINARIES (m1_ref/frozenvar/MD5, and frozenbase = the 81a9afe2d00 reference)
+  see those two files; every job in m1_ref/*.sh re-verifies them with `md5sum -c` and voids itself
+  on a mismatch.

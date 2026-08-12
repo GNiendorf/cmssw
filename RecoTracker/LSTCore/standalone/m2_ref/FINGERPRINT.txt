@@ -1,0 +1,58 @@
+M2 -- PER-NODE TOP-C WELD CAP.  FINGERPRINT.
+=============================================================================================
+PATCH        m2_ref/m2_topc_weld.patch
+             md5 ad1ef8d4e03ce55dbc75d8fd08fd3517   984 lines   4 files / 781 insertions
+BASE         81a9afe2d00 ("Integrate the NN-loop pipeline: 4 networks -> 3, all heads on-policy")
+APPLY        cd <CMSSW>/src && git apply -3 m2_ref/m2_topc_weld.patch
+WORKTREE     /mnt/data1/gsn27/here/gpu_wt/g4/src   (working tree == the patch, verified by diff)
+BUILD        2026-08-12 13:11, CPU + CUDA, 0 'error:' lines in .make.log.1786554527
+             md5 lst_cpu       add74afb4a9fa1212141c16518879305
+             md5 lst_cuda      22f6d2b59bde18ff0631f414279f101d
+             md5 liblst_cpu.so daaae9f9321f8f022f3b51a76c3addcb
+             md5 liblst_cuda.so 9ca4ddebac3fbe501f9ee3bfee7293a8
+             frozen copy: m2_ref/frozenC/ (+ MD5); every M2 job re-checks it and voids itself.
+
+FILES AND THE MERGE SURFACE
+  interface/ChainConfig.h        + nodeTopC (default 8), + edgeTileRows (default 4 Mi rows)
+  src/alpaka/ChainEdges.h        chainOrderFloat / chainUnorderFloat / chainWeldKey MOVED here from
+                                 ChainWeld.h (one definition of the weld order key, because the cap
+                                 selects by exactly the key the weld takes an argmax of);
+                                 ChainBuildEdges gains (eBase, nRows) = a row WINDOW;
+                                 + 6 new kernels: ChainTopC{Insert,Match,Sort,Count,Prefix,Emit}
+  src/alpaka/ChainWeld.h         the three key helpers removed (now included from ChainEdges.h);
+                                 + ChainWeldRankCensus (instrument, LST_CHAIN_RANK_CENSUS only)
+  src/alpaka/LSTEvent.dev.cc     buildChainEdges() split into a FLAT path (topC == 0, byte for byte
+                                 today's code) and a TILED capped path; + 3 env helpers; + the
+                                 per-sweep rank census block in buildChains()
+
+KNOBS (all three read once, cached in a function-local static)
+  LST_CHAIN_NODE_TOPC=<C>   overrides ChainConfig::nodeTopC.  0 = CAP OFF = the flat exactly-sized
+                            edge array, no tiling, no new kernel launched.  This is the A arm.
+  LST_CHAIN_EDGE_TILE=<rows> overrides ChainConfig::edgeTileRows.  Locality/footprint only: every
+                            tiling enumerates the same rows in the same order.
+  LST_CHAIN_RANK_CENSUS=1   per-sweep [CHAIN RANK] lines (the argmax rank R). Adds a kernel and two
+                            D2H copies per sweep -- never enable it on a timing arm.
+
+KERNEL COUNT (discipline rule 5): 91 -> 98 unique ptxas entry names.
+  +6 ChainTopC* kernels, +1 ChainWeldRankCensus, and ChainBuildEdges' single entry gains two
+  trailing uint32 arguments.  It does NOT fork: both paths launch it through one lambda, so there is
+  exactly one argument pack.  (cuobjdump -elf, base = m1_ref/frozenbase/liblst_cuda.so.)
+
+WHAT IT DOES, IN ONE PARAGRAPH
+  The weld gives each node one out-slot and one in-slot, so it can consume O(nNodes) edges, but the
+  enumeration hands it sum_key degIn*degOut -- 3.8e8 rows / 8.4 GB on the worst jet event, of which
+  0.018% are ever welded.  The capped path enumerates and scores in TILES and keeps, per node, only
+  its C highest-keyed ELIGIBLE out-edges and C highest-keyed eligible in-edges (union of the two
+  families, because an edge that is only its head's best still BLOCKS that head), then emits a
+  compacted array.  Peak footprint becomes tile + 2*C*nNodes slots + kept rows: exact and
+  sample-independent, instead of quadratic in the junction degree.
+
+EXACTNESS, and what is NOT claimed
+  NOT lossless by construction.  The rank a sweep's argmax reaches inside a node's own eligible list
+  is 1 + #{higher-keyed eligible edges whose far endpoint was welded earlier}, which kChainWeldSweeps
+  does not bound (see [M2 12:20] in FINDINGS_MEM.md).  C >= R is bit-identical by induction on the
+  sweep; R is MEASURED (LST_CHAIN_RANK_CENSUS) and the shipped C comes from a 35-branch ntuple diff
+  against the uncapped arm, not from an argument.
+  Known residual assumption, shared with the shipped weld: node stableId is treated as collision-free
+  (the tie word names an edge inside one node's list).  The capped path DETECTS a violation -- a
+  surviving slot with no endpoint match is counted and reported -- which HEAD's weld does not.

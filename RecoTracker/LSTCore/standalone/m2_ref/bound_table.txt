@@ -1,0 +1,18 @@
+C       slots MB   emit<=MB    tile MB     sum MB largest 1 alloc   verdict vs the 1 GiB device bin
+--- jets worst nT3=601655 E=398930093
+4           62.6      101.1       88.1      251.7        101.1   OK
+8          125.1      202.2       88.1      415.4        202.2   OK
+16         250.3      404.3       88.1      742.7        404.3   OK
+32         500.6      808.6       88.1     1397.3        808.6   OK
+64        1001.2     1617.2       88.1     2706.5       1617.2   OVER THE BIN
+--- PU200 worst nT3=53153 E=622599
+4            5.5        8.9       13.1       27.5         13.1   OK
+8           11.1       17.9       13.1       42.0         17.9   OK
+16          22.1       35.7       13.1       70.9         35.7   OK
+32          44.2       71.4       13.1      128.7         71.4   OK
+64          88.4      142.9       13.1      244.4        142.9   OK
+
+today (cap off), the same two events: ONE allocation of 8377 MB and of 13.1 MB.
+ceilings: 1073.7 MB per DEVICE allocation (allocator bin, throws); 4294.9 MB per buffer
+extent (alpaka Idx=uint32, truncates SILENTLY).  The bound is per ALLOCATION, so the column
+that has to clear 1073.7 is 'largest 1 alloc', not 'sum'.
