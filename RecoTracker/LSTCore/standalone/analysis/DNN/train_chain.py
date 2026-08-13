@@ -1,45 +1,59 @@
 #!/usr/bin/env python3
+"""P3: on-policy retrain of the 3-CLASS CHAIN GATE with JET-CORE chains MIXED INTO the PU200 rows.
 
-# SUPERSEDED -- does NOT produce the shipped ChainNetworkWeights.h.
-# The shipped chain gate comes from standalone/g2_ref/train3mix2.py (which imports this recipe's
-# successor, nnloop_ref/s2_work/train3.py). See analysis/DNN/README.md for the exact invocation.
-# Kept for lineage only.
+Everything about the head is inherited from nnloop_ref/s2_work/train3.py, which is itself the
+shipped recipe: arch 25->32->32->3, the M12 CONDITIONING_SPEC, the m12 tiered displaced class
+weighting, the cosine schedule S1/S2 proved is the converged one, seed 42, and the label
+(labelChainsHarness, replicated not corrected).  THREE things are new and they are the whole arm:
 
-"""M6 chain-gate classifier training for the LST chain-tracking prototype.
+ 1. TWO row-sets are trained jointly: an on-policy PU200 dump (event_1000, 1000 evt) and an
+    on-policy JET dump (jet_ref/trackingNtuple_jets_1000.root events 0-499 ONLY -- 500-999 is the
+    round's holdout and is never trained or calibrated on).  Both come from the SAME binary at
+    ec08aba9e5b with the provenance stamped next to the dump (p3_ref/dump/*.prov).
 
-Reads the flat per-chain dump produced by ChainDumpWriter (TTree "chains", one entry
-per PRE-arbitration welded chain; feature order recorded in the TNamed
-"feature_spec"), trains a small MLP chain-gate classifier (plan 5a: the hard
-irreversible decision, taken at maximum evidence) and evaluates it on held-out TEST
-events.
+ 2. `--jet-share L` sets the fraction of the TOTAL TRAIN LOSS WEIGHT carried by jet rows.  Row
+    COUNTS are not the knob: the two samples have similar row counts (PU200 ~6.9M, jets ~4.1M)
+    but wildly different composition (jets are 81% gate-killed, 70% 4-layer, and their true-chain
+    prevalence is far lower), so a naive concatenation would hand the jet sample a share of the
+    gradient nobody chose.  L is chosen and reported, and L = 0 is the CONTROL ARM: a PU200-only
+    re-dump retrain, which is what separates the ENRICHMENT effect from the RE-DUMP effect
+    (the round-5 rule).
 
-Mirrors train_edge.py discipline exactly:
-  - fixed seeds for numpy AND torch,
-  - event-level 60/20/20 split by evt (row-level splits forbidden, plan 5c),
-  - feature conditioning BEFORE standardization, recorded in the norm json for the
-    C++ port (export_chain_weights.py bakes it into chain_mlp_weights.h),
-  - standardization mean/std fit on TRAIN rows only, saved to the norm json,
-  - class imbalance via BCEWithLogits pos_weight = n_fake/n_true (train),
-  - displaced-aware weighting: TRUE chains with simVxy >= 1 cm get weight x4
-    (simple and recorded in the norm json; the M5 dxy diagnosis showed the binding
-    displaced losses sit at the scoring margin),
-  - 60 epochs, early stopping patience 8 on val AUC.
+ 3. STANDARDIZATION IS ALWAYS FITTED ON THE PU200 TRAIN SPLIT, never on the mix.  The protected
+    sample's normalized input distribution then does not move with L, so the control arm is a
+    genuine nested case of the enrichment arms and the only thing L changes is the loss.
 
-Conditioning (v2-edge lesson: heavy-tailed / curvature columns must be tamed BEFORE
-standardization or they cripple their own slots):
-  cf_05 fullFitChi2PerHit  -> log10(1+x)   (chi2 right tail spans decades)
-  cf_06 rzLineChi2PerHit   -> log10(1+x)
-  cf_14 maxJunctionDegProduct -> log10(1+x) (jet-tail degree products)
-  cf_07 fitKappa           -> clip [-1, 1]  (curvature block, v2 edge spec)
-  cf_08 dKappaFitVsMedianT3-> clip [-2, 2]
+VAL METRIC.  The shipped selector is min(AUC(mP prompt-vs-fake), AUC(mD disp-vs-fake)).  With two
+samples in the mix the selector is the MINIMUM OVER EVERY SAMPLE IN THE MIX of that same pair, so
+an epoch that buys jets by giving up PU200 cannot be selected.  At L = 0 only PU200 is in the mix
+and the selector is bit-for-bit the shipped one.  The jet-core separation (AUC of mX between
+core-true and core-fake chains, the 0.81-on-11-units defect of FINDINGS_JETPHYS Q2) is REPORTED
+every epoch but deliberately NOT selected on.
 
-Report: test AUC overall + per nLayers (4 / 5 / 6+) + prompt/displaced (vxy>=1).
+=====================  G (round 2) ADDITIONS -- three, all nested at their defaults  ===========
 
-Outputs:
-  chain_mlp_v1.pt    - torch state_dict + metadata (arch, feature names, best epoch/AUC)
-  chain_norm_v1.json - per-feature mean/std + conditioning + weighting spec
+ 1. `--share NAME=frac` (repeatable) replaces the single collective `--jet-share` when there are
+    THREE or more samples: each non-reference block is rescaled INDEPENDENTLY to its own share of
+    the total train loss weight (P3's named six-line change).  `--jet-share L` is kept and is
+    exactly `--share <all non-reference>=L` split proportionally, so every round-1 arm is
+    reproducible from this file.  The reference sample keeps 1 - sum(shares).
+
+ 2. `--dup-mode {none,norm,demote}` -- the [P3 CLOSED] dup-aware-loss hook.  The same-sim group is
+    `(evt, simIdx)` over TRUE rows (dupproxy.py's key), computed per sample.
+      norm    : each true row's weight is divided by the size of its same-sim group, so a sim with
+                eight redundant chains contributes the gradient of one.
+      demote f: SOFT relabel of every non-best member of a group,
+                loss_row = (1-f)*CE(z, y_row) + f*CE(z, 0).  The best member is the max by
+                (nLayers, frac, nUniq) -- an OBJECTIVE quality key, not the deployed head's own
+                score, which would make the target off-policy.  f = 0 is bit-for-bit the baseline.
+    Both are per-row transformations, so the training loop, the batching and the RNG stream are
+    untouched.  `--dup-on NAME[,NAME]` restricts either to named samples (default: all).
+
+ 3. `--sel-min-rows N` -- a sample enters the SELECTOR only if its val split has >= N rows in each
+    of (fake, prompt, displaced); otherwise its AUCs are REPORTED but cannot select an epoch.  This
+    exists because the gun samples contribute only a few hundred rows per class and a 300-row AUC
+    would otherwise drive model selection for the whole head.  With two large samples it is inert.
 """
-
 import argparse
 import copy
 import json
@@ -50,594 +64,430 @@ import time
 import numpy as np
 
 T0 = time.time()
-
-N_CHAIN_FEAT = 25  # a2: extended contract (16 frozen M6 slots + 9 a2 additions)
-
-
-def log(msg):
-    print(f"[{time.time() - T0:8.1f}s] {msg}", flush=True)
+HERE = os.path.dirname(os.path.abspath(__file__))
+# train3.py is a SIBLING in analysis/DNN (the shared chain-gate recipe: COND, build_inputs,
+# event_split). Python puts this script's directory on sys.path, so no path surgery is needed.
+from train3 import COND, build_inputs, event_split  # noqa: E402
 
 
-def parse_args():
-    p = argparse.ArgumentParser(description=__doc__)
-    d = "/mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/prototype"
-    p.add_argument("--input", nargs="+", default=[f"{d}/chains_300evt.root"],
-                   help="chain dump file(s). ONE file: original behavior (train_frac/"
-                        "val_frac event split). MULTIPLE files: M8 COMBINATION RULE -- "
-                        "file[0] is the PRIMARY (its original seed-<seed> test events "
-                        "stay the frozen test set); extra files drop every event whose "
-                        "evt id appears in the primary file, and the remaining events "
-                        "(primary non-test + extra new-id) are re-split by event "
-                        "pool_train_frac/(1-pool_train_frac) into train/val")
-    p.add_argument("--pool-train-frac", type=float, default=0.75,
-                   help="combined mode only: train fraction of the (non-frozen-test) "
-                        "event pool")
-    p.add_argument("--out-model", default=f"{d}/chain_mlp_v1.pt")
-    p.add_argument("--out-norm", default=f"{d}/chain_norm_v1.json")
-    p.add_argument("--seed", type=int, default=42, help="seed for numpy AND torch")
-    p.add_argument("--epochs", type=int, default=60)
-    p.add_argument("--patience", type=int, default=8, help="early stopping on val AUC")
-    p.add_argument("--displaced-weight", type=float, default=4.0,
-                   help="weight multiplier for TRUE chains with simVxy >= 1 cm")
-    p.add_argument("--displaced-weight-mid", type=float, default=None,
-                   help="tiered mode: weight for TRUE chains with 1 <= simVxy < 5 cm "
-                        "(with --displaced-weight-hi, replaces the flat --displaced-weight rule)")
-    p.add_argument("--displaced-weight-hi", type=float, default=None,
-                   help="tiered mode: weight for TRUE chains with simVxy >= 5 cm")
-    p.add_argument("--select-metric", choices=["val_auc", "min_prompt_disp"], default="val_auc",
-                   help="best-checkpoint / early-stop metric: 'val_auc' = overall val AUC (v1 "
-                        "behavior); 'min_prompt_disp' = min(prompt val AUC, displaced val AUC), "
-                        "prompt = true vxy<1 vs all val fakes, displaced = true vxy>=1 vs all "
-                        "val fakes")
-    p.add_argument("--no-feature-clip", action="store_true",
-                   help="disable feature conditioning (debug)")
-    p.add_argument("--hidden", type=int, default=32,
-                   help="hidden width (a2 gate capacity axis; M6-M9 gates used 24)")
-    p.add_argument("--n-input", type=int, default=0,
-                   help="a2 CONTROL: use only the FIRST N feature columns (0 = all). "
-                        "--n-input 16 reproduces the M6-M9 16-feature gate on exactly "
-                        "the same rows/split, which is the honest ablation baseline "
-                        "for the 9 a2 additions.")
-    p.add_argument("--dca-split", type=float, default=0.5,
-                   help="a2 report: -G 5 branch boundary for the per-branch AUC table")
-    p.add_argument("--no-perm-importance", action="store_true")
-    p.add_argument("--out-report", default="", help="a2: json summary of the test report")
-    p.add_argument("--batch-size", type=int, default=16384)
-    p.add_argument("--lr", type=float, default=1e-3)
-    p.add_argument("--train-frac", type=float, default=0.6)
-    p.add_argument("--val-frac", type=float, default=0.2)
-    p.add_argument("--state-file", default="",
-                   help="checkpoint/resume file: state (model+optimizer+rng+best "
-                        "trackers) is saved after every epoch; if the file exists the "
-                        "run resumes from it EXACTLY (same command). The data pipeline "
-                        "(load/split/standardize) is deterministic and recomputed.")
-    p.add_argument("--wall-limit-sec", type=float, default=0.0,
-                   help="if > 0: after the first epoch that ends beyond this wall time, "
-                        "save state and exit(3) (resume by rerunning the same command). "
-                        "Lets long trainings run as sequential foreground chunks.")
-    return p.parse_args()
+def log(m):
+    print("[%7.1fs] %s" % (time.time() - T0, m), flush=True)
 
-
-# ---------------------------------------------------------------- data loading
-
-META_BRANCHES = ["evt", "label", "simVxy", "simPt", "nLayers", "dcaXY"]
-
-
-def load_dump(path):
-    """Load the chain dump. Returns (meta dict, X float32 [N,16], names)."""
-    import uproot
-
-    f = uproot.open(path)
-    spec = f["feature_spec"].member("fTitle")
-    assert spec.startswith("cf:"), f"unexpected feature_spec '{spec[:20]}...'"
-    cf_names = spec[3:].split(",")
-    assert len(cf_names) == N_CHAIN_FEAT, f"expected {N_CHAIN_FEAT} features, got {len(cf_names)}"
-    feat_branches = [f"cf_{i:02d}" for i in range(N_CHAIN_FEAT)]
-    names = [f"cf_{n}" for n in cf_names]
-
-    tree = f["chains"]
-    arr = tree.arrays(META_BRANCHES + feat_branches, library="np")
-    meta = {k: arr[k] for k in META_BRANCHES}
-    n = len(meta["label"])
-    X = np.empty((n, N_CHAIN_FEAT), dtype=np.float32)
-    for j, b in enumerate(feat_branches):
-        X[:, j] = arr[b]
-        del arr[b]
-    return meta, X, names
-
-
-def data_quality_report(X, names):
-    log("--- data quality (all rows) ---")
-    degenerate = []
-    print(f"{'feature':>26} {'min':>12} {'max':>12} {'mean':>12} {'std':>12} {'nan':>8} {'inf':>8}")
-    for j, name in enumerate(names):
-        col = X[:, j]
-        n_nan = int(np.isnan(col).sum())
-        n_inf = int(np.isinf(col).sum())
-        finite = col[np.isfinite(col)] if (n_nan or n_inf) else col
-        mn, mx = float(finite.min()), float(finite.max())
-        mu, sd = float(finite.mean()), float(finite.std())
-        flag = ""
-        if sd < 1e-8:
-            degenerate.append(name)
-            flag = "  <-- DEGENERATE"
-        print(f"{name:>26} {mn:>12.4g} {mx:>12.4g} {mu:>12.4g} {sd:>12.4g} {n_nan:>8d} {n_inf:>8d}{flag}")
-    n_bad = int((~np.isfinite(X)).sum())
-    if n_bad:
-        log(f"WARNING: {n_bad} non-finite feature values -> replaced with 0 "
-            "(ChainFeatures.cc contract says this cannot happen)")
-        np.nan_to_num(X, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
-    if degenerate:
-        log(f"degenerate (zero-variance) columns: {degenerate}")
-    return degenerate
-
-
-# ------------------------------------------------------- feature conditioning
-
-# Applied IN ORDER to the named columns BEFORE standardization. The C++ inference
-# port must reproduce this exactly; the applied spec is written into the norm json
-# (same op vocabulary as train_edge.py / export_weights.py: "clip", "log10_1p").
-CONDITIONING_SPEC = [
-    {"feature": "cf_fullFitChi2PerHit", "op": "log10_1p"},
-    {"feature": "cf_rzLineChi2PerHit", "op": "log10_1p"},
-    {"feature": "cf_maxJunctionDegProduct", "op": "log10_1p"},
-    {"feature": "cf_fitKappa", "op": "clip", "lo": -1.0, "hi": 1.0},
-    {"feature": "cf_dKappaFitVsMedianT3", "op": "clip", "lo": -2.0, "hi": 2.0},
-    # a2 additions: the three heavy-tailed residual/chi2 columns get the same
-    # log10(1+x) treatment as their mean-valued cousins (cf_05/cf_06). The five
-    # t3dnn score columns are already probabilities in [0,1] and cf_18 (edge-logit
-    # std) is bounded by the logit scale -- both left raw.
-    {"feature": "cf_maxXyResid", "op": "log10_1p"},
-    {"feature": "cf_maxRzResid", "op": "log10_1p"},
-    {"feature": "cf_maxBridgeChi2", "op": "log10_1p"},
-]
-
-
-def apply_conditioning(X, names, spec):
-    """In-place column conditioning. Returns the applied spec (for the norm json)."""
-    for c in spec:
-        j = names.index(c["feature"])
-        if c["op"] == "clip":
-            np.clip(X[:, j], c["lo"], c["hi"], out=X[:, j])
-        elif c["op"] == "log10_1p":
-            X[:, j] = np.log10(1.0 + X[:, j])
-        else:
-            raise ValueError(f"unknown conditioning op {c['op']}")
-        log(f"conditioned {c['feature']}: {c['op']}"
-            + (f" [{c['lo']:g},{c['hi']:g}]" if c["op"] == "clip" else ""))
-    return spec
-
-
-# ---------------------------------------------------------------- event split
-
-def event_split(meta, train_frac, val_frac, rng):
-    """60/20/20 split on evt keys (the chain dump has no lumi branch; the 300-evt
-    RelVal sample has 300 distinct evt values -- asserted implicitly by the count)."""
-    key = meta["evt"].astype(np.uint64)
-    uniq = np.unique(key)
-    rng.shuffle(uniq)
-    n = len(uniq)
-    n_tr = int(round(train_frac * n))
-    n_va = int(round(val_frac * n))
-    tr_keys, va_keys, te_keys = uniq[:n_tr], uniq[n_tr:n_tr + n_va], uniq[n_tr + n_va:]
-    tr = np.isin(key, tr_keys)
-    va = np.isin(key, va_keys)
-    te = np.isin(key, te_keys)
-    log(f"event split: {n} distinct evt keys -> {n_tr}/{n_va}/{n - n_tr - n_va} events -> "
-        f"{tr.sum()}/{va.sum()}/{te.sum()} chains (train/val/test)")
-    return tr, va, te
-
-
-def combined_event_split(meta, src, args, rng):
-    """M8 COMBINATION RULE split (leak-proof, plan 10.4c) -- mirrors train_edge.py.
-
-    Frozen test = the ORIGINAL seed event-level test split of the PRIMARY (first
-    --input) file, reproduced exactly (shuffle of the primary unique evt keys with
-    the fresh seed rng, same train_frac/val_frac slices). Every other event
-    (primary non-test + kept extra-file events; overlap ids dropped at load) forms
-    the pool, re-split by event pool_train_frac/(1-pool_train_frac)."""
-    key = meta["evt"].astype(np.uint64)
-    uniq0 = np.unique(key[src == 0])
-    rng.shuffle(uniq0)
-    n0 = len(uniq0)
-    n_tr0 = int(round(args.train_frac * n0))
-    n_va0 = int(round(args.val_frac * n0))
-    te_keys = uniq0[n_tr0 + n_va0:]
-    te = np.isin(key, te_keys)
-    assert not (te & (src != 0)).any(), "frozen-test key present in an extra input (leak)"
-    pool_keys = np.unique(key[~te])
-    rng.shuffle(pool_keys)
-    n_ptr = int(round(args.pool_train_frac * len(pool_keys)))
-    tr_keys, va_keys = pool_keys[:n_ptr], pool_keys[n_ptr:]
-    tr = np.isin(key, tr_keys)
-    va = np.isin(key, va_keys)
-    prim = set(uniq0.tolist())
-    n_tr_p = sum(1 for k in tr_keys.tolist() if k in prim)
-    n_va_p = sum(1 for k in va_keys.tolist() if k in prim)
-    log(f"COMBINED event split: frozen test = {len(te_keys)} primary events (unchanged); "
-        f"pool {len(pool_keys)} events -> train {len(tr_keys)} "
-        f"({n_tr_p} primary + {len(tr_keys) - n_tr_p} extra) / "
-        f"val {len(va_keys)} ({n_va_p} primary + {len(va_keys) - n_va_p} extra) "
-        f"-> {tr.sum()}/{va.sum()}/{te.sum()} chains (train/val/test)")
-    return tr, va, te
-
-
-# ---------------------------------------------------------------- model
-
-def build_model(n_in, n_hid=32):
-    import torch.nn as nn
-    return nn.Sequential(nn.Linear(n_in, n_hid), nn.ReLU(),
-                         nn.Linear(n_hid, n_hid), nn.ReLU(),
-                         nn.Linear(n_hid, 1))
-
-
-def batched_scores(model, X_t, device, bs=1 << 20):
-    import torch
-    model.eval()
-    out = np.empty(len(X_t), dtype=np.float32)
-    with torch.no_grad():
-        for i in range(0, len(X_t), bs):
-            logits = model(X_t[i:i + bs].to(device)).squeeze(1).float().cpu()
-            # CMSSW torch build lacks numpy interop (.numpy() raises); tolist is fine.
-            out[i:i + bs] = logits.tolist()
-    return out
-
-
-def eval_block(tag, s_true, s_fake):
-    from sklearn.metrics import roc_auc_score
-    if len(s_true) == 0 or len(s_fake) == 0:
-        print(f"  {tag:>24} n_true={len(s_true):>8d} n_fake={len(s_fake):>8d} AUC=n/a (empty class)")
-        return {"auc": None, "n_true": int(len(s_true)), "n_fake": int(len(s_fake))}
-    y = np.concatenate([np.ones(len(s_true)), np.zeros(len(s_fake))])
-    s = np.concatenate([s_true, s_fake])
-    auc = roc_auc_score(y, s)
-    print(f"  {tag:>24} n_true={len(s_true):>8d} n_fake={len(s_fake):>8d} AUC={auc:.5f}")
-    return {"auc": float(auc), "n_true": int(len(s_true)), "n_fake": int(len(s_fake))}
-
-
-# ---------------------------------------------------------------- main
 
 def main():
-    args = parse_args()
+    p = argparse.ArgumentParser()
+    p.add_argument("--lab", action="append", required=True,
+                   help="NAME=dir, repeatable. The FIRST one is the reference sample whose train "
+                        "split fits the standardization (use pu=...).")
+    p.add_argument("--tag", required=True)
+    p.add_argument("--jet-share", type=float, default=0.0,
+                   help="fraction of total train loss weight given to all NON-reference samples")
+    p.add_argument("--loss", choices=["m12", "lst"], default="m12")
+    p.add_argument("--sched", choices=["const", "cos"], default="cos")
+    p.add_argument("--epochs", type=int, default=0)
+    p.add_argument("--patience", type=int, default=15)
+    p.add_argument("--lr", type=float, default=0.0)
+    p.add_argument("--hidden", type=int, default=32)
+    p.add_argument("--batch-size", type=int, default=16384)
+    p.add_argument("--seed", type=int, default=42)
+    p.add_argument("--dw-mid", type=float, default=8.0)
+    p.add_argument("--dw-hi", type=float, default=16.0)
+    p.add_argument("--jet-tier", action="store_true",
+                   help="also apply the tiered displaced boost to NON-reference samples")
+    p.add_argument("--share", action="append", default=[],
+                   help="NAME=frac, repeatable: per-sample share of the total train loss weight")
+    p.add_argument("--dup-mode", choices=["none", "norm", "demote"], default="none")
+    p.add_argument("--dup-f", type=float, default=1.0,
+                   help="demote mixing fraction toward the fake class (0 = baseline)")
+    p.add_argument("--dup-scope", choices=["all", "shorter"], default="all",
+                   help="demote every non-best group member (all) or only those with strictly "
+                        "fewer LAYERS than their group's best (shorter)")
+    p.add_argument("--dup-on", default="",
+                   help="comma-separated sample names the dup term applies to (default: all)")
+    p.add_argument("--sel-min-rows", type=int, default=500)
+    p.add_argument("--w4", type=float, default=0.0,
+                   help="weight MULTIPLIER for the 4-layer rows of the --only5 samples. 0 = drop "
+                        "them entirely (the A2L5 endpoint), 1 = keep them (the A02 endpoint); "
+                        "intermediate values interpolate between the two measured endpoints.")
+    p.add_argument("--only5", default="",
+                   help="comma-separated sample names whose 4-LAYER rows are dropped from the loss "
+                        "(weight 0). Motivated by the localization at [G 21:05]: 73%% of A02's PU200 "
+                        "fake excess is T4-class TCs, so the enrichment's lesson about 4-layer "
+                        "topology is the thing to remove, leaving the 4-layer cells governed by "
+                        "PU200 alone.")
+    p.add_argument("--flat", default="",
+                   help="comma-separated sample names whose rows get UNIFORM weight 1 instead of "
+                        "the m12 per-sample pos_weight. Required for the gun samples: they are "
+                        "98.9%% TRUE, so pos_weight = n_fake/n_true = 0.011 and the m12 convention "
+                        "would hand the sample's whole share to its 21 fake rows.")
+    a = p.parse_args()
+    if a.epochs == 0:
+        a.epochs = 120 if a.sched == "const" else 300
+    if a.lr == 0.0:
+        a.lr = 1e-3 if a.sched == "const" else 3e-3
+
     import torch
+    np.random.seed(a.seed)
+    torch.manual_seed(a.seed)
+    torch.cuda.manual_seed_all(a.seed)
+    dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    labs = [s.split("=", 1) for s in a.lab]
+    log("tag=%s labs=%s jet_share=%.3f loss=%s sched=%s lr=%g epochs=%d dev=%s"
+        % (a.tag, [n for n, _ in labs], a.jet_share, a.loss, a.sched, a.lr, a.epochs, dev))
 
-    np.random.seed(args.seed)
-    torch.manual_seed(args.seed)
-    torch.cuda.manual_seed_all(args.seed)
-    rng = np.random.default_rng(args.seed)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    log(f"seed={args.seed} device={device}")
+    Xs, ys, sid, trm, vam, tem, cores = [], [], [], [], [], [], []
+    gk, gq, nls = [], [], []  # same-sim group key, objective quality key, nLayers per row
+    for k, (nm, d) in enumerate(labs):
+        X, names, M = build_inputs(d)
+        tr, va, te = event_split(M["evt"], a.seed)
+        is_true = M["label"] == 1
+        vxy = M["vxy"]
+        y3 = np.zeros(len(X), np.int64)
+        y3[is_true & (vxy < 1.0)] = 1
+        y3[is_true & (vxy >= 1.0)] = 2
+        core = (M["isCore"] == 1) if "isCore" in M else np.zeros(len(X), np.int8)
+        log("  %-4s %s: %d chains  fake %d prompt %d disp %d  core-true %d"
+            % (nm, d, len(X), (y3 == 0).sum(), (y3 == 1).sum(), (y3 == 2).sum(), int((core == 1).sum())))
+        Xs.append(X)
+        ys.append(y3)
+        sid.append(np.full(len(X), k, np.int8))
+        trm.append(tr)
+        vam.append(va)
+        tem.append(te)
+        cores.append(np.asarray(core, np.int8))
+        # same-sim group key: (sample, evt, simIdx) for TRUE rows, -1 elsewhere.  The sample index
+        # is in the key so two samples' (evt, simIdx) pairs can never collide.
+        key = np.full(len(X), -1, np.int64)
+        ist = (y3 > 0) & (M["simIdx"] >= 0)
+        key[ist] = ((int(k) << 56) | (M["evt"][ist].astype(np.int64) << 24)
+                    | M["simIdx"][ist].astype(np.int64))
+        gk.append(key)
+        # objective quality key for "best member of the group": nLayers, then frac, then nUniq
+        nls.append(M["nLayers"].astype(np.int16))
+        gq.append((M["nLayers"].astype(np.float64) * 1e6
+                   + M["frac"].astype(np.float64) * 1e3 + M["nUniq"].astype(np.float64)))
+    X = np.concatenate(Xs)
+    GK = np.concatenate(gk)
+    GQ = np.concatenate(gq)
+    NL = np.concatenate(nls)
+    del gk, gq, nls
+    y3 = np.concatenate(ys)
+    S = np.concatenate(sid)
+    tr, va, te = np.concatenate(trm), np.concatenate(vam), np.concatenate(tem)
+    core = np.concatenate(cores)
+    del Xs, ys, sid, trm, vam, tem, cores
 
-    # Load input file(s). Multiple files engage the M8 COMBINATION RULE: file[0] is
-    # the primary; extra files drop every event whose evt id appears in the primary.
-    metas, x_parts, src_parts = [], [], []
-    names = prim_evts = None
-    for si, path in enumerate(args.input):
-        meta_i, X_i, names_i = load_dump(path)
-        if si == 0:
-            names = names_i
-            prim_evts = np.unique(meta_i["evt"])
-            log(f"input[0] PRIMARY {path}: {len(X_i)} chains over {len(prim_evts)} events")
-        else:
-            assert names_i == names, f"feature_spec mismatch: {path}"
-            evts_i = np.unique(meta_i["evt"])
-            keep = ~np.isin(meta_i["evt"], prim_evts)
-            kept_evts = np.unique(meta_i["evt"][keep])
-            log(f"input[{si}] EXTRA {path}: {len(X_i)} chains over {len(evts_i)} events; "
-                f"combination rule drops {len(evts_i) - len(kept_evts)} overlap events -> "
-                f"keep {int(keep.sum())} chains over {len(kept_evts)} events")
-            meta_i = {k: v[keep] for k, v in meta_i.items()}
-            X_i = X_i[keep]
-        metas.append(meta_i)
-        x_parts.append(X_i)
-        src_parts.append(np.full(len(X_i), si, dtype=np.int8))
-    if len(args.input) == 1:
-        meta, X, src = metas[0], x_parts[0], None
-    else:
-        meta = {k: np.concatenate([m[k] for m in metas]) for k in META_BRANCHES}
-        X = np.concatenate(x_parts)
-        src = np.concatenate(src_parts)
-    del metas, x_parts, src_parts
-    n_all = len(X)
-    log(f"loaded {n_all} chains x {X.shape[1]} features from {len(args.input)} file(s)")
-
-    degenerate = data_quality_report(X, names)
-
-    conditioning = []
-    if not args.no_feature_clip:
-        conditioning = apply_conditioning(X, names, CONDITIONING_SPEC)
-
-    # a2 CONTROL knob: restrict to the first N columns (slots 0-15 are the frozen M6
-    # contract, so --n-input 16 IS the pre-a2 gate on identical rows and split).
-    if args.n_input and args.n_input < X.shape[1]:
-        keep = args.n_input
-        dropped = names[keep:]
-        X = np.ascontiguousarray(X[:, :keep])
-        names = names[:keep]
-        conditioning = [c for c in conditioning if c["feature"] in names]
-        log(f"--n-input {keep}: dropped {len(dropped)} columns {dropped}")
-
-    if src is None:
-        tr, va, te = event_split(meta, args.train_frac, args.val_frac, rng)
-    else:
-        tr, va, te = combined_event_split(meta, src, args, rng)
-
-    # ---- standardization from TRAIN rows ----
-    mu = X[tr].mean(axis=0, dtype=np.float64).astype(np.float32)
-    sd = X[tr].std(axis=0, dtype=np.float64).astype(np.float32)
+    # ---- standardization: the REFERENCE sample's train split only ---------------------------
+    ref = (S == 0) & tr
+    mu = X[ref].mean(axis=0, dtype=np.float64).astype(np.float32)
+    sd = X[ref].std(axis=0, dtype=np.float64).astype(np.float32)
     sd[sd < 1e-8] = 1.0
-    Xs = (X - mu) / sd
+    Xn = (X - mu) / sd
+    del X
 
-    y = (meta["label"] == 1).astype(np.float32)
-    n_pos, n_neg = int(y[tr].sum()), int((1 - y[tr]).sum())
-    pos_weight = n_neg / max(n_pos, 1)
-    log(f"train: {n_pos} true / {n_neg} fake -> pos_weight={pos_weight:.4f}")
+    # ---- per-sample class weights, then the jet-share rescale --------------------------------
+    vxy_all = np.concatenate([np.load(os.path.join(d, "meta.npz"))["vxy"] for _, d in labs])
+    w = np.ones(len(Xn), dtype=np.float32)
+    spec = {"convention": a.loss, "jet_share_target": a.jet_share,
+            "tier_on_nonreference": bool(a.jet_tier), "per_sample": {}}
+    for k, (nm, _) in enumerate(labs):
+        m = S == k
+        mt = m & tr
+        n0, n1, n2 = [int((y3[mt] == c).sum()) for c in (0, 1, 2)]
+        if nm in [s for s in a.flat.split(",") if s]:
+            spec["per_sample"][nm] = {"pos_weight": 1.0, "flat": True, "counts_train": [n0, n1, n2]}
+            log("  %s: FLAT per-row weight 1 (no class reweighting, no displaced tiering)" % nm)
+            continue
+        if a.loss == "m12":
+            pw = n0 / max(n1 + n2, 1)
+            w[m & (y3 > 0)] = pw
+            spec["per_sample"][nm] = {"pos_weight": pw, "counts_train": [n0, n1, n2]}
+        else:
+            tot = n0 + n1 + n2
+            cw = [tot / (3.0 * max(c, 1)) for c in (n0, n1, n2)]
+            for c in (0, 1, 2):
+                w[m & (y3 == c)] = cw[c]
+            spec["per_sample"][nm] = {"class_weights": cw, "counts_train": [n0, n1, n2]}
+        # THE TIERED DISPLACED BOOST IS APPLIED TO THE REFERENCE (PU200) SAMPLE ONLY unless
+        # --jet-tier. It exists to serve the PU200/cube displaced physics the E1-B2 win lives in,
+        # and the jet sample's "displaced-true" population is a DIFFERENT thing: on jets
+        # displaced/true is 25.4% against PU200's 1.25% (in-jet decays and nuclear interactions, in
+        # a sample with no pileup), and its pos_weight is 32.3 against PU200's ~1.3. Tiering it
+        # would put ~80% of the jet block's gradient on in-jet displaced rows and turn a core-
+        # TOPOLOGY lesson into an in-jet-displacement lesson -- pointed straight at the protected
+        # behaviour. `--jet-tier` is available to test that claim rather than assert it.
+        if a.loss == "m12" and (k == 0 or a.jet_tier):
+            it = m & (y3 > 0)
+            w[it & (vxy_all >= 1.0) & (vxy_all < 5.0)] *= a.dw_mid
+            w[it & (vxy_all >= 5.0)] *= a.dw_hi
+    del vxy_all
 
-    # ---- displaced-aware weighting ----
-    # Flat rule (v1): true chains with simVxy >= 1 cm get x args.displaced_weight.
-    # Tiered rule (v2, --displaced-weight-mid/-hi): true [1,5) get x mid, true >= 5 get
-    # x hi; fakes and prompt true stay 1.
-    w_all = np.ones(n_all, dtype=np.float32)
-    is_true_all = meta["label"] == 1
-    disp_true = is_true_all & (meta["simVxy"] >= 1.0)
-    tiered = args.displaced_weight_mid is not None and args.displaced_weight_hi is not None
-    if tiered:
-        mid_true = is_true_all & (meta["simVxy"] >= 1.0) & (meta["simVxy"] < 5.0)
-        hi_true = is_true_all & (meta["simVxy"] >= 5.0)
-        w_all[mid_true] = args.displaced_weight_mid
-        w_all[hi_true] = args.displaced_weight_hi
-        weight_spec = {"rule": "tiered: true chains with 1<=simVxy<5 get weight x mid, "
-                               "simVxy>=5 get x hi; fakes and prompt true 1",
-                       "displaced_weight_mid": args.displaced_weight_mid,
-                       "displaced_weight_hi": args.displaced_weight_hi,
-                       "n_weighted_mid_train": int((mid_true & tr).sum()),
-                       "n_weighted_hi_train": int((hi_true & tr).sum())}
-        log(f"displaced weighting (tiered): x{args.displaced_weight_mid:g} on "
-            f"{int((mid_true & tr).sum())} train true chains vxy [1,5), "
-            f"x{args.displaced_weight_hi:g} on {int((hi_true & tr).sum())} train true "
-            f"chains vxy>=5 ({int(disp_true.sum())} displaced true total)")
-    else:
-        w_all[disp_true] = args.displaced_weight
-        weight_spec = {"rule": "true chains with simVxy >= 1 cm get weight x displaced_weight; all else 1",
-                       "displaced_weight": args.displaced_weight,
-                       "n_weighted_train": int((disp_true & tr).sum())}
-        log(f"displaced weighting: x{args.displaced_weight:g} on {int((disp_true & tr).sum())} "
-            f"train true chains with simVxy>=1 ({int(disp_true.sum())} total)")
+    # ---- G: --only5, the localization-driven mix filter -----------------------------------------
+    for nm in [x for x in a.only5.split(",") if x]:
+        k = [i for i, (n, _) in enumerate(labs) if n == nm]
+        assert k, "--only5 names a sample not in the mix: %s" % nm
+        m = (S == k[0]) & (NL < 5)
+        w[m] *= a.w4
+        log("only5 %s: %d rows with nLayers < 5 scaled by w4=%.3f (%d rows with nLayers >= 5 kept)"
+            % (nm, int(m.sum()), a.w4, int(((S == k[0]) & (NL >= 5)).sum())))
+    spec["only5"] = {"samples": [x for x in a.only5.split(",") if x], "w4": a.w4}
 
-    Xtr = torch.tensor(np.ascontiguousarray(Xs[tr]))
-    ytr = torch.tensor(np.ascontiguousarray(y[tr]))
-    wtr = torch.tensor(np.ascontiguousarray(w_all[tr]))
-    Xva = torch.tensor(np.ascontiguousarray(Xs[va]))
-    yva_np = y[va]
-    vxy_va = meta["simVxy"][va]
-    va_true = yva_np == 1
-    va_fake = ~va_true
-    va_prompt_true = va_true & (vxy_va < 1.0)
-    va_disp_true = va_true & (vxy_va >= 1.0)
-    if device.type == "cuda":
-        Xtr, ytr, wtr = Xtr.to(device), ytr.to(device), wtr.to(device)
+    # ---- G: the dup-aware term, applied BEFORE the share rescale so the shares stay exact -------
+    fmix = np.zeros(len(Xn), dtype=np.float32)      # per-row mixing fraction toward class 0
+    dup_on = [s for s in a.dup_on.split(",") if s] or [nm for nm, _ in labs]
+    spec["dup"] = {"mode": a.dup_mode, "f": a.dup_f, "on": dup_on}
+    if a.dup_mode != "none":
+        onmask = np.zeros(len(Xn), bool)
+        for k, (nm, _) in enumerate(labs):
+            if nm in dup_on:
+                onmask |= (S == k)
+        gm = (GK >= 0) & onmask
+        uk, inv, cnt = np.unique(GK[gm], return_inverse=True, return_counts=True)
+        gsz = cnt[inv]
+        if a.dup_mode == "norm":
+            # divide by group size, then RESTORE the total weight of the affected rows PER SAMPLE.
+            # Without the restore step this would also shift the fake/true balance inside the
+            # protected sample (multiplicity 2.39 on PU200 -> trues lose 2.4x of the gradient), and
+            # the arm would no longer be a pure REDISTRIBUTION among a sim's redundant chains, which
+            # is the only thing it is supposed to test.
+            wnew = w[gm] / gsz.astype(np.float32)
+            sgm = S[gm]
+            for k in range(len(labs)):
+                sm = sgm == k
+                if not sm.any():
+                    continue
+                b, aft = float(w[gm][sm].sum()), float(wnew[sm].sum())
+                if aft > 0:
+                    wnew[sm] *= b / aft
+            w[gm] = wnew
+            spec["dup"]["groups"] = int(len(uk))
+            spec["dup"]["rows"] = int(gm.sum())
+            spec["dup"]["preserve_sample_weight"] = True
+            log("dup-norm: %d same-sim groups over %d true rows (mean multiplicity %.3f), "
+                "weight divided by group size then per-sample total RESTORED"
+                % (len(uk), int(gm.sum()), gsz.mean()))
+        elif a.dup_scope == "shorter":
+            # demote ONLY members with strictly FEWER LAYERS than their group's best. Motivation:
+            # every enrichment arm of round 1 inflated the T4-class TC count (+3.0% to +6.7%) while
+            # the PU200 duplicate rate rose, so the suspect duplicate is "a 4-layer chain of a sim
+            # whose 5-layer chain is also delivered". This form leaves equal-length siblings alone.
+            nl = np.floor(GQ[gm] / 1e6)
+            best = np.zeros(len(uk), np.float64)
+            np.maximum.at(best, inv, nl)
+            dem = np.nonzero(gm)[0][nl < best[inv]]
+            fmix[dem] = a.dup_f
+            spec["dup"]["groups"] = int(len(uk))
+            spec["dup"]["rows"] = int(gm.sum())
+            spec["dup"]["demoted_rows"] = int(len(dem))
+            log("dup-demote(shorter) f=%.3f: %d groups, %d true rows, %d DEMOTED (strictly fewer "
+                "layers than their group best)" % (a.dup_f, len(uk), int(gm.sum()), len(dem)))
+        else:
+            # best member per group by the objective quality key; ties -> lowest row index
+            q = GQ[gm]
+            best = np.zeros(len(uk), np.float64)
+            np.maximum.at(best, inv, q)
+            isbest = q >= best[inv]
+            # break remaining ties: keep only the FIRST row that attains the group max
+            first = np.full(len(uk), np.iinfo(np.int64).max, np.int64)
+            idx = np.nonzero(gm)[0]
+            np.minimum.at(first, inv[isbest], idx[isbest])
+            keep = idx == first[inv]
+            dem = idx[~keep]
+            fmix[dem] = a.dup_f
+            spec["dup"]["groups"] = int(len(uk))
+            spec["dup"]["rows"] = int(gm.sum())
+            spec["dup"]["demoted_rows"] = int(len(dem))
+            log("dup-demote f=%.3f: %d same-sim groups, %d true rows, %d DEMOTED (soft) "
+                "(mean multiplicity %.3f)" % (a.dup_f, len(uk), int(gm.sum()), len(dem), gsz.mean()))
+        del uk, inv, cnt, gsz
 
-    model = build_model(X.shape[1], args.hidden).to(device)
-    opt = torch.optim.Adam(model.parameters(), lr=args.lr)
-    # Elementwise loss * per-sample weight, then mean (identical to plain mean
-    # reduction when all weights are 1).
-    crit = torch.nn.BCEWithLogitsLoss(pos_weight=torch.tensor(pos_weight, device=device),
-                                      reduction="none")
+    # ---- per-sample loss-weight shares ---------------------------------------------------------
+    names_ns = [nm for nm, _ in labs[1:]]
+    shares = {}
+    for s in a.share:
+        nm, fr = s.split("=", 1)
+        assert nm in names_ns, "--share names a non-existent non-reference sample: %s" % nm
+        shares[nm] = float(fr)
+    if not shares and len(labs) > 1:
+        # legacy collective --jet-share: split proportionally to the samples' own train weight
+        wns = {nm: float(w[(S == k + 1) & tr].sum()) for k, nm in enumerate(names_ns)}
+        tw = sum(wns.values())
+        for nm in names_ns:
+            shares[nm] = a.jet_share * (wns[nm] / tw if tw > 0 else 0.0)
+    for nm in names_ns:
+        shares.setdefault(nm, 0.0)
+    ssum = sum(shares.values())
+    assert ssum < 1.0, "shares sum to %.4f" % ssum
+    spec["share_targets"] = shares
+    spec["jet_share_target"] = ssum
+    if len(labs) > 1:
+        wref = float(w[(S == 0) & tr].sum())
+        for k, nm in enumerate(names_ns):
+            m = S == k + 1
+            wk = float(w[m & tr].sum())
+            if shares[nm] <= 0.0 or wk <= 0.0:
+                w[m] = 0.0
+                spec["per_sample"][nm]["rescale_factor"] = 0.0
+                log("share %s = 0: its rows carry ZERO loss weight (reported, not trained)" % nm)
+                continue
+            f = (shares[nm] / (1.0 - ssum)) * wref / wk
+            w[m] *= f
+            spec["per_sample"][nm]["rescale_factor"] = f
+            log("share rescale %s: target %.4f -> factor %.6f (ref train weight %.3e, %s %.3e)"
+                % (nm, shares[nm], f, wref, nm, wk))
+    tot = float(w[tr].sum())
+    for k, (nm, _) in enumerate(labs):
+        spec["per_sample"][nm]["train_weight_share"] = float(w[tr & (S == k)].sum()) / tot
+    shares = [float(w[tr][y3[tr] == c].sum()) / tot for c in (0, 1, 2)]
+    spec["train_loss_weight_share_by_class"] = shares
+    log("train weight share by SAMPLE: " + "  ".join(
+        "%s %.4f" % (nm, spec["per_sample"][nm]["train_weight_share"]) for nm, _ in labs))
+    log("train weight share by CLASS: fake %.4f prompt %.4f displaced %.4f" % tuple(shares))
 
-    from sklearn.metrics import roc_auc_score
+    # rows with zero weight are dropped from the train tensor entirely (saves memory and time)
+    trk = tr & (w > 0)
+    Xtr = torch.tensor(np.ascontiguousarray(Xn[trk])).to(dev)
+    ytr = torch.tensor(np.ascontiguousarray(y3[trk])).to(dev)
+    wtr = torch.tensor(np.ascontiguousarray(w[trk])).to(dev)
+    use_soft = a.dup_mode == "demote" and a.dup_f > 0.0
+    ftr = torch.tensor(np.ascontiguousarray(fmix[trk])).to(dev) if use_soft else None
+    y0tr = torch.zeros_like(ytr) if use_soft else None
+    log("train rows %d of %d (zero-weight rows dropped)%s"
+        % (int(trk.sum()), int(tr.sum()),
+           ("; soft-demoted train rows %d" % int((fmix[trk] > 0).sum())) if use_soft else ""))
 
-    def subgroup_auc(s, m_pos, m_neg):
-        yy = np.concatenate([np.ones(int(m_pos.sum())), np.zeros(int(m_neg.sum()))])
-        ss = np.concatenate([s[m_pos], s[m_neg]])
-        return roc_auc_score(yy, ss)
+    inmix = []
+    for k, (nm, _) in enumerate(labs):
+        if float(w[tr & (S == k)].sum()) <= 0:
+            continue
+        nrow = [int(((S == k) & va & (y3 == c)).sum()) for c in (0, 1, 2)]
+        if min(nrow) < a.sel_min_rows:
+            log("SELECTOR: %s EXCLUDED (val rows per class %s < --sel-min-rows %d); its AUCs are "
+                "reported but cannot select an epoch" % (nm, nrow, a.sel_min_rows))
+            continue
+        inmix.append(k)
+    spec["selector_samples"] = [labs[k][0] for k in inmix]
+    log("SELECTOR over: %s" % spec["selector_samples"])
+    Xva = torch.tensor(np.ascontiguousarray(Xn[va])).to(dev)
+    yva, Sva, cva = y3[va], S[va], core[va]
 
-    gen = torch.Generator(device="cpu").manual_seed(args.seed)
-    best_sel, best_state, best_epoch, bad = -1.0, None, -1, 0
-    best_meta = {}
-    start_epoch = 1
-    if args.state_file and os.path.exists(args.state_file):
-        st = torch.load(args.state_file, map_location="cpu", weights_only=False)
-        model.load_state_dict(st["model"])
-        model.to(device)
-        opt.load_state_dict(st["opt"])
-        gen.set_state(st["gen"])
-        best_sel, best_epoch, bad = st["best_sel"], st["best_epoch"], st["bad"]
-        best_state, best_meta = st["best_state"], st["best_meta"]
-        start_epoch = st["epoch"] + 1
-        log(f"RESUMED from {args.state_file}: next epoch {start_epoch}, "
-            f"best sel {best_sel:.5f} @ epoch {best_epoch}, bad={bad}")
+    model = torch.nn.Sequential(torch.nn.Linear(Xn.shape[1], a.hidden), torch.nn.ReLU(),
+                                torch.nn.Linear(a.hidden, a.hidden), torch.nn.ReLU(),
+                                torch.nn.Linear(a.hidden, 3)).to(dev)
+    opt = torch.optim.Adam(model.parameters(), lr=a.lr)
+    sch = (torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=a.epochs, eta_min=1e-5)
+           if a.sched == "cos" else None)
+    crit = torch.nn.CrossEntropyLoss(reduction="none")
+    gen = torch.Generator(device="cpu").manual_seed(a.seed)
+
+    def torch_auc(pos, neg):
+        """Mann-Whitney U with TIE-AVERAGED ranks -- exactly roc_auc_score (train3.py verbatim)."""
+        if len(pos) == 0 or len(neg) == 0:
+            return float("nan")
+        x = torch.cat([pos, neg])
+        n1, n2 = len(pos), len(neg)
+        order = torch.argsort(x)
+        xs = x[order]
+        rk = torch.arange(1, n1 + n2 + 1, dtype=torch.float64, device=x.device)
+        uniq, inv, cnt = torch.unique(xs, return_inverse=True, return_counts=True)
+        ssum = torch.zeros(len(uniq), dtype=torch.float64, device=x.device)
+        ssum.scatter_add_(0, inv, rk)
+        rk = (ssum / cnt.double())[inv]
+        ispos = torch.zeros(n1 + n2, dtype=torch.bool, device=x.device)
+        ispos[:n1] = True
+        r1 = rk[ispos[order]].sum()
+        return float((r1 - n1 * (n1 + 1) / 2.0) / (float(n1) * float(n2)))
+
+    msk = {}
+    for k in range(len(labs)):
+        msk[("f", k)] = torch.tensor(np.ascontiguousarray((Sva == k) & (yva == 0))).to(dev)
+        msk[("p", k)] = torch.tensor(np.ascontiguousarray((Sva == k) & (yva == 1))).to(dev)
+        msk[("d", k)] = torch.tensor(np.ascontiguousarray((Sva == k) & (yva == 2))).to(dev)
+        # the jet-core cell: core-true chains vs the fakes of that same sample
+        msk[("ct", k)] = torch.tensor(np.ascontiguousarray((Sva == k) & (cva == 1) & (yva > 0))).to(dev)
+
+    def val_metrics():
+        model.eval()
+        with torch.no_grad():
+            zs = []
+            for i in range(0, len(Xva), 1 << 20):
+                zs.append(model(Xva[i:i + (1 << 20)]).float())
+            z = torch.cat(zs)
+            mP, mD = z[:, 1] - z[:, 0], z[:, 2] - z[:, 0]
+            mX = torch.maximum(z[:, 1], z[:, 2]) - z[:, 0]
+            out = {}
+            for k, (nm, _) in enumerate(labs):
+                out[nm + "_P"] = torch_auc(mP[msk[("p", k)]], mP[msk[("f", k)]])
+                out[nm + "_D"] = torch_auc(mD[msk[("d", k)]], mD[msk[("f", k)]])
+                if int(msk[("ct", k)].sum()) > 0:
+                    out[nm + "_core"] = torch_auc(mX[msk[("ct", k)]], mX[msk[("f", k)]])
+            return out
+
+    best_sel, best_state, best_ep, bad, best_meta = -1.0, None, -1, 0, {}
     n_tr = len(Xtr)
-    for epoch in range(start_epoch, args.epochs + 1):
+    hist = []
+    for ep in range(1, a.epochs + 1):
         model.train()
-        perm = torch.randperm(n_tr, generator=gen)
+        perm = torch.randperm(n_tr, generator=gen).to(dev)
         tot_loss = 0.0
-        for i in range(0, n_tr, args.batch_size):
-            idx = perm[i:i + args.batch_size]
-            if device.type == "cuda":
-                idx = idx.to(device)
-            xb, yb = Xtr[idx], ytr[idx]
+        for i in range(0, n_tr, a.batch_size):
+            idx = perm[i:i + a.batch_size]
             opt.zero_grad()
-            loss = (crit(model(xb).squeeze(1), yb) * wtr[idx]).mean()
+            if use_soft:
+                out = model(Xtr[idx])
+                fm = ftr[idx]
+                l = (1.0 - fm) * crit(out, ytr[idx]) + fm * crit(out, y0tr[idx])
+                loss = (l * wtr[idx]).mean()
+            else:
+                loss = (crit(model(Xtr[idx]), ytr[idx]) * wtr[idx]).mean()
             loss.backward()
             opt.step()
             tot_loss += float(loss.detach()) * len(idx)
-        s_va = batched_scores(model, Xva, device)
-        auc = roc_auc_score(yva_np, s_va)
-        if args.select_metric == "min_prompt_disp":
-            auc_p = subgroup_auc(s_va, va_prompt_true, va_fake)
-            auc_d = subgroup_auc(s_va, va_disp_true, va_fake)
-            sel = min(auc_p, auc_d)
-            epoch_meta = {"val_auc": float(auc), "val_auc_prompt": float(auc_p),
-                          "val_auc_disp": float(auc_d)}
-            log(f"epoch {epoch:3d} train_loss={tot_loss / n_tr:.5f} val_auc={auc:.5f} "
-                f"prompt={auc_p:.5f} disp={auc_d:.5f} sel=min={sel:.5f}")
-        else:
-            sel = auc
-            epoch_meta = {"val_auc": float(auc)}
-            log(f"epoch {epoch:3d} train_loss={tot_loss / n_tr:.5f} val_auc={auc:.5f}")
-        stop = False
+        if sch is not None:
+            sch.step()
+        vm = val_metrics()
+        sel = min(vm[labs[k][0] + s] for k in inmix for s in ("_P", "_D"))
+        hist.append([ep, tot_loss / n_tr, sel] + [vm[k] for k in sorted(vm)])
+        if ep % 5 == 0 or ep <= 3:
+            log("ep %3d loss=%.5f sel=%.5f  " % (ep, tot_loss / n_tr, sel)
+                + " ".join("%s=%.5f" % (k, v) for k, v in sorted(vm.items()))
+                + ("  *" if sel > best_sel else ""))
         if sel > best_sel:
-            best_sel, best_epoch, bad = sel, epoch, 0
-            best_meta = epoch_meta
+            best_sel, best_ep, bad = sel, ep, 0
+            best_meta = dict(vm)
             best_state = copy.deepcopy({k: v.cpu() for k, v in model.state_dict().items()})
         else:
             bad += 1
-            if bad >= args.patience:
-                log(f"early stop at epoch {epoch} (best sel metric {best_sel:.5f} @ epoch {best_epoch})")
-                stop = True
-        if args.state_file:
-            tmp = args.state_file + ".tmp"
-            torch.save({"model": {k: v.cpu() for k, v in model.state_dict().items()},
-                        "opt": opt.state_dict(), "gen": gen.get_state(),
-                        "best_sel": best_sel, "best_epoch": best_epoch, "bad": bad,
-                        "best_state": best_state, "best_meta": best_meta,
-                        "epoch": epoch}, tmp)
-            os.replace(tmp, args.state_file)
-        if stop:
-            break
-        if (args.wall_limit_sec > 0 and time.time() - T0 > args.wall_limit_sec
-                and epoch < args.epochs):
-            log(f"wall limit {args.wall_limit_sec:.0f}s reached after epoch {epoch}; "
-                f"state saved to {args.state_file} -> exit(3), rerun same command to resume")
-            sys.exit(3)
-    best_auc = best_meta.get("val_auc", best_sel)
-    log(f"best checkpoint: epoch {best_epoch} select_metric={args.select_metric} "
-        f"sel={best_sel:.5f} meta={best_meta}")
-    model.load_state_dict(best_state)
-    model.to(device)
+            if a.sched == "const" and bad >= a.patience:
+                log("early stop at epoch %d (best %.5f @ %d)" % (ep, best_sel, best_ep))
+                break
+    log("BEST epoch %d sel=%.5f %s" % (best_ep, best_sel,
+                                       " ".join("%s=%.5f" % kv for kv in sorted(best_meta.items()))))
 
-    # ---- save model + normalization ----
-    torch.save({"state_dict": best_state,
-                "arch": [X.shape[1], args.hidden, args.hidden, 1],
-                "feature_names": names, "seed": args.seed,
-                "conditioning": conditioning,
-                "best_epoch": best_epoch, "best_val_auc": float(best_auc),
-                "select_metric": args.select_metric, "best_sel": float(best_sel),
-                "best_val_meta": best_meta}, args.out_model)
-    with open(args.out_norm, "w") as fh:
-        json.dump({"feature_names": names,
-                   # C++ inference: apply "conditioning" ops IN ORDER to the raw
-                   # features FIRST, then x_std = (x - mean) / std.
-                   "conditioning": conditioning,
-                   "mean": mu.tolist(), "std": sd.tolist(),
-                   "seed": args.seed, "degenerate_columns": degenerate,
-                   "displaced_weighting": weight_spec,
-                   "train_args": {"epochs": args.epochs, "patience": args.patience,
-                                  "batch_size": args.batch_size, "lr": args.lr,
-                                  "feature_clip": not args.no_feature_clip,
-                                  "displaced_weight": args.displaced_weight,
-                                  "displaced_weight_mid": args.displaced_weight_mid,
-                                  "displaced_weight_hi": args.displaced_weight_hi,
-                                  "select_metric": args.select_metric,
-                                  "hidden": args.hidden, "n_input": args.n_input,
-                                  "inputs": args.input,
-                                  "pool_train_frac": args.pool_train_frac}}, fh, indent=1)
-    log(f"saved {args.out_model} and {args.out_norm}")
-
-    # ---- TEST evaluation: overall + per nLayers (4/5/6+) + prompt/displaced ----
-    Xte = torch.tensor(np.ascontiguousarray(Xs[te]))
-    s_te = batched_scores(model, Xte, device)
-    lab_te = meta["label"][te]
-    vxy_te = meta["simVxy"][te]
-    nl_te = meta["nLayers"][te]
-    is_true = lab_te == 1
-    is_fake = ~is_true
-
-    print("\n=== chain-gate MLP on TEST events ===")
-    res = {}
-    res["all"] = eval_block("all", s_te[is_true], s_te[is_fake])
-    for tag, m in (("nLayers=4", nl_te == 4), ("nLayers=5", nl_te == 5), ("nLayers>=6", nl_te >= 6)):
-        res[tag] = eval_block(tag, s_te[is_true & m], s_te[is_fake & m])
-    # vxy subgroups: true chains of the stratum vs ALL test fakes (fakes have simVxy
-    # = -999, they carry no displacement class -- same convention as train_edge.py).
-    res["prompt vxy<1"] = eval_block("prompt vxy<1", s_te[is_true & (vxy_te < 1)], s_te[is_fake])
-    res["displaced vxy>=1"] = eval_block("displaced vxy>=1", s_te[is_true & (vxy_te >= 1)], s_te[is_fake])
-    res["displaced vxy>=5"] = eval_block("displaced vxy>=5", s_te[is_true & (vxy_te >= 5)], s_te[is_fake])
-
-    # Logit-scale context for threshold picking in the K9 sweep.
-    for tag, m in (("true", is_true), ("fake", is_fake)):
-        q = np.quantile(s_te[m], [0.05, 0.25, 0.5, 0.75, 0.95])
-        print(f"  test {tag} logit quantiles 5/25/50/75/95%: "
-              + " ".join(f"{v:+.2f}" for v in q))
-
-    # ---- a2: PER -G 5 BRANCH evaluation ------------------------------------------
-    # The M9 residual fake is localized (~85%) in the EXEMPT (dcaXY >= dcaSplit)
-    # 5+-layer branch, and the best-displaced w1/z-configs live in the exempt T4
-    # branch. Those are the two cells that must move, so they get their own AUCs.
-    dca_te = meta["dcaXY"][te]
-    XS = args.dca_split
-    print(f"\n=== a2 per-branch AUC (dcaSplit = {XS} cm; branch = the -G 5 split) ===")
-    branch = {}
-    for bname, bmask in (("IP dca<%g" % XS, dca_te < XS), ("EXEMPT dca>=%g" % XS, dca_te >= XS)):
-        for lname, lmask in (("L4", nl_te <= 4), ("L5+", nl_te >= 5), ("Lall", np.ones(len(nl_te), bool))):
-            m = bmask & lmask
-            print(f"-- {bname} {lname}: n={int(m.sum())}")
-            branch[f"{bname}|{lname}|all"] = eval_block("all-true vs fake", s_te[is_true & m], s_te[is_fake & m])
-            branch[f"{bname}|{lname}|prompt"] = eval_block(
-                "prompt vxy<1", s_te[is_true & m & (vxy_te < 1)], s_te[is_fake & m])
-            branch[f"{bname}|{lname}|disp1"] = eval_block(
-                "displaced vxy>=1", s_te[is_true & m & (vxy_te >= 1)], s_te[is_fake & m])
-            branch[f"{bname}|{lname}|disp5"] = eval_block(
-                "displaced vxy>=5", s_te[is_true & m & (vxy_te >= 5)], s_te[is_fake & m])
-    res["branch"] = branch
-
-    # ---- a2: PERMUTATION IMPORTANCE ----------------------------------------------
-    # Shuffle one STANDARDIZED test column at a time (fixed rng) and record the AUC
-    # drop, overall and in the two branch cells that matter. Reported sorted by the
-    # exempt-5+ displaced drop -- the M9 representational target.
-    if not args.no_perm_importance:
-        log("permutation importance on TEST rows ...")
-        prng = np.random.default_rng(args.seed + 1)
-        Xte_np = np.ascontiguousarray(Xs[te])
-        base_all = res["all"]["auc"]
-        ex5 = (dca_te >= XS) & (nl_te >= 5)
-        ip4 = (dca_te < XS) & (nl_te <= 4)
-
-        def cell_auc(scores, m, true_extra=None):
-            tm = is_true & m if true_extra is None else is_true & m & true_extra
-            fm = is_fake & m
-            if tm.sum() == 0 or fm.sum() == 0:
-                return None
-            yy = np.concatenate([np.ones(int(tm.sum())), np.zeros(int(fm.sum()))])
-            ss = np.concatenate([scores[tm], scores[fm]])
-            return float(roc_auc_score(yy, ss))
-
-        base_ex5_all = cell_auc(s_te, ex5)
-        base_ex5_disp = cell_auc(s_te, ex5, vxy_te >= 1)
-        base_ip4_all = cell_auc(s_te, ip4)
-        rows = []
-        perm_idx = prng.permutation(len(Xte_np))
-        for j, nm in enumerate(names):
-            Xp = Xte_np.copy()
-            Xp[:, j] = Xte_np[perm_idx, j]
-            sp = batched_scores(model, torch.tensor(Xp), device)
-            rows.append((nm,
-                         base_all - roc_auc_score(np.concatenate([np.ones(int(is_true.sum())),
-                                                                  np.zeros(int(is_fake.sum()))]),
-                                                  np.concatenate([sp[is_true], sp[is_fake]])),
-                         (base_ex5_all - cell_auc(sp, ex5)) if base_ex5_all else 0.0,
-                         (base_ex5_disp - cell_auc(sp, ex5, vxy_te >= 1)) if base_ex5_disp else 0.0,
-                         (base_ip4_all - cell_auc(sp, ip4)) if base_ip4_all else 0.0))
-            del Xp
-        print(f"\n=== a2 permutation importance (AUC DROP when the column is shuffled) ===")
-        print(f"  baselines: all={base_all:.5f} exempt5+_all={base_ex5_all:.5f} "
-              f"exempt5+_disp={base_ex5_disp:.5f} ip_L4_all={base_ip4_all:.5f}")
-        print(f"  {'feature':>24} {'dAUC_all':>10} {'dAUC_ex5':>10} {'dAUC_ex5disp':>13} {'dAUC_ipL4':>10}")
-        for nm, d0, d1, d2, d3 in sorted(rows, key=lambda r: -r[3]):
-            print(f"  {nm:>24} {d0:>10.5f} {d1:>10.5f} {d2:>13.5f} {d3:>10.5f}")
-        res["perm_importance"] = [{"feature": nm, "dAUC_all": d0, "dAUC_exempt5": d1,
-                                   "dAUC_exempt5_disp": d2, "dAUC_ip_L4": d3}
-                                  for nm, d0, d1, d2, d3 in rows]
-
-    if args.out_report:
-        with open(args.out_report, "w") as fh:
-            json.dump({"model": args.out_model, "n_input": X.shape[1],
-                       "hidden": args.hidden, "best_epoch": best_epoch,
-                       "best_sel": float(best_sel), "best_val_meta": best_meta,
-                       "test": res, "inputs": args.input, "dca_split": XS}, fh, indent=1)
-        log(f"wrote {args.out_report}")
-
-    log("done")
+    os.makedirs(os.path.join(HERE, "models"), exist_ok=True)
+    mp = os.path.join(HERE, "models", "chain3_%s.pt" % a.tag)
+    torch.save({"state_dict": best_state, "arch": [Xn.shape[1], a.hidden, a.hidden, 3],
+                "feature_names": names, "seed": a.seed, "conditioning": COND,
+                "best_epoch": best_ep, "best_sel": float(best_sel),
+                "best_val_meta": best_meta}, mp)
+    np.save(os.path.join(HERE, "models", "hist_%s.npy" % a.tag), np.array(hist, dtype=np.float64))
+    nj = os.path.join(HERE, "models", "chain3_norm_%s.json" % a.tag)
+    with open(nj, "w") as fh:
+        json.dump({"feature_names": names, "conditioning": COND,
+                   "mean": mu.tolist(), "std": sd.tolist(), "seed": a.seed,
+                   "class_spec": {"0": "fake", "1": "prompt-true (simVxy<1)",
+                                  "2": "displaced-true (simVxy>=1)"},
+                   "displaced_weighting": spec,
+                   "val_metric_keys": sorted(best_meta),
+                   "train_args": {"epochs": a.epochs, "batch_size": a.batch_size, "lr": a.lr,
+                                  "hidden": a.hidden, "sched": a.sched, "loss": a.loss,
+                                  "jet_share": a.jet_share,
+                                  "inputs": {n: d for n, d in labs},
+                                  "standardized_on": labs[0][0] + " train split",
+                                  "val_metric": "min over samples in the mix of "
+                                                "(AUC(mP prompt-vs-fake), AUC(mD disp-vs-fake))"}},
+                  fh, indent=1)
+    log("saved %s + %s" % (mp, nj))
 
 
 if __name__ == "__main__":
