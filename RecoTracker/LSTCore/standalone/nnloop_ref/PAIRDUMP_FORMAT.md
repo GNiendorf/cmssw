@@ -1,5 +1,21 @@
 # PAIRDUMP_FORMAT.md -- the `LST_CHAIN_PAIR_DUMP` attach pair sidecar
 
+> **CORRECTION, 2026-08-13 (agent AT, coordinator-verified).** This document was written when
+> `kAttachFeatures` was **20**. It is now **22** (`interface/ChainConfig.h:413`), so on this tree the
+> pair record is **22 floats wide, not 20**, and it carries the FULL standardized vector the head
+> consumed -- including slots 11-13, the chain gate's three raw logits standardized with the DEPLOYED
+> header's constants. `ChainAttachPairRow` is `float x[kAttachFeatures]` and its `static_assert`
+> tracks the constant, so the INSTRUMENT is correct and only the numbers written below were stale.
+>
+> **Consequence, and it is a silent-corruption trap:** `nnloop_ref/s3_work/train_s3.py` splices with
+> `concatenate([a[:, :11], b, a[:, 12:]])`, which assumes a 20-wide row. On a 22-wide row that DROPS
+> slot 11 and SHIFTS eight columns, with no error. Anyone reusing the S3 scripts must take the width
+> from the header instead; `at_ref/s3label_at.py`, `train_at.py` and `barfit_at.py` do, overwriting
+> columns 11:14 with the re-standardized raw logits and keeping every other column verbatim.
+>
+> Read every "20" below as "`kAttachFeatures`, currently 22", and the record size as
+> `4 * uint32 + kAttachFeatures * float` = **104 bytes** on this tree (was 96).
+
 The on-policy pair-row instrument for step 3 of `PLAN_NN_LOOP.md`: it emits, from the DEPLOYED
 binary, one row per SCORED attach pair, carrying the 20 standardized head inputs **as the head
 consumed them** and the logit the head produced. It exists because no pair-level sidecar did: the
