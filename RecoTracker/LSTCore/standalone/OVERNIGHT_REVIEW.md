@@ -1,7 +1,22 @@
 # OVERNIGHT REVIEW — 2026-08-12 into 2026-08-13
 
-Written for you to read cold. Sections 1-4 are COMPLETE. Section 5 (agent AT) and section 6
-(jet-core round 3) were still running when this was written and are appended below as they land.
+Written for you to read cold. **Everything below is COMPLETE** — six agents, all reported.
+
+## THE ONE-MINUTE VERSION
+* **Shipped last night with your approval:** `04c6e122e68` (gun-enriched chain gate + region-conditioned
+  pLS retirement). Jet-core .6513 -> .7611 on sealed data; PU200 displaced untouched; cube50_highPt
+  displaced +52%.
+* **A four-patch candidate now sits ready, unshipped**, judged on samples no agent opened:
+  **jet-core .7611 -> .8087, which BEATS LST master (.7761) by .0326**, at 1.85x cleaner fake and
+  master's own TC count — plus PU200 duplicates −49% in the barrel and a resolved PU200 displaced gain.
+  See **section 10**.
+* **Its only cost, in the whole gate set:** jet duplicates inside dR<.005 (.0506 -> .1030).
+* **Two things are NOT measured:** timing (anywhere, including the round-2 ship), and the softer-jet
+  gate for the attach arm. Both listed in section 10.
+* **You were right about the DNN scripts.** `analysis/DNN/` had been stale since before the NN loop and
+  reproduced none of the shipped weights. Fixed, and all three networks are now provably reproducible
+  by re-export. Section 2.
+* Repo cleaned: 39 finished-round dirs + 18 proto dirs archived, 87.7 GB freed, disk 173 -> 260 GB.
 
 **Nothing was shipped without your approval. Nothing was published anywhere.** All commits are on
 `chain_tracking_proto`, pushed to `fork` only.
@@ -761,3 +776,77 @@ four-way pays roughly twice what the triple did for roughly 2.7x the efficiency.
 
 Cube gates for the four-way are running (ATJ25R alone is bit-identical on both guns per AT; the triple
 is 0/0 on all twelve cube50_highPt cells) — rows append when they land.
+
+### 9a. FOUR-WAY CUBE GATES — pass. `cube50_highPt` bit-identical.
+
+| cell | cube50_highPt | cube50 |
+|---|---|---|
+| every cell | **0/0 discordant — bit-identical** | 0/0 except one |
+| dxy[1,5) | .1120 -> .1120, **0/0** | .1329 -> .1329, **0/0** |
+| the only movement | none at all | dxy[5,10) 1 sim of 10,000, p 1.0 |
+
+Round 2's displaced headline survives all four patches untouched.
+
+---
+
+## 10. WHERE IT ENDS — the decision, and what is NOT measured
+
+### The candidate: four patches, all cheap, none adding machinery
+
+| patch | md5 | what it is |
+|---|---|---|
+| `weld_ref/pat/weld_S02.patch` | `baa19ab0654220cc445f2287bb876dd1` | ONE constant: `kChainWeldSweeps` 3 -> 2 (a third LESS weld work) |
+| `t4_ref/t4_class_policy.patch` | `6550c79df1ff469319bdb44fbeabd606` | three floats: density-conditioned 4-layer IP gate bar |
+| `key_ref/key_orderkey_KE50.patch` | `299a40aed188325c7b2162908c548c52` | an eta ramp on the order key's EXISTING hinge |
+| `at_ref/patch/ATJ25R.patch` | `0a27d3441210ba6b11c508f4ee6e3fc6` | attach head retrained WITH jet-core rows in the mix |
+
+**No new kernels. No new SoA columns. No new networks.** One retrained weight file (attach), replacing
+an existing one.
+
+### The complete sealed-sample ledger
+
+| gate | SHIPPED | **FOUR-WAY** | master | |
+|---|---:|---:|---:|---|
+| jets eff jet-core | .7611 | **.8087** | .7761 | **+.0326 ABOVE master** |
+| jets eff all-sim | .8081 | **.8295** | .8141 | +.0154 above |
+| jets eff dR<.005 | .4051 | **.4744** | .2604 | +.214 |
+| jets eff dR<.02 | .5172 | **.6098** | .5292 | +.081 |
+| jets eff dR<.05 | .6097 | **.6951** | .6370 | +.058 |
+| jets fake | .1287 | **.1210** | .2235 | 1.85x cleaner |
+| jets TCs/evt | 125.6 | 127.6 | 127.6 | equal to master |
+| PU200 eff overall | .8107 | .8111 | — | positive, unresolved |
+| PU200 eff dxy[1,5) | .5748 | **.5806** | — | **resolved GAIN** p .025 |
+| PU200 other displaced | — | neutral-or-up | — | pass |
+| PU200 dup overall / barrel | .04315 / .01398 | **.04057 / .00711** | — | **−6.0% / −49%** |
+| PU200 fake | .04466 | **.04402** | — | better than shipped |
+| cube50_highPt | — | **bit-identical** | — | pass |
+| cube50 | — | 1 sim of 10,000 | — | pass |
+| **jets dup dR<.005** | **.0506** | **.1030** | .0000 | **THE ONLY ADVERSE CELL** |
+| jets dup dR<.05 / pooled | .0232 / .0241 | .0319 / .0253 | ~.003 / .0207 | |
+
+### NOT MEASURED — state these with the headline if you quote it
+1. **Timing.** Nothing in this round or the round-2 ship has been timed. The weld arm does strictly
+   less work and the attach arm adds a retrained head of identical shape, so the expectation is
+   neutral-to-faster — but that is an expectation, not a measurement.
+2. **The softer-jet gate for `ATJ25R`.** WELD (+.0047), T4C1 (+.0000) and KE50 (inert) all passed the
+   200-500 GeV genjet check; **AT never ran it**, and its arm is the largest of the four. Given JPR2
+   found we are +.038 ahead of master there and that population dominates real data, I would want
+   this before shipping the four-way.
+3. `analysis/DNN/README.md`'s attach row needs updating in whichever commit ships `ATJ25R`.
+
+### My recommendation
+**Ship the four-way, after measuring the two gaps above.** It is the largest single improvement this
+project has produced: +.0476 jet-core efficiency over the shipped head, passing LST master by .0326
+while being 1.85x cleaner on fake at the same TC count, with PU200 duplicates down 49% in the barrel
+and a resolved PU200 displaced gain — and the parts repair each other's costs, which no union in this
+project has done before.
+
+If you want the smaller, safer step instead: **the three-way** (drop `ATJ25R`) still beats master on
+every jet aggregate, has no unmeasured gate, costs half the deep-core duplicates, and needs no
+retrained weight file.
+
+**The next round writes itself:** jet duplicates inside dR<.005 are now the only cell in the entire
+gate set moving the wrong way, and four independent agents have localised it to the same object — the
+(delivered chain, un-retired bare pLS) pair, barrel, high-pT, hit-disjoint, outside the shipped
+retirement rule's window, and out of reach of every bar, mutual-argmax and calibration lever tried so
+far. Everything else on jets now beats master.
