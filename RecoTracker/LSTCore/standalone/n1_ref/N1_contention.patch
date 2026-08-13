@@ -1,0 +1,274 @@
+diff --git a/RecoTracker/LSTCore/interface/ChainConfig.h b/RecoTracker/LSTCore/interface/ChainConfig.h
+index 2bbad3ec5a7..d62ceffa1bd 100644
+--- a/RecoTracker/LSTCore/interface/ChainConfig.h
++++ b/RecoTracker/LSTCore/interface/ChainConfig.h
+@@ -177,6 +177,58 @@ namespace lst {
+     float claimFracAlt = 0.f;
+     int claimItemsAltMDs = 0;
+ 
++    // ------------------------------------------------------------------------------------------
++    // JET ROUND 4 (N1) -- the CONTENTION-CONDITIONED claim admission.
++    // ------------------------------------------------------------------------------------------
++    // JPR3 relocated the jet-core problem onto the separation axis: 57.5% of everything we still
++    // lose has another selected track within dR .005, the weld REACH is flat across separation
++    // while DELIVERY runs .749 -> .967, and the claim is .386 of the whole loss budget. The
++    // obstacle was that the only crowding number the kernel had (ChainFeatures[14], what T4C1
++    // ramps on) is a NEIGHBOURHOOD statistic: AUC .517 for "this chain will not be delivered", so
++    // it cannot order chains inside a crowd.
++    //
++    // The observable this group consumes is COMPETITOR-RESOLVED and costs nothing new:
++    //   nHitBetter(c) = how many of c's own claim hits a BETTER-RANKED CANDIDATE also wants.
++    // ChainClaimRounds' phase A already builds exactly that map -- atomicMin over minPos[] -- and
++    // in ROUND 1 the owner map is empty, so every candidate participates and round-1 minPos[h] is
++    // "the best-ranked candidate in the whole event that wants hit h". Counting minPos[h] < oi
++    // over c's own claim hits is therefore one pass over an array phase B already reads, in round
++    // one only, and it measured AUC .957 for non-delivery in the dRnn < .005 population against
++    // feature 14's .499 on the same rows.
++    //
++    // WHAT IT BUYS, and why it is not a rank term. The claim's hit-exclusivity bar is also this
++    // project's duplicate suppressor: 474 rejected >= 4-layer candidates per jet event sit behind
++    // it, against only 2.74 recoverable jet-core sims. Relaxing the bar on nClaimed alone (the
++    // number the kernel already has) admits 21.7 TC/evt for +.0173 core efficiency at 18.9 fake
++    // TC/evt -- unaffordable. Adding `nHitBetter <= contMaxHitBetter` cuts the fakes by 10.2x to
++    // 1.85/evt while keeping 55% of the efficiency. It is a BAR, never a score: nothing here
++    // reorders anything, and the frozen order key is untouched.
++    //
++    // CUBE INVARIANCE BY CONSTRUCTION (rule 4 of the round brief). The whole group is gated on
++    //   chains.features()[c][14] > contDensRho0
++    // which is the SAME occupancy column and the same "identically zero at and below a knee"
++    // construction T4C1 cleared its cube gate with, at a knee well above it. With
++    // contMaxHitBetter < 0 -- the SHIPPED DEFAULT -- not one comparison in this group is even
++    // evaluated and the claim is the frozen expression bit for bit.
++    //
++    //   contMaxHitBetter  admit a claim-bar-rejected chain whose round-1 nHitBetter is at most
++    //                     this. < 0 = the whole group is OFF.
++    //   contMaxClaimed    hard cap on already-owned hits for a relaxed admission (nClaimed is
++    //                     always <= nHitBetter, so this only bites inside the relaxed set).
++    //   contMaxLayers     restrict the relaxation to one length class (0 = every class). The
++    //                     4-layer class carries 64.9% of the claim's recoverable ceiling (JPR3).
++    //   contDensRho0      the cube knee. The relaxation is identically OFF at and below it.
++    //   contBraidFrac     the owner-relative braid fraction a RELAXED chain is judged by. The
++    //                     frozen 0.20 kills 87.7% of the relaxed set outright (a two-real-track
++    //                     pair genuinely shares a quarter of one member's hits), so the group is
++    //                     inert unless this is loosened with it; > 1 disables the braid for the
++    //                     relaxed set only. Chains admitted the ORDINARY way keep braidFrac.
++    int contMaxHitBetter = -1;
++    int contMaxClaimed = 3;
++    int contMaxLayers = 4;
++    float contDensRho0 = 100.f;
++    float contBraidFrac = 1.01f;
++
+     // -PU 1: claim-universe unification. The kept carried pixel rows' outer-tracker hits are
+     // pre-claimed before the greedy walk. Mode 2 (pixel owners also join the braid) is not in the
+     // freeze, so pixel owners only supply claimed slots to the maxClaimedFrac test.
+@@ -498,6 +550,48 @@ namespace lst {
+                   cfg.t4AttachMinLayers);
+   }
+ 
++  // JET ROUND 4 (N1): env overrides of the contention-conditioned claim admission. One binary
++  // supplies every arm of the A/B, which is the only way to prove inertness by BIT-IDENTITY
++  // rather than assert it. With nothing set this function writes nothing and prints nothing, and
++  // contMaxHitBetter stays < 0, which makes the whole group unevaluated.
++  //
++  //   LST_CONT_HITBETTER  arm the group; admit a claim-bar-rejected chain with round-1
++  //                       nHitBetter <= this (negative = OFF, the shipped value)
++  //   LST_CONT_CLAIMED    cap on already-owned hits for a relaxed admission
++  //   LST_CONT_LAYERS     restrict the relaxation to this length class (0 = every class)
++  //   LST_CONT_RHO0       the occupancy knee; identically OFF at and below it
++  //   LST_CONT_BRAIDFRAC  braid fraction applied to the relaxed set only
++  inline void chainConfigContEnv(ChainConfig& cfg) {
++    auto rdf = [](char const* name, float* dst) {
++      char const* s = std::getenv(name);
++      if (s == nullptr || *s == '\0')
++        return false;
++      *dst = static_cast<float>(std::atof(s));
++      return true;
++    };
++    auto rdi = [](char const* name, int* dst) {
++      char const* s = std::getenv(name);
++      if (s == nullptr || *s == '\0')
++        return false;
++      *dst = std::atoi(s);
++      return true;
++    };
++    bool any = false;
++    any |= rdi("LST_CONT_HITBETTER", &cfg.contMaxHitBetter);
++    any |= rdi("LST_CONT_CLAIMED", &cfg.contMaxClaimed);
++    any |= rdi("LST_CONT_LAYERS", &cfg.contMaxLayers);
++    any |= rdf("LST_CONT_RHO0", &cfg.contDensRho0);
++    any |= rdf("LST_CONT_BRAIDFRAC", &cfg.contBraidFrac);
++    if (any)
++      std::printf("[chainenv] N1 contention claim admission resolved: hitBetter=%d claimed=%d"
++                  " layers=%d rho0=%g braidFrac=%g\n",
++                  cfg.contMaxHitBetter,
++                  cfg.contMaxClaimed,
++                  cfg.contMaxLayers,
++                  cfg.contDensRho0,
++                  cfg.contBraidFrac);
++  }
++
+   // The value of ChainConfig::degreeCap that means "no cap". It is not a sentinel the code tests
+   // for: it is simply larger than any degree a min() can ever see (a degree is bounded by the
+   // triplet count, and 2^32 / 21 B = 204 M edge rows is the hard allocation wall long before that),
+diff --git a/RecoTracker/LSTCore/src/alpaka/ChainArbitrate.h b/RecoTracker/LSTCore/src/alpaka/ChainArbitrate.h
+index e65586c9d4a..cbaa486e841 100644
+--- a/RecoTracker/LSTCore/src/alpaka/ChainArbitrate.h
++++ b/RecoTracker/LSTCore/src/alpaka/ChainArbitrate.h
+@@ -62,6 +62,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+   //   0 extension chains examined   1 no-fit   2 candidates   3 outer extensions
+   //   4 uniq-rejected   5 chi2-rejected   6 own-fit-rejected
+   //   7 K10 layer-slot fallbacks    8 K10 rows that ran out of slots
++  //   14 JET ROUND 4 (N1): chains admitted through the contention-conditioned relaxation
+   static constexpr uint32_t kChainArbStats = 16u;
+ 
+   // ------------------------------------------------------------------------------------------
+@@ -403,6 +404,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+     // Hard stop on the claim round loop. Progress is proved (>= 1 chain decided per round), so this
+     // can only fire on a logic bug; it is reported through stats[13].
+     constexpr uint32_t kMaxClaimRounds = 4096u;
++    // JET ROUND 4 (N1): "this candidate has no round-1 contention census", which is strictly
++    // larger than any nHitBetter a chain can carry (nClaimHits <= 2 * kChainMaxNodes * 3).
++    constexpr uint16_t kNoBetter = 0xFFFFu;
+   }  // namespace chainpar
+ 
+   // ==========================================================================================
+@@ -766,6 +770,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+                                   int32_t const* bandItems,
+                                   float const* bandFrac,
+                                   float const* bandBraid,
++                                  uint16_t* contBetter,
++                                  uint8_t* contRelax,
+                                   uint32_t* stats,
+                                   ChainConfig cfg) const {
+       ALPAKA_ASSERT_ACC((alpaka::getWorkDiv<alpaka::Grid, alpaka::Blocks>(acc)[0u] == 1));
+@@ -781,6 +787,11 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+ 
+       for (uint32_t oi = worker; oi < n; oi += nWorkers) {
+         state[oi] = chainpar::kUndecided;
++        // JET ROUND 4 (N1). kNoBetter, not 0: a candidate that never reaches phase B has no
++        // round-1 census, and the relaxation must be unreachable for it rather than maximally
++        // permissive.
++        contBetter[oi] = chainpar::kNoBetter;
++        contRelax[oi] = 0u;
+         if (oi + 1u < n && chains.orderKey()[order[oi]] == chains.orderKey()[order[oi + 1u]])
+           alpaka::atomicAdd(acc, &stats[9], 1u, alpaka::hierarchy::Threads{});
+       }
+@@ -821,10 +832,33 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+             claimOk = nClaimed <= cItems;
+           else
+             claimOk = (nClaimed <= cItems) || !(frac > cFrac);
++          // JET ROUND 4 (N1): the CONTENTION-CONDITIONED admission. See ChainConfig.h for the
++          // measurement that motivates it and for the cube-invariance argument; the short form is
++          // that relaxing this bar on nClaimed alone costs 18.9 fake TC/evt on jets and relaxing
++          // it on nClaimed AND the competitor-resolved round-1 census costs 1.85 for 55% of the
++          // same efficiency. It is a BAR: no order key, no ranking, nothing reordered.
++          //
++          // contBetter[] is written in ROUND 1's phase B, so this can only fire from round 2 on,
++          // which is where it is needed: in round 1 the owner map is empty and every candidate
++          // clears the frozen bar anyway. Monotonicity of the reject verdict survives -- nClaimed
++          // only grows and contBetter is fixed after round 1, so a chain that fails the relaxed
++          // test can never later pass it.
++          //
++          // With contMaxHitBetter < 0 (the shipped default) the short-circuit stops at the first
++          // comparison and the claim is the frozen expression bit for bit.
++          bool relaxed = false;
++          if (!claimOk && cfg.contMaxHitBetter >= 0 && nClaimed <= cfg.contMaxClaimed &&
++              static_cast<int>(contBetter[oi]) <= cfg.contMaxHitBetter &&
++              (cfg.contMaxLayers <= 0 || chains.nLayers()[c] == cfg.contMaxLayers) &&
++              chains.features()[c][14] > cfg.contDensRho0) {
++            claimOk = true;
++            relaxed = true;
++          }
+           if (!claimOk) {
+             state[oi] = chainpar::kRejected;  // monotone: this verdict can never turn around
+             continue;
+           }
++          contRelax[oi] = relaxed ? 1u : 0u;
+ 
+           nClaimedScratch[oi] = static_cast<uint32_t>(nClaimed);
+           part[oi] = 1u;
+@@ -841,6 +875,22 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+           uint32_t const hitBase = 6u * chains.nodeOffset()[c];
+           int const total = chains.nClaimHits()[c];
+ 
++          // JET ROUND 4 (N1): the round-1 competitor-resolved contention census. In round 1 the
++          // owner map is empty, so EVERY candidate clears phase A's bar and registers itself in
++          // minPos; round-1 minPos[h] is therefore "the best-ranked candidate in the whole event
++          // that wants hit h", and counting minPos[h] < oi over this chain's own claim hits is
++          // exactly "how many of MY hits does someone BETTER also want". This is one pass over an
++          // array phase B already reads, in round one only, and it must sit BEFORE the `safe`
++          // test because the chains it exists to describe are precisely the ones that fail it.
++          if (rounds == 0u && cfg.contMaxHitBetter >= 0) {
++            uint32_t nb = 0u;
++            for (int k = 0; k < total; ++k)
++              nb += (minPos[claimHits[hitBase + k]] < oi) ? 1u : 0u;
++            contBetter[oi] = (nb < static_cast<uint32_t>(chainpar::kNoBetter))
++                                 ? static_cast<uint16_t>(nb)
++                                 : static_cast<uint16_t>(chainpar::kNoBetter - 1u);
++          }
++
+           bool safe = true;
+           for (int k = 0; k < total && safe; ++k)
+             safe = (minPos[claimHits[hitBase + k]] == oi);
+@@ -850,7 +900,12 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+           }
+ 
+           int const nClaimed = static_cast<int>(nClaimedScratch[oi]);
+-          float const bFrac = bandBraid[c];
++          // JET ROUND 4 (N1): a chain admitted through the contention relaxation is judged by
++          // contBraidFrac instead of its band's braid fraction. Without this the group is inert:
++          // the frozen 0.20 braid kills 87.7% of the relaxed set, because two real tracks in a
++          // close pair genuinely share a quarter of one member's hits, which is the whole
++          // phenomenon being addressed. Chains admitted the ORDINARY way are untouched.
++          float const bFrac = (contRelax[oi] != 0u) ? cfg.contBraidFrac : bandBraid[c];
+           bool killed = false;
+           if (braidOn && bFrac > 0.f && nClaimed > 0) {
+             // Owner-relative braid, per-chain and allocation-free: the reference's touched-owner
+@@ -899,6 +954,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+           uint32_t const hitBase = 6u * chains.nodeOffset()[c];
+           int const total = chains.nClaimHits()[c];
+           bool const acceptedNow = (state[oi] == chainpar::kAccepted);
++          if (acceptedNow && contRelax[oi] != 0u)
++            alpaka::atomicAdd(acc, &stats[14], 1u, alpaka::hierarchy::Threads{});
+           for (int k = 0; k < total; ++k) {
+             uint32_t const h = claimHits[hitBase + k];
+             if (acceptedNow)
+diff --git a/RecoTracker/LSTCore/src/alpaka/LSTEvent.dev.cc b/RecoTracker/LSTCore/src/alpaka/LSTEvent.dev.cc
+index 6ff156b889a..3718208bec8 100644
+--- a/RecoTracker/LSTCore/src/alpaka/LSTEvent.dev.cc
++++ b/RecoTracker/LSTCore/src/alpaka/LSTEvent.dev.cc
+@@ -1783,6 +1783,11 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
+     auto nClaimed_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, nChainCount_);
+     auto state_buf = cms::alpakatools::make_device_buffer<uint8_t[]>(queue_, nChainCount_);
+     auto part_buf = cms::alpakatools::make_device_buffer<uint8_t[]>(queue_, nChainCount_);
++    // JET ROUND 4 (N1): the round-1 competitor-resolved contention census and the flag marking a
++    // chain admitted through it. Both are written by ChainClaimRounds' own prologue, so they need
++    // no memset; they are per-CANDIDATE (indexed by order position), hence the nChainCount_ bound.
++    auto contBetter_buf = cms::alpakatools::make_device_buffer<uint16_t[]>(queue_, nChainCount_);
++    auto contRelax_buf = cms::alpakatools::make_device_buffer<uint8_t[]>(queue_, nChainCount_);
+     alpaka::memset(queue_, owner_buf, 0xFF);   // chainarb::kFree everywhere
+     alpaka::memset(queue_, minPos_buf, 0xFF);  // chainpar::kNoPos everywhere
+     k9a = stamp();
+@@ -1848,6 +1853,8 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
+                         bandItems_buf.data(),
+                         bandFrac_buf.data(),
+                         bandBraid_buf.data(),
++                        contBetter_buf.data(),
++                        contRelax_buf.data(),
+                         stats_buf.data(),
+                         chainConfig_);
+   }
+diff --git a/RecoTracker/LSTCore/src/alpaka/LSTEvent.h b/RecoTracker/LSTCore/src/alpaka/LSTEvent.h
+index 762136c4459..4abc2e13322 100644
+--- a/RecoTracker/LSTCore/src/alpaka/LSTEvent.h
++++ b/RecoTracker/LSTCore/src/alpaka/LSTEvent.h
+@@ -157,6 +157,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+       chainConfigRetirementEnv(chainConfig_);
+       // JET ROUND 3 (T4): env overrides of the 4-layer class policy group. Inert with nothing set.
+       chainConfigT4Env(chainConfig_);
++      // JET ROUND 4 (N1): env overrides of the contention-conditioned claim admission. Inert with
++      // nothing set (contMaxHitBetter stays < 0, so not one comparison is evaluated).
++      chainConfigContEnv(chainConfig_);
+       if (ptCut < 0.6f) {
+         throw std::invalid_argument("Minimum pT cut must be at least 0.6 GeV. Provided value: " +
+                                     std::to_string(ptCut));

@@ -1178,3 +1178,54 @@ except "already measured".
 
 PU200 `event_2000` for the three arms is still running and will be appended for completeness. The
 round now waits on N3's PU200 and cube gates, which govern whether anything else needs re-pricing.
+
+## [COORDINATOR 13:00] `UN4` PASSES ITS FULL SEALED GATE AND IS SHELVED READY-TO-GO, NOT SHIPPED: **jets 500-999 fake .1210 -> .1087 (-10.2% rel, core fake TC/evt 6.32 -> 5.49, -13.1%) with core efficiency +.0003 and dR<.005 EXACTLY unchanged (0 lost / 0 gained); PU200 `event_2000` overall +.00053 with `dxy[1,5)`, `dxy[5,10)`, `dxy[10,30)` and `vxy[10,30)` at EXACTLY ZERO movement and fake -.00062; and the FULL 10,000-entry `cube50_highPt` with ALL 21 JUDGE FIELDS IDENTICAL. Maintainer's call: parked with the rest of the round -- not because it failed anything, but because two constants of fake reduction is not worth a merge on its own.**
+
+Judged by the coordinator on halves no agent opened. One binary (N4's snapshot, `bin/lst_cpu` md5
+`c3845715ee491f69571782d029446f1a`), arms by env only, no file clashes, entry counts verified.
+
+| gate | CTRL | `UN4` | verdict |
+|---|---:|---:|---|
+| jets core-all (sealed) | .8087 | .8090 (2 lost / 9 gained) | neutral-positive |
+| **jets dR<.005** | .4744 | **.4744, 0/0** | **exactly unchanged** |
+| **jets fake** | .1210 | **.1087** | **-10.2% rel** |
+| **jets core fake TC/evt** | 6.32 | **5.49** | **-13.1%** |
+| jets dup | .0253 | .0258 | +11 TCs of 59,091 |
+| PU200 overall (sealed) | .81107 | .81160 | +.00053 |
+| **PU200 dxy[1,5)/[5,10)/[10,30)** | | | **+.00000 / +.00000 / +.00000** |
+| **PU200 vxy[10,30)** | .70563 | .70563 | **+.00000** |
+| PU200 vxy[1,5)/[5,10) | | | -.00043 / -.00056 (the only adverse cells, unresolved) |
+| PU200 fake / dup | .04402/.04057 | .04340/.04064 | fake BETTER, dup +.00007 |
+| **`cube50_highPt` FULL 10,000** | | | **21/21 fields IDENTICAL** |
+
+`n_tc_t4cl` 71,894 -> 35,649: `T4A4` re-labels HALF the PU200 4-layer class into the pT5 class.
+**That relabelling is why the pT4 class must be broken out in the plots BEFORE this ever ships** --
+otherwise a renaming reads as a physics change.
+
+## [COORDINATOR 13:00] THE WELD LEVER IS A NEAR-1:1 JETS-FOR-DISPLACED TRADE IN EVERY PARAMETERISATION TRIED, ACROSS THREE GENERATIONS AND ~15 WORKING POINTS: **jet-core gain divided by PU200 `vxy[10,30)` loss is 0.80 (`F05`), 0.90 (`TK5S1`), 0.72 (`Q2P`) -- the ratio is invariant, which is the signature of ONE mechanism with no free point anywhere in the searched space. Every F-, P- and Q-family arm is a GLOBAL re-key; none is density-conditioned in the `T4C1` sense, and that is the one construction not yet tried.**
+
+| arm | jet core | PU200 overall | vxy[5,10) | **vxy[10,30)** | **dxy[1,5)** |
+|---|---:|---:|---:|---:|---:|
+| `F05` (weakest) | +.0040 | +.00008 | -.0030 | **-.0050** | **-.0042** |
+| `F1` | +.0050 | -.00017 | -.0089 | -.0129 | -.0130 |
+| `F2` | +.0081 | -.00009 | -.0108 | -.0254 | -.0227 |
+| `F5` | +.0120 | -.00056 | -.0153 | -.0381 | -.0413 |
+| `P2F2` | +.0099 | -.00019 | -.0103 | -.0168 | -.0172 |
+| `P2` | +.0281 | -.00027 | -.0148 | -.0318 | -.0377 |
+| `TK5` | +.0223 | -.00052 | -.0153 | -.0383 | -.0416 |
+| **`TK5S1`** | **+.0307** | -.00019 | -.0207 | **-.0340** | **-.0312** |
+| `Q2P` | +.0238 | -.00114 | -.0143 | -.0330 | -.0279 |
+| `Q2` | +.0195 | -.00117 | -.0168 | -.0412 | -.0328 |
+| `Q1` | +.0259 | -.00240 | -.0488 | **-.0759** | **-.0591** |
+| **`S1` (sweeps 2->1 ALONE)** | **-.0024** | -.00141 | -.0276 | **-.0340** | -.0120 |
+
+**`S1` is the load-bearing row: the sweep reduction ALONE gives NEGATIVE jet efficiency and takes
+-.0340 of `vxy[10,30)`.** So `TK5S1`'s headline is the family re-key carrying a sweep change that is
+independently harmful, and any future weld arm should re-derive its sweep count rather than inherit
+`S1`.
+
+PU200 provenance note: N3's `gates.sh` used `-i PU200RelVal`, the DIRECTORY, which globs the sealed
+`event_2000..7000`; with `-n 1000` it stops inside `event_1000` and `n_tc` = 1,583,156 matches the
+known tune value exactly, so these numbers ARE the tune half and the holdout is uncontaminated --
+but the construction is fragile and any arm run at `-n > 1000` would have silently eaten sealed
+events. Name `event_1000.root` by path (N4's `gates2.sh` does).

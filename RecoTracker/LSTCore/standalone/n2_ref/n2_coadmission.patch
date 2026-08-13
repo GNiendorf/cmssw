@@ -1,0 +1,244 @@
+diff --git a/RecoTracker/LSTCore/interface/ChainConfig.h b/RecoTracker/LSTCore/interface/ChainConfig.h
+index 2bbad3ec5a7..0d0c70b8491 100644
+--- a/RecoTracker/LSTCore/interface/ChainConfig.h
++++ b/RecoTracker/LSTCore/interface/ChainConfig.h
+@@ -348,6 +348,49 @@ namespace lst {
+     int t4EmitMinLayers = 0;
+     int t4AttachMinLayers = 0;
+ 
++    // ------------------------------------------------------------------------------------------
++    // JET ROUND 4 (N2) -- CO-ADMISSION of a contested chain under an EXCLUSIVE-EVIDENCE floor.
++    // Every default below is OFF, so an unset environment is bit-identical (proven, not asserted:
++    // the zero-knob arm is the control).
++    //
++    // WHAT THE SHIPPED CLAIM ACTUALLY DOES. K9 is not an exclusive hit assignment, it is a greedy
++    // walk with an admission BUDGET: a candidate is admitted iff at most `2 * maxClaimedMDs` of its
++    // claim hits are already owned (`claimCountExclusive`), and iff it shares fewer than
++    // `braidFrac * nClaimHits(owner)` hits with any single owner. With the shipped numbers that is
++    //   barrel  nClaimed <= 2 hits,   endcap (|eta(innermost T3)| >= braidAltEta)  nClaimed <= 0,
++    //   braid   >= 0.20 * 10 = 2 hits against one 5-layer owner is a kill.
++    // i.e. TWO CHAINS MAY NOT SHARE A MINI-DOUBLET, and in the endcap may not share a single hit.
++    //
++    // WHY THAT IS THE WRONG RULE FOR A CLOSE PAIR. JPR3 measured that 57.5% of the remaining
++    // jet-core loss has another SELECTED sim within dR .005, that stage f (the claim) is .386 of
++    // the whole loss budget, and that the thief is itself a genuine >=75%-purity track 46.6% of the
++    // time. When both contenders are real tracks whose inner hits merge into shared clusters, an
++    // exclusive claim converts one loss into a different loss no matter which one it ranks first.
++    // The shape that can win is the one that lets BOTH survive -- and because LST's 75% match rule
++    // does NOT require hits to be exclusively assigned, two overlapping TCs can both be credited.
++    //
++    // THE PREDICATE. A candidate that fails the count bar gets a SECOND path when it still has
++    // `coadMinExcl` claim hits that NOBODY owns. That count is the discriminator this arm rests on:
++    // a duplicate of an already-taken track has almost no unowned hits left, while a genuine
++    // neighbour sharing only merged inner clusters keeps its own outer hits. It is a PER-CHAIN BAR
++    // on the claim state, not a rank term, so KEY's structural result (per-chain conditioning of a
++    // global rank key is broken) does not apply -- the order key is untouched by this arm.
++    //
++    // coadMaxShare replaces braidFrac for a co-admitted candidate only, so the owner-relative
++    // ceiling can be loosened on that path without touching the ordinary one. coadMinLayers /
++    // coadMinMx / coadMaxOwners are the optional quality and blast-radius guards.
++    int coadMinExcl = 0;        // 0 = OFF; else the minimum UNOWNED claim hits (hits, not MDs)
++    float coadMaxShare = 0.5f;  // per-owner ceiling on the co-admission path only
++    int coadMinLayers = 0;      // 0 = any
++    float coadMinMx = -1e30f;   // -1e30 = any
++    int coadMaxOwners = 0;      // 0 = any
++    float coadMaxMyShare = 0.f; // 0 = OFF; else the max fraction of MY OWN claim universe one
++                                // single owner may already hold, on the co-admission path only
++    // <= 1 = OFF; else the minimum ptEst RATIO between a co-admitted chain and every owner it
++    // overlaps -- the same-track test (ChainFeatures[9], AUC .910 for "the blocker is a DIFFERENT
++    // sim"; see the block comment at its use in ChainArbitrate.h).
++    float coadMinPtRatio = 1.f;
++
+     // ------------------------------------------------------------------------------------------
+     // JET ROUND (M1) -- the per-shared-key incidence degree cap. NOT a physics working point.
+     // ------------------------------------------------------------------------------------------
+@@ -498,6 +541,52 @@ namespace lst {
+                   cfg.t4AttachMinLayers);
+   }
+ 
++  // JET ROUND 4 (N2): env overrides of the CO-ADMISSION group. One binary supplies every arm of the
++  // A/B, which is the only way to prove inertness by BIT-IDENTITY rather than assert it. With
++  // nothing set this function writes nothing and prints nothing.
++  //
++  //   LST_N2_COAD_MINEXCL    minimum UNOWNED claim hits for the second admission path (0 = OFF)
++  //   LST_N2_COAD_MAXSHARE   per-owner braid ceiling on that path only (shipped braid is 0.20)
++  //   LST_N2_COAD_MINLAYERS  restrict the path to chains of at least this many layers (0 = any)
++  //   LST_N2_COAD_MINMX      restrict the path to chains with marginX >= this (-1e30 = any)
++  //   LST_N2_COAD_MAXOWNERS  refuse the path to a candidate overlapping more owners than this
++  //   LST_N2_COAD_MAXMYSHARE max fraction of the candidate's OWN universe one owner may hold
++  //   LST_N2_COAD_MINPTRATIO minimum ptEst ratio against every owner (the same-track test)
++  inline void chainConfigN2Env(ChainConfig& cfg) {
++    auto rdf = [](char const* name, float* dst) {
++      char const* s = std::getenv(name);
++      if (s == nullptr || *s == '\0')
++        return false;
++      *dst = static_cast<float>(std::atof(s));
++      return true;
++    };
++    auto rdi = [](char const* name, int* dst) {
++      char const* s = std::getenv(name);
++      if (s == nullptr || *s == '\0')
++        return false;
++      *dst = std::atoi(s);
++      return true;
++    };
++    bool any = false;
++    any |= rdi("LST_N2_COAD_MINEXCL", &cfg.coadMinExcl);
++    any |= rdf("LST_N2_COAD_MAXSHARE", &cfg.coadMaxShare);
++    any |= rdi("LST_N2_COAD_MINLAYERS", &cfg.coadMinLayers);
++    any |= rdf("LST_N2_COAD_MINMX", &cfg.coadMinMx);
++    any |= rdi("LST_N2_COAD_MAXOWNERS", &cfg.coadMaxOwners);
++    any |= rdf("LST_N2_COAD_MAXMYSHARE", &cfg.coadMaxMyShare);
++    any |= rdf("LST_N2_COAD_MINPTRATIO", &cfg.coadMinPtRatio);
++    if (any)
++      std::printf("[chainenv] N2 co-admission resolved: minExcl=%d maxShare=%g minLayers=%d"
++                  " minMx=%g maxOwners=%d maxMyShare=%g minPtRatio=%g\n",
++                  cfg.coadMinExcl,
++                  cfg.coadMaxShare,
++                  cfg.coadMinLayers,
++                  cfg.coadMinMx,
++                  cfg.coadMaxOwners,
++                  cfg.coadMaxMyShare,
++                  cfg.coadMinPtRatio);
++  }
++
+   // The value of ChainConfig::degreeCap that means "no cap". It is not a sentinel the code tests
+   // for: it is simply larger than any degree a min() can ever see (a degree is bounded by the
+   // triplet count, and 2^32 / 21 B = 204 M edge rows is the hard allocation wall long before that),
+diff --git a/RecoTracker/LSTCore/src/alpaka/ChainArbitrate.h b/RecoTracker/LSTCore/src/alpaka/ChainArbitrate.h
+index e65586c9d4a..d50e753a2fc 100644
+--- a/RecoTracker/LSTCore/src/alpaka/ChainArbitrate.h
++++ b/RecoTracker/LSTCore/src/alpaka/ChainArbitrate.h
+@@ -821,13 +821,32 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+             claimOk = nClaimed <= cItems;
+           else
+             claimOk = (nClaimed <= cItems) || !(frac > cFrac);
++          // JET ROUND 4 (N2) -- the CO-ADMISSION path. See the block comment in ChainConfig.h.
++          // A candidate that fails the count bar is given a SECOND admission path when enough of
++          // its own claim universe is still UNOWNED, i.e. when it carries independent evidence of
++          // being a different trajectory rather than a re-tread of one already taken. The path is
++          // recorded in part[] (2 instead of 1) and pays a DIFFERENT owner-relative ceiling in
++          // phase B; nothing else about the walk changes.
++          //
++          // The phase-A pre-reject stays MONOTONE, which is what the conflict-free-round
++          // decomposition needs: nClaimed is non-decreasing as the owner map fills, so
++          // (total - nClaimed) >= coadMinExcl is a non-increasing predicate, as is the count bar,
++          // and the OR of two non-increasing predicates is non-increasing. nLayers and marginX are
++          // per-chain constants. So a verdict of kRejected here still can never turn around.
++          uint8_t path = 1u;
+           if (!claimOk) {
+-            state[oi] = chainpar::kRejected;  // monotone: this verdict can never turn around
+-            continue;
++            bool const coadOk = (cfg.coadMinExcl > 0) && ((total - nClaimed) >= cfg.coadMinExcl) &&
++                                (cfg.coadMinLayers <= 0 || chains.nLayers()[c] >= cfg.coadMinLayers) &&
++                                (chains.marginX()[c] >= cfg.coadMinMx);
++            if (!coadOk) {
++              state[oi] = chainpar::kRejected;  // monotone: this verdict can never turn around
++              continue;
++            }
++            path = 2u;
+           }
+ 
+           nClaimedScratch[oi] = static_cast<uint32_t>(nClaimed);
+-          part[oi] = 1u;
++          part[oi] = path;
+           for (int k = 0; k < total; ++k)
+             alpaka::atomicMin(acc, &minPos[claimHits[hitBase + k]], oi, alpaka::hierarchy::Threads{});
+         }
+@@ -850,8 +869,12 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+           }
+ 
+           int const nClaimed = static_cast<int>(nClaimedScratch[oi]);
+-          float const bFrac = bandBraid[c];
++          // N2: a co-admitted candidate (part == 2) pays cfg.coadMaxShare instead of the -W band
++          // fraction, and may additionally be capped on the NUMBER of distinct owners it overlaps.
++          bool const coadPath = (part[oi] == 2u);
++          float const bFrac = coadPath ? cfg.coadMaxShare : bandBraid[c];
+           bool killed = false;
++          int nOwnersSeen = 0;
+           if (braidOn && bFrac > 0.f && nClaimed > 0) {
+             // Owner-relative braid, per-chain and allocation-free: the reference's touched-owner
+             // list is replaced by "count the occurrences of the FIRST appearance of each owner
+@@ -871,14 +894,45 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+                 }
+               if (!first)
+                 continue;
++              ++nOwnersSeen;
+               int cnt = 0;
+               for (int j = 0; j < total; ++j)
+                 cnt += (owner[claimHits[hitBase + j]] == o) ? 1 : 0;
+               int const oTot = chains.nClaimHits()[static_cast<uint32_t>(o)];
+               if (oTot > 0 && static_cast<float>(cnt) >= bFrac * static_cast<float>(oTot))
+                 killed = true;
++              // N2: the MY-SIDE ceiling. The braid above is owner-relative (how much of the OWNER
++              // I take); this is candidate-relative (how much of MY OWN universe one owner already
++              // holds). They are different objects and the second is the one that separates a
++              // second TRACK from a second CHAIN OF THE SAME TRACK: a re-tread of an already-taken
++              // trajectory has most of its own universe sitting under one owner, while a genuine
++              // neighbour sharing only merged inner clusters does not.
++              if (coadPath && cfg.coadMaxMyShare > 0.f && total > 0 &&
++                  static_cast<float>(cnt) > cfg.coadMaxMyShare * static_cast<float>(total))
++                killed = true;
++              // N2 -- the SAME-TRACK test, and it is the one that separates the efficiency from the
++              // duplicates. A co-admitted chain that is a second CHAIN OF THE SAME TRACK has the
++              // same measured momentum as the owner it overlaps; a genuine second TRACK in a close
++              // pair does not. Measured offline on 60 jet tune events (7,202 same-sim vs 681
++              // different-sim blocker pairs): |log(ptEst_c / ptEst_owner)| has AUC .910, same-sim
++              // p50 .018 against different-sim p50 .767. Both values are ChainFeatures[9], already
++              // computed before the claim runs, so this costs one indexed read per distinct owner.
++              // Expressed as a RATIO so no logarithm is needed in the kernel:
++              //     |log(a/b)| >= log(r)   <=>   max(a,b) >= r * min(a,b)
++              if (coadPath && cfg.coadMinPtRatio > 1.f) {
++                float const pa = chains.features()[c][9];
++                float const pb = chains.features()[static_cast<uint32_t>(o)][9];
++                float const hi = pa > pb ? pa : pb;
++                float const lo = pa > pb ? pb : pa;
++                if (!(lo > 0.f) || hi < cfg.coadMinPtRatio * lo)
++                  killed = true;
++              }
+             }
+           }
++          if (coadPath && cfg.coadMaxOwners > 0 && nOwnersSeen > cfg.coadMaxOwners)
++            killed = true;
++          if (coadPath)
++            alpaka::atomicAdd(acc, &stats[killed ? 15u : 14u], 1u, alpaka::hierarchy::Threads{});
+           state[oi] = killed ? chainpar::kRejected : chainpar::kAccepted;
+         }
+         alpaka::syncBlockThreads(acc);
+diff --git a/RecoTracker/LSTCore/src/alpaka/LSTEvent.dev.cc b/RecoTracker/LSTCore/src/alpaka/LSTEvent.dev.cc
+index 6ff156b889a..d5a160aac07 100644
+--- a/RecoTracker/LSTCore/src/alpaka/LSTEvent.dev.cc
++++ b/RecoTracker/LSTCore/src/alpaka/LSTEvent.dev.cc
+@@ -2286,7 +2286,7 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
+     uint32_t const* s = stats_h.data();
+     lstWarning(
+         std::format("[CHAIN K9] accepted={} chainTCs={} | TC slot fallbacks={} overflow={} | tieK9order={} | "
+-                    "R3 claimRounds={} claimStuck={} capHit={}",
++                    "R3 claimRounds={} claimStuck={} capHit={} | N2 coadOK={} coadBraidKill={}",
+                     *nAcc_h.data(),
+                     *nTC_h.data(),
+                     s[7],
+@@ -2294,7 +2294,9 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
+                     s[9],
+                     s[11],
+                     s[12],
+-                    s[13]));
++                    s[13],
++                    s[14],
++                    s[15]));
+     if (timing) {
+       auto ms = [](auto a, auto b) { return std::chrono::duration<double, std::milli>(b - a).count(); };
+       lstWarning(
+diff --git a/RecoTracker/LSTCore/src/alpaka/LSTEvent.h b/RecoTracker/LSTCore/src/alpaka/LSTEvent.h
+index 762136c4459..adb0155ee43 100644
+--- a/RecoTracker/LSTCore/src/alpaka/LSTEvent.h
++++ b/RecoTracker/LSTCore/src/alpaka/LSTEvent.h
+@@ -157,6 +157,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+       chainConfigRetirementEnv(chainConfig_);
+       // JET ROUND 3 (T4): env overrides of the 4-layer class policy group. Inert with nothing set.
+       chainConfigT4Env(chainConfig_);
++      // JET ROUND 4 (N2): env overrides of the claim co-admission group. Inert with nothing set.
++      chainConfigN2Env(chainConfig_);
+       if (ptCut < 0.6f) {
+         throw std::invalid_argument("Minimum pT cut must be at least 0.6 GeV. Provided value: " +
+                                     std::to_string(ptCut));

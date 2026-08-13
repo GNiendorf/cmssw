@@ -1,0 +1,127 @@
+diff --git a/RecoTracker/LSTCore/interface/ChainConfig.h b/RecoTracker/LSTCore/interface/ChainConfig.h
+index 2bbad3ec5a7..3ebb9724123 100644
+--- a/RecoTracker/LSTCore/interface/ChainConfig.h
++++ b/RecoTracker/LSTCore/interface/ChainConfig.h
+@@ -348,6 +348,34 @@ namespace lst {
+     int t4EmitMinLayers = 0;
+     int t4AttachMinLayers = 0;
+ 
++    // ------------------------------------------------------------------------------------------
++    // JET ROUND 4 (N4) -- the 4-layer EXEMPT branch, density-conditioned. The mirror of T4C1: that
++    // arm LOWERS the 4-layer IP bar where the graph is crowded; these two RAISE the 4-layer exempt
++    // one, on the same conditioning variable (ChainFeatures column 14) and with the same
++    // identically-zero-below-the-knee property, so every region at or below the knee -- which is
++    // every region a displaced gun or a PU200 event produces -- is bit-identical BY CONSTRUCTION.
++    //
++    // The measurement (n4_ref/t4branch.py, 450 jet tune events, ship binary): the 4-layer class
++    // splits by gate branch into two disjoint populations. Branch 0 (IP) is 3.08 core TC/evt at
++    // fake .420 and carries 2229 of 2229 of the claim's 4-layer recoverable ceiling. Branch 1
++    // (exempt) is 1.73 core TC/evt at fake .9575 -- 33 non-fake TCs in 450 events -- and carries
++    // NONE of it, while being 29.7% of the jet-core fake TC budget. Inside branch 1, 1387 TCs
++    // (3.08/evt, fake .966; 545 in the core at fake .9945, i.e. THREE non-fake) could only have
++    // been admitted by the E1-B2 far-dca free pass (dcaSplit2 + t4FarMaxResid, bar m3Theta4D2 =
++    // -1e9). That free pass is correct where it was fitted -- a displaced gun's 4-layer chains sit
++    // at junction density 1-2, three decades below the knee -- and is a fake tap inside a jet,
++    // where the same cell's chains sit at density p50 780 with .952 above 30.
++    //
++    // (1) t4FarDensRho0: above this LOCAL junction occupancy the far cell loses its free pass and
++    //     takes the ordinary exempt bar. 0 = off, the frozen behaviour. This one is a KNEE and not
++    //     a ramp for a structural reason: the free pass is -1e9, i.e. minus infinity, and there is
++    //     no meaningful continuous interpolation out of it -- what rule 4 of the round asks for,
++    //     "identically inert at and below the knee", is exactly preserved.
++    // (2) t4ExDensDelta: added to the NON-far exempt bar, ramped by T4C1's own weight function
++    //     (t4DensRho0 / t4DensDecades). 0 = off, the frozen behaviour.
++    float t4FarDensRho0 = 0.f;
++    float t4ExDensDelta = 0.f;
++
+     // ------------------------------------------------------------------------------------------
+     // JET ROUND (M1) -- the per-shared-key incidence degree cap. NOT a physics working point.
+     // ------------------------------------------------------------------------------------------
+@@ -465,6 +493,9 @@ namespace lst {
+   //   LST_T4_GATE_TIGHTEN  add to the 4-layer IP bar and the non-far exempt bar (suppression arm)
+   //   LST_T4_EMIT_MIN      override kChainTCMinLayers at the K10 emission flag
+   //   LST_T4_ATTACH_MIN    override kAttachMinLayers in the stage-A attach target filter
++  //   LST_T4_FARDENS_RHO0  junction occupancy above which the E1-B2 far-dca cell loses its free
++  //                        pass and takes the ordinary exempt bar (0 = off, the shipped value)
++  //   LST_T4_EXDENS_DELTA  add to the NON-far 4-layer exempt bar, ramped on T4C1's weight
+   inline void chainConfigT4Env(ChainConfig& cfg) {
+     auto rdf = [](char const* name, float* dst) {
+       char const* s = std::getenv(name);
+@@ -487,15 +518,19 @@ namespace lst {
+     any |= rdf("LST_T4_GATE_TIGHTEN", &cfg.t4GateTighten);
+     any |= rdi("LST_T4_EMIT_MIN", &cfg.t4EmitMinLayers);
+     any |= rdi("LST_T4_ATTACH_MIN", &cfg.t4AttachMinLayers);
++    any |= rdf("LST_T4_FARDENS_RHO0", &cfg.t4FarDensRho0);
++    any |= rdf("LST_T4_EXDENS_DELTA", &cfg.t4ExDensDelta);
+     if (any)
+       std::printf("[chainenv] T4 class policy resolved: densDelta=%g rho0=%g decades=%g"
+-                  " gateTighten=%g emitMin=%d attachMin=%d\n",
++                  " gateTighten=%g emitMin=%d attachMin=%d farDensRho0=%g exDensDelta=%g\n",
+                   cfg.t4DensDelta,
+                   cfg.t4DensRho0,
+                   cfg.t4DensDecades,
+                   cfg.t4GateTighten,
+                   cfg.t4EmitMinLayers,
+-                  cfg.t4AttachMinLayers);
++                  cfg.t4AttachMinLayers,
++                  cfg.t4FarDensRho0,
++                  cfg.t4ExDensDelta);
+   }
+ 
+   // The value of ChainConfig::degreeCap that means "no cap". It is not a sentinel the code tests
+diff --git a/RecoTracker/LSTCore/src/alpaka/ChainGate.h b/RecoTracker/LSTCore/src/alpaka/ChainGate.h
+index a50d45857f3..585dc96b5e6 100644
+--- a/RecoTracker/LSTCore/src/alpaka/ChainGate.h
++++ b/RecoTracker/LSTCore/src/alpaka/ChainGate.h
+@@ -494,14 +494,18 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+   // above it, so a region whose occupancy sits below rho0 takes the frozen bar BIT FOR BIT. That is
+   // what makes the sparse-region invariance a property of the code rather than of a measurement.
+   template <typename TAcc>
+-  ALPAKA_FN_ACC ALPAKA_FN_INLINE float chainT4DensRelax(TAcc const& acc, ChainConfig const& cfg, float degProd) {
+-    if (!(cfg.t4DensDelta > 0.f))
+-      return 0.f;
++  ALPAKA_FN_ACC ALPAKA_FN_INLINE float chainT4DensW(TAcc const& acc, ChainConfig const& cfg, float degProd) {
+     float const x = alpaka::math::log10(acc, 1.f + degProd) - alpaka::math::log10(acc, 1.f + cfg.t4DensRho0);
+     if (!(x > 0.f))
+       return 0.f;
+-    float const w = (cfg.t4DensDecades > 0.f) ? chainMinf(x / cfg.t4DensDecades, 1.f) : 1.f;
+-    return cfg.t4DensDelta * w;
++    return (cfg.t4DensDecades > 0.f) ? chainMinf(x / cfg.t4DensDecades, 1.f) : 1.f;
++  }
++
++  template <typename TAcc>
++  ALPAKA_FN_ACC ALPAKA_FN_INLINE float chainT4DensRelax(TAcc const& acc, ChainConfig const& cfg, float degProd) {
++    if (!(cfg.t4DensDelta > 0.f))
++      return 0.f;
++    return cfg.t4DensDelta * chainT4DensW(acc, cfg, degProd);
+   }
+ 
+   // ------------------------------------------------------------------------------------------
+@@ -615,9 +619,26 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+             // -FR: the cell also requires a GOOD FIT (feature 16 = maxXyResid), so it selects
+             // "displaced AND well measured" rather than merely "badly fitted". Default 1e9 = off.
+             bool const farCell = dca >= cfg.dcaSplit2 && chains.features()[c][16] <= cfg.t4FarMaxResid;
++            // JET ROUND 4 (N4): the far cell's free pass is a SPARSE-REGION semantic. It was fitted
++            // on a displaced gun and on PU200, where a 4-layer chain's own weld junctions carry a
++            // local degree product of 1-2; inside a hard jet the same cell admits 3.08 TC/evt at a
++            // measured fake rate of .966 (.9945 inside dR .05). Above t4FarDensRho0 of LOCAL
++            // junction occupancy -- ChainFeatures column 14, the same CONDITIONING variable T4C1
++            // ramps on, never a rank term -- the cell therefore takes the ordinary exempt bar
++            // instead of its free pass. t4FarDensRho0 = 0 disables the condition, which is the
++            // frozen behaviour; every region at or below the knee is bit-identical BY CONSTRUCTION.
++            bool const farDense = cfg.t4FarDensRho0 > 0.f && chains.features()[c][14] > cfg.t4FarDensRho0;
+             // JET ROUND 3 (T4): the suppression-arm offset reaches the NON-far exempt bar only --
+             // the E1-B2 far-dca cell keeps its free pass, which is a crown-jewel semantic.
+-            float const bar4D = farCell ? cfg.m3Theta4D2 : (cfg.m3Theta4D + d4D + cfg.t4GateTighten);
++            // JET ROUND 4 (N4): t4ExDensDelta is the density-ramped mirror of T4C1 on that same
++            // non-far exempt bar (T4C1 LOWERS the 4-layer IP bar in dense regions; this RAISES the
++            // 4-layer exempt one). It shares T4C1's ramp, so it too is identically zero at and
++            // below t4DensRho0. 0 = off, the frozen behaviour.
++            float const exDens =
++                (cfg.t4ExDensDelta > 0.f) ? cfg.t4ExDensDelta * chainT4DensW(acc, cfg, chains.features()[c][14])
++                                          : 0.f;
++            float const bar4D = (farCell && !farDense) ? cfg.m3Theta4D2
++                                                       : (cfg.m3Theta4D + d4D + cfg.t4GateTighten + exDens);
+             if (mD < bar4D) {
+               score -= cfg.gateKill;
+               flags |= kChainFlagKilled;
