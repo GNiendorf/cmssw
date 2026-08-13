@@ -65,13 +65,17 @@ namespace lst {
     //     chi2 PROXY instead of by the head, so "the head chooses better" can be separated from
     //     "trimming more is better".
     //   5 as 1, but the winning variant must beat the full chain by trimMarginGap logit units
-    // SHIPPED (trim-NN round, arm L1): the terminal-trim DECISION is the chain head's argmax over
-    // the three variants, with every guard of the chi2 rule deleted. 0 restores the chi2 rule
-    // (kept reachable for A/B via LST_TRIM_MODE and scheduled for deletion once it has been
-    // unused for a round). See standalone/FINDINGS_TRIMNN.md.
-    int trimMode = 1;
+    // SHIPPED (trim-NN round, arm G10): the terminal-trim DECISION is the chain head's, not a chi2
+    // threshold -- but the head must be DECISIVE, not merely ahead. A terminal node is dropped only
+    // when the best variant's realness margin beats the FULL chain's by trimMarginGap logit units,
+    // i.e. when the shortened chain is e^gap = 2.7x more favourable in real-vs-fake odds. mode 1 is
+    // the same argmax with NO gap (measured: more jet-core efficiency, but it spends 46% more
+    // outer-tracker hits to buy 20% more realness -- the marginal trims shorten tracks without
+    // buying anything). mode 0 restores the chi2 rule for A/B and is scheduled for deletion once it
+    // has gone a round unused. See standalone/FINDINGS_TRIMNN.md.
+    int trimMode = 5;
     // The one constant the learned rule can need: how decisively the head must prefer a drop.
-    float trimMarginGap = 0.f;
+    float trimMarginGap = 1.f;
 
     // -X 0.5 : IP-compatibility boundary on the chain dcaXY, cm.
     float dcaSplit = 0.5f;
