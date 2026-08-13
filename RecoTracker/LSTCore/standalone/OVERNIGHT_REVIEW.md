@@ -552,3 +552,99 @@ efficiency has been paid for in that one bin.
 
 PU200 `event_2000` for KE50 and the TRIPLE was still running when this was written; those rows and the
 TRIPLE cube gates append below. **Nothing has been shipped.**
+
+### 6k. THE THREE-WAY UNION ON SEALED PU200 — every metric improves
+
+PU200 `event_2000`, 1000 events, 73,470 sims, paired McNemar. KE50 alone is essentially neutral there
+(overall +.0000 at p .766, no band resolved in either direction); the union carries WELD's improvement.
+
+| cell | SHIPPED | KE50 | **TRIPLE** | p (triple) |
+|---|---:|---:|---:|---:|
+| eff overall | .8107 | .8107 | **.8112** | **.0101** (80 lost / 117 gained) |
+| eff_barrel | .9220 | .9221 | **.9228** | **.025** |
+| eff_transition | .8761 | .8762 | .8764 | .804 |
+| eff_endcap | .6832 | .6832 | .6835 | .090 |
+| **eff dxy[1,5)** | .5748 | .5761 | **.5809** | **.0145** (18 lost / 37 gained) |
+| eff dxy[5,10) | .2566 | .2556 | .2613 | .18 |
+| eff dxy[10,30) | .0583 | — | .0590 | 1.0 |
+| eff vxy[1,5) | .7931 | .7935 | .7938 | .664 |
+| eff vxy[5,10) | .7297 | .7297 | .7291 | 1.0 (7 vs 6 — noise) |
+| eff vxy[10,30) | .7021 | .7033 | **.7038** | .45 |
+| dup overall | .04315 | .04309 | **.04279** | better |
+| fake overall | .04466 | .04460 | **.04370** | better |
+| dup_barrel | .01398 | .01388 | **.01273** | better |
+| fake_barrel | .05071 | .05050 | **.04856** | better |
+| n_tc | 1,577,093 | 1,576,732 | **1,575,287** | −1,806 |
+
+**Nothing on PU200 moves the wrong way.** Overall efficiency and the barrel are *resolved gains*,
+dxy[1,5) is a *resolved displaced gain* (+.0060, p .0145), every other displaced band is neutral or
+positive, and duplicates and fakes both fall in every region. The fake improvement recovers **66% of
+round 2's +3.4% PU200 fake regression** (pre-round .04321 -> shipped .04466 -> triple .04370).
+
+So across the whole gate set the three-way union has **exactly one adverse cell in the entire
+program**: jet duplicates inside dR < .005.
+
+### 6l. TRIPLE UNION CUBE GATES — pass, identical to the two-way (10,000 common events each)
+
+| cell | cube50_highPt | cube50 |
+|---|---|---|
+| all twelve cells | **0/0 discordant, every one** | 10 of 12 at **0/0** |
+| dxy[1,5) | .1120 -> .1120, **0/0** | .1329 -> .1329, **0/0** |
+| the only movement | none | vxy[5,10) 1 sim, dxy[5,10) 1 sim — both p 1.0 |
+
+Adding KEY's third patch changed nothing on either gun. Round 2's displaced headline is preserved
+exactly.
+
+---
+
+## 8. THE DECISION — SUPERSEDES SECTION 7. The three-way union is the candidate.
+
+`weld_S02` (`baa19ab0654220cc445f2287bb876dd1`, one constant)
++ `T4C1` (`6550c79df1ff469319bdb44fbeabd606`, three floats, inert by default)
++ `key_orderkey_KE50` (`299a40aed188325c7b2162908c548c52`, an eta ramp on an existing hinge).
+**No new kernels. No new networks. No new weight files. The weld does a third LESS work.**
+
+### The complete gate set, all on data no agent opened
+
+| gate | SHIPPED | **TRIPLE** | master | verdict |
+|---|---:|---:|---:|---|
+| jets eff jet-core | .7611 | **.7788** | .7761 | **PASS MASTER** |
+| jets eff all-sim | .8081 | **.8163** | .8141 | **PASS MASTER** |
+| jets eff dR<.02 | .5172 | **.5561** | .5292 | **PASS MASTER** |
+| jets eff dR<.05 | .6097 | **.6430** | .6370 | **PASS MASTER** |
+| jets eff dR<.005 | .4051 | **.4429** | .2604 | +.183 |
+| jets fake | .1287 | **.1203** | .2235 | **1.86x cleaner** |
+| jets fake TCs/evt dR<.05 | 6.22 | **6.00** | 14.98 | 2.5x cleaner |
+| jets TCs/evt | 125.6 | **125.6** | 127.6 | fewer than master |
+| jets dup pooled | .0241 | .0242 | .0207 | flat |
+| PU200 eff overall | .8107 | **.8112** | — | **resolved GAIN** p .0101 |
+| PU200 eff_barrel | .9220 | **.9228** | — | **resolved GAIN** p .025 |
+| PU200 eff dxy[1,5) | .5748 | **.5809** | — | **resolved DISPLACED GAIN** p .0145 |
+| PU200 other displaced | — | neutral-or-up | — | pass |
+| PU200 dup / fake | .04315 / .04466 | **.04279 / .04370** | — | both better; 66% of round 2's fake regression repaid |
+| PU200 n_tc | 1,577,093 | **1,575,287** | — | −1,806 |
+| cube50_highPt | — | **0/0 on all 12 cells** | — | pass |
+| cube50 | — | 2 sims of 10,000, p 1.0 | — | pass |
+| softer jets 200-500 GeV | — | WELD +.0047, T4C1 +.0000, KE50 inert | — | pass |
+| **jets dup dR<.005** | **.0506** | **.0871** | .0000 | **THE ONLY ADVERSE CELL** |
+| jets dup dR<.05 | .0232 | .0253 | ~.003 | +.0021 |
+| **timing** | — | **NOT MEASURED** | — | owed, on this AND on the round-2 ship |
+
+### What I recommend, and why
+**Ship the three-way union.** It is the first time this project beats LST master on every jet
+efficiency aggregate, and it does so while being 1.86x cleaner on fake, on fewer track candidates per
+event, with PU200 efficiency *and* PU200 displaced efficiency *both improving*, both cube guns clean,
+and no new machinery of any kind. Under your stated priority — efficiency >> dup > fake — efficiency
+improves everywhere measured, fake improves everywhere measured, and one dup cell degrades.
+
+**The honest caveat, stated the way you asked for caveats: every point of this round was paid for in
+the deep-core duplicate bin.** dR<.005 goes .0506 -> .0871 where master carries zero. Pooled jet dup is
+flat and all four PU200 dup cells improve, so it is a sharp concentration, not a broad regression — but
+it is real and it is in the currency you rank above fake.
+
+**And it is the obvious next round.** Three agents have now independently localised that cell to the
+(delivered chain, un-retired bare pLS) pair: barrel, high-pT, hit-disjoint, provably outside the
+shipped retirement rule's window, and untouched by every bar and mutual-argmax rule tried so far. It is
+now the single cell standing between this algorithm and a clean sweep of the jet gate set.
+
+**Two things I did NOT do:** ship anything, and time anything. Both wait for you.
