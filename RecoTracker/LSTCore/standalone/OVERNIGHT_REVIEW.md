@@ -648,3 +648,116 @@ shipped retirement rule's window, and untouched by every bar and mutual-argmax r
 now the single cell standing between this algorithm and a clean sweep of the jet gate set.
 
 **Two things I did NOT do:** ship anything, and time anything. Both wait for you.
+
+---
+
+## 5. AGENT AT — the on-policy attach retrain (COMPLETE; full record in `FINDINGS_ATTACH.md`, 522 lines)
+
+**It answered the brief's question by refuting my hypothesis.** I had told AT to expect the value to be
+in *calibration* (re-standardising slots 11-13 and refitting the bars against the moved gate logits).
+Measured decomposition, each stage against the one below it:
+
+| stage | jets core | jets dup<.05 | PU200 eff | PU200 dup |
+|---|---:|---:|---:|---:|
+| `ATCAL` − BASE — **calibration alone** (weights byte-identical) | +.0010 (ns) | +.0033 | +.0000 | −0.43% |
+| `ATCTL` − `ATCAL` — **the mandated re-dump control, shipped recipe verbatim** | +.0044 | **+.0575** | **−.0008** | −0.28% |
+| `ATJ25R` − `ATCTL` — **jet-core rows in the attach mix + role-split bars** | **+.0258** | **−.0564** | −.0001 | **−4.53%** |
+
+**Calibration is worth ~nothing, the retrain itself is worth NEGATIVE, and the entire value is the one
+recipe change.** And the mandated control was again not a null — it is a *loss*: −.0008 resolved PU200
+efficiency (p .0017) and jet-core dup ×2.9. Round 1's rule keeps earning its keep.
+
+### Candidate `ATJ25R` (md5 `0a27d3441210ba6b11c508f4ee6e3fc6`, 586 lines, 2 files, apply-check clean)
+- jets core **.7659 -> .7971 (+.0312, p 1e-94)**, dR<.02 **+.0682**, dR<.005 **+.0572**
+- jets fake dR<.05 **−.0216**; jets dup<.05 **unresolved** (+.0044, p .148)
+- PU200 `dup_overall` **−5.24%**; **all four dxy and all three vxy displaced bands neutral-or-better**
+- **both cube guns BIT-IDENTICAL on all three slices** — `cube50_highPt dxy[1,5)` stays .1209, zero discordant
+- **FAILS**: PU200 **prompt** efficiency **−.0009 resolved (p 9.9e-04)**, entirely in dxy[0,1)/vxy[0,1),
+  and AT attributes it to the RETRAIN, not the enrichment; PU200 fake +1.12% relative
+- ship-verified: rebuilding from the patch alone reproduces the measured `bin/lst_cpu` AND
+  `liblst_cpu.so` byte-identically
+- alternative banked `ATJ25` (md5 `c2635e66709ca83599179a8f57d44da7`): jet core **+.0455**, PU200 eff
+  **+.0008 resolved UP**, vxy[1,5) +.0038 (p .0079) — but jets dup .0313 -> **.0826** and PU200 dup +2.19%.
+  **AT explicitly declined to make the efficiency-vs-duplicate call.**
+
+### Findings that stand regardless of which arm ships
+- **The gain is a WRONG-RETIREMENT REPAIR, not a new object**: bare-pLS TCs 15.5 -> 17.5/evt, core sims
+  won by a bare pLS 1,340 -> 2,077, **+684 core sims that previously had no match at all.** This is
+  exactly why EA's structural ceiling (+.018) did not bind — that ceiling priced the target list and
+  the ranking, and this moves neither.
+- **The jet-core duplicate is structurally out of reach of calibration** — the deployed head already
+  retires .953/.976/.985 of true (chain, pLS) pairs at the three `xcTheta` bands on jets. **Third
+  independent confirmation**, after D and EA.
+- **The off-policy shift was real but small**: gate logits moved ~0.16 header-sigma in mean and
+  `zPrompt` sigma grew 26%, yet the deployed head's stage-0 AUC on the new dataflow is .99954 against
+  .99933 on the old. The head absorbed it. (So the "off-policy at attach" cost I listed against the
+  round-2 ship was real but minor — worth knowing for how hard to chase this in future.)
+- **Machinery fact with teeth: the eight attach bars compile into `bin/lst_cpu` while the attach
+  weights compile into `liblst_cpu.so`.** Checking only the resolved library md5 does NOT pin an arm's
+  bars — several of our provenance checks have leaned on the library alone.
+- `PAIRDUMP_FORMAT.md` / `train_s3.py` staleness (22-float records) — already corrected in the repo.
+- `ATCTLM`/`ATJ25M` (min() on all eight bars) recorded as measured rejects.
+
+**`analysis/DNN/README.md`'s attach row will need updating in whichever ship commit lands.**
+
+---
+
+## 9. THE FOUR-WAY UNION — supersedes section 8. **Jet-core efficiency .8087 against master's .7761.**
+
+`weld_S02` + `T4C1` + `KE50` + **`ATJ25R`** (AT's attach retrain), all four applied together, built in
+`gpu_wt/r2b` (bin `9be33c096901`, 0 `error:`), judged on samples no agent opened.
+
+### JETS, sealed holdout rows 500-999, 500 events, paired
+
+| cell | SHIPPED | TRIPLE | ATJ25R | **QUAD** | LST master |
+|---|---:|---:|---:|---:|---:|
+| **eff jet-core** | .7611 | .7788 | .7939 | **.8087** | .7761 |
+| eff all-sim | .8081 | .8163 | .8228 | **.8295** | .8141 |
+| eff dR < .005 | .4051 | .4429 | .4429 | **.4744** | .2604 |
+| eff dR < .02 | .5172 | .5561 | .5777 | **.6098** | .5292 |
+| eff dR < .05 | .6097 | .6430 | .6672 | **.6951** | .6370 |
+| fake | .1287 | .1203 | .1279 | **.1210** | .2235 |
+| TCs/evt | 125.6 | 125.6 | 127.6 | **127.6** | 127.6 |
+| dup pooled | .0241 | .0242 | .0263 | .0253 | .0207 |
+| dup dR < .05 | .0232 | .0253 | .0329 | .0319 | ~.003 |
+| **dup dR < .005** | **.0506** | .0871 | .0876 | **.1030** | .0000 |
+
+**We beat LST master by +.0326 on jet-core efficiency** (.8087 vs .7761), by +.0154 on all-sim, by
+**+.081 at dR<.02**, +.058 at dR<.05 and **+.214 in the innermost bin** — while being **1.85x cleaner
+on fake** at **exactly master's TC count**. Total gain over the shipped head: **+.0476 jet-core.**
+
+Additivity: TRIPLE +.0177 and ATJ25R +.0328 separately, **+.0476 together** — 94% of the sum, so they
+are very nearly independent (AT's gain is a wrong-retirement repair on tracks that had NO match at
+all, which is why it barely overlaps the claim-side arms).
+
+### PU200 `event_2000`, sealed, 1000 events, paired McNemar — **the union RECOVERS AT's solo loss**
+
+| cell | SHIPPED | ATJ25R alone | **QUAD** | p (QUAD) |
+|---|---:|---:|---:|---:|
+| eff overall | .8107 | **.8105 (−.0002)** | **.8111 (+.0004)** | .293 |
+| eff_barrel | .9220 | **.9210 (−.0010, p .051)** | **.9219 (−.0001)** | .904 |
+| **eff dxy[1,5)** | .5748 | .5742 | **.5806 (+.0057)** | **.0247 — resolved GAIN** |
+| eff dxy[5,10) | .2566 | .2566 | .2613 | .18 |
+| eff dxy[10,30) | .0583 | .0577 | .0590 | 1.0 |
+| dup overall | .04315 | .04092 | **.04057 (−6.0%)** | better |
+| **dup_barrel** | .01398 | .00832 | **.00711 (−49%)** | much better |
+| fake overall | .04466 | .04503 (worse) | **.04402** | better than shipped |
+| n_tc | 1,577,093 | 1,578,571 | 1,576,821 | −272 |
+
+**This is the important interaction.** `ATJ25R` alone carries AT's stated PU200 prompt-efficiency
+cost — though on the SEALED sample it is **−.0002 at p .578, unresolved**, where AT's tune half said
+−.0009 resolved (p 9.9e-04), so the tune-half result did not reproduce. **In the four-way union it is
+gone entirely**: PU200 efficiency goes positive, the barrel is flat, dxy[1,5) becomes a **resolved
+displaced gain**, and AT's solo fake regression is absorbed. The round-3 arms and the attach retrain
+repair each other's costs.
+
+**PU200 duplicates improve dramatically** — overall −6.0% and **barrel −49%** — because AT's arm is
+fundamentally a wrong-retirement repair.
+
+### The one cost, now doubled
+**Jet duplicates inside dR<.005: .0506 -> .1030.** dR<.05 goes .0232 -> .0319 and pooled .0241 ->
+.0253. Master carries zero there. This remains the only adverse cell in the entire program, and the
+four-way pays roughly twice what the triple did for roughly 2.7x the efficiency.
+
+Cube gates for the four-way are running (ATJ25R alone is bit-identical on both guns per AT; the triple
+is 0/0 on all twelve cube50_highPt cells) — rows append when they land.
