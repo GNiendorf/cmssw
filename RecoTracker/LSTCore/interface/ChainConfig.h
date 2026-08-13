@@ -137,6 +137,27 @@ namespace lst {
     // -BK is compile-time 1 (the 3-class mX hinge); modes 0 and 2..11 are dead experiments.
     float orderAlpha = 10.f;
     float orderHinge = 5.f;
+    // JET ROUND 3 (KEY): an ETA-CONDITIONED weight on the SAME hinge, no new column and no new
+    // kernel -- the band |eta(innermost T3)| this ramps on is already computed a few lines below
+    // for the -WZ braid band, and is simply hoisted above the key.
+    //
+    //   alphaEff = orderAlpha + (orderAlphaCentral - orderAlpha) * (1 - ramp(aEta))
+    //   ramp(x)  = clip((x - orderEtaRampLo) / (orderEtaRampHi - orderEtaRampLo), 0, 1)
+    //
+    // WHY ETA AND NOT pT OR OCCUPANCY. A rank key is a GLOBAL total order, so conditioning its
+    // WEIGHT on a per-chain quantity scrambles comparisons between chains in different regimes
+    // (measured, 200 jet tune events, offline claim replay: the identical boost conditioned on the
+    // chain's own ptEst is core -.0747 and on its junction-degree product -.0360, against +.0054
+    // unconditioned). Eta is the exception because the chains that CONTEND for a hit are in one
+    // detector neighbourhood and therefore share the conditioner. The measured payoff is that the
+    // deployed PU200 duplicate cost of the unconditioned boost is ENTIRELY ENDCAP (+239 dup TCs at
+    // |eta| >= 1.7, against -54 barrel and -32 transition, 1000 events), while the jet-core gain is
+    // central barrel (JPR2: the residual master gap is |eta| < 0.6).
+    // orderAlphaCentral <= 0 means "inherit orderAlpha", i.e. the ramp is OFF, which is the
+    // shipped behaviour bit for bit.
+    float orderAlphaCentral = 50.f;
+    float orderEtaRampLo = 1.0f;
+    float orderEtaRampHi = 1.3f;
 
     // -F 0.20 / -FC 1 / -FCX 0: the candidate-relative claim tolerance. -FC is expressed in MD
     // units for physics readability; the claim universe is HITS (-H 1 is compile-time true) and
@@ -192,18 +213,18 @@ namespace lst {
     // bar's true-pair acceptance in the same cell -- measured with the shipped head's own logit on
     // the SAME on-policy rows, so the reference is in the data and the fit costs ZERO parameters.
     // Still NOT independent of AttachNetworkWeights.h.
-    float attachTheta = 6.626049f;   // -a   delivery margin, |eta| < 1.1
-    float attachThetaT = 5.753662f;  // -a2  delivery margin, 1.1 <= |eta| < 1.7
-    float attachThetaE = 5.907102f;  // -a3  delivery margin, |eta| >= 1.7
+    float attachTheta = 6.64275f;    // -a   delivery margin, |eta| < 1.1
+    float attachThetaT = 6.23461f;   // -a2  delivery margin, 1.1 <= |eta| < 1.7
+    float attachThetaE = 6.209162f;  // -a3  delivery margin, |eta| >= 1.7
     // -AT3 6.0: the bare-T3 (stage B) delivery margin, GLOBAL -- no eta bands. Also the T3-side
     // retirement bar of the -RPS predicate (-RPST was measured as a dead end and is deleted; the
     // bar is hardcoded to this value).
-    float attachThetaT3 = 5.515511f;  // S3: re-fitted for the 22-input head
+    float attachThetaT3 = 5.558521f;  // S3: re-fitted for the 22-input head
     // -RPSA 5.5: the chain-side RETIREMENT bar of the -RPS predicate. Global, deliberately NOT
     // banded (banded -RPSA measured dominated). The retirement kernels must read THIS, never
     // attachTheta -- reusing the delivery margin is the pre-A11 behaviour and is wrong now that
     // delivery is banded.
-    float rpsThetaChain = 5.480793f;  // S3: re-fitted for the 22-input head
+    float rpsThetaChain = 5.32247f;   // S3: re-fitted for the 22-input head
     // -T3F 0.10: stage-B target admission on the production T3 fake score (node feature 12 ==
     // triplets.fakeScore()). NaN-rejecting form !(fakeScore <= t3FakeMax). Applied to the bare
     // mask so cut targets are never scored and never write plsBestT3.
@@ -236,9 +257,9 @@ namespace lst {
     // Bars re-fitted for the 20-input head (its logit scale differs from the 19-input one; see
     // AttachNetworkWeights.h). These are NOT independent of the weights header.
     // S3: re-fitted for the 22-input head by the same fixed-acceptance rule as the -a bars.
-    float xcTheta = 3.430463f;   // |seed eta| < 1.1
-    float xcThetaT = 2.82865f;   // 1.1 <= |seed eta| < 1.7
-    float xcThetaE = 3.641699f;  // |seed eta| >= 1.7
+    float xcTheta = 2.114034f;   // |seed eta| < 1.1
+    float xcThetaT = 2.120019f;  // 1.1 <= |seed eta| < 1.7
+    float xcThetaE = 3.401128f;  // |seed eta| >= 1.7
     // -CC9 2: the T4-class crossclean against the delivered SEEDED rows -- drop a delivered type-9
     // bare chain sharing this many outer-tracker hits (2 = one full mini-doublet) with a delivered
     // type-7 or type-5 row. 0 disables it. See ChainCrossClean.h; measured fake barrel -.0037 with
@@ -279,6 +300,53 @@ namespace lst {
     // are ALSO the grid's design inputs (ChainAttach.h derives its cell widths from them).
     float attachPrefDPhi = 0.4f;
     float attachPrefDTanL = 0.6f;
+
+    // ------------------------------------------------------------------------------------------
+    // JET ROUND 3 (T4) -- the 4-LAYER CLASS POLICY. Every default below reproduces the shipped
+    // configuration EXACTLY, so an unset environment is bit-identical (proven, not asserted: the
+    // zero-knob arm is the control).
+    //
+    // The measurement that motivates the group (t4_ref/{price,stage}.py on JPR2's 450-event jet
+    // funnel corpus): the 4-layer class is the SOLE cover of 585 core sims per 450 jet tune events
+    // (+.067 of dR<.05 efficiency, +.047 of pooled jet-core efficiency) and it concentrates in
+    // exactly the sim-pt band where LST master collapses (best-match is 4-layer for .22 / .31 /
+    // .37 of matched sims at 50-100 / 100-300 / >300 GeV). At the same time 677 of 873 stage-e
+    // core sims have a gate-KILLED chain made entirely of their own T3s that is 4 layers long and
+    // sits in the IP branch -- i.e. the 4-layer IP bar, not the weld and not the claim, is what
+    // stands between us and three quarters of the gate stage's budget on jets.
+    //
+    // (1) t4DensDelta LOWERS the branch-0 (4-layer, IP) gate bar by up to t4DensDelta, ramped in
+    //     LOCAL graph occupancy: ChainFeatures column 14, the maximum over the chain's OWN weld
+    //     junctions of degIn * degOut at the junction element. The ramp is
+    //         w = min(1, max(0, log10(1+deg) - log10(1+t4DensRho0)) / t4DensDecades)
+    //     which is identically ZERO at or below t4DensRho0 and continuous above it, so every
+    //     region below that occupancy is bit-identical to the ship BY CONSTRUCTION rather than by
+    //     measurement (PU200 branch-0 chains and both displaced cube guns live decades below the
+    //     jet-core values). It is a CONDITIONING variable, never a rank term.
+    // (2) t4GateTighten is the opposite sign as a single unconditioned number, for PRICING the
+    //     suppression direction. It is added to the 4-layer IP bar and to the NON-far exempt bar;
+    //     the E1-B2 far-dca cell (dcaSplit2 + t4FarMaxResid) keeps its free pass untouched.
+    // (3) t4EmitMinLayers overrides kChainTCMinLayers at the K10 emission flag ONLY, so the claim
+    //     runs identically and the arm isolates "what does the class DELIVER" from "what do its
+    //     hits do to everyone else". 0 = the frozen kChainTCMinLayers.
+    // (4) t4AttachMinLayers overrides kAttachMinLayers in the stage-A target filter, which makes a
+    //     4-layer chain a real attach target (contention, plsBest, delivery) instead of the
+    //     score-only -XC4 aux target it is today. 0 = the frozen kAttachMinLayers. The aux append
+    //     de-duplicates itself against the widened stage-A list (see ChainAttachSelectAux).
+    // SHIPPED (jet round 3, arm T4C1): the 4-layer IP gate bar is relaxed by up to 2 units, ramped
+    // over one decade of local junction density starting at 30. Below rho0 the relaxation is
+    // IDENTICALLY zero, so sparse regions take the frozen bar bit for bit -- which is why both cube
+    // guns are bit-identical under this arm and why the sparse-region invariance is a property of
+    // the code rather than of a measurement. The unconditioned form (rho0 = 0, decades = 0) was
+    // measured and REJECTED: it buys more displaced efficiency everywhere (PU200 dxy[1,5) +.0130 vs
+    // +.0057, cube50_highPt overall +.0345 with zero losses) but takes PU200 fake from .04402 to
+    // .04619, i.e. from cleaner than LST master (.0454) to worse than it.
+    float t4DensDelta = 2.f;
+    float t4DensRho0 = 30.f;
+    float t4DensDecades = 1.f;
+    float t4GateTighten = 0.f;
+    int t4EmitMinLayers = 0;
+    int t4AttachMinLayers = 0;
 
     // ------------------------------------------------------------------------------------------
     // JET ROUND (M1) -- the per-shared-key incidence degree cap. NOT a physics working point.
@@ -386,14 +454,73 @@ namespace lst {
                 cfg.dupMutualDelta);
   }
 
+  // JET ROUND 3 (T4): env overrides of the 4-layer class policy group. One binary supplies every
+  // arm of the A/B, which is the only way to prove inertness by BIT-IDENTITY rather than assert it.
+  // With nothing set this function writes nothing and prints nothing.
+  //
+  //   LST_T4_DENS_DELTA    lower the branch-0 (4-layer IP) gate bar by up to this much, ramped in
+  //                        local graph occupancy (0 = off, the shipped value)
+  //   LST_T4_DENS_RHO0     occupancy at which the ramp STARTS (below it: bit-identical to ship)
+  //   LST_T4_DENS_DECADES  ramp width in decades of log10(1 + occupancy)
+  //   LST_T4_GATE_TIGHTEN  add to the 4-layer IP bar and the non-far exempt bar (suppression arm)
+  //   LST_T4_EMIT_MIN      override kChainTCMinLayers at the K10 emission flag
+  //   LST_T4_ATTACH_MIN    override kAttachMinLayers in the stage-A attach target filter
+  inline void chainConfigT4Env(ChainConfig& cfg) {
+    auto rdf = [](char const* name, float* dst) {
+      char const* s = std::getenv(name);
+      if (s == nullptr || *s == '\0')
+        return false;
+      *dst = static_cast<float>(std::atof(s));
+      return true;
+    };
+    auto rdi = [](char const* name, int* dst) {
+      char const* s = std::getenv(name);
+      if (s == nullptr || *s == '\0')
+        return false;
+      *dst = std::atoi(s);
+      return true;
+    };
+    bool any = false;
+    any |= rdf("LST_T4_DENS_DELTA", &cfg.t4DensDelta);
+    any |= rdf("LST_T4_DENS_RHO0", &cfg.t4DensRho0);
+    any |= rdf("LST_T4_DENS_DECADES", &cfg.t4DensDecades);
+    any |= rdf("LST_T4_GATE_TIGHTEN", &cfg.t4GateTighten);
+    any |= rdi("LST_T4_EMIT_MIN", &cfg.t4EmitMinLayers);
+    any |= rdi("LST_T4_ATTACH_MIN", &cfg.t4AttachMinLayers);
+    if (any)
+      std::printf("[chainenv] T4 class policy resolved: densDelta=%g rho0=%g decades=%g"
+                  " gateTighten=%g emitMin=%d attachMin=%d\n",
+                  cfg.t4DensDelta,
+                  cfg.t4DensRho0,
+                  cfg.t4DensDecades,
+                  cfg.t4GateTighten,
+                  cfg.t4EmitMinLayers,
+                  cfg.t4AttachMinLayers);
+  }
+
   // The value of ChainConfig::degreeCap that means "no cap". It is not a sentinel the code tests
   // for: it is simply larger than any degree a min() can ever see (a degree is bounded by the
   // triplet count, and 2^32 / 21 B = 204 M edge rows is the hard allocation wall long before that),
   // so the capped expressions collapse to the uncapped ones with no branch.
   static constexpr uint32_t kChainDegreeCapOff = 1000000000u;
 
-  // prototype/Stages.h kWeldSweeps.
-  static constexpr int kChainWeldSweeps = 3;
+  // prototype/Stages.h kWeldSweeps was 3. WELD ROUND (L4): this is not a completeness knob, it is
+  // where a TRUNCATION lands. K6a lets an edge compete only while BOTH of its slots are free
+  // (ChainWeld.h), so a node's argmax cannot advance past its own rank-1 edge until some OTHER weld
+  // removes the blocker; K6a/K6b is therefore an iterated mutual-best whose fixed point is the
+  // greedy matching by weld key, and on a jet core it needs 12-20 sweeps to get there (measured:
+  // 32.8% of the slots a true core edge loses are still EMPTY after 3 sweeps, 0.3% after 20).
+  // Running it to that fixed point is monotonically HARMFUL, because the marginal weld's quality
+  // collapses: the measured same-sim purity of the welds a sweep produces is .55 (sweep 1), .31
+  // (sweep 2), .12 (sweep 3), .05 (sweep 4) on jet cores. Deployed on 500 jet tune events, 16
+  // sweeps costs .0164 of core efficiency and adds .0108 of fake, while dropping the THIRD sweep is
+  // a Pareto move: core efficiency .7659 -> .7695 (p = 9.9e-04, paired McNemar), dR < .02
+  // .5074 -> .5169, fake .1317 -> .1271, all eight dR aggregates >= 0, and PU200's seven displaced
+  // bands all neutral-or-better. It needs no density conditioning because it is self-limiting:
+  // where the iteration had already converged the third sweep had nothing to do (PU200 overall
+  // efficiency +.0002, cube50 exactly .00000 on every band). Caveat that rides with the constant:
+  // jet-core (dR < .05) duplicate goes .0313 -> .0345 (p = .017), in a cell we already owe master.
+  static constexpr int kChainWeldSweeps = 2;
   // prototype/K9K10.cc k10AssembleChainTCs: a chain shorter than this emits no TC.
   static constexpr int kChainTCMinLayers = 4;
   // -H 1 is FROZEN: the claim universe is hit rows, not MiniDoublets.

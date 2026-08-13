@@ -249,6 +249,12 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     uint32_t pls;
   };
 
+  // JET ROUND 3 (T4): the resolved stage-A attach length floor. 0 (the shipped value) reads the
+  // frozen kAttachMinLayers, so nothing about the target list changes unless the knob is set.
+  ALPAKA_FN_ACC ALPAKA_FN_INLINE int chainAttachMinLayers(ChainConfig const& cfg) {
+    return (cfg.t4AttachMinLayers > 0) ? cfg.t4AttachMinLayers : kAttachMinLayers;
+  }
+
   // Per-target record, prototype/PixelAttach.cc TargetPre restricted to the chain kind.
   // xs[0..4] are head inputs 7..11 preprocessed; fitKappa and tanLambda stay raw as well because
   // the per-pair features dKappa and dTanLambda are built from them.
@@ -1159,14 +1165,23 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                   uint32_t const* accepted,
                                   uint32_t const* nTargets5,
                                   uint32_t* targets,
-                                  uint32_t* nTargetsAllOut) const {
+                                  uint32_t* nTargetsAllOut,
+                                  ChainConfig cfg) const {
       if (!cms::alpakatools::once_per_grid(acc))
         return;
       uint32_t const nAcc = chains.nAccepted();
       uint32_t n = *nTargets5;
+      // JET ROUND 3 (T4): with t4AttachMinLayers <= 4 the 4-layer chains that clear the stage-A
+      // dcaXY gate are ALREADY in targets[0, nTargets5) as real targets. Appending them again would
+      // score them twice and hand one chain two positions in the contention, so the aux list keeps
+      // exactly the 4-layer chains stage A did NOT take. At the shipped value the second test is
+      // false for every chain and this loop is the original one.
+      bool const auxAll = chainAttachMinLayers(cfg) > 4;
       for (uint32_t ai = 0; ai < nAcc; ++ai) {
         uint32_t const c = accepted[ai];
         if (chains.nLayers()[c] != 4)
+          continue;
+        if (!auxAll && !(chains.dcaXY()[c] >= cfg.attachDcaMax))
           continue;
         targets[n++] = c;
       }
@@ -1268,11 +1283,12 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                   uint32_t* keep,
                                   ChainConfig cfg) const {
       uint32_t const nAcc = chains.nAccepted();
+      int const minL = chainAttachMinLayers(cfg);
       for (uint32_t ai : cms::alpakatools::uniform_elements(acc, nBound)) {
         bool k = false;
         if (ai < nAcc) {
           uint32_t const c = accepted[ai];
-          k = (chains.nLayers()[c] >= kAttachMinLayers) && !(chains.dcaXY()[c] >= cfg.attachDcaMax);
+          k = (chains.nLayers()[c] >= minL) && !(chains.dcaXY()[c] >= cfg.attachDcaMax);
         }
         keep[ai] = k ? 1u : 0u;
       }

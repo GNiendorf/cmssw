@@ -1,0 +1,29 @@
+diff --git a/RecoTracker/LSTCore/interface/ChainConfig.h b/RecoTracker/LSTCore/interface/ChainConfig.h
+--- a/RecoTracker/LSTCore/interface/ChainConfig.h
++++ b/RecoTracker/LSTCore/interface/ChainConfig.h
+@@ -392,8 +392,23 @@
+   // so the capped expressions collapse to the uncapped ones with no branch.
+   static constexpr uint32_t kChainDegreeCapOff = 1000000000u;
+ 
+-  // prototype/Stages.h kWeldSweeps.
+-  static constexpr int kChainWeldSweeps = 3;
++  // prototype/Stages.h kWeldSweeps was 3. WELD ROUND (L4): this is not a completeness knob, it is
++  // where a TRUNCATION lands. K6a lets an edge compete only while BOTH of its slots are free
++  // (ChainWeld.h), so a node's argmax cannot advance past its own rank-1 edge until some OTHER weld
++  // removes the blocker; K6a/K6b is therefore an iterated mutual-best whose fixed point is the
++  // greedy matching by weld key, and on a jet core it needs 12-20 sweeps to get there (measured:
++  // 32.8% of the slots a true core edge loses are still EMPTY after 3 sweeps, 0.3% after 20).
++  // Running it to that fixed point is monotonically HARMFUL, because the marginal weld's quality
++  // collapses: the measured same-sim purity of the welds a sweep produces is .55 (sweep 1), .31
++  // (sweep 2), .12 (sweep 3), .05 (sweep 4) on jet cores. Deployed on 500 jet tune events, 16
++  // sweeps costs .0164 of core efficiency and adds .0108 of fake, while dropping the THIRD sweep is
++  // a Pareto move: core efficiency .7659 -> .7695 (p = 9.9e-04, paired McNemar), dR < .02
++  // .5074 -> .5169, fake .1317 -> .1271, all eight dR aggregates >= 0, and PU200's seven displaced
++  // bands all neutral-or-better. It needs no density conditioning because it is self-limiting:
++  // where the iteration had already converged the third sweep had nothing to do (PU200 overall
++  // efficiency +.0002, cube50 exactly .00000 on every band). Caveat that rides with the constant:
++  // jet-core (dR < .05) duplicate goes .0313 -> .0345 (p = .017), in a cell we already owe master.
++  static constexpr int kChainWeldSweeps = 2;
+   // prototype/K9K10.cc k10AssembleChainTCs: a chain shorter than this emits no TC.
+   static constexpr int kChainTCMinLayers = 4;
+   // -H 1 is FROZEN: the claim universe is hit rows, not MiniDoublets.

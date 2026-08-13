@@ -155,6 +155,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
       // JET ROUND 2 (D): env overrides of the bare-seed retirement bars only. Inert with nothing
       // set (see interface/ChainConfig.h).
       chainConfigRetirementEnv(chainConfig_);
+      // JET ROUND 3 (T4): env overrides of the 4-layer class policy group. Inert with nothing set.
+      chainConfigT4Env(chainConfig_);
       if (ptCut < 0.6f) {
         throw std::invalid_argument("Minimum pT cut must be at least 0.6 GeV. Provided value: " +
                                     std::to_string(ptCut));

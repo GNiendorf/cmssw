@@ -1,0 +1,274 @@
+diff --git a/RecoTracker/LSTCore/interface/ChainConfig.h b/RecoTracker/LSTCore/interface/ChainConfig.h
+index f4d70311203..0fec81eee95 100644
+--- a/RecoTracker/LSTCore/interface/ChainConfig.h
++++ b/RecoTracker/LSTCore/interface/ChainConfig.h
+@@ -280,6 +280,45 @@ namespace lst {
+     float attachPrefDPhi = 0.4f;
+     float attachPrefDTanL = 0.6f;
+ 
++    // ------------------------------------------------------------------------------------------
++    // JET ROUND 3 (T4) -- the 4-LAYER CLASS POLICY. Every default below reproduces the shipped
++    // configuration EXACTLY, so an unset environment is bit-identical (proven, not asserted: the
++    // zero-knob arm is the control).
++    //
++    // The measurement that motivates the group (t4_ref/{price,stage}.py on JPR2's 450-event jet
++    // funnel corpus): the 4-layer class is the SOLE cover of 585 core sims per 450 jet tune events
++    // (+.067 of dR<.05 efficiency, +.047 of pooled jet-core efficiency) and it concentrates in
++    // exactly the sim-pt band where LST master collapses (best-match is 4-layer for .22 / .31 /
++    // .37 of matched sims at 50-100 / 100-300 / >300 GeV). At the same time 677 of 873 stage-e
++    // core sims have a gate-KILLED chain made entirely of their own T3s that is 4 layers long and
++    // sits in the IP branch -- i.e. the 4-layer IP bar, not the weld and not the claim, is what
++    // stands between us and three quarters of the gate stage's budget on jets.
++    //
++    // (1) t4DensDelta LOWERS the branch-0 (4-layer, IP) gate bar by up to t4DensDelta, ramped in
++    //     LOCAL graph occupancy: ChainFeatures column 14, the maximum over the chain's OWN weld
++    //     junctions of degIn * degOut at the junction element. The ramp is
++    //         w = min(1, max(0, log10(1+deg) - log10(1+t4DensRho0)) / t4DensDecades)
++    //     which is identically ZERO at or below t4DensRho0 and continuous above it, so every
++    //     region below that occupancy is bit-identical to the ship BY CONSTRUCTION rather than by
++    //     measurement (PU200 branch-0 chains and both displaced cube guns live decades below the
++    //     jet-core values). It is a CONDITIONING variable, never a rank term.
++    // (2) t4GateTighten is the opposite sign as a single unconditioned number, for PRICING the
++    //     suppression direction. It is added to the 4-layer IP bar and to the NON-far exempt bar;
++    //     the E1-B2 far-dca cell (dcaSplit2 + t4FarMaxResid) keeps its free pass untouched.
++    // (3) t4EmitMinLayers overrides kChainTCMinLayers at the K10 emission flag ONLY, so the claim
++    //     runs identically and the arm isolates "what does the class DELIVER" from "what do its
++    //     hits do to everyone else". 0 = the frozen kChainTCMinLayers.
++    // (4) t4AttachMinLayers overrides kAttachMinLayers in the stage-A target filter, which makes a
++    //     4-layer chain a real attach target (contention, plsBest, delivery) instead of the
++    //     score-only -XC4 aux target it is today. 0 = the frozen kAttachMinLayers. The aux append
++    //     de-duplicates itself against the widened stage-A list (see ChainAttachSelectAux).
++    float t4DensDelta = 0.f;
++    float t4DensRho0 = 1000.f;
++    float t4DensDecades = 1.f;
++    float t4GateTighten = 0.f;
++    int t4EmitMinLayers = 0;
++    int t4AttachMinLayers = 0;
++
+     // ------------------------------------------------------------------------------------------
+     // JET ROUND (M1) -- the per-shared-key incidence degree cap. NOT a physics working point.
+     // ------------------------------------------------------------------------------------------
+@@ -386,6 +425,50 @@ namespace lst {
+                 cfg.dupMutualDelta);
+   }
+ 
++  // JET ROUND 3 (T4): env overrides of the 4-layer class policy group. One binary supplies every
++  // arm of the A/B, which is the only way to prove inertness by BIT-IDENTITY rather than assert it.
++  // With nothing set this function writes nothing and prints nothing.
++  //
++  //   LST_T4_DENS_DELTA    lower the branch-0 (4-layer IP) gate bar by up to this much, ramped in
++  //                        local graph occupancy (0 = off, the shipped value)
++  //   LST_T4_DENS_RHO0     occupancy at which the ramp STARTS (below it: bit-identical to ship)
++  //   LST_T4_DENS_DECADES  ramp width in decades of log10(1 + occupancy)
++  //   LST_T4_GATE_TIGHTEN  add to the 4-layer IP bar and the non-far exempt bar (suppression arm)
++  //   LST_T4_EMIT_MIN      override kChainTCMinLayers at the K10 emission flag
++  //   LST_T4_ATTACH_MIN    override kAttachMinLayers in the stage-A attach target filter
++  inline void chainConfigT4Env(ChainConfig& cfg) {
++    auto rdf = [](char const* name, float* dst) {
++      char const* s = std::getenv(name);
++      if (s == nullptr || *s == '\0')
++        return false;
++      *dst = static_cast<float>(std::atof(s));
++      return true;
++    };
++    auto rdi = [](char const* name, int* dst) {
++      char const* s = std::getenv(name);
++      if (s == nullptr || *s == '\0')
++        return false;
++      *dst = std::atoi(s);
++      return true;
++    };
++    bool any = false;
++    any |= rdf("LST_T4_DENS_DELTA", &cfg.t4DensDelta);
++    any |= rdf("LST_T4_DENS_RHO0", &cfg.t4DensRho0);
++    any |= rdf("LST_T4_DENS_DECADES", &cfg.t4DensDecades);
++    any |= rdf("LST_T4_GATE_TIGHTEN", &cfg.t4GateTighten);
++    any |= rdi("LST_T4_EMIT_MIN", &cfg.t4EmitMinLayers);
++    any |= rdi("LST_T4_ATTACH_MIN", &cfg.t4AttachMinLayers);
++    if (any)
++      std::printf("[chainenv] T4 class policy resolved: densDelta=%g rho0=%g decades=%g"
++                  " gateTighten=%g emitMin=%d attachMin=%d\n",
++                  cfg.t4DensDelta,
++                  cfg.t4DensRho0,
++                  cfg.t4DensDecades,
++                  cfg.t4GateTighten,
++                  cfg.t4EmitMinLayers,
++                  cfg.t4AttachMinLayers);
++  }
++
+   // The value of ChainConfig::degreeCap that means "no cap". It is not a sentinel the code tests
+   // for: it is simply larger than any degree a min() can ever see (a degree is bounded by the
+   // triplet count, and 2^32 / 21 B = 204 M edge rows is the hard allocation wall long before that),
+diff --git a/RecoTracker/LSTCore/src/alpaka/ChainArbitrate.h b/RecoTracker/LSTCore/src/alpaka/ChainArbitrate.h
+index 4463b8683d7..e636e4c5c1d 100644
+--- a/RecoTracker/LSTCore/src/alpaka/ChainArbitrate.h
++++ b/RecoTracker/LSTCore/src/alpaka/ChainArbitrate.h
+@@ -949,11 +949,19 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+   // K10, first half: the output row of every accepted chain long enough to emit a TC.
+ 
+   struct ChainRowFlags {
+-    ALPAKA_FN_ACC void operator()(
+-        Acc1D const& acc, ChainsConst chains, uint32_t const* accepted, uint32_t nBound, uint32_t* keep) const {
++    ALPAKA_FN_ACC void operator()(Acc1D const& acc,
++                                  ChainsConst chains,
++                                  uint32_t const* accepted,
++                                  uint32_t nBound,
++                                  uint32_t* keep,
++                                  ChainConfig cfg) const {
+       uint32_t const nAcc = chains.nAccepted();
++      // JET ROUND 3 (T4): t4EmitMinLayers suppresses a whole length class at EMISSION while the
++      // claim those chains just won stays bit-identical -- which is what separates "what does the
++      // class DELIVER" from "what do its hits cost everyone else". 0 = frozen kChainTCMinLayers.
++      int const minL = (cfg.t4EmitMinLayers > 0) ? cfg.t4EmitMinLayers : kChainTCMinLayers;
+       for (uint32_t ai : cms::alpakatools::uniform_elements(acc, nBound))
+-        keep[ai] = (ai < nAcc && chains.nLayers()[accepted[ai]] >= kChainTCMinLayers) ? 1u : 0u;
++        keep[ai] = (ai < nAcc && chains.nLayers()[accepted[ai]] >= minL) ? 1u : 0u;
+     }
+   };
+ 
+diff --git a/RecoTracker/LSTCore/src/alpaka/ChainAttach.h b/RecoTracker/LSTCore/src/alpaka/ChainAttach.h
+index bac536ddf3a..40140cf0b3f 100644
+--- a/RecoTracker/LSTCore/src/alpaka/ChainAttach.h
++++ b/RecoTracker/LSTCore/src/alpaka/ChainAttach.h
+@@ -249,6 +249,12 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+     uint32_t pls;
+   };
+ 
++  // JET ROUND 3 (T4): the resolved stage-A attach length floor. 0 (the shipped value) reads the
++  // frozen kAttachMinLayers, so nothing about the target list changes unless the knob is set.
++  ALPAKA_FN_ACC ALPAKA_FN_INLINE int chainAttachMinLayers(ChainConfig const& cfg) {
++    return (cfg.t4AttachMinLayers > 0) ? cfg.t4AttachMinLayers : kAttachMinLayers;
++  }
++
+   // Per-target record, prototype/PixelAttach.cc TargetPre restricted to the chain kind.
+   // xs[0..4] are head inputs 7..11 preprocessed; fitKappa and tanLambda stay raw as well because
+   // the per-pair features dKappa and dTanLambda are built from them.
+@@ -1159,15 +1165,24 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+                                   uint32_t const* accepted,
+                                   uint32_t const* nTargets5,
+                                   uint32_t* targets,
+-                                  uint32_t* nTargetsAllOut) const {
++                                  uint32_t* nTargetsAllOut,
++                                  ChainConfig cfg) const {
+       if (!cms::alpakatools::once_per_grid(acc))
+         return;
+       uint32_t const nAcc = chains.nAccepted();
+       uint32_t n = *nTargets5;
++      // JET ROUND 3 (T4): with t4AttachMinLayers <= 4 the 4-layer chains that clear the stage-A
++      // dcaXY gate are ALREADY in targets[0, nTargets5) as real targets. Appending them again would
++      // score them twice and hand one chain two positions in the contention, so the aux list keeps
++      // exactly the 4-layer chains stage A did NOT take. At the shipped value the second test is
++      // false for every chain and this loop is the original one.
++      bool const auxAll = chainAttachMinLayers(cfg) > 4;
+       for (uint32_t ai = 0; ai < nAcc; ++ai) {
+         uint32_t const c = accepted[ai];
+         if (chains.nLayers()[c] != 4)
+           continue;
++        if (!auxAll && !(chains.dcaXY()[c] >= cfg.attachDcaMax))
++          continue;
+         targets[n++] = c;
+       }
+       *nTargetsAllOut = n;
+@@ -1268,11 +1283,12 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+                                   uint32_t* keep,
+                                   ChainConfig cfg) const {
+       uint32_t const nAcc = chains.nAccepted();
++      int const minL = chainAttachMinLayers(cfg);
+       for (uint32_t ai : cms::alpakatools::uniform_elements(acc, nBound)) {
+         bool k = false;
+         if (ai < nAcc) {
+           uint32_t const c = accepted[ai];
+-          k = (chains.nLayers()[c] >= kAttachMinLayers) && !(chains.dcaXY()[c] >= cfg.attachDcaMax);
++          k = (chains.nLayers()[c] >= minL) && !(chains.dcaXY()[c] >= cfg.attachDcaMax);
+         }
+         keep[ai] = k ? 1u : 0u;
+       }
+diff --git a/RecoTracker/LSTCore/src/alpaka/ChainGate.h b/RecoTracker/LSTCore/src/alpaka/ChainGate.h
+index 00b7f7b76b6..a50d45857f3 100644
+--- a/RecoTracker/LSTCore/src/alpaka/ChainGate.h
++++ b/RecoTracker/LSTCore/src/alpaka/ChainGate.h
+@@ -482,6 +482,28 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+     }
+   };
+ 
++  // JET ROUND 3 (T4): the density-conditioned relaxation of the 4-layer IP gate bar, in bar units.
++  //
++  // `degProd` is ChainFeatures column 14 straight off the chain row: the maximum over the chain's
++  // OWN weld junctions of degIn * degOut at the junction element. It is a LOCAL graph observable --
++  // the crowding of the region this chain was welded in -- and carries nothing event-level and
++  // nothing that identifies a sample. It is used here purely as a CONDITIONING variable: it decides
++  // how much of a fixed relaxation applies, never how a chain ranks.
++  //
++  // The ramp is identically zero at or below cfg.t4DensRho0 and saturates cfg.t4DensDecades decades
++  // above it, so a region whose occupancy sits below rho0 takes the frozen bar BIT FOR BIT. That is
++  // what makes the sparse-region invariance a property of the code rather than of a measurement.
++  template <typename TAcc>
++  ALPAKA_FN_ACC ALPAKA_FN_INLINE float chainT4DensRelax(TAcc const& acc, ChainConfig const& cfg, float degProd) {
++    if (!(cfg.t4DensDelta > 0.f))
++      return 0.f;
++    float const x = alpaka::math::log10(acc, 1.f + degProd) - alpaka::math::log10(acc, 1.f + cfg.t4DensRho0);
++    if (!(x > 0.f))
++      return 0.f;
++    float const w = (cfg.t4DensDecades > 0.f) ? chainMinf(x / cfg.t4DensDecades, 1.f) : 1.f;
++    return cfg.t4DensDelta * w;
++  }
++
+   // ------------------------------------------------------------------------------------------
+   // K7b + K7c, fused. The head is 25 -> 32 -> 32 -> 3 with the kSrcCol gather (column -1 = the
+   // chain dcaXY) and NO softmax: every downstream decision is on the logit MARGINS.
+@@ -593,13 +615,16 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+             // -FR: the cell also requires a GOOD FIT (feature 16 = maxXyResid), so it selects
+             // "displaced AND well measured" rather than merely "badly fitted". Default 1e9 = off.
+             bool const farCell = dca >= cfg.dcaSplit2 && chains.features()[c][16] <= cfg.t4FarMaxResid;
+-            float const bar4D = farCell ? cfg.m3Theta4D2 : (cfg.m3Theta4D + d4D);
++            // JET ROUND 3 (T4): the suppression-arm offset reaches the NON-far exempt bar only --
++            // the E1-B2 far-dca cell keeps its free pass, which is a crown-jewel semantic.
++            float const bar4D = farCell ? cfg.m3Theta4D2 : (cfg.m3Theta4D + d4D + cfg.t4GateTighten);
+             if (mD < bar4D) {
+               score -= cfg.gateKill;
+               flags |= kChainFlagKilled;
+             }
+             flags |= kChainFlagExempt;
+-          } else if (mX < cfg.m3Theta4 + d4) {
++          } else if (mX < cfg.m3Theta4 + d4 + cfg.t4GateTighten -
++                              chainT4DensRelax(acc, cfg, chains.features()[c][14])) {
+             score -= cfg.gateKill;
+             flags |= kChainFlagKilled;
+           }
+diff --git a/RecoTracker/LSTCore/src/alpaka/LSTEvent.dev.cc b/RecoTracker/LSTCore/src/alpaka/LSTEvent.dev.cc
+index 98640b19c4b..792e277d9d1 100644
+--- a/RecoTracker/LSTCore/src/alpaka/LSTEvent.dev.cc
++++ b/RecoTracker/LSTCore/src/alpaka/LSTEvent.dev.cc
+@@ -1904,7 +1904,8 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
+                         chainsDC_->const_view(),
+                         accepted_buf.data(),
+                         nChainCount_,
+-                        rowKeep_buf.data());
++                        rowKeep_buf.data(),
++                        chainConfig_);
+     chainScanTimed(timing, __LINE__, queue_,
+                         chainScan_workDiv,
+                         ChainSegPrefix{},
+@@ -2363,7 +2364,8 @@ void LSTEvent::attachPixels(unsigned int nHits,
+                       accepted,
+                       nTargets_buf_d.data(),
+                       targets_buf.data(),
+-                      nTgtAll_buf_d.data());
++                      nTgtAll_buf_d.data(),
++                      chainConfig_);
+   auto const a0c = stamp();
+   auto nTargets_buf_h = cms::alpakatools::make_host_buffer<uint32_t>(queue_);
+   auto nTgtAll_buf_h = cms::alpakatools::make_host_buffer<uint32_t>(queue_);
+diff --git a/RecoTracker/LSTCore/src/alpaka/LSTEvent.h b/RecoTracker/LSTCore/src/alpaka/LSTEvent.h
+index 0fafb622ac5..762136c4459 100644
+--- a/RecoTracker/LSTCore/src/alpaka/LSTEvent.h
++++ b/RecoTracker/LSTCore/src/alpaka/LSTEvent.h
+@@ -155,6 +155,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+       // JET ROUND 2 (D): env overrides of the bare-seed retirement bars only. Inert with nothing
+       // set (see interface/ChainConfig.h).
+       chainConfigRetirementEnv(chainConfig_);
++      // JET ROUND 3 (T4): env overrides of the 4-layer class policy group. Inert with nothing set.
++      chainConfigT4Env(chainConfig_);
+       if (ptCut < 0.6f) {
+         throw std::invalid_argument("Minimum pT cut must be at least 0.6 GeV. Provided value: " +
+                                     std::to_string(ptCut));

@@ -138,7 +138,25 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         float const score = chains.score()[c];
         int const nL = chains.nLayers()[c];
 
-        chains.orderKey()[c] = score - cfg.orderAlpha * chainMaxf(0.f, cfg.orderHinge - chains.marginX()[c]);
+        // KEY (jet round 3). The -WZ band's |eta(innermost T3)| is HOISTED above the key so the key
+        // can be conditioned on it at zero extra cost; block (d) below consumes the same value.
+        // With orderAlphaCentral <= 0 (the shipped default) alphaEff == cfg.orderAlpha and this
+        // whole block is the frozen expression bit for bit.
+        int const nNodesC = chains.nNodes()[c];
+        float aEta = 0.f;
+        if (nNodesC > 0) {
+          uint32_t const t3In = nodes.tripletIndex()[items.nodeItems()[off]];
+          unsigned int m0, m1, m2;
+          chainNodeMDs(triplets, segments, t3In, m0, m1, m2);
+          aEta = alpaka::math::abs(acc, chainT3Eta(acc, mds, m2));
+        }
+        float alphaEff = cfg.orderAlpha;
+        if (cfg.orderAlphaCentral > 0.f && cfg.orderEtaRampHi > cfg.orderEtaRampLo) {
+          float const t = (aEta - cfg.orderEtaRampLo) / (cfg.orderEtaRampHi - cfg.orderEtaRampLo);
+          float const ramp = chainMaxf(0.f, chainMinf(1.f, t));
+          alphaEff = cfg.orderAlpha + (cfg.orderAlphaCentral - cfg.orderAlpha) * (1.f - ramp);
+        }
+        chains.orderKey()[c] = score - alphaEff * chainMaxf(0.f, cfg.orderHinge - chains.marginX()[c]);
 
         bool const exempt = (chains.flags()[c] & kChainFlagExempt) != 0u;
         float const thr =
@@ -153,18 +171,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         // form: kChainClaimCandidate is 0x1, so `(claim & bit) != 0` is exactly `score >= thr`.
         candKeep[c] = (score >= thr) ? 1u : 0u;
 
-        // (d) the -WE / -WZ band tolerances
-        bool altBand = false;
-        {
-          int const nN = chains.nNodes()[c];
-          if (nN > 0) {
-            uint32_t const t3In = nodes.tripletIndex()[items.nodeItems()[off]];
-            unsigned int m0, m1, m2;
-            chainNodeMDs(triplets, segments, t3In, m0, m1, m2);
-            float const aEta = alpaka::math::abs(acc, chainT3Eta(acc, mds, m2));
-            altBand = (aEta >= cfg.braidAltEta) && (static_cast<float>(nN) <= cfg.braidAltMaxNodes);
-          }
-        }
+        // (d) the -WE / -WZ band tolerances. aEta is the value hoisted above the key; the nN > 0
+        // guard is preserved exactly, so a node-less chain still takes the global band as before.
+        bool const altBand = (nNodesC > 0) && (aEta >= cfg.braidAltEta) &&
+                             (static_cast<float>(nNodesC) <= cfg.braidAltMaxNodes);
         bandItems[c] = (altBand && maxItemsAlt != -2) ? maxItemsAlt : maxItems;
         bandFrac[c] = (altBand && cfg.claimFracAlt > 0.f) ? cfg.claimFracAlt : cfg.maxClaimedFrac;
         bandBraid[c] = (altBand && cfg.braidFracAlt > 0.f) ? cfg.braidFracAlt : cfg.braidFrac;
@@ -949,11 +959,19 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
   // K10, first half: the output row of every accepted chain long enough to emit a TC.
 
   struct ChainRowFlags {
-    ALPAKA_FN_ACC void operator()(
-        Acc1D const& acc, ChainsConst chains, uint32_t const* accepted, uint32_t nBound, uint32_t* keep) const {
+    ALPAKA_FN_ACC void operator()(Acc1D const& acc,
+                                  ChainsConst chains,
+                                  uint32_t const* accepted,
+                                  uint32_t nBound,
+                                  uint32_t* keep,
+                                  ChainConfig cfg) const {
       uint32_t const nAcc = chains.nAccepted();
+      // JET ROUND 3 (T4): t4EmitMinLayers suppresses a whole length class at EMISSION while the
+      // claim those chains just won stays bit-identical -- which is what separates "what does the
+      // class DELIVER" from "what do its hits cost everyone else". 0 = frozen kChainTCMinLayers.
+      int const minL = (cfg.t4EmitMinLayers > 0) ? cfg.t4EmitMinLayers : kChainTCMinLayers;
       for (uint32_t ai : cms::alpakatools::uniform_elements(acc, nBound))
-        keep[ai] = (ai < nAcc && chains.nLayers()[accepted[ai]] >= kChainTCMinLayers) ? 1u : 0u;
+        keep[ai] = (ai < nAcc && chains.nLayers()[accepted[ai]] >= minL) ? 1u : 0u;
     }
   };
 

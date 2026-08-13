@@ -149,6 +149,43 @@ namespace {
     return (env <= 0) ? kChainDegreeCapOff : static_cast<uint32_t>(env);
   }
 
+  // ------------------------------------------------------------------------------------------
+  // JET ROUND 3 (KEY). The two literals of the K9 order key, as env overrides, so ONE binary
+  // supplies every arm of the A/B and no comparison can be a build artefact.
+  //
+  //   orderKey = score - orderAlpha * max(0, orderHinge - marginX)      (ChainArbitrate.h:141)
+  //
+  // marginX is the retrained 3-class gate's own margin, and it is now the best single core-purity
+  // column the chain carries: on the population the claim actually arbitrates (candidates sharing
+  // >= 3 claim hits with a core-true candidate, 200 jet tune events) it reaches AUC .9639 for
+  // core-true-vs-fake, against .717 when orderAlpha = 10 was chosen, so the frozen weight
+  // under-uses it. Both overrides are ABSENT-MEANS-CONFIGURED: an unset environment reproduces
+  // the shipped key bit for bit. A negative value also means "use the configured literal".
+  float chainOrderAlpha(float configured) {
+    static double const env = []() {
+      char const* s = std::getenv("LST_CHAIN_ORDER_ALPHA");
+      return (s == nullptr || *s == '\0') ? -1.0 : std::atof(s);
+    }();
+    return (env < 0.0) ? configured : static_cast<float>(env);
+  }
+
+  float chainOrderHinge(float configured) {
+    static double const env = []() {
+      char const* s = std::getenv("LST_CHAIN_ORDER_HINGE");
+      return (s == nullptr || *s == '\0') ? -1.0 : std::atof(s);
+    }();
+    return (env < 0.0) ? configured : static_cast<float>(env);
+  }
+
+  // The eta-conditioned central weight and its ramp (ChainConfig::orderAlphaCentral and friends).
+  float chainOrderEnvF(char const* name, float configured) {
+    char const* s = std::getenv(name);
+    if (s == nullptr || *s == '\0')
+      return configured;
+    double const v = std::atof(s);
+    return (v < 0.0) ? configured : static_cast<float>(v);
+  }
+
   // An overflowing event is SKIPPED (loudly) rather than fatal, because one unallocatable event in
   // a thousand must not take the other 999 with it -- 9.0% of jet events are over the GPU ceiling
   // and the process currently dies on the first of them. This makes the failure a hard error again
@@ -1686,6 +1723,29 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
   auto bandItems_buf = cms::alpakatools::make_device_buffer<int32_t[]>(queue_, nChainCount_);
   auto bandFrac_buf = cms::alpakatools::make_device_buffer<float[]>(queue_, nChainCount_);
   auto bandBraid_buf = cms::alpakatools::make_device_buffer<float[]>(queue_, nChainCount_);
+  // KEY (jet round 3): the ONLY thing this copy changes is the order key's two literals, and only
+  // when the environment names them. ChainClaimPrep is the sole reader of orderAlpha/orderHinge in
+  // the whole tree, so the override cannot leak into any other stage.
+  ChainConfig cfgK9 = chainConfig_;
+  cfgK9.orderAlpha = chainOrderAlpha(chainConfig_.orderAlpha);
+  cfgK9.orderHinge = chainOrderHinge(chainConfig_.orderHinge);
+  cfgK9.orderAlphaCentral = chainOrderEnvF("LST_CHAIN_ORDER_ALPHA_CENTRAL", chainConfig_.orderAlphaCentral);
+  cfgK9.orderEtaRampLo = chainOrderEnvF("LST_CHAIN_ORDER_ETA_LO", chainConfig_.orderEtaRampLo);
+  cfgK9.orderEtaRampHi = chainOrderEnvF("LST_CHAIN_ORDER_ETA_HI", chainConfig_.orderEtaRampHi);
+  if (cfgK9.orderAlpha != chainConfig_.orderAlpha || cfgK9.orderHinge != chainConfig_.orderHinge ||
+      cfgK9.orderAlphaCentral != chainConfig_.orderAlphaCentral ||
+      cfgK9.orderEtaRampLo != chainConfig_.orderEtaRampLo ||
+      cfgK9.orderEtaRampHi != chainConfig_.orderEtaRampHi) {
+    static bool once = false;
+    if (!once) {
+      once = true;
+      printf("[CHAIN KEY] order key override ON: orderAlpha=%g orderHinge=%g alphaCentral=%g eta[%g,%g]"
+             " (shipped %g / %g / %g / %g / %g)\n",
+             cfgK9.orderAlpha, cfgK9.orderHinge, cfgK9.orderAlphaCentral, cfgK9.orderEtaRampLo,
+             cfgK9.orderEtaRampHi, chainConfig_.orderAlpha, chainConfig_.orderHinge,
+             chainConfig_.orderAlphaCentral, chainConfig_.orderEtaRampLo, chainConfig_.orderEtaRampHi);
+    }
+  }
   alpaka::exec<Acc1D>(queue_,
                       chainFlat_workDiv,
                       ChainClaimPrep{},
@@ -1700,7 +1760,7 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
                       bandItems_buf.data(),
                       bandFrac_buf.data(),
                       bandBraid_buf.data(),
-                      chainConfig_);
+                      cfgK9);
   auto const t2 = stamp();
 
   // K9a / K9b / K9c: pre-claim, greedy claim, braid, as conflict-free rounds (see ChainArbitrate.h).
@@ -1904,7 +1964,8 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
                         chainsDC_->const_view(),
                         accepted_buf.data(),
                         nChainCount_,
-                        rowKeep_buf.data());
+                        rowKeep_buf.data(),
+                        chainConfig_);
     chainScanTimed(timing, __LINE__, queue_,
                         chainScan_workDiv,
                         ChainSegPrefix{},
@@ -2363,7 +2424,8 @@ void LSTEvent::attachPixels(unsigned int nHits,
                       accepted,
                       nTargets_buf_d.data(),
                       targets_buf.data(),
-                      nTgtAll_buf_d.data());
+                      nTgtAll_buf_d.data(),
+                      chainConfig_);
   auto const a0c = stamp();
   auto nTargets_buf_h = cms::alpakatools::make_host_buffer<uint32_t>(queue_);
   auto nTgtAll_buf_h = cms::alpakatools::make_host_buffer<uint32_t>(queue_);

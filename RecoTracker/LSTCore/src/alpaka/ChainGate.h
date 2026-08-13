@@ -482,6 +482,28 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     }
   };
 
+  // JET ROUND 3 (T4): the density-conditioned relaxation of the 4-layer IP gate bar, in bar units.
+  //
+  // `degProd` is ChainFeatures column 14 straight off the chain row: the maximum over the chain's
+  // OWN weld junctions of degIn * degOut at the junction element. It is a LOCAL graph observable --
+  // the crowding of the region this chain was welded in -- and carries nothing event-level and
+  // nothing that identifies a sample. It is used here purely as a CONDITIONING variable: it decides
+  // how much of a fixed relaxation applies, never how a chain ranks.
+  //
+  // The ramp is identically zero at or below cfg.t4DensRho0 and saturates cfg.t4DensDecades decades
+  // above it, so a region whose occupancy sits below rho0 takes the frozen bar BIT FOR BIT. That is
+  // what makes the sparse-region invariance a property of the code rather than of a measurement.
+  template <typename TAcc>
+  ALPAKA_FN_ACC ALPAKA_FN_INLINE float chainT4DensRelax(TAcc const& acc, ChainConfig const& cfg, float degProd) {
+    if (!(cfg.t4DensDelta > 0.f))
+      return 0.f;
+    float const x = alpaka::math::log10(acc, 1.f + degProd) - alpaka::math::log10(acc, 1.f + cfg.t4DensRho0);
+    if (!(x > 0.f))
+      return 0.f;
+    float const w = (cfg.t4DensDecades > 0.f) ? chainMinf(x / cfg.t4DensDecades, 1.f) : 1.f;
+    return cfg.t4DensDelta * w;
+  }
+
   // ------------------------------------------------------------------------------------------
   // K7b + K7c, fused. The head is 25 -> 32 -> 32 -> 3 with the kSrcCol gather (column -1 = the
   // chain dcaXY) and NO softmax: every downstream decision is on the logit MARGINS.
@@ -593,13 +615,16 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
             // -FR: the cell also requires a GOOD FIT (feature 16 = maxXyResid), so it selects
             // "displaced AND well measured" rather than merely "badly fitted". Default 1e9 = off.
             bool const farCell = dca >= cfg.dcaSplit2 && chains.features()[c][16] <= cfg.t4FarMaxResid;
-            float const bar4D = farCell ? cfg.m3Theta4D2 : (cfg.m3Theta4D + d4D);
+            // JET ROUND 3 (T4): the suppression-arm offset reaches the NON-far exempt bar only --
+            // the E1-B2 far-dca cell keeps its free pass, which is a crown-jewel semantic.
+            float const bar4D = farCell ? cfg.m3Theta4D2 : (cfg.m3Theta4D + d4D + cfg.t4GateTighten);
             if (mD < bar4D) {
               score -= cfg.gateKill;
               flags |= kChainFlagKilled;
             }
             flags |= kChainFlagExempt;
-          } else if (mX < cfg.m3Theta4 + d4) {
+          } else if (mX < cfg.m3Theta4 + d4 + cfg.t4GateTighten -
+                              chainT4DensRelax(acc, cfg, chains.features()[c][14])) {
             score -= cfg.gateKill;
             flags |= kChainFlagKilled;
           }
