@@ -458,6 +458,21 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         float const ae = attachFabs(o.eta);
         o.attachThr = (ae < 1.1f) ? cfg.attachTheta : ((ae < 1.7f) ? cfg.attachThetaT : cfg.attachThetaE);
         o.xcThr = (ae < 1.1f) ? cfg.xcTheta : ((ae < 1.7f) ? cfg.xcThetaT : cfg.xcThetaE);
+        // JET ROUND 2 (D) -- REGION-CONDITIONED SEED RETIREMENT. G's [G 21:05] localization puts the
+        // gate arm's ADDED duplicates at 97% |eta| >= 1.1, 100% pt < 3 GeV, in (chain TC, bare pLS)
+        // pairs; a GLOBAL loosening of this same bar was measured to cost most of its efficiency in
+        // the barrel and at high pt, where it buys none of that population ([D 21:45] section 2).
+        // So the bar is lowered ONLY there, with a CONTINUOUS linear ramp in pt (weight 1 at pt -> 0,
+        // 0 at the ceiling) so the rule has no pt cliff. Conditioning is on LOCAL per-seed physical
+        // observables only -- the seed's own |eta| and pt -- never on anything event- or
+        // sample-level. The |eta| >= 1.1 leg introduces no NEW discontinuity: it is the same band
+        // edge the shipped xcTheta / xcThetaT bars already switch on. dupXcDelta <= 0 is OFF, which
+        // is the shipped value, and the barrel and the pt >= dupXcPtMax population are then
+        // untouched BY CONSTRUCTION.
+        if (cfg.dupXcDelta > 0.f && ae >= 1.1f && pt < cfg.dupXcPtMax) {
+          float const w = 1.f - pt / cfg.dupXcPtMax;
+          o.xcThr -= cfg.dupXcDelta * w;
+        }
         o.isQuad = pixelSeeds.isQuad()[p] ? 1u : 0u;
         o.cx = pixelSegments.circleCenterX()[p];
         o.cy = pixelSegments.circleCenterY()[p];
@@ -909,6 +924,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                   uint32_t const* offsets,
                                   AttachPlsPre const* items,
                                   uint64_t* tgtKey,
+                                  uint64_t* tgtKeyPre,
                                   uint32_t* plsBest,
                                   ChainXcPair* xcPairs,
                                   uint32_t* xcCursor,
@@ -953,6 +969,14 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         AttachTargetPre const cp = tgt[t];
         int32_t bestPls = -1;
         float bestLogit = kAttachNoLogit;
+        // JET ROUND 2 (D) -- MUTUAL-BEST RETIREMENT. The PRE-THRESHOLD argmax of the same walk:
+        // the seed this target likes best whether or not the pair reaches the DELIVERY margin.
+        // Retirement is a strictly weaker claim than delivery ("this seed's track is already this
+        // chain's track") which is why it may live below that margin; the mutual test in
+        // ChainAttachUnpackBest is what makes it safe to use. Inert unless cfg.dupMutualDelta >= 0.
+        int32_t bestPrePls = -1;
+        float bestPreLogit = kAttachNoLogit;
+        float bestPreThr = 0.f;
         uint32_t nCand = 0, nScored = 0, nDup = 0;
         int nb = 0;
 
@@ -985,6 +1009,12 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
               } else {
                 alpaka::atomicAdd(acc, &stats[11], 1u, alpaka::hierarchy::Threads{});  // overflow census
               }
+            }
+            if (!is4L && cfg.dupMutualDelta >= 0.f &&
+                (bestPrePls < 0 || lo > bestPreLogit || (lo == bestPreLogit && p < bestPrePls))) {
+              bestPrePls = p;
+              bestPreLogit = lo;
+              bestPreThr = pq.attachThr;  // this pair's OWN banded margin, for the floor below
             }
             if (lo < pq.attachThr)
               continue;  // the banded -a / -a2 / -a3 delivery margin (A11)
@@ -1050,6 +1080,15 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                             &tgtKey[t],
                             attachContendKey(bestLogit, static_cast<uint32_t>(bestPls)),
                             alpaka::hierarchy::Blocks{});
+        // The same packed-key reduction for the pre-threshold pick, with the FLOOR applied to each
+        // slice's own local winner: a slice whose local best is below its floor writes nothing,
+        // and the global argmax (>= every local best) still wins the atomicMax if it passed.
+        if (tgtKeyPre != nullptr && cfg.dupMutualDelta >= 0.f && bestPrePls >= 0 &&
+            bestPreLogit >= bestPreThr - cfg.dupMutualDelta)
+          alpaka::atomicMax(acc,
+                            &tgtKeyPre[t],
+                            attachContendKey(bestPreLogit, static_cast<uint32_t>(bestPrePls)),
+                            alpaka::hierarchy::Blocks{});
         alpaka::atomicAdd(acc, &stats[1], nCand, alpaka::hierarchy::Threads{});
         alpaka::atomicAdd(acc, &stats[2], nScored, alpaka::hierarchy::Threads{});
         alpaka::atomicAdd(acc, &stats[10], nDup, alpaka::hierarchy::Threads{});
@@ -1076,8 +1115,26 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                   int32_t* tgtPls,
                                   float* tgtLogit,
                                   uint32_t nTargets,
-                                  uint32_t* stats) const {
+                                  uint32_t* stats,
+                                  uint64_t const* tgtKeyPre = nullptr,
+                                  uint32_t const* plsBest = nullptr,
+                                  uint8_t* plsMutual = nullptr,
+                                  uint32_t nPls = 0u) const {
       for (uint32_t t : cms::alpakatools::uniform_elements(acc, nTargets)) {
+        // JET ROUND 2 (D). MUTUAL BEST, decided here because both halves are final: tgtKeyPre[t] is
+        // THIS target's pre-threshold argmax pair and plsBest[p] is the max logit any target scored
+        // for p, both in the same chainOrderFloat encoding, so the equality is exact integer.
+        // A mutual pair means "each is the other's best", which a bar cannot express -- and a bar is
+        // what admits a seed whose own track lies elsewhere (measured: [D 21:45]).
+        if (plsMutual != nullptr && tgtKeyPre != nullptr && plsBest != nullptr) {
+          uint64_t const kp = tgtKeyPre[t];
+          if (kp != 0u) {
+            uint32_t const p = 0xFFFFFFFFu - static_cast<uint32_t>(kp & 0xFFFFFFFFu);
+            uint32_t const key = static_cast<uint32_t>(kp >> 32);
+            if (p < nPls && plsBest[p] == key)
+              plsMutual[p] = 1u;
+          }
+        }
         uint64_t const k = tgtKey[t];
         if (k == 0u) {
           tgtPls[t] = -1;

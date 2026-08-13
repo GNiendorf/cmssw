@@ -1827,12 +1827,15 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
   auto xcPairs_buf = cms::alpakatools::make_device_buffer<ChainXcPair[]>(queue_, kXcPairCap);
   auto xcCursor_buf = cms::alpakatools::make_device_buffer<uint32_t>(queue_);
   auto xcRetired_buf = cms::alpakatools::make_device_buffer<uint8_t[]>(queue_, nPls);
+  // JET ROUND 2 (D): the mutual-best retirement flag, one byte per pLS row.
+  auto plsMutual_buf = cms::alpakatools::make_device_buffer<uint8_t[]>(queue_, nPls);
   alpaka::memset(queue_, plsOwned_buf, 0u);
   alpaka::memset(queue_, plsBestChain_buf, 0u);  // orderFloat(-inf) == 0
   alpaka::memset(queue_, plsBestT3_buf, 0u);
   alpaka::memset(queue_, rdHashKey_buf, 0xFF);  // chainattach::kSeedHashEmpty everywhere
   alpaka::memset(queue_, xcCursor_buf, 0u);
   alpaka::memset(queue_, xcRetired_buf, 0u);
+  alpaka::memset(queue_, plsMutual_buf, 0u);
   if (pixelSize_ > 0)
     alpaka::exec<Acc1D>(queue_,
                         chainFlat_workDiv,
@@ -1857,7 +1860,8 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
                rdHashVal_buf.data(),
                xcPairs_buf.data(),
                xcCursor_buf.data(),
-               kXcPairCap);
+               kXcPairCap,
+               plsMutual_buf.data());
 
   // DEGENERATE PATH: attachPixels builds the shared grid, but it bails out before that when no
   // 5+ layer chain target was accepted (or there is no pLS). Stage B still has its own targets on
@@ -2138,6 +2142,7 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
                         plsBestChain_buf.data(),
                         plsBestT3_buf.data(),
                         xcRetired_buf.data(),
+                        (chainConfig_.dupMutualDelta >= 0.f) ? plsMutual_buf.data() : nullptr,
                         pixelSize_,
                         keep_buf.data(),
                         class_buf.data(),
@@ -2287,7 +2292,8 @@ void LSTEvent::attachPixels(unsigned int nHits,
                             int32_t* hashVal,
                             ChainXcPair* xcPairs,
                             uint32_t* xcCursor,
-                            uint32_t xcCap) {
+                            uint32_t xcCap,
+                            uint8_t* plsMutual) {
   // Chain-tracking phase P2.4 (port map section 5, K8a-K8c) at the CHAINFINAL2 flags
   // (-A 4 -a 5.0 -a2 5.0 -a3 6.0 -RT5 1 -RT3 1 -RPS 1 -RPSA 5.5 -RD 1 -D4 1e9
   // -XC 3 -XC4 1). Reference: prototype/PixelAttach.cc, prototype/AttachDelivery.cc
@@ -2407,8 +2413,12 @@ void LSTEvent::attachPixels(unsigned int nHits,
   auto tgtPls_buf = cms::alpakatools::make_device_buffer<int32_t[]>(queue_, nTargets);
   auto tgtLogit_buf = cms::alpakatools::make_device_buffer<float[]>(queue_, nTargets);
   auto tgtKey_buf = cms::alpakatools::make_device_buffer<uint64_t[]>(queue_, nTargets);
+  // JET ROUND 2 (D): the pre-threshold argmax key, for the mutual-best retirement test. 8 B per
+  // target (~10 kB at PU200) and it is never written unless cfg.dupMutualDelta >= 0.
+  auto tgtKeyPre_buf = cms::alpakatools::make_device_buffer<uint64_t[]>(queue_, nTargets);
   alpaka::memset(queue_, stats_buf, 0u);
   alpaka::memset(queue_, tgtKey_buf, 0);  // key 0 = "no pair reached the margin"
+  alpaka::memset(queue_, tgtKeyPre_buf, 0);
   // The device slice count (see ChainAttachScore): nS threads cooperate on one target's candidate
   // walk, so the launch has to be nTargets * nS wide instead of nTargets wide. Host backends run
   // one thread per target and ignore it.
@@ -2429,6 +2439,7 @@ void LSTEvent::attachPixels(unsigned int nHits,
                       offsets_buf.data(),
                       items_buf.data(),
                       tgtKey_buf.data(),
+                      tgtKeyPre_buf.data(),
                       plsBestChain,
                       xcPairs,
                       xcCursor,
@@ -2444,7 +2455,11 @@ void LSTEvent::attachPixels(unsigned int nHits,
                       tgtPls_buf.data(),
                       tgtLogit_buf.data(),
                       nTargets,
-                      stats_buf.data());
+                      stats_buf.data(),
+                      tgtKeyPre_buf.data(),
+                      static_cast<uint32_t const*>(plsBestChain),
+                      (chainConfig_.dupMutualDelta >= 0.f) ? plsMutual : nullptr,
+                      pixelSize_);
   auto const a3 = stamp();
 
   // K8c: contention and the -RD seed dedup.

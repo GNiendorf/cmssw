@@ -152,6 +152,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
           pixelMapping_(*deviceESData->pixelMapping),
           endcapGeometry_(*deviceESData->endcapGeometry),
           objectsStatistics_(verbose) {
+      // JET ROUND 2 (D): env overrides of the bare-seed retirement bars only. Inert with nothing
+      // set (see interface/ChainConfig.h).
+      chainConfigRetirementEnv(chainConfig_);
       if (ptCut < 0.6f) {
         throw std::invalid_argument("Minimum pT cut must be at least 0.6 GeV. Provided value: " +
                                     std::to_string(ptCut));
@@ -220,7 +223,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                       int32_t* hashVal,
                       ChainXcPair* xcPairs,
                       uint32_t* xcCursor,
-                      uint32_t xcCap);
+                      uint32_t xcCap,
+                      uint8_t* plsMutual);
     // THE ONE K8a GRID, built from the UNION of the two stages' per-r-bin radial hulls and shared
     // by BOTH attach stages. It used to be built twice -- same plsPre, same ChainConfig, same cell
     // layout, only a different hull -- which cost a second GridCount + prefix + GridScatter, a

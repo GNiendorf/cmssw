@@ -2,6 +2,8 @@
 #define RecoTracker_LSTCore_interface_ChainConfig_h
 
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 
 namespace lst {
 
@@ -74,13 +76,13 @@ namespace lst {
 
     // -G 6 three-class margin kills. mP = zPrompt - zFake, mD = zDisp - zFake,
     // mX = max(zPrompt, zDisp) - zFake.
-    float m3Theta4 = 2.352515f; // -M4  : T4-class IP    kill iff mX < m3Theta4
-    float m3Theta4D = -2.255362f; // -M4D : T4-class exempt kill iff mD < m3Theta4D
+    float m3Theta4 = 2.256949f; // -M4  : T4-class IP    kill iff mX < m3Theta4
+    float m3Theta4D = -2.381371f; // -M4D : T4-class exempt kill iff mD < m3Theta4D
     float m3Theta5 = 1e9f;    // -M5  : IP nLayers == 5 kill iff mP < m3Theta5 (inert at 1e9)
     float m3Theta6 = 1e9f;    // -M6  : IP nLayers >= 6 kill iff mP < m3Theta6 (inert at 1e9)
     float m3ThetaD = 1e9f;    // -MD  : exempt 5+       kill iff mD < m3ThetaD (inert at 1e9)
-    float m3ThetaRI = -0.2518739f; // -MRI : IP-5+     OR-rescue floor on mX
-    float m3ThetaR = -1.263387f; // -MR  : exempt-5+ OR-rescue floor on mX (endcap + no-member fallback)
+    float m3ThetaRI = -0.4409661f; // -MRI : IP-5+     OR-rescue floor on mX
+    float m3ThetaR = -1.44432f;  // -MR  : exempt-5+ OR-rescue floor on mX (endcap + no-member fallback)
     // -MRB / -MRT: band split of the exempt-5+ OR-rescue floor. Band on |eta| of the innermost
     // member T3 (the K10 TC eta), boundaries zEta1 / zEta2. Resolved values only -- the prototype's
     // kMrUnset sentinel is resolved on the host and never reaches a kernel.
@@ -92,19 +94,19 @@ namespace lst {
     // they bought was FAKE rate only (fakB -.0057, fakT -.0055), which is the lowest-priority
     // metric, so the trade is being unwound. The band machinery stays in place -- setting these two
     // fields is all it takes to put the bars back.
-    float m3ThetaRB = -1.108733f;
-    float m3ThetaRT = -0.8797723f;
+    float m3ThetaRB = -1.214288f;
+    float m3ThetaRT = -1.011139f;
     // -C25 0.0 / -C25D -2.0 : the (nNodes == 2, nLayers == 5) cell rule; kills only when BOTH
     // margins fail, and never re-kills an already-killed chain.
-    float c25Theta = 1.999641f;
-    float c25ThetaD = -0.9891577f;
+    float c25Theta = 2.268653f;
+    float c25ThetaD = -1.208447f;
 
     // Transition-band levers. The band is keyed on |eta| of the chain's INNERMOST member T3
     // (the same quantity K10 gives the TC), and the deltas are ADDITIVE to the thresholds above.
     float zEta1 = 1.1f;      // -ZE1
     float zEta2 = 1.7f;      // -ZE2
-    float zdM4 = -0.4565438f; // -ZM4  : added to -M4
-    float zdM4D = 1.451099f; // -ZM4D : added to -M4D
+    float zdM4 = -0.5098293f; // -ZM4  : added to -M4
+    float zdM4D = 1.473291f; // -ZM4D : added to -M4D
     float zdRI = 0.f;        // -ZRI  : added to -MRI
     float zdR = 0.f;         // -ZR   : added to -MR
     float zdR5 = 0.f;        // -ZR5  : added to -ZR for exempt nLayers == 5
@@ -244,6 +246,26 @@ namespace lst {
     // efficiency denominator (977 evt). type-9 rows never share 3+, so the value is effectively
     // binary.
     int cc9MinShared = 1;
+    // JET ROUND 2 (D) -- MUTUAL-BEST bare-seed retirement. A bare pLS row is retired when it is the
+    // PRE-THRESHOLD argmax pair of a delivered 5+-layer accepted chain and that chain is the seed's
+    // OWN best-scoring chain, provided the pair's logit is within dupMutualDelta of that pair's
+    // banded DELIVERY margin. NEGATIVE = OFF, which is the shipped value: nothing is written and
+    // nothing is read, so the arm is bit-identical to the shipped configuration.
+    // Rationale (d2_ref): 97% of jet-core duplicate pairs and 91% of the gate retrain's PU200
+    // duplicate regression are (delivered chain TC, un-retired bare pLS row), and the three existing
+    // retirement bars cannot separate "this seed's track is already delivered" from "this seed is the
+    // only thing covering its track" -- a BAR admits a seed whose own track lies elsewhere, while a
+    // MUTUAL argmax cannot. Measured pair precision on EA's stage-A corpus: .87-.93 for the new
+    // decisions at delta 0.5 against .46-.53 for the marginal decisions of a bar.
+    float dupMutualDelta = -1.f;
+    // JET ROUND 2 (D) -- the REGION-CONDITIONED -XC delta (see ChainAttachPlsPre). dupXcDelta <= 0
+    // is OFF; the ramp reaches its full depth only as pt -> 0 and vanishes at dupXcPtMax, and the
+    // barrel never sees it. SHIPPED at 1.5: it removes the gun-enriched gate's whole PU200
+    // duplicate excess (dup_overall and dup_transition both land BELOW the pre-round value) at
+    // PU200 efficiency equal to it, jet-core efficiency exactly unchanged, zero discordant sims in
+    // every displaced band, and both cube guns bit-identical.
+    float dupXcDelta = 1.5f;
+    float dupXcPtMax = 3.f;
     // -RPS 1: also retire a carried bare-pLS (type 8) row whose seed had a scored pair above its
     // class RETIREMENT bar but lost the contention. -RD 1: seed-family dedup of the attach owners,
     // two pLS being the same seed when they share >= 2 pixel hit rows (also gates the stage-B
@@ -297,6 +319,72 @@ namespace lst {
                                zdCP != 0.f || zdCD != 0.f);
     }
   };
+
+  // ------------------------------------------------------------------------------------------
+  // JET ROUND 2 (D). Env overrides of the BARE-SEED RETIREMENT bars, and nothing else.
+  //
+  // Why only these five fields: the (delivered chain TC, un-retired bare pLS row) pair is 87% of
+  // the PU200 duplicate excess of the gate-retrain arm and 97% of its jet-core duplicate excess
+  // (d2_ref/anat_*), and the only evidence any of the three retirement channels has is the attach
+  // head's pair logit against these bars. The knobs move the bars DOWN by a delta so one binary
+  // supplies a whole scan; every default is untouched, so an unset environment is bit-identical to
+  // the shipped configuration (proven, not asserted: the zero-delta arm is the control).
+  //
+  //   LST_D_RPS_DELTA   subtract from rpsThetaChain  (-RPSA, the chain-side retirement bar)
+  //   LST_D_XC_DELTA    subtract from xcTheta / xcThetaT / xcThetaE together (-XC, all three bands)
+  //   LST_D_T3_DELTA    subtract from attachThetaT3  (-AT3, the T3-side retirement bar)
+  //
+  // A delta rather than three absolute values because the bands were fitted at a common fixed
+  // acceptance: moving them together keeps that structure, and a per-band scan is a later refinement
+  // (which is why the deltas are separate knobs and not one).
+  inline void chainConfigRetirementEnv(ChainConfig& cfg) {
+    auto readf = [](char const* name) {
+      char const* s = std::getenv(name);
+      if (s == nullptr || *s == '\0')
+        return 0.f;
+      return static_cast<float>(std::atof(s));
+    };
+    float const dRps = readf("LST_D_RPS_DELTA");
+    float const dXc = readf("LST_D_XC_DELTA");
+    float const dT3 = readf("LST_D_T3_DELTA");
+    char const* xl = std::getenv("LST_D_XCLO_DELTA");
+    if (xl != nullptr && *xl != '\0') {
+      cfg.dupXcDelta = static_cast<float>(std::atof(xl));
+      char const* pm = std::getenv("LST_D_XCLO_PTMAX");
+      if (pm != nullptr && *pm != '\0')
+        cfg.dupXcPtMax = static_cast<float>(std::atof(pm));
+      std::printf("[chainenv] dupXcDelta: OFF -> %g (ramped, |eta| >= 1.1, pt < %g)\n",
+                  cfg.dupXcDelta,
+                  cfg.dupXcPtMax);
+    }
+    char const* mu = std::getenv("LST_D_MUTUAL_DELTA");
+    if (mu != nullptr && *mu != '\0') {
+      cfg.dupMutualDelta = static_cast<float>(std::atof(mu));
+      std::printf("[chainenv] dupMutualDelta: OFF -> %g\n", cfg.dupMutualDelta);
+    }
+    if (dRps != 0.f) {
+      cfg.rpsThetaChain -= dRps;
+      std::printf("[chainenv] rpsThetaChain: -%g -> %g\n", dRps, cfg.rpsThetaChain);
+    }
+    if (dXc != 0.f) {
+      cfg.xcTheta -= dXc;
+      cfg.xcThetaT -= dXc;
+      cfg.xcThetaE -= dXc;
+      std::printf("[chainenv] xcTheta/T/E: -%g -> %g %g %g\n", dXc, cfg.xcTheta, cfg.xcThetaT, cfg.xcThetaE);
+    }
+    if (dT3 != 0.f) {
+      cfg.attachThetaT3 -= dT3;
+      std::printf("[chainenv] attachThetaT3: -%g -> %g\n", dT3, cfg.attachThetaT3);
+    }
+    std::printf("[chainenv] D retirement resolved: rpsThetaChain=%g xcTheta=%g/%g/%g attachThetaT3=%g"
+                " dupMutualDelta=%g\n",
+                cfg.rpsThetaChain,
+                cfg.xcTheta,
+                cfg.xcThetaT,
+                cfg.xcThetaE,
+                cfg.attachThetaT3,
+                cfg.dupMutualDelta);
+  }
 
   // The value of ChainConfig::degreeCap that means "no cap". It is not a sentinel the code tests
   // for: it is simply larger than any degree a min() can ever see (a degree is bounded by the

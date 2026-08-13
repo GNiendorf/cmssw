@@ -455,6 +455,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                   uint32_t const* plsBestChain,
                                   uint32_t const* plsBestT3,
                                   uint8_t const* xcRetired,
+                                  uint8_t const* plsMutual,
                                   uint32_t nPls,
                                   uint32_t* keep,
                                   uint32_t* classCounts,
@@ -480,6 +481,11 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
             if (cfg.attachSuppressBarePLS)
               drop = drop || (plsBestChain[p] >= keyChain) || (plsBestT3[p] >= keyT3);
             drop = drop || (xcRetired[p] != 0u);
+            // JET ROUND 2 (D): the MUTUAL-BEST retirement channel. Set only for a seed that is the
+            // pre-threshold argmax pair of a delivered 5+-layer accepted chain AND whose own best
+            // chain is that chain (ChainAttachUnpackBest). Inert when cfg.dupMutualDelta < 0, which
+            // is the shipped default -- the flag array is then never written.
+            drop = drop || (plsMutual != nullptr && plsMutual[p] != 0u);
           }
         }
         if (drop) {
