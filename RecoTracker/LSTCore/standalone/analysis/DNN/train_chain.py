@@ -1,4 +1,10 @@
 #!/usr/bin/env python3
+
+# SUPERSEDED -- does NOT produce the shipped ChainNetworkWeights.h.
+# The shipped chain gate comes from standalone/g2_ref/train3mix2.py (which imports this recipe's
+# successor, nnloop_ref/s2_work/train3.py). See analysis/DNN/README.md for the exact invocation.
+# Kept for lineage only.
+
 """M6 chain-gate classifier training for the LST chain-tracking prototype.
 
 Reads the flat per-chain dump produced by ChainDumpWriter (TTree "chains", one entry

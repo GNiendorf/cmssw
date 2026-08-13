@@ -1,4 +1,10 @@
 #!/usr/bin/env python3
+
+# SUPERSEDED -- does NOT produce the shipped AttachNetworkWeights.h.
+# The shipped attach head comes from standalone/nnloop_ref/s3_work/train_s3.py (22 inputs, the
+# fourth network deleted). An on-policy retrain behind the round-2 chain gate is in progress.
+# See analysis/DNN/README.md. Kept for lineage only.
+
 """train_attach.py -- trainer of the DEPLOYED attach head.
 
 This is the script that produced the head in src/alpaka/AttachNetworkWeights.h (20 inputs:

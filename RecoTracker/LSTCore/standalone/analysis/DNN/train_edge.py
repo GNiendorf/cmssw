@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+
+# SUPERSEDED -- does NOT produce the shipped EdgeNetworkWeights.h.
+# The shipped edge head comes from standalone/nnloop_ref/s1_work/train_s1.py (NN-loop arm G,
+# on-policy, 3-class equal class weights). See analysis/DNN/README.md. Kept for lineage only.
+
 """M2 gate study + first edge-classifier training for the LST chain-tracking prototype.
 
 Reads the flat per-edge dump produced by DumpWriter (TTree "edges", one entry per
