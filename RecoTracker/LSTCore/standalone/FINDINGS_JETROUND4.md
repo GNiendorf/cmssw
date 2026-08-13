@@ -1229,3 +1229,188 @@ PU200 provenance note: N3's `gates.sh` used `-i PU200RelVal`, the DIRECTORY, whi
 known tune value exactly, so these numbers ARE the tune half and the holdout is uncontaminated --
 but the construction is fragile and any arm run at `-n > 1000` would have silently eaten sealed
 events. Name `event_1000.root` by path (N4's `gates2.sh` does).
+
+## [N3 13:15] STAGE d IS SOLVED AND THE FIX IS REFUSED BY THE CROWN JEWELS: **the weld argmax's E2-family-first re-key CONSUMES 83% of stage d (585 -> ~100 sims), EXPANDS reach R8 .8513 -> .8891 AND raises delivery/reach .832 -> .857 at once, worth jets tune core +.0223 / dR<.02 +.0624 with fake AND dup DOWN -- and it costs PU200 `dxy[1,5)` -.0416 and `vxy[10,30)` -.0383, which rule 6 forbids. The displaced cost is INTRINSIC: it survives sweep re-scheduling (give E1 a later chance), pT>5 GeV conditioning, and every softening except one so small the jets gain is +.0039.** Caveats WITH the headline: jets TUNE 0-499 and PU200 `event_1000` only (500-999 and `event_2000` never opened); nothing timed; the reach ladder is 60 events; the arm is an env knob on a verified-inert instrument, not a shipped patch.
+
+Artifacts `n3_ref/` (~5 GB, ROOT arms kept for the coordinator). Instrument patch
+`n3_ref/n3_weld_instrument.patch`, md5 **4b890a30d19ead7dd49d95f6a226e0bb**, `git apply --check`
+CLEAN against the main tree. **INERTNESS PROVEN, NOT ASSERTED**: with no variable set the instrument
+is bit-identical to the PRISTINE main-tree ship binary on **all 23 `m3_ref/jetphys.py` fields** over
+500 jet tune events (`n3_ref/runs/{BASE,PRIS}_jet.json`, 0 differing fields) and on **all 35
+`d3_ref/pu_judge.py` fields** over 1000 PU200 tune events (`BASE1` vs `BASE2` vs `BASE3`, 0 differing
+fields across three successive builds). Every arm below is the SAME frozen binary with a different
+environment.
+
+### 1. DELIVERABLE 1 -- WHERE THE HIGH-pt REACH GOES, AND THE ANSWER IS NOT ONE THING
+
+Free, on JPR3's 450-event corpus (`n3_ref/d1.py`, `n3_ref/d1.txt`), joining `dRnn` per JPR3.
+"noPair" = R5 fails, i.e. **no graph-adjacent >75% T3 pair exists at all** (candidate GENERATION);
+"outRank" = the true edge is present AND eligible and loses the argmax (stage d).
+
+| cell | denom | R5 | R8 | noPair | noRow(cap) | notElig(WP) | **outRank** |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| **pt>=100 AND dRnn<.005** | 2104 | .9168 | .7562 | **175** | 1 | 0 | **337** |
+| pt>=100, dRnn>=.005 | 385 | .8831 | .7740 | 45 | 0 | 0 | 42 |
+| pt<100, dRnn<.005 | 2913 | .9283 | .8476 | 209 | 0 | 1 | 234 |
+| pt<100, dRnn>=.005 | 14291 | .8859 | .8712 | 1630 | 0 | 0 | 210 |
+| ALL | 19693 | .8954 | .8536 | 2059 | 1 | 1 | 823 |
+
+**Two thirds (337/513) of the high-pt close-pair reach deficit is the ARGMAX and one third (175) is
+CANDIDATE GENERATION** -- a sim with no graph-adjacent >75% T3 pair, which no re-key can reach. The
+degree cap and the 80 WPs are 2 sims in the whole corpus, re-confirming JPR3's nulls.
+
+**And where the true edge IS present it is NEAR THE TOP, not buried.** For each stage-d sim take its
+best pair's WORSE slot and measure the logOdds shortfall against that slot's best eligible edge
+(`n3_ref/d2.py`, exact pairing of JPR3's two `beat` rows per pair; 585 unmatched stage-d sims):
+**19.2% are at margin exactly 0** (the true edge is the top-scoring eligible edge at BOTH slots on
+logOdds and still does not weld -- lost to the stable tie word or to the mutual-best deadlock),
+**74.4% are within 0.5 logits**, 86.8% within 1.0, 96.2% within 2.0. Flat across pt (hi-pt close
+pairs: 78.7% within 0.5). So stage d is a **near-miss** population, which is why a re-key can move
+it and why WELD's rank-based reading ("median rank 63 of 195") understates how tight the contest is.
+
+### 2. THE MECHANISM: TWO FAMILIES, TWO CALIBRATIONS, ONE ARGMAX
+
+`ChainEdges` has two adjacency families -- **E1** (the triplets share the middle MD; the chain
+advances 2 MDs per node) and **E2** (they share a whole line segment, 4 hits; the chain advances 1
+MD per node). The weld eligibility bar is **per-FAMILY and per-(pT,|eta|) cell** -- that is exactly
+what the 80 weld WPs are (`ChainEdges.h:528-531`, `kWpPrompt[fam*kWpBins+bin]`) -- so `logOdds` is
+calibrated only WITHIN a family. But `ChainWeldArgmax` puts both families into ONE `atomicMax` and
+compares their `logOdds` directly. They are not the same evidence: on **89M sampled edge rows**
+(JPR3's own `subT`/`subTrue` block, 450 tune events, free) an E2 row joins two triplets of the same
+sim **.00280** of the time against E1's **.00041** -- **6.8x** -- and E2 carries 56% of all same-sim
+edges in 16% of the rows.
+
+### 3. THE JETS SCAN (TUNE, 500 events, one frozen binary, env-toggled)
+
+| arm | key | sweeps | eff core | delta | eff dR<.02 | delta | fake | dup | TC/evt |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| **BASE = SHIPPED** | logOdds | 2 | .81204 | -- | .61277 | -- | .12375 | .02491 | 125.1 |
+| **TK5** | **E2 first** | 2 | .83434 | **+.0223** | .67518 | **+.0624** | .12102 | .02434 | 125.9 |
+| **TK6 = CONTROL** | **E1 first** | 2 | .78995 | **-.0221** | .55594 | **-.0568** | .12192 | .02520 | 123.2 |
+| TK5S1 | E2 first | 1 | .84274 | +.0307 | .69245 | +.0797 | .11075 | .02184 | 125.2 |
+| P2 | E2 first in SWEEP 1 only | 2 | .84009 | +.0281 | .68381 | +.0710 | .11802 | .02407 | 125.9 |
+| Q2 | E2 first, pT>5 GeV only | 2 | .83156 | +.0195 | .67518 | +.0624 | .11550 | .02623 | 123.6 |
+| F05 / F1 / F2 / F5 | E2 +0.5/1/2/5 in the key | 2 | | +.0039 / +.0050 / +.0081 / +.0120 | | +.0108 / +.0130 / +.0237 / +.0356 | | | |
+
+**The control is decisive: reversing the two families flips the sign with the same magnitude.** The
+soft form is monotone all the way to the strict rule -- there is no interior optimum, so the
+lexicographic rule is both the strongest and the simpler object. TK5S1 paired
+(`n3_ref/TK5S1_gate.txt`): core **+.0307** (p 9.5e-47), <.005 +.0864, <.02 +.0797, [.02,.05) +.0353,
+>.05 +.0069; every fine bin to [.1,.2) positive and significant; fake DOWN in every aggregate
+(-1.47 fake TCs/evt, p 9e-25); dup DOWN in every aggregate (p 1.3e-05).
+
+### 4. IT EXPANDS THE REACH -- BOTH HALVES MOVE (60 tune events, JPR3's own instrument, `n3_ref/reach.txt`)
+
+| | BASE | TK5 | delta |
+|---|---:|---:|---:|
+| R5 adjacent T3 pair / R6 row / R7 eligible | .8952 | .8952 | **+.0000** (untouched, as it must be) |
+| **R8 some same-sim edge WELDED = REACH** | **.8513** | **.8891** | **+.0378** |
+| R9 gate-alive | .8182 | .8729 | +.0547 |
+| R10 delivered | .7080 | .7616 | +.0535 |
+| R11 matched (= efficiency) | .7962 | .8159 | +.0196 |
+| **delivery / reach R10/R8** | .8317 | .8566 | **+.0249** |
+| **UNION(matched OR welded) ceiling** | .9137 | .9361 | **+.0223** |
+
+R8 by sim pt: 100-300 **+.1216**, >300 +.1034, 50-100 +.0996, 20-50 +.0480, below 20 +.0054 -- the
+reach expansion lands exactly on JPR3's high-pt block. R8 at dR<.005 +.0876. Stage histogram of the
+unmatched: **d WELD 76 -> 13 (-83%)**, e gate 54 -> 25, against f claim +13 and g purity +23 (some of
+the new reach arrives as impure chains). Net unmatched 529 -> 478. **This is the only arm the project
+has measured that raises the ceiling and the delivery fraction at the same time.**
+
+### 5. WHY IT IS REFUSED: PU200 (1000 tune events, `d3_ref/pu_judge.py`, deltas vs BASE)
+
+| arm | overall | barrel | dxy[0,1) | **dxy[1,5)** | dxy[5,10) | dxy[10,30) | vxy[1,5) | vxy[5,10) | **vxy[10,30)** | fake | dup |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| TK5 | -.0005 | -.0021 | -.0016 | **-.0416** | -.0179 | +.0006 | -.0039 | -.0153 | **-.0383** | +.0011 | +.0012 |
+| TK5S1 | -.0002 | -.0013 | -.0014 | -.0312 | -.0089 | +.0000 | -.0043 | -.0207 | -.0340 | +.0001 | +.0002 |
+| P2 (E2 first pick only) | -.0003 | -.0015 | -.0011 | **-.0377** | -.0139 | +.0006 | -.0034 | -.0148 | -.0318 | +.0010 | +.0006 |
+| P3 / P4 / P6 | | | | -.0416/-.0426/-.0439 | | | | | -.0345/-.0359/-.0364 | | |
+| Q2 (pT>5 GeV only) | -.0012 | -.0036 | -.0032 | **-.0328** | -.0149 | -.0025 | -.0043 | -.0168 | **-.0412** | +.0002 | +.0005 |
+| Q1 (pT>5, 1 sweep) | -.0024 | -.0056 | -.0067 | **-.0591** | -.0169 | -.0044 | -.0184 | -.0488 | **-.0759** | -.0007 | +.0004 |
+| F2 | -.0001 | -.0015 | -.0010 | -.0227 | -.0129 | +.0013 | -.0026 | -.0108 | -.0254 | +.0013 | +.0008 |
+| F1 | -.0002 | -.0006 | -.0007 | -.0130 | -.0070 | +.0019 | -.0026 | -.0089 | -.0129 | +.0009 | +.0004 |
+| **F05** | **+.0001** | +.0002 | -.0001 | **-.0042 (p .117)** | +.0000 | +.0019 | -.0006 | -.0030 | **-.0050 (p .028)** | +.0005 | +.0001 |
+| (`kChainWeldSweeps=1` ALONE, for attribution) | -.0014 | -.0024 | -.0040 | -.0120 | +.0079 | -.0006 | -.0143 | -.0276 | -.0340 | -.0009 | -.0002 |
+
+**Three repairs tried, all failed.** (a) **Give E1 a later chance** -- run the family key only in
+sweep 1 and the shipped key afterwards, so a demoted E1 edge is delayed rather than deleted (P2/P3/
+P4/P6, up to 6 sweeps): `dxy[1,5)` stays at -.038 to -.044. Once the E2 edge takes the slot in sweep
+1 the E1 edge is blocked permanently, and more sweeps do not give it back. (b) **Condition on pT** --
+apply the family term only where the tail node's WP cell is above 5 GeV (`wpBin >= 10`, a bit the
+node already carries), which keeps the whole deep-core jets gain (dR<.02 +.0624, identical to TK5):
+`dxy[1,5)` -.0328, `vxy[10,30)` -.0412, i.e. **no protection at all** -- PU200's displaced loss is
+NOT a low-pT population. (c) **Soften** -- the exchange rate is smooth and unfavourable, and even at
+famOff = 0.5 there is one RESOLVED adverse displaced cell.
+
+The mechanism of the cost, stated so the next agent does not re-derive it: an E1 step spans two MDs
+and an E2 step spans one, so a track with a THIN triplet supply needs E1 links to reach
+`kChainTCMinLayers`. Demoting E1 kills exactly those chains. Within the pure-offset family the cost
+tracks the 4-layer chain-TC count monotonically (PU200 `n_tc_t4cl` -766 / -2101 / -4547 / -5298 for
+F05/F1/F2/F5 against `dxy[1,5)` -.0042 / -.0130 / -.0227 / -.0413), but that correlation BREAKS for
+TK5S1 and Q2 (t4cl +6931 / +2953 with the displaced cost undiminished), so it is a partial story and
+I did not close it.
+
+**Cubes** (full `cube50`, `cube50_highPt` 5000): TK5 and TK5S1 lose on every displaced efficiency
+band of both guns (cube50 `vxy[5,10)` -.0196, `dxy[1,5)` -.0065; cubehi5 `dxy[0,1)` -.0036), i.e. the
+guns agree with PU200 rather than contradicting it. **F05 is bit-identical on `cube50_highPt` on
+every efficiency and fake band** (only `n_tc_t4cl` moves, by 4) and moves `cube50` `vxy[1,5)` by
+-.0029.
+
+### 6. THE PRICED RESIDUE, and I am NOT calling it a candidate
+`LST_CHAIN_WELD_TIE=7 LST_CHAIN_WELD_FAMOFF=0.5` -- one constant added to the E2 family's score in
+the ARGMAX KEY ONLY (`chains.score()` still sums the untouched `logOdds`, so the gate and the K9 key
+are unmoved). Jets TUNE paired (`n3_ref/F05_gate.txt`): core **+.0039** (p 3.3e-04), <.02 **+.0108**
+(p 4.9e-04), <.005 +.0143 (p .042), all eight dR aggregates >= 0, **fake -.0007 (n.s.), dup -.0012
+(p .015, BETTER)**. PU200: overall +.0001, `dxy[1,5)` -.0042 (p .117, unresolved), **`vxy[10,30)`
+-.0050 (p .028, RESOLVED and adverse, 52 lost / 31 gained of 4178)**. Under rule 6 that single cell
+disqualifies it, so I hand it over as a priced option and not as a candidate; the coordinator can
+overrule the rule, I cannot.
+
+### 7. THREE NULLS, each retiring a lever with a number
+* **The deadlock-breaking family is CLOSED.** I built the "late sweep" instrument WELD's diagnosis
+  implies: one extra kernel computes each node's best eligible `logOdds` over its FULL incident set
+  (weld-state independent), and sweeps >= 3 admit only edges within `rel` of that best at BOTH
+  endpoints -- a per-node near-top-RANK restriction, which is what "resolve the deadlock without
+  welding the deep junk" means. `rel = 0` moves core efficiency by **-.00005** (exactly as theory
+  demands, since a both-slot argmax welds in sweep 1 -- the instrument validating itself); `rel =
+  .25 / .5 / 1.0` at 3 sweeps give **+.0002 / -.0019 / -.0036**; at 8 and 20 sweeps -.0004. A global
+  additive bar on the late sweep (`weldBar + 2`) is EXACTLY a no-op. **Restricting which extra welds
+  you add does not rescue adding them.**
+* **The weld's arbitrary tie-break is worth .0017 of core efficiency and .0045 of the deep core.**
+  Flipping the stable tie word (a pure re-roll, same distribution) gives core -.0017 and dR<.02
+  -.0045. That is the NOISE FLOOR any future weld re-key claim has to clear.
+* **E1-vs-E2 exact-logit ties essentially do not happen**: preferring E2 on ties ONLY is bit-identical
+  to the ship on all 23 jets fields (0 differing). The ~1e4 same-key pairs per event are
+  within-family, so the tie word is not a hidden family lever.
+
+### 8. WHAT WOULD UNLOCK IT, AND WHAT I DID NOT MEASURE
+The finding is a **calibration defect in the edge head**, not a tuning knob: the head is fitted and
+worked-point per family, and the argmax then compares families on one scale. The clean fix is a
+per-family (or per-family-per-cell) calibration of `logOdds` fitted so the two families are
+comparable, with **PU200's displaced bands in the fit** so the E1-dependent thin-supply chains are
+priced in -- which the flat constant I scanned cannot do. JPR3's closed list contains "edge-head
+retrain", but it was closed as a RANKING lever inside the current calibration; cross-family
+calibration is a different object and nobody has proposed it. I did not re-open it and I am not
+proposing it inside this round.
+
+NOT MEASURED, honestly: no timing of any kind (an extra `nodes` view in K6a/K6b and, for the late-
+sweep instrument only, one extra edge pass); no holdout of any kind; no union with any other agent's
+arm; no CMSSW workflow; the reach ladder is 60 events (the 500-event efficiency it implies, +.0196,
+agrees with the 500-event +.0223 to within the corpus offset); the `n_tc_t4cl` mediation of the
+displaced cost is a partial story I did not close; and I did not try a union of the family prior with
+a 4-layer admission loosening, which is the obvious next experiment and belongs to whoever owns T4.
+
+Reproduce:
+```
+n3_ref/d1.py jpr3_ref/fun pur_ref/A500_jet.root      # the reach split, free
+n3_ref/d2.py jpr3_ref/fun pur_ref/A500_jet.root      # the two-slot margin, free
+n3_ref/scan.sh n3_ref/arms<N>.txt <par> <jet|pu|cubes>   # every arm, N3_BIN=n3_ref/bin3
+n3_ref/runfun.sh ; n3_ref/reach.py n3_ref/fun_NBASE n3_ref/fun_NTK5 BASE TK5
+p4_ref/jetgate.py --split tune n3_ref/runs/{BASE,TK5S1}_jet.root
+p4_ref/paired_rle.py n3_ref/runs/{BASE1,F05}_pu.root BASE F05
+```
+-- N3. Nothing committed, nothing published, nothing in /tmp, jets 500-999 and PU200 `event_2000`
+never opened.
+
+## [N3 13:30] HOUSEKEEPING: **the single frozen binary that reproduces every N3 arm is `n3_ref/bin3` (bin md5 5c058a0b17a7b4b0adb51ce362d838db, lib ad6980767861e0558a423d1593d36d6b); the earlier snapshots were deleted to keep the disk under control and are not needed -- `BASE3` (bin3, no variables set) is bit-identical to `BASE1`/`BASE2` (the earlier builds) and to the PRISTINE ship binary on all 23 jets fields and all 35 PU200 fields, so every arm run on an earlier snapshot reproduces on `bin3`.** Kept under `n3_ref/runs/`: the jets arms BASE/BASE3/TK5/TK5S1/TK6/P2/Q1/Q2/S1/F05, their PU200 partners, and the cube arms for TK5/TK5S1/F05. All per-arm JSON judge outputs for every arm are kept (`*_jet.json`, `*_pu.json`, `*_cube*.json`), including the ones whose ROOT files were deleted. `n3_ref/` is 1.3 GB.
+-- N3

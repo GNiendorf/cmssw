@@ -1,0 +1,281 @@
+diff --git a/RecoTracker/LSTCore/src/alpaka/ChainWeld.h b/RecoTracker/LSTCore/src/alpaka/ChainWeld.h
+index e439886513a..465bbf3ec83 100644
+--- a/RecoTracker/LSTCore/src/alpaka/ChainWeld.h
++++ b/RecoTracker/LSTCore/src/alpaka/ChainWeld.h
+@@ -75,15 +75,123 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+     return (static_cast<uint64_t>(chainOrderFloat(logOdds)) << 32) | static_cast<uint64_t>(tie);
+   }
+ 
++  // ------------------------------------------------------------------------------------------
++  // JET ROUND 4 (N3), MEASUREMENT INSTRUMENT. The "late sweep" admission restriction.
++  //
++  // K6a/K6b is an iterated mutual-best whose fixed point is the greedy matching by weld key, and
++  // the shipped two sweeps stop it far short of that (WELD, round 3). Running more sweeps
++  // unconditionally is monotonically negative because the marginal weld's same-sim purity
++  // collapses (.55 / .31 / .12 for sweeps 1 / 2 / 3). This lets a sweep run with a RESTRICTED
++  // admission set, so that only near-best edges can break a deadlock:
++  //   abs  - an additive offset on top of the per-edge weldBar (a global score bar);
++  //   rel  - the edge's logOdds must be within `rel` of the BEST eligible logOdds at BOTH of its
++  //          endpoints, where "best" is computed once over the full eligible incident set and is
++  //          therefore independent of the weld state (a per-node near-top-rank restriction).
++  // `on == 0` reproduces the shipped weld bit for bit; the top-key pass is then not even launched.
++  struct ChainWeldLate {
++    uint32_t const* topOut;
++    uint32_t const* topIn;
++    float abs;
++    float rel;
++    int on;
++    // The ARGMAX key mode. 0 = shipped, bit for bit. 1..2 only re-decide EXACT-logOdds ties (the
++    // low word of the packed key), so they cannot displace any weld that logOdds decided:
++    //   1 = flip the stable tie word (a pure re-roll: measures how much of the weld is decided by
++    //       an arbitrary hash, i.e. the noise floor of any re-key claim);
++    //   2 = prefer the E2 (shared-segment) family on a tie -- E2 rows are 6.8x more likely to join
++    //       two triplets of the same sim than E1 rows (.00280 vs .00041, 89M sampled edge rows).
++    //   3 = E2 outranks E1 OUTRIGHT, then logOdds, then the tie word (a real re-key, not a
++    //       tie-break).
++    //   5 = mode 3 with the tie word kept intact (one float mantissa bit spent instead);
++    //   6 = mode 5 with the families the OTHER WAY ROUND -- the control that says whether the
++    //       gain is the E2 prior or merely the perturbation;
++    //   7 = a SOFT family prior: famOff added to E2's score in the KEY ONLY.
++    //
++    // Why a family term is admissible at all: the weld eligibility bar is already per-FAMILY and
++    // per-(pT,|eta|)-cell (the 80 weld WPs), i.e. the head's output is only calibrated WITHIN a
++    // family -- but K6a's argmax compares the two families' logOdds against each other on one
++    // scale. E1 (shared middle MD) and E2 (shared line segment) are not the same evidence: over
++    // 89M sampled edge rows an E2 row joins two triplets of the same sim .00280 of the time
++    // against E1's .00041.
++    int tieMode;
++    float famOff;
++    // Apply the family term only where the TAIL node's WP cell is at or above this index.
++    // ChainEdges.h:416-419 packs wpBin = (pT > 5 GeV) * kEtaBins + etaBin, so famBinMin = 10 means
++    // "only above 5 GeV", which is where the jet-core loss lives (73.8% of it is above 20 GeV) and
++    // is not where PU200's displaced bands live. 0 = unconditional.
++    int famBinMin;
++  };
++
++  // The per-node best eligible logOdds, as the ordered uint32 word, over the FULL incident set.
++  struct ChainWeldTopKey {
++    ALPAKA_FN_ACC void operator()(Acc1D const& acc, ChainEdgesConst edges, uint32_t* topOut, uint32_t* topIn) const {
++      uint32_t const nEdges = static_cast<uint32_t>(edges.metadata().size());
++      for (uint32_t e : cms::alpakatools::uniform_elements(acc, nEdges)) {
++        if (edges.type()[e] == 0u)
++          continue;
++        float const lo = edges.logOdds()[e];
++        if (lo < edges.weldBar()[e])
++          continue;
++        uint32_t const k = chainOrderFloat(lo);
++        alpaka::atomicMax(acc, &topOut[edges.inner()[e]], k, alpaka::hierarchy::Threads{});
++        alpaka::atomicMax(acc, &topIn[edges.outer()[e]], k, alpaka::hierarchy::Threads{});
++      }
++    }
++  };
++
++  ALPAKA_FN_ACC ALPAKA_FN_INLINE uint64_t chainWeldKeyM(ChainWeldLate const& L,
++                                                        float lo,
++                                                        uint32_t tie,
++                                                        uint8_t ty,
++                                                        uint8_t wpBinTail) {
++    if (L.famBinMin > 0 && static_cast<int>(wpBinTail) < L.famBinMin)
++      return chainWeldKey(lo, tie);
++    if (L.tieMode == 1)
++      return chainWeldKey(lo, ~tie);
++    if (L.tieMode == 2)
++      return chainWeldKey(lo, (ty == 2u) ? (0x80000000u | (tie >> 1)) : (tie >> 1));
++    if (L.tieMode == 3)
++      return (static_cast<uint64_t>(ty == 2u ? 1u : 0u) << 63) |
++             (static_cast<uint64_t>(chainOrderFloat(lo)) << 31) | static_cast<uint64_t>(tie >> 1);
++    // Modes 5 / 6: the same family-lexicographic order, but the bit is taken out of the FLOAT's
++    // last mantissa bit instead of out of the tie word, so the tie word stays 32 bits wide and the
++    // per-node key uniqueness K6b relies on is unchanged.
++    if (L.tieMode == 5 || L.tieMode == 6) {
++      bool const hi = (L.tieMode == 5) ? (ty == 2u) : (ty == 1u);
++      uint32_t const w = (chainOrderFloat(lo) >> 1) | (hi ? 0x80000000u : 0u);
++      return (static_cast<uint64_t>(w) << 32) | static_cast<uint64_t>(tie);
++    }
++    // Mode 7: a SOFT family prior -- a constant added to the E2 family's score in the ARGMAX KEY
++    // ONLY. chains.score() still sums the untouched logOdds, and famOff = 0 is the shipped key.
++    if (L.tieMode == 7)
++      return chainWeldKey((ty == 2u) ? (lo + L.famOff) : lo, tie);
++    return chainWeldKey(lo, tie);
++  }
++
++  // Shared by K6a and K6b so the two admission sets cannot drift apart.
++  ALPAKA_FN_ACC ALPAKA_FN_INLINE bool chainWeldLateAdmits(ChainWeldLate const& L, float lo, uint32_t n, uint32_t m) {
++    if (L.on == 0)
++      return true;
++    if (L.rel >= 0.f) {
++      float const tO = (L.topOut[n] != 0u) ? chainUnorderFloat(L.topOut[n]) : -1.0e30f;
++      float const tI = (L.topIn[m] != 0u) ? chainUnorderFloat(L.topIn[m]) : -1.0e30f;
++      if (lo < tO - L.rel || lo < tI - L.rel)
++        return false;
++    }
++    return true;
++  }
++
+   // ------------------------------------------------------------------------------------------
+   // K6a. Per-sweep argmax over a frozen snapshot of the weld slots.
+   struct ChainWeldArgmax {
+     ALPAKA_FN_ACC void operator()(Acc1D const& acc,
+                                   ChainEdgesConst edges,
++                                  ChainNodesConst nodes,
+                                   int32_t const* outWeld,
+                                   int32_t const* inWeld,
+                                   uint64_t* bestOut,
+-                                  uint64_t* bestIn) const {
++                                  uint64_t* bestIn,
++                                  ChainWeldLate late) const {
+       uint32_t const nEdges = static_cast<uint32_t>(edges.metadata().size());
+ 
+       for (uint32_t e : cms::alpakatools::uniform_elements(acc, nEdges)) {
+@@ -99,11 +207,15 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+         // whose whole table row holds one value reproduces the old single-scalar behaviour exactly.
+         if (lo < edges.weldBar()[e])
+           continue;  // eligibility gate
++        if (late.on != 0 && lo < edges.weldBar()[e] + late.abs)
++          continue;
+         uint32_t const n = edges.inner()[e];
+         uint32_t const m = edges.outer()[e];
++        if (!chainWeldLateAdmits(late, lo, n, m))
++          continue;
+         if (outWeld[n] != -1 || inWeld[m] != -1)
+           continue;  // tail's out-slot or head's in-slot already taken
+-        uint64_t const key = chainWeldKey(lo, edges.tie()[e]);
++        uint64_t const key = chainWeldKeyM(late, lo, edges.tie()[e], etype, nodes.wpBin()[n]);
+         alpaka::atomicMax(acc, &bestOut[n], key, alpaka::hierarchy::Threads{});
+         alpaka::atomicMax(acc, &bestIn[m], key, alpaka::hierarchy::Threads{});
+       }
+@@ -127,10 +239,12 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+   struct ChainWeldMutual {
+     ALPAKA_FN_ACC void operator()(Acc1D const& acc,
+                                   ChainEdgesConst edges,
++                                  ChainNodesConst nodes,
+                                   int32_t* outWeld,
+                                   int32_t* inWeld,
+                                   uint64_t const* bestOut,
+-                                  uint64_t const* bestIn) const {
++                                  uint64_t const* bestIn,
++                                  ChainWeldLate late) const {
+       uint32_t const nEdges = static_cast<uint32_t>(edges.metadata().size());
+ 
+       for (uint32_t e : cms::alpakatools::uniform_elements(acc, nEdges)) {
+@@ -148,9 +262,11 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+         float const lo = edges.logOdds()[e];
+         if (lo < edges.weldBar()[e])
+           continue;
+-        if (bestKey != chainWeldKey(lo, edges.tie()[e]))
++        if (bestKey != chainWeldKeyM(late, lo, edges.tie()[e], etype, nodes.wpBin()[n]))
+           continue;
+         uint32_t const m = edges.outer()[e];
++        if (late.on != 0 && (lo < edges.weldBar()[e] + late.abs || !chainWeldLateAdmits(late, lo, n, m)))
++          continue;  // mirrors K6a exactly; redundant while node keys are unique, kept explicit
+         if (bestIn[m] != bestKey)
+           continue;
+         outWeld[n] = static_cast<int32_t>(e);
+diff --git a/RecoTracker/LSTCore/src/alpaka/LSTEvent.dev.cc b/RecoTracker/LSTCore/src/alpaka/LSTEvent.dev.cc
+index 6ff156b889a..cc464e4ef0e 100644
+--- a/RecoTracker/LSTCore/src/alpaka/LSTEvent.dev.cc
++++ b/RecoTracker/LSTCore/src/alpaka/LSTEvent.dev.cc
+@@ -177,6 +177,29 @@ namespace {
+     return (env < 0.0) ? configured : static_cast<float>(env);
+   }
+ 
++  // ------------------------------------------------------------------------------------------
++  // JET ROUND 4 (N3), MEASUREMENT INSTRUMENT. The weld sweep count and the late-sweep admission
++  // restriction (ChainWeld.h ChainWeldLate). All four are ABSENT-MEANS-CONFIGURED: with none of
++  // them set the weld is the shipped two unrestricted sweeps, bit for bit, and the extra top-key
++  // pass is not launched at all.
++  //   LST_CHAIN_WELD_SWEEPS     total sweeps                          (default kChainWeldSweeps)
++  //   LST_CHAIN_WELD_LATE_FROM  0-based index of the first RESTRICTED sweep (default off)
++  //   LST_CHAIN_WELD_LATE_ABS   additive offset on the per-edge weldBar in restricted sweeps
++  //   LST_CHAIN_WELD_LATE_REL   max logOdds shortfall against the node's own best, both endpoints
++  int chainWeldEnvI(char const* name, int configured) {
++    char const* s = std::getenv(name);
++    if (s == nullptr || *s == '\0')
++      return configured;
++    return static_cast<int>(std::atol(s));
++  }
++
++  float chainWeldEnvF(char const* name, float configured) {
++    char const* s = std::getenv(name);
++    if (s == nullptr || *s == '\0')
++      return configured;
++    return static_cast<float>(std::atof(s));
++  }
++
+   // The eta-conditioned central weight and its ramp (ChainConfig::orderAlphaCentral and friends).
+   float chainOrderEnvF(char const* name, float configured) {
+     char const* s = std::getenv(name);
+@@ -1479,10 +1502,47 @@ void LSTEvent::buildChains() {
+   alpaka::memset(queue_, outWeld_buf, 0xff);
+   alpaka::memset(queue_, inWeld_buf, 0xff);
+ 
++  // JET ROUND 4 (N3) instrument: sweep count and the late-sweep admission restriction.
++  int const weldSweeps = chainWeldEnvI("LST_CHAIN_WELD_SWEEPS", kChainWeldSweeps);
++  int const weldLateFrom = chainWeldEnvI("LST_CHAIN_WELD_LATE_FROM", -1);
++  float const weldLateAbs = chainWeldEnvF("LST_CHAIN_WELD_LATE_ABS", 0.f);
++  float const weldLateRel = chainWeldEnvF("LST_CHAIN_WELD_LATE_REL", -1.f);
++  bool const weldLateOn = (weldLateFrom >= 0) && (weldLateFrom < weldSweeps);
++  bool const weldNeedTop = weldLateOn && (weldLateRel >= 0.f);
++
++  auto topOut_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, weldNeedTop ? nChainNodes_ : 1u);
++  auto topIn_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, weldNeedTop ? nChainNodes_ : 1u);
++  if (weldNeedTop) {
++    alpaka::memset(queue_, topOut_buf, 0);
++    alpaka::memset(queue_, topIn_buf, 0);
++    alpaka::exec<Acc1D>(queue_,
++                        chainFlat_workDiv,
++                        ChainWeldTopKey{},
++                        chainEdgesDC_->const_view(),
++                        topOut_buf.data(),
++                        topIn_buf.data());
++  }
++  int const weldTieMode = chainWeldEnvI("LST_CHAIN_WELD_TIE", 0);
++  float const weldFamOff = chainWeldEnvF("LST_CHAIN_WELD_FAMOFF", 0.f);
++  // The key mode applies to sweeps [0, weldTieUntil). Default = every sweep. Setting it to 1 gives
++  // the E2 family FIRST PICK and then reverts to the shipped key, so a demoted E1 edge is not
++  // deleted, only made to wait -- which is what a sparse (displaced) track needs.
++  int const weldTieUntil = chainWeldEnvI("LST_CHAIN_WELD_TIE_UNTIL", 1 << 20);
++  int const weldFamBinMin = chainWeldEnvI("LST_CHAIN_WELD_FAMBIN", 0);
++  ChainWeldLate const weldLateOff{nullptr, nullptr, 0.f, -1.f, 0, weldTieMode, weldFamOff, weldFamBinMin};
++  ChainWeldLate const weldLateSet{
++      topOut_buf.data(), topIn_buf.data(), weldLateAbs, weldLateRel, 1, weldTieMode, weldFamOff, weldFamBinMin};
++  ChainWeldLate const weldPlainOff{nullptr, nullptr, 0.f, -1.f, 0, 0, 0.f, 0};
++  ChainWeldLate const weldPlainSet{topOut_buf.data(), topIn_buf.data(), weldLateAbs, weldLateRel, 1, 0, 0.f, 0};
++
+   // S1: the weld eligibility bar is no longer a kernel argument. K5 resolved it per edge into
+   // ChainEdgesSoA::weldBar (from the head's per-family, per-cell table, or from the two per-family
+   // scalars when chainConfig_.edgeWpTable is false), so both weld kernels just read the edge row.
+-  for (int sweep = 0; sweep < kChainWeldSweeps; ++sweep) {
++  for (int sweep = 0; sweep < weldSweeps; ++sweep) {
++    bool const lateHere = (weldLateOn && sweep >= weldLateFrom);
++    bool const keyHere = (sweep < weldTieUntil);
++    ChainWeldLate const late = lateHere ? (keyHere ? weldLateSet : weldPlainSet)
++                                        : (keyHere ? weldLateOff : weldPlainOff);
+     // A fixed sweep count, no host sync: the reference's "break when nothing welded" early exit is
+     // a CPU nicety and a zero-weld sweep is idempotent.
+     alpaka::memset(queue_, bestOut_buf, 0);
+@@ -1491,18 +1551,22 @@ void LSTEvent::buildChains() {
+                         chainFlat_workDiv,
+                         ChainWeldArgmax{},
+                         chainEdgesDC_->const_view(),
++                        chainNodesDC_->const_view(),
+                         outWeld_buf.data(),
+                         inWeld_buf.data(),
+                         bestOut_buf.data(),
+-                        bestIn_buf.data());
++                        bestIn_buf.data(),
++                        late);
+     alpaka::exec<Acc1D>(queue_,
+                         chainFlat_workDiv,
+                         ChainWeldMutual{},
+                         chainEdgesDC_->const_view(),
++                        chainNodesDC_->const_view(),
+                         outWeld_buf.data(),
+                         inWeld_buf.data(),
+                         bestOut_buf.data(),
+-                        bestIn_buf.data());
++                        bestIn_buf.data(),
++                        late);
+   }
+ 
+   auto const t1 = stamp();
