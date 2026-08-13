@@ -172,6 +172,8 @@ ranking union (antagonistic: 64% of summed gains, 92% of summed costs); lowering
 
 ## [WELD 00:35] DESIGN ON RECORD + THE FIRST ANSWER TO "WHAT DOES THE ARGMAX LOSE TO", FROM JPR2's EXISTING CORPUS AT ZERO COST: **stage d is NOT a tie-break, slot-contention or sweep-deadlock problem -- .9941 of the 23,669 eligible-unwelded core-sim pairs have a STRICTLY HIGHER-scoring eligible competitor on at least one of their two slots, .6804 have one on BOTH slots, and on .9379 of them the beating edge is NOT a same-sim edge. Median 222 eligible competitors per slot, median losing margin 2.89 logit units.** So the weld argmax at a high-pt core node is a 1-of-222 ranking contest that the edge head loses, and `lostBOTH` is monotone in sim pt (.222 below 10 GeV -> .730 at 100-300 GeV).
 
+**[CORRECTED BY WELD 00:46 -- read that post instead.** The pass-1 headline above is wrong on one word that turns out to matter: the competitor that out-scores the true edge mostly **never welds either**, so .7017 of the lost slots end up EMPTY and stage d IS partly a truncated-iteration effect. The competitor counts, margins and the pt monotonicity in this post all stand; the "not a sweep-deadlock problem" clause does not.**)
+
 Caveats WITH the headline: this is JPR2's `beat` table, i.e. a **sweep-1 snapshot** of the argmax
 among the eligible edges incident on the pair's two nodes, ranked on `logOdds` ALONE (the deployed
 key is the packed (logOdds, stableId-XOR tie) pair, so exact-logit ties are resolved differently
@@ -481,4 +483,775 @@ the numbers above my prior is a refusal with this exchange table as the delivera
 
 Artifacts: `pur_ref/{g_census,gtrim,gtrim2,score,curve,rep}.py`, `pur_ref/G4_*` (244k unit rows),
 `pur_ref/rep_BASE.txt`. Nothing built, nothing deployed, nothing committed.
+-- PUR
+
+## [WELD 00:46] THE ARGMAX DOES NOT LOSE TO A BETTER EDGE -- IT LOSES TO AN EDGE THAT NEVER WELDS EITHER, AND THE FIX IS TO WELD **LESS**: **.7017 of the slots a stage-d true edge fails to win are STILL EMPTY when the weld finishes**, because K6a/K6b is an iterated mutual-best (greedy-matching) fixed-point iteration stopped 5+ rounds early -- and **converging it is monotonically NEGATIVE** (16 sweeps: core eff -.0164, dR<.02 -.0329, fake +.0108), while **going the OTHER way to 2 sweeps is a Pareto win on jets: core eff +.0036 (p=9.9e-04, paired McNemar), dR<.02 +.0095 (p=.0024), fake -.0046 (p=4.8e-12), all 8 dR aggregates >= 0, sim pt 100-300 GeV +.0192 -- for ONE CONSTANT and a THIRD LESS WORK in the weld.**
+
+Caveats riding WITH the headline, all four of them:
+* **jet-core (dR<.05) DUPLICATE gets WORSE at 2 sweeps: .0313 -> .0345, +.0032, p=.017** (0.47 ->
+  0.52 dup TCs/evt) in the cell where we already owe master 0.30/evt. **1 sweep instead removes dup
+  (all: .0246 -> .0230, p=.003; core flat -.0005) and removes 3x more fake (-.0114), but its
+  core-all efficiency gain is NOT significant (+.0021, p=.218) and it REGRESSES dR>.05 by -.0035
+  (p=.033).** Both points are on the table; 2 sweeps is the efficiency-priority choice.
+* **sim pt > 300 GeV loses .0210 at 2 sweeps** (denom 761, -16 sims) while 100-300 gains +.0192
+  (denom 2036, +39 sims). We are +.1945 ahead of master above 300 GeV, so this spends part of a lead.
+* PU200, cube50 and cube50_highPt are RUNNING, not done. **No ship claim until they land.**
+* Jets TUNE 0-499 only; 500-999 and PU200 `event_2000` never opened.
+
+### 0. Provenance and the inertness proof
+Worktree **`w1`** = `/mnt/data1/gsn27/here/gpu_wt/w1` at `04c6e122e68` (fresh, nobody else's).
+`LST_CHAIN_WELD_SWEEPS` overrides `kChainWeldSweeps`, which occurs in **exactly one place** in the
+whole tree (`LSTEvent.dev.cc:1448`, the K6a/K6b loop bound) and sizes no buffer, so unset == frozen.
+Build `-mcC`, **0 `error:`** in the fresh make log, binary `338ef61cea7464367634faaa884fc1f3`, lib
+`f6cb563a1cfbe0d98d66266c036a1f1b`, frozen at `weld_ref/swbin/` so a later rebuild cannot move a
+finished arm. **INERTNESS PROVEN, NOT ASSERTED: arm BASE (w1, variable unset) is bit-identical to
+the PRISTINE main-tree ship binary `5293c48f2561a6968efecf4fd4b1270f` on all 23 `m3_ref/jetphys.py`
+fields over the same 500 jet events** (`weld_ref/runs/{BASE,PRIS}_jet.json`, dict equality).
+
+### 1. THE DIAGNOSIS -- and it is not the one both prior rounds assumed
+
+Pass 1 (`weld_ref/beat1.py`, JPR2's corpus, free): of 23,669 eligible-but-unwelded adjacent same-sim
+pairs on 599 stage-d sims -- **39.5 pairs per sim, not one of them welded** -- .9941 have a strictly
+higher-scoring eligible competitor on a slot, .6804 on BOTH slots (monotone in pt: .222 below 10 GeV
+-> .730 at 100-300), median **222** eligible competitors per slot, median losing margin 2.89.
+
+Pass 2 (200 fresh jet tune events, `weld_ref/{wreduce,wagg}.py`; exact weld slots recovered from the
+chains dump's pre-trim node runs, 0 welded pairs unmapped; replay max |dmX| 7.9e-05) says the
+competitor **wins the slot and then does not use it**:
+
+| stage-d slots, both sides pooled | ALL | 20-50 | 50-100 | 100-300 | >300 |
+|---|---:|---:|---:|---:|---:|
+| **slot is EMPTY when the weld ends** | **.7017** | .6513 | .7321 | .7109 | .6795 |
+| taken by an edge into a T3 of ANOTHER sim | .0069 | .0034 | .0076 | .0062 | .0121 |
+| taken by an edge into a FAKE T3 | .2914 | .3453 | .2604 | .2829 | .3084 |
+| taken by an edge into a T3 of OUR sim | **.0000** | .0000 | .0000 | .0000 | .0000 |
+
+and of the taken slots, the occupant's chain is **gate-killed .7855** and delivered **.0359**.
+
+**The mechanism, from the kernel.** K6a lets `e = (n,m)` compete only when `outWeld[n] == -1` AND
+`inWeld[m] == -1` (`ChainWeld.h:104`). So a node's argmax NEVER advances past its own rank-1 edge on
+its own: if that edge is not also rank-1 at its head, it wins `bestOut[n]` again in every later
+sweep and n welds nothing. Progress happens only when some OTHER weld removes the blocker. That
+makes K6a/K6b an iterated mutual-best -- whose fixed point is exactly the greedy matching by key,
+at which **no slot with any eligible edge can be empty**. `FINDINGS_JET.md:363-368`'s "the weld
+consumes at most `kChainWeldSweeps` edges per node-slot, so at most 3 ranks deep" is **wrong**: the
+depth is not 3, it is however far the blocking cascade happens to unwind. My local replay
+(`weld_ref/wsweep.py`, reproduces 95.5% of the 83,327 tree-welded local edges at N=3) puts the free
+stage-d slot fraction at **.328 at N=3, .053 at N=8, .0027 at N=20** -- i.e. the shipped weld runs
+about a quarter of its own iteration.
+
+The true edge's RANK, on the deployed packed key, among the eligible edges at its slot
+(`wagg.py`, 9,808 stage-d pairs / 274 sims):
+
+| | ALL | 20-50 | 50-100 | 100-300 | >300 |
+|---|---:|---:|---:|---:|---:|
+| median eligible edges at the slot | 195 | 218 | 216 | 202 | 110 |
+| max(rank) p25 / **p50** / p90 | 19 / **63** / 249 | 14/44/241 | 20/75/256 | 22/73/244 | 17/41/254 |
+| P(max rank <= 3) per PAIR | .0324 | .0359 | .0359 | .0267 | .0316 |
+| **per SIM, best pair's max(rank): p50** | **4** | 5 | 3 | 4 | 4 |
+| **P(best pair <= rank 3)** | **.4854** | .360 | .524 | .495 | .447 |
+| P(best pair == rank 1) | **.0000** | | | | |
+
+`P(best == 1) = .0000` is the instrument validating itself: rank 1 at both slots welds in sweep 1 by
+construction, so no stage-d sim can have one.
+
+### 2. THE DEPLOYED SWEEP CURVE -- the truncation is load-bearing REGULARISATION
+
+The weld is monotone in the sweep count (sweeps 1-3 produce the same welds whatever N is), so every
+arm's weld set is a superset of the arm below it, and the whole curve is a clean marginal-value
+measurement of the extra welds. Jets TUNE 500 events, one binary, env-toggled, identical denominators
+(21,919 core sims / 49,459 all):
+
+| sweeps | eff core | eff all | eff dR<.02 | fake | dup | TC/evt | T4 core wins |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| **1** | .76792 | .81031 | **.5183** | **.12029** | **.02296** | 121.2 | 2419 |
+| **2** | **.76947** | **.81099** | .5169 | .12712 | .02431 | 122.9 | 1239 |
+| **3 = SHIPPED** | .76587 | .80909 | .5074 | .13170 | .02463 | 123.1 | 1016 |
+| 4 | .76468 | .80847 | .5070 | .13464 | .02516 | 123.4 | 900 |
+| 5 | .76244 | .80736 | .5027 | .13618 | .02519 | 123.4 | 823 |
+| 6 | .75957 | .80588 | .4971 | .13848 | .02518 | 123.4 | 764 |
+| 8 | .75437 | .80349 | .4847 | .14111 | .02473 | 123.5 | 666 |
+| 16 | .74944 | .80117 | .4745 | .14250 | .02492 | 123.4 | 532 |
+
+**Every marginal weld past sweep 2 is net NEGATIVE, and monotonically so on efficiency, on deep-core
+efficiency and on fake at once.** Because existing welds are never revoked (weld-set nesting checked
+on 6 events: 0 welds ever LOST going up in sweeps), the loss cannot be "a good weld displaced": it
+is the added welds themselves. Visible in `core_by_type`, where T4 core wins collapse 2419 -> 532 as
+T5 rises 6556 -> 6711, i.e. correct 4-layer chains are displaced by wrong 5-layer ones. **This retires an entire class of levers with a number: on this
+graph and this key, anything that adds welds is negative, so the weld argmax cannot be attacked by
+giving the true edge more chances.** Stage d's +.0304 is not reachable that way -- .8230 of stage-d
+sims have every eligible pair strictly out-ranked, at median rank 63 of 195.
+
+### 3. THE CANDIDATE: `kChainWeldSweeps: 3 -> 2` (paired, jets TUNE, `weld_ref/sweepgate.txt`)
+
+| band | BASE | S02 | delta | p (McNemar) |
+|---|---:|---:|---:|---:|
+| **core-all** | .7659 | **.7695** | **+.0036** | **9.9e-04** |
+| <.005 | .4108 | .4164 | +.0056 | .41 |
+| [.005,.01) | .4773 | .4931 | +.0158 | .011 |
+| [.01,.02) | .5932 | .6013 | +.0080 | .090 |
+| **<.02** | .5074 | **.5169** | **+.0095** | **.0024** |
+| [.02,.05) | .7459 | .7483 | +.0024 | .42 |
+| <.05 | .6091 | .6156 | +.0065 | .0025 |
+| >.05 | .8902 | .8915 | +.0013 | .21 |
+| fake all | .1317 | .1271 | **-.0046** | 4.8e-12 |
+| dup all | .0246 | .0243 | -.0003 | .38 |
+| **dup <.05** | .0313 | **.0345** | **+.0032** | **.017** |
+
+**All eight dR aggregates are >= 0** (the only negative fine bins are [.0175,.02) -.0020 p=1 and
+[.04,.05) -.0043 p=.47). **SOFTER JETS PASS** (`jpr2_ref/jetptaxis.py`, same file, free):
+genjet 50-200 .9277 -> .9270 (-3 sims of 4067), **200-500 .9164 -> .9211**, 500-1000 .8761 -> .8778,
+1000-2000 .7721 -> .7770, >2000 .7527 -> .7534 -- so it is not a TeV-tuned lever.
+Sim pt: **100-300 +.0192**, 50-100 +.0069, 20-50 +.0053, 10-20 +.0027, **>300 -.0210** (-16 sims).
+
+**Why this should be near-inert off-distribution, mechanically and not by construction:** the
+sweep count only binds where the mutual-best iteration has NOT converged. PU200 core nodes carry a
+median 12 eligible incident edges against the jet core's 222, so sweeps 2-3 have far less to do
+there, and on the guns less still. **That is a prediction, not a result -- PU200 and both cubes are
+in flight and I will report them whatever they say.** No ship claim before they land.
+
+### 4. Still open on my side (running / next)
+* The full gate set for S01 and S02 (PU200 35 fields + displaced bands, cube50, cube50_highPt 0-4999).
+* The re-KEY arm, which is the only remaining re-ranking lever and adds NO welds: `weldKey`, a
+  per-edge ordering scalar separate from the summed `logOdds`, built in `w1` (mode 0 = max(mP,mD) =
+  today, bit for bit). Offline screen on the 200-event corpus (`weld_ref/wkey.py`, validated: the
+  CURRENT key recovers exactly 0 stage-d sims, as the sufficient condition demands): **min(mP,mD)
+  recovers .2226 of stage-d sims at sweep 1 and mP .1934, versus .0000 today** -- the winner's-curse
+  reading, that an argmax over ~200 competitors should not order on the OPTIMISTIC max of the two
+  class margins -- but it also displaces ~15% of the currently welded local edges, and section 2
+  just showed how sensitive the weld is to that. Screen only; deployment decides.
+
+**For agent T4:** the sweep count is a large, free handle on your class. T4 core wins go
+1016 (shipped) -> 1239 (2 sweeps) -> **2419 (1 sweep)** with jet fake going the RIGHT way
+(.1317 -> .1271 -> .1203) -- so "more T4" and "less fake" are not opposed along this axis, and any
+T4 policy you price should be priced at the sweep count we end up shipping. **For agent PUR:** the
+harm from extra sweeps is chains grown past their correct endpoint, i.e. it manufactures exactly
+your stage-g population; the K6f terminal trim is single-ended and demonstrably cannot keep up.
+-- WELD
+
+## [PUR 02:05] THE ARM CLOSES WITH A MECHANISM, NOT A THRESHOLD: **65.0% of the mini-doublets that must be removed are carried by NOTHING ELSE IN THE EVENT (87.9% at MD granularity), so the +.0278 ceiling is 82% unreachable no matter how good a classifier gets — and where the evidence DOES exist the argmax is right 74 of 74 times.** The limit is EVIDENCE AVAILABILITY, not discriminator quality. Attached anyway: a priced candidate that clears EVERY hard gate — **jets core +.0041 to +.0051, PU200 +22 sims with ZERO discordant sims in all four dxy and all three vxy bands, PU200 duplicates BETTER (-13 core / -143 pooled), BOTH CUBES fire ZERO times (bit-identical by mechanism)** — whose price is a new kernel for **+.005**, i.e. below the bar the maintainer set when declining a 4th weight file for +.02. **Caveat riding with the whole post: this is an OFFLINE PROXY, nothing was built or deployed.**
+
+### 1. Why the ceiling is unreachable (`pur_ref/reach.py`, jets tune 0-499)
+Take the 609 delivered chain TCs where removing ONE mini-doublet newly matches a previously
+unmatched core sim (**ceiling +.0278**), and ask what truth-free evidence exists on the unit that
+has to go. (Reconciliation of the two ceiling numbers in my two posts: **+.0258** is the ORACLE RULE
+"always drop the least-owned mini-doublet", which pays 39 destroyed matches for its 609 gains;
+**+.0278** = 609/21,919 is what a bar-aware oracle that fires only when it helps would deliver, i.e.
+the addressability ceiling. Both are the same 609 sims; the .0020 is the oracle rule's own loss side.
+JPR2's stage-g row is +.0253 and D's is +.0244 on the older corpus.)
+
+| evidence on the unit that must be removed | present | share |
+|---|---:|---:|
+| terminal position (inner or outer) | 423 | .6946 |
+| **some other TC carries a hit of it (`shar >= 1`)** | **213** | **.3498** |
+| both of its hits are carried elsewhere | 88 | .1445 |
+| **one other TC carries the WHOLE mini-doublet (`sharMD >= 1`)** | **74** | **.1215** |
+| `chi2Full > trimAbsChi2` (the K6f concentrating guard would even look) | 161 | .2644 |
+| it has the largest \|xy residual\| of its own TC | **0** | **.0000** |
+
+**`shar == 0` for .6502 of them and `sharMD == 0` for .8785.** The thief stole a mini-doublet that no
+other reconstructed object claims, and the geometry cannot see it (section 3 of [PUR 01:20]: LOO chi2
+AUC .494). There is no observable left. **And where evidence does exist it is already sufficient: of
+the 74 units with `sharMD >= 1`, the unit that must be removed is the argmax of `sharMD` in its own
+TC 74 of 74 times (1.0000).** A better classifier buys nothing; there is nothing left to classify.
+
+That also kills the cheap version of this arm for the record: **only 26.4% of the addressable
+population even passes `chi2Full > 1`**, so relaxing `trimMinLayersAfter` 5 -> 4 (or `trimFactor`)
+cannot reach stage g — the K6f guard anti-selects it, because a stitched jet-core chain FITS WELL.
+
+### 2. The candidate, if the maintainer wants it anyway: **PUR-SB**
+> In `ChainEmitTCs` (K10), for an emitted chain row with **>= 5 outer-tracker mini-doublets**, if some
+> member mini-doublet is also carried by **another emitted chain TC**, skip the one with the highest
+> such count when filling the layer slots. Nothing else changes.
+
+**The proxy is EXACT for this shape, which is unusual in this program and is why I am quoting it.**
+Every quantity the standalone metric measures (`tc_isFake`, `tc_simIdx`, `sim_tcIdx`,
+`tc_isDuplicate`, `tc_nhitOT`, `tc_nlayers`) is derived from `getHitIdxsAndHitTypesFromTC`, i.e. from
+the TC row's layer slots (`parseChainTC` -> `write_lst_ntuple.cc:1752`), so removing a unit from the
+slot fill is precisely what my instrument computes. The instrument reproduces the ntuple's own
+`tc_isFake` on **1,226,917 of 1,226,917 chain-backed TC rows across jets + PU200 + both cubes, 0
+disagreements**.
+
+| gate | JETS tune 0-499 (21,919 core sims) | PU200 tune event_1000 (72,481 sims) | cube50 (10k evt) | cube50_highPt (5k evt) |
+|---|---|---|---|---|
+| rule FIRES on | 4,564 of 44,433 chain TCs | 16,289 of 977,099 | **0 of 1,329** | **0 of 519** |
+| efficiency sims gained / lost | **113 / 24 = +89 (+.0041)** | **24 / 2 = +22 (+.00030)** | 0 / 0 | 0 / 0 |
+| dxy[0,1) / [1,5) / [5,10) / [10,30) | 113/24, 0/0, 0/0, 0/0 | 24/2, **0/0, 0/0, 0/0** | inert | inert |
+| vxy[1,5) / [5,10) / [10,30) | 3/1, 0/0, 0/0 | 2/0, **0/0, 0/0** | inert | inert |
+| non-core sims gained / lost (= fake TCs converted) | 169 / 18 | 604 / 41 | 0 / 0 | 0 / 0 |
+| d duplicates, in-acceptance | **+0** | **-13** | 0 | 0 |
+| d duplicates, pooled | -0 | **-143** | 0 | 0 |
+
+(`sharMD >= 1` above; the hit-level `shar >= 1` variant is jets **+111 (+.0051)** / PU200 +13, and the
+`sharboth` variant jets +105 / PU200 +23 — all three have the same all-zero displaced-band profile.)
+
+**Both cubes are inert BY MECHANISM, not by tuning**: a displaced single-muon gun has no second track
+to share a mini-doublet with, so `sharMD` is identically 0 there and **cube50_highPt dxy[1,5) = .1209
+is untouched, bit-identically**. That is the same structural argument that protected D's shipped
+bare-pLS rule, and it doubles as the anti-sample-recognition check (sparse-region behaviour identical
+to base, by construction, no conditioning variable involved).
+
+### 3. What the candidate costs, stated as a cost and not as fine print
+* **A new kernel.** `ccClaimed[md]` is written INSIDE `ChainEmitTCs` today, so the count that the trim
+  reads does not exist until every row is emitted. A build needs K10 split into emit-slots then
+  count-and-trim, i.e. one extra launch over the accepted chains plus a `uint8` per-MD counter. Kernel
+  count is a real cost in this project ([[simplicity-over-cleverness]]) and this buys **+.005**.
+* **A design decision that propagates if you get it wrong:** whether `ccClaimed` (the -CC pre-claim
+  map, which feeds the pLS retirement sweep) reflects pre- or post-trim mini-doublets. My proxy
+  assumes **PRE-trim / unchanged**, which is what keeps the arm a pure repair. Post-trim would leak
+  into the CC sweep and my numbers would not describe it.
+* **T4 pressure, for agent T4:** 188 of the 609 addressable TCs (30.9%) are 5-layer, so a repaired
+  one becomes a **4-layer T4 row**; 421 are 6-layer and stay T5. At the delivered rate that is about
+  +0.06 T4 TC/evt on jets, small against your 2.07 fake T4/evt, and every one of them is a NEWLY
+  CORRECT track rather than a fake.
+* **It is an offline proxy.** Exact for the shape above, and validated against `tc_isFake` on 1.23M
+  rows — but this project's proxies have mispredicted deployment 4+ times and **deployment is the only
+  referee**. Nothing here has been deployed.
+
+### 4. My position
+**Refusal, with the exchange table as the deliverable.** Stage g is a real +.0278 of jet-core
+efficiency and it is 100% ours, but **82% of it is invisible to any truth-free observable that exists
+in this kernel**, for a physics reason (collinearity inside the jet core) that no retrain or threshold
+touches. The reachable 18% is clean enough to ship on every gate and small enough that I am not
+recommending a new kernel for it. If the maintainer wants the +.005 anyway, section 2 is the whole
+specification and section 3 is the whole bill.
+
+**For the round:** stage g should be re-filed from "fifth-largest and rising, a near miss" to
+**"+.0278 ceiling with a measured .0050 reachable, mechanism understood, closed"**, and the funnel's
+remaining money is in f / e / d where the missing information still exists somewhere in the event.
+
+Artifacts (`pur_ref/`): `gtrim2.py` (the instrument), `score2.py` (vectorised rule scorer, agrees with
+`score.py` to the sim), `curve.py` (the AUC -> efficiency exchange curve), `reach.py` (the
+evidence-availability decomposition), `g_census.py`, `rep.py`; corpora `J9_*` (jets, 244k unit rows),
+`P9_*` (PU200, 5.3M), `C9_*` / `H9_*` (cubes); `score_{J9,P9}.txt`. **No build, no worktree, no
+deployment, no commit, nothing published.**
+-- PUR
+
+## [PUR 03:10] I HAVE TO CORRECT MY OWN CLOSING VERDICT: **there IS a per-mini-doublet discriminator with real power and it is FREE — the T3-DNN fake score of the chain's TERMINAL member node, `triplets.fakeScore()`, which `ChainEmitTCs` already has in its signature and already loops over. AUC .807, and thresholded at .5 on the two terminal mini-doublets it delivers +.0100 core efficiency at 48 gained / 4 lost (12:1) — twice the hit-ownership family and ~38% of the +.0267 ceiling, with NO new kernel, NO counter and NO propagation.** Caveats WITH the headline, and they are large: **this is 100 jet events only** (the same 100 reproduce ORACLE +.0267 and `shar>=1 any` +.0052 against the 500-event +.0260 / +.0051, so the corpus scales, but a 48/4 cell is 52 tracks); **PU200 and the cubes are NOT yet measured for this rule** and the T3 score is NOT structurally zero on a displaced gun the way `sharMD` is, so the cube inertness argument of [PUR 02:05] DOES NOT TRANSFER; 500-event jets and 200-event PU200 `--allobj` runs are in flight. **SUPERSEDED IN PART BY
+[PUR 04:15] BELOW: the 500-event number held (+.00949) but the rule FAILS BOTH CUBE GATES — read that
+post, not this one, for the verdict.**
+
+### What I got wrong at [PUR 02:05]
+I concluded "the limit is evidence availability, not discriminator quality" from the fact that .6502 of
+the addressable mini-doublets are claimed by no other TC. That statement is true of OWNERSHIP evidence
+and it does not generalise: **the T3-DNN already scores the three-mini-doublet object that contains the
+stolen hit**, and a stitched terminal T3 is exactly what that network was trained to call fake. My
+[PUR 01:20] statement that "the geometry is blind" is also too broad — the RAW residual is blind
+(AUC .494), but a TRAINED function of the same geometry is not (AUC .807). The honest version:
+**a linear read of the fit is blind; the T3-DNN is not.** The T3 columns needed an `--allobj` run,
+which is why this arrived last.
+
+### The measurement (jets tune events 0-499 -> first 100 only, `pur_ref/T3S_*`, 47,284 units)
+Same instrument, same per-sim aggregation, `--allobj` run md5-verified against the pristine ship binary.
+Reference rows on the SAME 100 events so the comparison is like-for-like:
+
+| rule | fires | AUC | GAIN | LOSE | NET | d core eff |
+|---|---:|---:|---:|---:|---:|---:|
+| ORACLE any (the ceiling) | 8611 | .9988 | 127 | 9 | +118 | +.02672 |
+| `shar>=1` any (best of [PUR 02:05]) | 2279 | .8057 | 57 | 34 | +23 | +.00521 |
+| `sharMD>=1` any | 825 | .9466 | 21 | 4 | +17 | +.00385 |
+| any, max \|xy resid\| | 8611 | .5863 | 41 | 121 | -80 | -.01812 |
+| **t3 fakeScore, worse terminal** | 8521 | **.8074** | 92 | 55 | +37 | **+.00838** |
+| t3 promptScore (low), worse terminal | 8521 | .8082 | 97 | 60 | +37 | +.00838 |
+| **t3 fakeScore > .5, worse terminal** | **929** | .6752 | **48** | **4** | **+44** | **+.00996** |
+| t3 fakeScore, worse terminal, AND `shar>=1` | 1364 | .6720 | 39 | 15 | +24 | +.00543 |
+| t3 fakeScore, max over ALL positions | 8521 | .7805 | 51 | 91 | -40 | -.00906 |
+
+Two structural facts in that table:
+* **The threshold is what makes it safe, not the ranking.** Unthresholded it is 92/55; at
+  `fakeScore > 0.5` it is 48/4 while KEEPING more gain than any ownership rule. That is the shape a
+  candidate should have.
+* **It must be TERMINAL-restricted.** The same score applied at any position is -.00906: an interior
+  mini-doublet sits in three member T3s and dropping it breaks the chain's own geometry.
+
+### The in-kernel form, and it is the cheapest thing in this round
+> In `ChainEmitTCs` (K10): for an emitted chain row with **>= 5 outer-tracker mini-doublets**, read
+> `triplets.fakeScore()` of the **innermost and outermost member nodes** (both already reachable —
+> the kernel walks `items.nodeItems()[off + k]` for the pt median two lines above); if the worse of the
+> two exceeds `0.5`, skip that terminal mini-doublet when filling the layer slots.
+
+No new kernel, no new launch, no new array, no per-MD counter, no `ccClaimed` interaction, no weight
+file (the T3-DNN is already there and is LST's own, not ours to add). It is ~10 lines and one
+`ChainConfig` float defaulting to OFF. **This supersedes the `sharMD` candidate of [PUR 02:05] on
+every axis except the cube-inertness proof, which it does not have.**
+
+### What is NOT done, stated as a gap and not as a caveat
+1. **500-event jets** (in flight) — the 48/4 cell must survive the other 400 events.
+2. **PU200** (200-event `--allobj` in flight). The T3 fake score is a per-T3 quantity with a jet/PU200
+   prior shift, and the rule fires on 929 of 8,611 chain TCs on jets; on PU200 it will fire on ~1.2M
+   chain rows. **The loss side there is prompt efficiency and there is no budget.** This is the gate
+   that decides the arm.
+3. **Both cubes.** `sharMD` was inert on a displaced gun BY MECHANISM; `t3 fakeScore > .5` is NOT, so
+   `cube50_highPt dxy[1,5) = .1209` is at genuine risk and must be measured, not argued.
+4. Still an offline proxy. Exact for a K10-slot-skip (the reasoning in [PUR 02:05] section 2 applies
+   unchanged), but never deployed.
+
+**My position moves from "refusal" to "one candidate worth finishing, gates pending."** If the PU200
+and cube gates come back clean, `t3fk>.5 term` is a ~+.010 jet-core repair for ten lines and no new
+object, which is a better price than anything else I priced this round; if they come back dirty, the
+refusal of [PUR 02:05] stands and this paragraph is the reason it was worth checking.
+-- PUR
+
+## [WELD 01:15] CANDIDATE HANDED OVER, ALL HARD GATES GREEN, ONE NAMED DEBIT: **`kChainWeldSweeps: 3 -> 2`, ONE CONSTANT, a THIRD LESS WELD WORK -- jets tune core eff .7659 -> .7695 (p = 9.9e-04 paired), dR<.02 .5074 -> .5169 (p = .0024), sim pt 100-300 GeV +.0192, fake .1317 -> .1271; PU200 all SEVEN displaced bands neutral-or-better (three significantly BETTER) with fake and dup down everywhere; cube50_highPt EXACTLY .00000 on every efficiency and fake band including round 2's dxy[1,5) = .12089; cube50 exactly .00000 on all but two tiny bands (-.00093 and -.00019). The debit: jet-core (dR<.05) DUPLICATE .0313 -> .0345 (p = .017, 0.47 -> 0.52 TC/evt) in a cell we already owe master 0.30/evt.** The re-key arm is REFUSED with an exchange-rate table.
+
+Patch `weld_ref/pat/weld_S02.patch`, md5 **baa19ab0654220cc445f2287bb876dd1**, 29 lines, ONE file,
+`git apply --check` CLEAN against the main tree (== `04c6e122e68` for `LSTCore/{src,interface}`).
+**Verified end to end, not asserted:** a clean worktree `w2` at `04c6e122e68` + this patch and nothing
+else (no env knob, no `weldKey` column) is **bit-identical to the env-knobbed S02 arm on all 23
+`m3_ref/jetphys.py` fields over the same 500 jet events** (`weld_ref/runs/{S02,P02}_jet.json`, dict
+equality). The same check on the 35 PU200 fields is still RUNNING (`P02_pu`) and I will post it
+whatever it says; the S02 PU200 numbers below come from the env-knobbed binary, whose knob-unset arm
+is itself bit-identical to the pristine ship binary on all 35 fields.
+Binary `dcdd6dec417454034ec75bf94b509228`, lib `82fbf9df079a7569e71576ca79a5e490`, 0 `error:` in the
+fresh make log. Arms `weld_ref/runs/{BASE,S01,S02,P02,...}_{jet,pu,cube50,cubehi5}.*`, all with
+`RUN_EXIT=0` and a printed library-provenance check.
+
+Everything above rests on the diagnosis in [WELD 00:46] plus two things measured since. Jets TUNE
+0-499 and PU200 `event_1000` only; **jets 500-999 and PU200 `event_2000` never opened** -- the
+holdout is the coordinator's.
+
+### 1. THE MECHANISM, now measured directly rather than inferred (and my 00:46 wording corrected)
+
+The marginal weld's TRUTH QUALITY collapses sweep by sweep (`weld_ref/wqual.py`, 200-event local
+corpus, label = both endpoints the same sim; the sim's per-sweep alignment cross-checks against the
+tree at .787/.636/.431 tree-welded for sweeps 1/2/3 and ~.001 for sweeps >= 4, which is exactly what
+a 3-sweep tree should give):
+
+| welds produced BY sweep | 1 | 2 | **3** | 4 | 5 | 8 | 12 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| count | 58881 | 36499 | 18417 | 10093 | 5859 | 1489 | 244 |
+| **same-sim purity** | **.5487** | **.3126** | **.1208** | .0529 | .0306 | .0148 | .0041 |
+
+**The third sweep's welds are 88% wrong.** That is the whole result: sweeps 1 and 2 are mutual-best
+over nearly-full incident sets, sweep k is mutual-best only among k-1 rounds of leftovers, so the
+weld is not being truncated too early, it is being run one round too long.
+
+**Correction to my own 00:46 post:** I attributed the harm to chains being EXTENDED past their
+correct endpoint. The chain census on 6 events (`weld_ref/{chcmp.sh,chagg.py}`) says the dominant
+effect is chain CREATION, not extension -- chains 38,349 -> 61,328 -> 78,686 -> 130,944 at 1/2/3/8
+sweeps while nodes per chain move only 2.055 -> 2.087 -> 2.106 -> 2.157, and the gate-killed
+fraction rises .871 -> .897 -> .913 -> .945. Extension is real but secondary (2-node chains .944 ->
+.891 -> .835; 5-layer chains .194 -> .238 -> .293), and it is the part that displaces a correct
+4-layer chain with a wrong 5-layer one -- which is what `core_by_type` shows (T4 core wins 2419 at 1
+sweep -> 1016 at 3 -> 532 at 16). **Weld-set nesting verified: 0 welds are ever LOST going up in
+sweeps, on all 6 events**, so the whole sweep curve is a clean marginal-value measurement of added
+welds and no result here can be "a good weld displaced by re-ranking".
+
+### 2. THE FULL GATE TABLE for `kChainWeldSweeps = 2`
+
+**Jets TUNE, 500 events, paired McNemar on identical sims** (`p4_ref/jetgate.py`,
+`weld_ref/sweepgate.txt`; 0 sim-misaligned events, identical denominators 21,919 core / 49,459 all):
+
+| | BASE | S02 | delta | p |
+|---|---:|---:|---:|---:|
+| **eff core-all** | .7659 | **.7695** | **+.0036** | **9.9e-04** |
+| eff <.005 | .4108 | .4164 | +.0056 | .41 |
+| eff [.005,.01) | .4773 | .4931 | +.0158 | .011 |
+| eff [.01,.02) | .5932 | .6013 | +.0080 | .090 |
+| **eff <.02** | .5074 | **.5169** | **+.0095** | **.0024** |
+| eff [.02,.05) | .7459 | .7483 | +.0024 | .42 |
+| eff <.05 | .6091 | .6156 | +.0065 | .0025 |
+| eff >.05 | .8902 | .8915 | +.0013 | .21 |
+| eff all-sim | .8091 | .8110 | +.0019 | |
+| fake all | .1317 | **.1271** | **-.0046** | 4.8e-12 |
+| dup all | .0246 | .0243 | -.0003 | .38 |
+| **dup <.05** | .0313 | **.0345** | **+.0032** | **.017** |
+| TCs/evt | 123.15 | 122.90 | -0.25 | |
+
+All eight dR aggregates >= 0. Only negative fine bins: [.0175,.02) -.0020 (p=1) and [.04,.05) -.0043
+(p=.47). **SOFTER JETS** (`jpr2_ref/jetptaxis.py`): genjet 50-200 .9277 -> .9270 (-3 sims of 4067),
+**200-500 .9164 -> .9211**, 500-1000 .8761 -> .8778, 1000-2000 .7721 -> .7770, >2000 .7527 -> .7534.
+**SIM pt** (`jpr2_ref/ptaxis.py`): 10-20 +.0027, 20-50 +.0053, 50-100 +.0069, **100-300 +.0192**,
+**>300 -.0210** (denom 761, -16 sims, in the band where we lead master by +.1945).
+
+**PU200 tune, 1000 events, paired McNemar** (`p4_ref/paired_rle.py` + `d3_ref/pu_judge.py`; the
+pristine ship binary and the knob binary with the knob unset agree on all 35 fields, so BASE is a
+true null):
+
+| cell | BASE | S02 | delta | p |
+|---|---:|---:|---:|---:|
+| overall | .8097 | .8099 | +.0002 | .33 |
+| barrel | .9242 | .9251 | +.0008 | .011 |
+| transition | .8796 | .8791 | -.0005 | .49 |
+| endcap | .6795 | .6794 | -.0001 | .66 |
+| **dxy [0,1)** | .8345 | .8349 | +.0004 | .033 |
+| **dxy [1,5)** | .5621 | .5669 | **+.0049** | .053 |
+| **dxy [5,10)** | .2502 | .2582 | **+.0079** | .039 |
+| **dxy [10,30)** | .0538 | .0551 | +.0013 | .63 |
+| **vxy [1,5) / [5,10) / [10,30)** | | | **+.0017 / +.0015 / +.0041** | .15 / .61 / .036 |
+| fake overall / barrel | .0454 / .0519 | .0444 / .0499 | **-.0010 / -.0021** | |
+| dup overall / barrel | .0428 / .0140 | .0424 / .0127 | **-.0004 / -.0013** | |
+
+**All seven displaced bands neutral-or-better, three significantly better.** The PU200 fake drop is
+worth flagging on its own: round 2 shipped with `fake_overall` +3.4% relative, and this takes back
+-2.1% of it for free.
+
+**Cubes, full samples, own runs** (`cube50 -n -1 -s 4`; `cube50_highPt -n 5000 -s 4`, `RUN_EXIT=0`,
+n_evt 5000 and every denominator identical across arms):
+
+| | cube50 delta | cube50_highPt delta |
+|---|---|---|
+| every efficiency band | **+.00000** except `eff_vxy_5_10` **-.00093** and `eff_dxy_5_10` **-.00019** | **+.00000 on ALL TWELVE**, incl. **dxy[1,5) = .12089 unchanged** |
+| every fake band | **+.00000** | **+.00000** |
+| dup | +.00000 (endcap -.00002) | **-.00207 overall, -.00990 endcap** |
+
+**This is the sparse-region invariance guard passing MECHANICALLY, not by construction, and it is why
+the arm needs no density conditioning.** The sweep count only binds where the mutual-best iteration
+has not converged, and how much there is to converge scales with incidence degree, which
+`ChainConfig.h:285-292` already measures at **2.08 mean per shared key on PU200 against 62-272 on
+jets** (max 554 vs 2303) -- my own stage-d slots carry a median **195-222** eligible edges. So the
+third sweep simply has almost nothing left to do off-distribution, and the cube tables above are the
+direct evidence rather than an argument. **Stated as a limit, not a claim: I did not measure the
+eligible-incidence distribution on PU200 or the guns myself** -- the cube deltas of exactly .00000
+and the PU200 overall +.0002 are the measurements. The E1-B2 far-dca cell is untouched (no attach
+code, no bar, no weight file is in the patch).
+
+### 3. THE RE-KEY ARM: REFUSED, with the exchange-rate table
+
+Built and deployed, because it was the only remaining lever that adds NO welds -- a `weldKey` column
+on `ChainEdgesSoA` carrying the scalar the K6a/K6b ARGMAX orders on, separate from the `logOdds` that
+K6e sums and the gate reads (`ChainEdges.h chainWeldKeyScalar`, mode 0 = max(mP,mD) = today).
+**Inertness proven: the weldKey binary `c2953e626b41743caaa5008416efda7d` with the mode unset is
+bit-identical to the pristine ship binary on all 23 jetphys fields**, so the extra column costs no
+physics. Jets TUNE 500 events, 3 sweeps, single variable:
+
+| weld argmax key | eff core | eff <.02 | fake | dup | TC/evt | offline proxy said |
+|---|---:|---:|---:|---:|---:|---:|
+| **max(mP,mD) = SHIPPED** | .76587 | .5074 | .13170 | .02463 | 123.1 | .0000 stage-d sims |
+| min(mP,mD) | **-.0042** | **-.0155** | -.0146 | +.0008 | 119.4 | **.2226** |
+| mP | -.0031 | -.0133 | -.0133 | -.0005 | 119.5 | .1934 |
+| mP + mD | +.0012 | -.0043 | -.0070 | -.0001 | 121.9 | .1752 |
+| **`kChainWeldSweeps = 2` for comparison** | **+.0036** | **+.0095** | -.0046 | -.0003 | 122.9 | -- |
+
+**All three alternative keys lose deep-core efficiency**, and the best of them (mP+mD, +.0012 core /
+-.0043 deep core) is dominated by the one-constant arm on every axis while costing an SoA column.
+**This is the fifth time an offline proxy in this project has mispredicted deployment**: the sweep-1
+mutual-argmax predicate is a rigorous lower bound on weld reach and it correctly said min(mP,mD)
+recovers .2226 of stage-d sims -- what it could not price is the ~15% of currently-welded edges the
+re-key displaces, which section 1 shows is exactly the currency the weld is most sensitive to.
+The winner's-curse reading of `max` is therefore **wrong as a lever even though the argmax really is
+an extreme-value selection over ~200 competitors.** I recommend the `weldKey` column NOT be shipped
+(the patch above does not contain it); it is banked at `weld_ref/keybin/` + `w1` if anyone wants it.
+
+### 4. TWO CORRECTIONS TO THE RECORD, both with numbers, because a PARKED candidate rests on one
+
+**(a) "The weld can only reach ~3 ranks deep in a node's own ordering" is false as a theorem.**
+`FINDINGS_JET.md:363-368` and `interface/ChainConfig.h:292` ("the weld consumes at most
+`kChainWeldSweeps` edges per node-slot") both state it, and M2's parked per-node top-C weld cap
+(`m2_ref/`, "provably lossless C >= 16") is justified by it. K6a excludes an edge whose HEAD's
+in-slot is taken, so a later sweep's argmax at a node is the highest-ranked edge with a free head,
+which can be arbitrarily deep. **Empirically the conclusion survives but the proof does not**: over
+36,026 tree-welded edges with a complete slot list (`weld_ref/wrank.py`), the out-slot rank of a
+consumed edge is p50 1, p90 3, p99 4, **max 9**, with .9726 within rank 3 and 1.0000 within rank 8
+(in-slot: p50 1, p90 2, max 9). So C >= 16 is safe on this sample by MEASUREMENT, not by the sweep
+count. **Caveat with that number: those slots carry a median of 10 eligible edges, i.e. the
+complete-slot subset is biased toward the sparser slots where a weld actually happened**, so read it
+as "no counterexample above rank 9 was found", not as a bound.
+**(b) The fixed point of K6a/K6b is the greedy matching by weld key**, so at convergence no slot with
+any eligible edge can be empty; the shipped 3 sweeps leaves **32.8%** of the slots a true core edge
+loses still EMPTY (local sim: .659 at 1 sweep, .328 at 3, .053 at 8, .0027 at 20).
+
+### 5. What I did NOT do, and what I would do next
+* No union arm (S02 x re-key) -- the re-key is negative alone and unions are measured, never summed;
+  with the re-key refused there is nothing to union. **Timing untouched** (out of scope), but the
+  direction is favourable and structural, not measured: K6a/K6b runs 2/3 as many times, and
+  `FINDINGS_JET.md:508` put K6ab at 18.8% of chain time, so ~6% of chain time should come back.
+* **Stage d's remaining +.026 is NOT reachable from inside the weld.** After the sweep move, what is
+  left is a genuine ranking loss: .8230 of stage-d sims have EVERY eligible pair strictly out-ranked,
+  at median rank 63 of 195 competitors, and the three cheapest re-orderings of the head's existing
+  outputs all lose deep-core efficiency. The next honest step is a sharper EDGE head (declined) or a
+  multi-slot weld (an admission lever, and section 1 just priced admission on this graph as
+  negative). I would spend the next round elsewhere.
+* Two stale comments the coordinator may want to fix while committing: `ChainConfig.h:292`'s
+  "the weld consumes at most `kChainWeldSweeps` edges per node-slot" (see 4a) and
+  `ChainEdgesSoA.h:39`'s "repeat the lookup ~8-16x per edge" (4x at two sweeps). Both are comments
+  only; I left them out of the patch to keep it one constant and verified.
+
+### Reproduce
+```
+weld_ref/beat1.py jpr2_ref/fun                       # pass 1, free, JPR2's corpus
+weld_ref/wlaunch.sh 0 199 24                         # the 200-event pass-2 corpus (needs ~250 MB)
+weld_ref/wagg.py weld_ref/fun                        # ranks, slot occupancy, competitor census
+weld_ref/{wsweep,wqual,wkey,wrank}.py weld_ref/fun   # sweep sim, per-sweep purity, key screen, ranks
+weld_ref/gates.sh <TAG> <sweeps|base> <all|jet|pu|cubes>   # env-knobbed arms (WELD_BIN, WELD_KEY)
+weld_ref/patgates.sh P02 all                         # the SHIP-PATCH arm from worktree w2
+weld_ref/chcmp.sh 0 5 ; weld_ref/chagg.py weld_ref/ch     # chain census vs sweep count
+p4_ref/jetgate.py --split tune weld_ref/runs/{BASE,S01,S02}_jet.root m3_ref/jpr_master_jets1000.root
+p4_ref/paired_rle.py weld_ref/runs/{BASE,S02}_pu.root BASE S02
+```
+1.2 GB in `weld_ref/`. Nothing committed, nothing published, nothing in `/tmp`.
+-- WELD
+
+## [T4 02:40] **THE CLASS IS NET POSITIVE, IT IS UNDER-ADMITTED, AND SUPPRESSING IT IS FORBIDDEN BY THE CROWN JEWELS: deleting the 4-layer class costs PU200 `dxy[10,30)` .0538 -> .0228 (-58% relative), `dxy[5,10)` .2502 -> .1917, `dxy[1,5)` .5621 -> .5318 and `vxy[10,30)` .6963 -> .6764 -- 284 displaced sims lost and ZERO gained, paired p 2e-28 to 3e-18.** Turning that around gives the round a CANDIDATE: **`T4C1`, a density-conditioned loosening of the 4-layer IP gate bar, buys +.0091 jet-core efficiency (+.0241 at dR<.02, +.0261 at dR<.005, EVERY fine bin from [0,.0025) to [.03,.04) positive and significant) for EIGHT extra TCs in 1,583,791 on PU200, three discordant sims of 75,422 all in its favour, and BOTH CUBES BIT-IDENTICAL including `cube50_highPt` dxy[1,5) = .1209 unchanged to four decimals.** Caveats WITH the headline: **jet-core dup (dR<.05) goes .0313 -> .0324 (+3.5% rel, p .066, NOT resolved) -- the one cell that moves the wrong way**; jets TUNE half only (500-999 sealed, I never opened them); PU200 `event_2000` never opened; the full-sample `cube50_highPt` runs are still in flight (the 5000-entry slice that carries the .1209 headline is IN and bit-identical); nothing is timed.
+
+### 1. THE POLICY ANSWER: the class carries the displaced crown jewels on PU200
+
+`LST_T4_EMIT_MIN=5` deletes the class at emission; `LST_T4_GATE_TIGHTEN=1000` kills it at the gate.
+PU200 tune, 1000 events, 75,422 sims, paired McNemar (`p4_ref/paired_rle.py`):
+
+| cell | SHIP | **T4E5** (delete) | lost / gained | p | **T4KG** (gate-kill) |
+|---|---:|---:|---:|---:|---:|
+| **eff_dxy[1,5)** | .5621 | **.5318 (-.0302)** | **93 / 0** | 2.0e-28 | .5344 (-.0276) |
+| **eff_dxy[5,10)** | .2502 | **.1917 (-.0586)** | **59 / 0** | 3.5e-18 | .1966 (-.0536) |
+| **eff_dxy[10,30)** | .0538 | **.0228 (-.0310)** | **49 / 0** | 3.6e-15 | .0488 (-.0051) |
+| **eff_vxy[10,30)** | .6963 | **.6764 (-.0199)** | **83 / 0** | 2.1e-25 | .6821 (-.0141) |
+| eff_vxy[5,10) | .7128 | .6975 (-.0153) | 32 / 1 | 7.9e-09 | .7015 (-.0113) |
+| eff_overall | .8097 | .8086 (-.0011) | 204 / 121 | 4.8e-06 | .8099 (+.0002, n.s.) |
+| fake_overall | .04535 | .03533 (-22% rel) | | | .03982 |
+| n_tc / n_tc_t4cl | 1583791 / 63851 | -25038 / -63851 | | | -14296 / -56706 |
+
+**The 4-layer class is where our displaced advantage lives**: it carries 58% of `dxy[10,30)`, 23% of
+`dxy[5,10)`, 5.4% of `dxy[1,5)` and 2.9% of `vxy[10,30)`, and **not one displaced sim is recovered by
+another route when it is removed** (B-only = 0 in all four dxy bands). Under
+[[feedback_tuning_priority]] and [[feedback_headline_caveats]] that closes the whole suppression
+family, including round 2's unmeasured leftover: **the `t4p10` idea (a +0.10 offset on the four
+4-layer bars, left UNMEASURED at [COORDINATOR 22:05]) is a small version of exactly this arm and
+should not be built.** On jets the same arms cost -.0218 (emit) / -.0266 (gate) jet-core efficiency,
+and the gate version makes jet fake WORSE (.1317 -> .1359, dR<.02 .3997 -> .4338) because the freed
+hits go to fakes: T5 45.8 -> 47.7/evt at non-fake .8262 -> .8015. **6-8 fake TCs removed per core sim
+LOST, against a budget that says we may SPEND 2.6 fakes per sim GAINED.**
+
+### 2. SO THE LEVER IS THE OTHER DIRECTION -- and 3/4 of the gate stage's core budget is one bar
+
+`t4_ref/stage.py`, 450-event corpus, core sims dR<.05: **677 of 873 stage-e sims (.776) have a
+gate-KILLED chain whose entire node run is their own T3s, 4 layers long -- and 697 of the 700 are
+BRANCH 0, the 4-layer IP bar `m3Theta4`.** (Stage f's mirror: 552 of 1,481 have a gate-ALIVE pure
+chain that is ONLY 4-layer -- KEY's population, not mine.) The gate kills **95.15% of all 4-layer
+chains and 97.97% of branch 0**; a 4-layer chain that survives delivers at .0415 against .2085 for
+5-layer and .4656 for 6+.
+
+### 3. THE CANDIDATE FRONTIER (jets tune 0-499 paired; PU200 tune 1000 evt paired; both cubes)
+
+`bar = m3Theta4 + zdM4 - delta * min(1, max(0, log10(1+deg) - log10(1+rho0)) / decades)`, where
+`deg` = `ChainFeatures[14]` = max over the chain's OWN weld junctions of degIn*degOut. Zero at or
+below rho0 by construction, so sparse regions are bit-identical without needing a measurement.
+Design table (`p3_ref/lab/{jet,pu}`, head-independent columns, 839k jet + 1.55M PU200 branch-0
+4-layer chains): fraction above rho0 = **jets core-TRUE .964 / .930 / .801 / .517** vs
+**PU200 .1095 / .0199 / .0018 / .0001** at rho0 = 10 / 30 / 100 / 300 -- a 47x to 5000x separation
+with no sample-level quantity anywhere in it.
+
+| arm (delta, rho0, decades) | jet core | dR<.02 | jet fake (pooled) | jet dup <.05 | PU200 sims lost/gained | PU200 n_tc | cube50 | cube50_hp |
+|---|---:|---:|---:|---:|---:|---:|---|---|
+| SHIP | .7659 | .5074 | .1317 | .0313 | -- | 1583791 | -- | -- |
+| **T4C3** (2, 100, 0.5) conservative | .7741 **+.0082** | +.0216 | -.0003 | +.0011 | **0 / 0, all 12 cells** | **+0** | -- | -- |
+| **T4C1** (2, 30, 1.0) **PRIMARY** | .7749 **+.0091** | **+.0241** | **-.0005** | +.0012 | **0 / 3** | **+8** | **BIT-IDENTICAL** | **BIT-IDENTICAL** |
+| **T4R10** (2, 10, 1.0) aggressive | .7754 **+.0096** | +.0250 | +.0000 | +.0011 | 5 / 8 (dxy[1,5) **0/4**) | +31 | **BIT-IDENTICAL** | pending |
+| T4U20 unconditioned (2) | .7753 +.0094 | +.0255 | +.0007 | +.0011 | not run | | | |
+| T4U40 unconditioned (4) | .7749 +.0091 | +.0255 | **+.0101** | +.0009 | not run | | | |
+| T4D20 (2, 1000, 1.0) | .7663 +.0004 | +.0013 | -.0000 | +.0000 | -- | | | |
+
+Two things this table says that I did not expect. **(a) The condition costs almost nothing on jets:
+T4C1 gets 97% of the unconditioned gain, and T4R10 gets 102% of it at LOWER fake** -- the occupancy
+cut removes admissions that were pure fake. **(b) The unconditioned arm is peaked at delta 2**;
+delta 4 buys no efficiency and +.0101 of pooled fake, so the bar is genuinely mis-set by ~2 units
+for the jet regime and not more. rho0 = 1000 is inert on BOTH samples and is the null control that
+proves the conditioning variable is doing the work.
+
+### 4. `T4C1` FULL GATE TABLE
+
+**JETS tune 0-499, paired McNemar** (`p4_ref/jetgate.py --split tune`, `t4_ref/jetgate_C1only.json`):
+
+| cell | SHIP | T4C1 | delta | lost | gained | p |
+|---|---:|---:|---:|---:|---:|---:|
+| **core-all** | .7659 | **.7749** | **+.0091** | 55 | 254 | **1.0e-31** |
+| **<.005** | .4108 | .4369 | **+.0261** | 6 | 48 | 3.3e-09 |
+| [.005,.01) | .4773 | .4968 | +.0195 | 6 | 37 | 1.6e-06 |
+| [.01,.02) | .5932 | .6190 | +.0258 | 12 | 73 | 8.1e-12 |
+| **<.02** | .5074 | **.5315** | **+.0241** | 24 | 158 | 2.2e-25 |
+| [.02,.05) | .7459 | .7565 | +.0106 | 21 | 65 | 2.2e-06 |
+| [0,.0025) (the shared wall) | .4277 | .4495 | **+.0218** | 3 | 17 | .0026 |
+| [.0125,.015) (the peak-gap bin) | .5831 | .6042 | **+.0212** | 4 | 17 | .0072 |
+| every other fine bin to [.03,.04) | | | **all positive**, +.0101 to +.0314 | | | .0001-.019 |
+| fake pooled / <.05 / <.02 | .1317/.3766/.3997 | .1312/.3737/.4069 | **-.0005 / -.0029** / +.0072 | | | .27/.19/.038 |
+| **dup <.05** | **.0313** | **.0324** | **+.0012 (FLAG)** | | | .066 |
+| dup pooled | .0246 | .0249 | +.0003 | | | .021 |
+| TCs/evt | 123.1 | 123.6 | +0.5 | | | |
+
+In objects per event: **+0.40 core sims/evt matched (+199 core sims per 500 events) against +0.01
+core fake TCs/evt and +0.02 core duplicate TCs/evt** -- 40 core sims per admitted core fake and 18
+core sims per admitted core duplicate. The core fake RATE inside dR<.02 rises (+.0072) because the
+denominator grows; the core fake COUNT there is +0.06/evt against +0.27 core sims/evt.
+
+**NEW SOFTER-JETS GATE: PASS, exactly** (`jpr2_ref/jetptaxis.py --split tune`):
+
+| genjet pt | denom | delta ALL | delta dR<.005 | delta [.005,.02) | delta [.02,.05) |
+|---|---:|---:|---:|---:|---:|
+| **50-200** | 4067 | **+.0000** | -- | **+.0000** | **+.0000** |
+| **200-500** | 2357 | **+.0000** | **+.0000** | **+.0000** | **+.0000** |
+| 500-1000 | 1751 | +.0023 | +.0000 | +.0131 | +.0029 |
+| 1000-2000 | 14916 | +.0084 | +.0215 | +.0222 | +.0125 |
+| >2000 | 7003 | **+.0104** | **+.0340** | +.0254 | +.0064 |
+**The populations where we ALREADY beat master (50-200 and 200-500 GeV, +.038/+.016 in the annulus
+per JPR2) do not move by a single track, in any dR band.** The arm is self-targeting because
+occupancy is what a hard jet makes -- this is the cleanest evidence I have that the conditioning is
+physics and not sample recognition.
+
+**AND IT LANDS ON THE CELL JPR2 RELOCATED THE GAP TO** (`jpr2_ref/ptaxis.py`, sim pt, tune):
+
+| sim pt | denom | MASTER | SHIP | **T4C1** | gap to master, SHIP -> T4C1 |
+|---|---:|---:|---:|---:|---|
+| 10-20 | 3330 | .8805 | .8589 | **.8673** | -.0216 -> **-.0132** |
+| **20-50** | 3971 | .7870 | .7122 | **.7263** | -.0748 -> **-.0607** |
+| **50-100** | 2185 | .6146 | .5364 | **.5606** | **-.0783 -> -.0540 (31% of the gap)** |
+| 100-300 | 2036 | .3541 | .3718 | **.3954** | +.0177 -> **+.0413** |
+| >300 | 761 | .1932 | .3876 | **.4021** | +.1945 -> **+.2089** |
+| 0.9-10 | 9636 | -- | -- | **+.0000 to +.0032** | untouched |
+137 of the 540 sims of the pt 10-100 GeV master gap, plus 47 above 100 GeV, with the low-pt
+population untouched.
+
+**PU200 tune 1000 evt, paired** (`p4_ref/paired_rle.py`): **3 discordant sims in 75,422, ALL
+gained** -- `dxy[1,5)` 0/1, `vxy[10,30)` 0/1, `dxy[0,1)` 0/2; every band delta +.0000 to +.0003; all
+21 `d3_ref/pu_judge.py` fields identical to five decimals except `eff_dxy[1,5)` +.00032 and
+`eff_vxy[10,30)` +.00024 (both UP); `fake_overall` +.00000, `dup_overall` -.00000; **n_tc +8 of
+1,583,791**, n_tc_t4cl +14 of 63,851.
+
+**BOTH CUBES: BIT-IDENTICAL.** `cube50` (5000 evt, -s 4) and `cube50_highPt` entries 0-4999 (-s 4):
+**every one of the 21 judge fields identical, including n_tc, and 0 discordant sims in all 11 paired
+cells.** `cube50_highPt` dxy[1,5) stays **.1209**, dxy[5,10) .0649, vxy[1,5) .3172 -- round 2's
+headline is untouched to four decimals, by construction (a displaced gun's junction occupancy is
+p50 2, three decades below rho0). The full-sample cubehi runs are in flight and I will post them.
+
+### 5. ARM (b) AND THE pT4 VERDICT, now with the PU200 side
+
+`LST_T4_ATTACH_MIN=4` (see [T4 01:20] for the jet numbers: core -.0002, p .72, i.e. neutral).
+**PU200: eff_overall +.00073 with 2 lost / 57 gained (p 6e-15), eff_barrel +.00082, eff_transition
++.00127, ALL FOUR dxy bands and vxy[5,10)/[10,30) with ZERO discordant sims, `fake_overall`
+-.00053 (BETTER), and both cubes BIT-IDENTICAL.** Its price: **`dup_overall` +.00025 and
+`dup_barrel` +.00060** (+439 duplicate TCs per 1000 events for +55 sims = 8:1 in the currency we
+already owe, against D's round-2 rule which ran 228:1 the other way), and it re-types 30,722 of
+63,851 PU200 T4-class TCs into pT5-class. **My recommendation: do not ship it, but record it** -- it
+is a real +.0007 PU200 efficiency for one constant, and if AT's retrain changes the pair head's
+calibration this arm should be re-measured on top of it rather than inherited from here.
+**For the pT4 question (arm c): the object is reachable TODAY for one constant, it is emitted as a
+type-7 row with the pixel hits prepended, and deployed it is worth -.0002 on jets and +.0007 on
+PU200 with dup worse. I recommend NOT porting pT4.** The four branch commits sit on LST's T4 object,
+which this tree no longer has (our 4-layer class is a WELD product), so the port is a rewrite whose
+product is already measured.
+
+### 6. THE ARTEFACT
+
+| item | value |
+|---|---|
+| patch | `standalone/t4_ref/t4_class_policy.patch` md5 **`6550c79df1ff469319bdb44fbeabd606`**, 274 lines, 6 files, `git apply --check` CLEAN (the main tree's `src`+`interface` are byte-identical to `04c6e122e68`) |
+| worktree / binary | `gpu_wt/t4a`, `bin/lst_cpu` md5 `945c71c4041a9fe0b414b333ff9099c6`, `liblst_cpu.so` md5 `1fb656ee55247cffaf5cf06fbe0e573b`, snapshot `t4_ref/snap/{bin,LST}`, 0 `error:` in `.make.log.1786595247` |
+| inertness | knob-free arm is **BIT-IDENTICAL to the ship binary's own runs** on jets (500/500 events, 10 branches) AND on PU200 (all 21 judge fields, n_tc exact) |
+| **to ship T4C1** | `ChainConfig::t4DensDelta = 2.f; t4DensRho0 = 30.f; t4DensDecades = 1.f;` -- three floats, NO new kernel, NO new weight file, NO new cell, NO new feature |
+| to reproduce | `bash t4_ref/gates.sh $PWD/t4_ref/snap T4C1 all "LST_T4_DENS_DELTA=2.0 LST_T4_DENS_RHO0=30 LST_T4_DENS_DECADES=1"` then `python3 p4_ref/jetgate.py --split tune at_ref/runs/BASE_jet.root t4_ref/runs/T4C1_jet.root --labels SHIP,T4C1` |
+| other knobs in the patch | `LST_T4_GATE_TIGHTEN`, `LST_T4_EMIT_MIN`, `LST_T4_ATTACH_MIN` -- all inert at their defaults; they are the PRICING instruments for sections 1 and 5 and the coordinator may strip them |
+
+**Simplicity disclosure** ([[feedback_simplicity_over_cleverness]]): the shippable part is three
+floats and one three-line inline function in `ChainGate.h`. The other three knobs are measurement
+scaffolding; if the maintainer wants the minimum diff, sections 1 and 5 are already measured and the
+patch can be reduced to the density term alone.
+
+### 7. FOR THE OTHER AGENTS
+* **KEY** -- 552 of 1,481 stage-f core sims (dR<.05) have a pure gate-alive chain that is ONLY
+  4-layer, and it rises with sim pt (2 / 20 / 106 / 143 / 206 / 75 across 1-10 / 10-20 / 20-50 /
+  50-100 / 100-300 / >300 GeV). **T4C1 makes this population BIGGER** (T4 core-eff share 1016 ->
+  1307, T4 TCs/evt 10.1 -> 11.4), so your discriminator will see more 4-layer candidates than the
+  base does; measure on top of T4C1 if the coordinator takes it, and note that a key which cannot
+  rank a 4-layer chain above a 5-layer thief cannot reach 37% of your stage in the core.
+* **PUR** -- your trim hazard is worse than the attach-eligibility line suggests: a chain that drops
+  from 5 layers to 4 lands in a class whose **delivery-given-gate-alive is .0415 against .2085 for
+  5-layer**, i.e. it is ~5x less likely to win its claim, and its non-fake fraction on jets is .489.
+  That belongs in your ledger next to the duplicate hazard. (The attach-eligibility half of the
+  hazard is real but cheap to remove: `LST_T4_ATTACH_MIN=4` is measured neutral on jets.)
+* **AT** -- `LST_T4_ATTACH_MIN` is inert by default and I am NOT recommending it, so your on-policy
+  dumps are unaffected. I did not touch `AttachNetworkWeights.h` or any of the eight attach
+  `ChainConfig` bars. T4C1 does not touch the attach path at all. If you want the 4-layer targets in
+  your mix, section 5 is their deployed price on both samples.
+* **SF / WELD** -- T4C1 moves the 4-layer IP GATE bar only. It does not touch `thetaEdgeE1/E2`, the
+  80 weld WPs, or the weld argmax, so it is orthogonal to both of your levers by construction; the
+  union is measurable with one env string on my binary if the coordinator wants it.
+-- T4
+
+## [WELD 01:25] THE LAST OPEN CHECK LANDS: **the ship patch is bit-identical to the env-knobbed S02 arm on the PU200 side too -- all 35 `d3_ref/pu_judge.py` fields, 1000 tune events (`RUN_EXIT=0`).**
+
+So `weld_ref/pat/weld_S02.patch` (md5 `baa19ab0654220cc445f2287bb876dd1`) is verified against the
+measured arm on **both** judges: 23/23 jetphys fields on 500 jet events and 35/35 PU200 fields on
+1000 events. Nothing in [WELD 01:15] is now resting on the env knob. That closes my brief.
+
+One handover note for whoever commits it: my worktrees are `w1` (the measurement scaffolding -- the
+`LST_CHAIN_WELD_SWEEPS` knob, the `weldKey` column and the `LST_CHAIN_WELD_KEY` mode, binary
+`c2953e626b41743caaa5008416efda7d`) and `w2` (the ship patch and nothing else, binary
+`dcdd6dec417454034ec75bf94b509228`). **Only w2's diff should be committed.** Frozen binaries at
+`weld_ref/{swbin,keybin}/`; the corpus and every arm's ROOT/JSON under `weld_ref/{fun,runs,ch}`.
+-- WELD
+
+## [T4 03:05] CUBE GATE COMPLETE FOR THE CANDIDATE: **`T4C1` is BIT-IDENTICAL on the FULL 10,000-event `cube50_highPt` as well -- all 21 judge fields including `n_tc`, and 0 discordant sims in all 12 paired cells** (`p4_ref/paired_rle.py`, `-s 4`, no writer segfault on either arm). Also bit-identical: `T4R10` and `T4A4` on `cube50_highPt` entries 0-4999, and `T4C1`/`T4R10`/`T4A4` on `cube50`. So every displaced-gun cell in the round's gate set is untouched at the level of individual sim tracks for all three arms, which is what the conditioning was designed to guarantee by construction rather than by luck.
+
+| sample | events | arms verified BIT-IDENTICAL to SHIP |
+|---|---:|---|
+| `cube50` | 5000 | T4C1, T4R10, T4A4 |
+| `cube50_highPt` entries 0-4999 (carries the .1209 headline) | 5000 | T4C1, T4R10, T4A4 |
+| **`cube50_highPt` FULL** | **10000** | **T4C1** (dxy[1,5) .1120, dxy[5,10) .0630, vxy[1,5) .3097, all +.0000, 0/0 discordant) |
+
+Remaining open on `T4C1`, stated so nobody over-reads the gate set: the **jets 500-999 HOLDOUT and
+PU200 `event_2000` are SEALED and I never opened either** -- the coordinator owns both; the
+**jet-core dup cell (dR<.05) .0313 -> .0324 at p .066 is unresolved and is the one cell moving the
+wrong way** (+0.02 core duplicate TCs/evt against +0.40 core sims/evt, 18:1 in favour); and
+**nothing is timed** (the arm adds one `log10` and one `min` per 4-layer chain inside a kernel that
+already evaluates a 25-32-32-3 MLP for every chain, so I expect free, and I have not measured it).
+-- T4
+
+## [PUR 04:15] BOTH CANDIDATES NOW FULLY MEASURED AND THEY SPLIT CLEANLY: **the T3-score rule holds at +.0095 jet core on the full 500-event corpus (230 gained / 22 lost, 36% of the ceiling, twice the ownership family) and FAILS BOTH CUBE GATES — 0 gained / 3 lost on cube50 and 0 gained / 4 lost on cube50_highPt, with `dxy[1,5)` at 0/1 and 0/1, i.e. it gives back round 2's headline cell and buys nothing there.** The ownership rule `sharMD>=1` is HALF the jet gain (+.0041) and **fires ZERO times on either cube, bit-identically, by mechanism.** So: **+.0041 that clears every gate, or +.0095 that does not.** PU200 for the T3 rule is still running and cannot rescue it — the cube fail is already a hard-gate fail.
+
+### The two candidates side by side, all four samples, one instrument
+Jets = tune 0-499 (21,919 core sims). PU200 = event_1000 (72,481 in-acceptance sims). Cubes = full
+samples, gun denominators (**no vertex cut** — the guns are judged in bands; my first cube pass used
+the prompt vertex cut and its band cells were void, this table is the corrected one).
+
+| | **PUR-SB: `sharMD >= 1`** | **PUR-T3: `t3 fakeScore > .5`, terminal** |
+|---|---|---|
+| what it reads | another emitted chain TC carries the same mini-doublet | `triplets.fakeScore()` of the terminal member node |
+| cost to build | new kernel + per-MD counter (K10 must split) | **~10 lines inside `ChainEmitTCs`, no new launch** |
+| **jets core eff** | **+.00406** (113 gained / 24 lost) | **+.00949** (230 / 22) |
+| ... as a share of the +.0260 ceiling | .156 | **.365** |
+| jets fake TCs converted (non-core sims) | 169 / 18 | 233 / 34 |
+| jets core duplicates | +0 | +1 |
+| jets dxy / vxy bands | 113/24 in dxy[0,1); **0/0 in all other bands** | 439/253 in dxy[0,1); 0/0 elsewhere |
+| PU200 eff | **+22** (24 / 2) | running |
+| PU200 dxy[1,5) / [5,10) / [10,30) | **0/0, 0/0, 0/0** | running |
+| PU200 duplicates | **-13 core, -143 pooled (BETTER)** | running |
+| **cube50** | **fires 0 of 1,329 — BIT-IDENTICAL** | fires 590; **0 gained / 3 lost** |
+| **cube50_highPt** | **fires 0 of 519 — BIT-IDENTICAL** | fires 345; **0 gained / 4 lost** |
+| ... cube50_highPt dxy[0,1)/[1,5)/[5,10)/[10,30) | 0/0, **0/0**, 0/0, 0/0 | 0/1, **0/1**, 0/1, 0/1 |
+
+**Why the T3 rule fails the guns, mechanistically, so nobody retunes the threshold and hopes:** on a
+single-particle displaced gun there ARE no stolen mini-doublets, so every firing is a false positive.
+The measurement says exactly that — the T3 fake score's per-mini-doublet AUC is **.4194 on
+cube50_highPt and .5307 on cube50** (against .80 on jets), i.e. on the guns it carries no information
+and simply deletes hits. 345 firings, 4 destroyed matches, 0 repairs. A lower threshold fires more; a
+higher one keeps firing on the same population because the score is uninformative there, not small.
+
+**The conjunction does not rescue it either, and this is the load-bearing negative:** `t3 fakeScore
+terminal AND shar >= 1` fires **0 times on both cubes** (inheriting `sharMD`'s mechanism) and delivers
+**+.00493** on jets — i.e. it throws away exactly the extra reach that made the T3 rule interesting and
+lands back on the ownership family's number. The T3 score's extra .005 lives precisely in the chains
+where no ownership evidence exists, which is the population the guns cannot distinguish from their own.
+
+### What I hand over
+1. **PUR-SB (`sharMD >= 1`) is a certified-on-every-gate candidate worth +.0041 jet core**, with PU200
+   efficiency positive, all seven displaced bands at zero discordant sims, PU200 duplicates BETTER, and
+   both cubes bit-identical by mechanism. Its bill is a new kernel launch and a per-MD counter for
+   +.004. **I am not recommending it** — [[simplicity-over-cleverness]] prices a kernel higher than
+   that, and the maintainer already declined +.02 for a weight file. It is on record, fully priced, if
+   the round ends short.
+2. **PUR-T3 is the better physics and the wrong shape.** +.0095 for ten lines is the best price in my
+   assignment, and the only thing standing between it and a ship is that it fires in regions where
+   there is nothing to repair. **The named next experiment is a REGIME-CONDITIONED threshold** — make
+   the `fakeScore` bar a continuous function of local occupancy so it relaxes to "never fire" in sparse
+   regions, which is exactly the round's allowed conditioning shape and exactly what the cube failure
+   asks for. I did not build it: it needs the occupancy column plumbed into K10 and a deployed sweep,
+   which is a round's work, not a measurement.
+3. **The residual/chi2 family stays closed** (AUC .494) and **the K6f trim relaxation stays closed**
+   (only 26.4% of the addressable population even passes its concentrating guard).
+
+**One measurement still in flight and it cannot change the verdict:** the PU200 200-event `--allobj`
+run for PUR-T3 (the cube fail is already a hard-gate fail, and PUR-SB's PU200 row is complete). It is
+chained to reduce and score itself into `pur_ref/chain2.log` when the run lands, tagged `TPU`.
+
+Artifacts added: `pur_ref/{TJ5B,TC5B,TCHB,T3S}_*` (the `--allobj` corpora and their scores),
+`pur_ref/{A500_jet,A200_pu,AC50,ACHI}.root` (the four `--allobj` runs, pristine-binary md5 verified),
+`pur_ref/chain{2,3,4}.log`. **No build, no worktree, no deployment, no commit.**
 -- PUR

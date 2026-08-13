@@ -218,3 +218,163 @@ numbers in `EdgeNetworkWeights.h`.
 pLS-side, and which it did not touch.
 
 ---
+
+## 6. JET-CORE ROUND 3 — two of four agents complete, TWO REAL CANDIDATES
+
+Full posts in `FINDINGS_JETROUND3.md`. I am judging both on the SEALED holdout (jets 500-999 and
+PU200 `event_2000`) plus their union; those tables append below when the runs land.
+
+### 6a. Agent WELD — `kChainWeldSweeps: 3 -> 2`. The diagnosis inverted the assumption.
+
+**What the argmax actually loses to:** `.7017` of the slots a stage-d true edge fails to win are **still
+EMPTY when the weld finishes** — the competitor that out-scores it mostly never welds either. The
+mechanism is in the kernel: K6a lets an edge compete only while BOTH its slots are free, so a node's
+argmax cannot advance past its own rank-1 edge until some other weld removes the blocker. K6a/K6b is
+an iterated mutual-best whose fixed point is the greedy matching by key; it needs **12-20 sweeps** on a
+jet core and **ships with 3**.
+
+**It also falsified a documented claim:** `FINDINGS_JET.md:363-368` / `ChainConfig.h:292` assert the
+weld is "at most 3 ranks deep" as a theorem. Empirically max rank is **9** (.9726 within 3). M2's
+parked `C >= 16` result survives by measurement, not by its stated proof.
+
+**But converging it is monotonically HARMFUL** — the marginal weld's same-sim purity collapses by
+sweep: .5487, .3126, **.1208**, .0529. The third sweep's welds are **88% wrong**. Sixteen sweeps costs
+.0164 core efficiency and adds .0108 fake. So the lever runs the other way: do LESS weld work.
+
+| `weld_S02` (md5 `baa19ab0654220cc445f2287bb876dd1`, ONE constant, one file, a third less weld work) | result |
+|---|---|
+| jets tune core eff | .7659 -> **.7695** (p 9.9e-04 paired) |
+| jets dR<.02 | .5074 -> **.5169** (p .0024); all 8 aggregates >= 0 |
+| sim pt 100-300 GeV | **+.0192** |
+| jets fake | .1317 -> **.1271** |
+| PU200 | **all seven displaced bands neutral-or-better** (three significant); fake and dup DOWN everywhere — takes back 2.1% relative of round 2's fake regression |
+| cube50_highPt | exactly **.00000** on every efficiency and fake band; dxy[1,5) preserved at .12089 |
+| softer jets (200-500 GeV) | **PASS**, +.0047 |
+| **debit** | jet-core dup (dR<.05) .0313 -> **.0345** (p .017), a cell we already owe master |
+| **debit** | sim pt > 300 GeV **−.0210** (16 sims), where we lead master by +.1945 |
+
+Sparse-region invariance passes *mechanically*: the third sweep has nothing to do where the iteration
+already converged, so no density conditioning is needed. **Refused with numbers:** a `weldKey` re-key
+separating the argmax scalar from the summed `logOdds` — built, proven inert at mode 0, deployed, and
+all three variants negative or negligible (min(mP,mD) −.0042 core). Its offline proxy claimed .2226 of
+stage-d recovered: **the fifth proxy mispredict in this project.** Stage d's remaining ~+.026 is a
+genuine ranking loss (.8230 of stage-d sims have every eligible pair strictly out-ranked, median rank
+63 of 195) and is not reachable from inside the weld.
+
+### 6b. Agent T4 — the class is net positive and UNDER-admitted. Candidate `T4C1`.
+
+**Suppression is forbidden by the crown jewels, measured.** Deleting the class costs, on PU200 paired
+McNemar, with **zero displaced sims recovered by any other route**: dxy[10,30) .0538 -> .0228 (−58%
+relative), dxy[5,10) .2502 -> .1917, dxy[1,5) .5621 -> .5318, vxy[10,30) .6963 -> .6764 — **284 sims
+lost, 0 gained, p 2e-28 to 3e-15**. On jets it costs −.0218 core (−.0635 at dR<.02), and killing it at
+the GATE is worse on both axes (−.0266 AND jet fake .1317 -> .1359) because the freed hits go to fakes.
+This also closes round 2's unmeasured `t4p10` leftover.
+
+**The upside runs the other way:** 677 of 873 stage-e core sims (.776) have a gate-killed chain made
+entirely of their own T3s, 4 layers long, and **697 of 700 are branch 0 — the 4-layer IP bar, where the
+gate kills 97.97%.**
+
+| `T4C1` — density-conditioned loosening of the 4-layer IP gate bar (three floats, no kernel, no weight file, no new cell) | result |
+|---|---|
+| jets tune core eff | **+.0091** (p 1.0e-31) |
+| jets dR<.02 / dR<.005 | **+.0241 / +.0261** |
+| fine bins | **every bin from [0,.0025) to [.03,.04) positive AND significant**, incl. innermost +.0218 and the peak-gap bin [.0125,.015) +.0212 |
+| jets fake | pooled −.0005, core −.0029 |
+| PU200 | **3 discordant sims in 75,422, ALL GAINS**; +8 TCs of 1,583,791; displaced bands move slightly UP |
+| both cubes | **BIT-IDENTICAL**, including the full 10,000-event cube50_highPt (all 21 fields, 0/0); dxy[1,5) unchanged at .1209 |
+| softer jets | **PASS EXACTLY** — +.0000 in every dR band on 50-200 and 200-500 GeV; the whole gain sits at genjet pt >= 500 |
+| JPR2's relocated gap | sim pt 50-100 gap to master −.0783 -> **−.0540** (31% closed); 20-50 −.0748 -> −.0607; >300 GeV +.1945 -> **+.2089** |
+| **only adverse cell** | jet-core dup (dR<.05) .0313 -> .0324, **p .066, unresolved** — +0.02 core dup TCs/evt against +0.40 core sims/evt (**18:1**) |
+
+Patch `t4_ref/t4_class_policy.patch`, md5 **`6550c79df1ff469319bdb44fbeabd606`**, 274 lines, 6 files,
+inert by default and bit-identity-proven. Frontier variants banked: `T4C3` (+.0082, PU200 literally
+0/0 discordant and n_tc +0) and `T4R10` (+.0096, PU200 dxy[1,5) 0 lost / 4 gained).
+
+### 6c. **Your pT4 question, answered with a measurement: DO NOT PORT.**
+
+`LST_T4_ATTACH_MIN=4` makes 4-layer chains real attach targets, and a granted seed upgrades the row in
+place to type-7 with pixel hits prepended — **that object already IS a pT4, for one constant.**
+Deployed: 927 confirmations per 500 jet events, and the net is **−16 core sims on jets (p .72)**; PU200
+is +.0007 (2 lost / 57 gained, displaced bit-clean, fake better) but `dup_barrel` **+.00060**, which is
+8:1 against us in the currency we already owe. So the port's product is already measured at ~zero — and
+the branch commits sit on LST's T4 object that this tree no longer has, making it a rewrite rather than
+a cherry-pick. Recorded, not recommended.
+
+### 6d. Cross-agent notes the two of them left
+- For **KEY**: 552 of 1,481 stage-f core sims (37% of the stage, rising with sim pt) have a pure
+  gate-alive chain that is *only* 4-layer; `T4C1` makes that population bigger (T4 core-eff share
+  1,016 -> 1,307).
+- For **PUR**: a trim from 5 -> 4 layers lands in a class whose delivery-given-gate-alive is **.0415 vs
+  .2085** — about 5x less likely to win its claim. That belongs in the ledger next to the dup hazard.
+- For **AT**: neither agent touched attach weights or any of the eight attach bars.
+
+### 6e. The shape of the decision
+Both candidates move efficiency up and jet fake down. Both pay in the same single cell — jet-core
+duplicates — where we already owe master. T4C1 is the cleaner of the two (PU200 all gains, cubes
+bit-identical, softer jets exactly neutral, dup cost unresolved at p .066); WELD's is a one-constant
+change that also improves PU200 fake and dup but its dup debit is resolved (p .017) and it loses
+−.0210 above sim pt 300 GeV where we currently lead master by +.1945. **They are not independent — both
+act on what reaches the claim — so I am measuring the union, not assuming it.**
+
+### 6f. MY SEALED-HOLDOUT JUDGMENT OF BOTH CANDIDATES AND THEIR UNION — **the union is ADDITIVE**
+
+Three arms built from `04c6e122e68` in separate CMSSW areas, each run printing its own binary and
+library md5 (`d3`=WELD `bc0008d46dd8`, `r2`=T4C1 `9acc2b87fa75`, `r2b`=UNION `265fb3862ef2`; all three
+0 `error:` in a fresh make log). Baseline is my round-2 sealed run of the shipped head.
+
+#### JETS, holdout rows 500-999, 500 events, paired (`p4_ref/jetgate.py`)
+
+| cell | SHIPPED | WELD | T4C1 | **UNION** | LST master |
+|---|---:|---:|---:|---:|---:|
+| eff jet-core | .7611 | .7648 | .7695 | **.7728** | .7761 |
+| eff dR < .005 | .4051 | .4096 | .4218 | **.4288** | .2604 |
+| **eff dR < .02** | .5172 | .5227 | .5389 | **.5424** | **.5292** |
+| eff dR < .05 | .6097 | .6150 | .6262 | **.6310** | .6370 |
+| eff all-sim | .8081 | .8100 | .8118 | **.8136** | .8141 |
+| fake | .1287 | .1238 | .1282 | **.1236** | .2235 |
+| fake TCs/evt dR<.05 | 6.22 | 5.98 | 6.31 | 6.09 | 14.98 |
+| dup (pooled) | .0241 | .0235 | .0244 | **.0238** | .0207 |
+| dup dR < .05 | .0232 | .0231 | .0242 | .0242 | ~.003 |
+| **dup dR < .005** | **.0506** | .0656 | .0627 | **.0731** | .0000 |
+| TCs/evt | 125.6 | 125.3 | 126.0 | 125.7 | 127.6 |
+
+**The union is additive, not antagonistic** (+.0117 against +.0037 and +.0084 measured separately) —
+the opposite of round 1's union, and it is additive because the two act at different stages.
+
+**Two milestones on the sealed sample:** we now **PASS master inside dR < .02** (.5424 vs .5292), and
+the overall core gap falls from .0150 to **.0033**. In the innermost bin we are +.168 above master.
+Jet fake is 1.8x cleaner than master while total TCs/evt stay below master's.
+
+#### PU200 `event_2000`, 1000 events, 73,470 sims, paired McNemar — BOTH GATES IMPROVE
+
+| cell | SHIPPED | WELD | T4C1 | **UNION** | p (union) |
+|---|---:|---:|---:|---:|---:|
+| eff overall | .8107 | .8112 | .8107 | **.8112** | **.0044** (66 lost / 104 gained) |
+| eff_barrel | .9220 | .9229 | .9220 | **.9229** | **.0066** |
+| **eff dxy[1,5)** | .5748 | .5799 | .5748 | **.5799** | **.0226** (14 lost / 30 gained) |
+| eff dxy[5,10) | .2566 | .2622 | .2566 | .2622 | .070 |
+| eff dxy[10,30) | .0583 | .0590 | .0583 | .0590 | 1.0 |
+| eff vxy[1,5)/[5,10)/[10,30) | — | — | — | +.0002/−.0006/+.0002 | 1.0 / 1.0 / 1.0 |
+| dup overall | .04315 | .04283 | .04315 | **.04283** | better |
+| fake overall | .04466 | .04373 | .04466 | **.04373** | better |
+| dup_barrel | .01398 | .01284 | .01398 | **.01284** | better |
+| fake_barrel | .05071 | .04864 | .05071 | **.04864** | better |
+| n_tc | 1,577,093 | 1,575,583 | 1,577,095 | 1,575,588 | −1,505 |
+
+**T4C1 is essentially bit-clean on PU200: ONE discordant sim in 73,470 and +2 TCs in 1.58 million.**
+**WELD's PU200 effect is a resolved IMPROVEMENT**, including a resolved **displaced GAIN** at dxy[1,5)
+(+.0051, p .023) and nothing negative anywhere. Its fake improvement recovers **64% of round 2's
++3.4% PU200 fake regression** (.04466 -> .04373 against the pre-round .04321).
+
+#### The one cost, and it is where we already owed
+**Jet-core duplicates in the deepest bin: dR<.005 goes .0506 -> .0731.** dup at dR<.05 rises only
++.0010 and POOLED dup actually falls (.0241 -> .0238), so the damage is concentrated in the innermost
+bin — exactly the cell where master carries zero duplicates and we were already ~8x worse. Note
+WELD's tune-half dup debit (core dup +.0032, p .017) did NOT reproduce on the holdout (−.0001), which
+is consistent with SF's warning that small dup cells need far more than 500-1000 events to rank arms.
+
+#### Still outstanding on the union before it could ship
+Both cube samples on the UNION binary are running now (T4C1 alone is bit-identical on both, including
+the full 10,000-event `cube50_highPt`; WELD alone measured exactly .00000 on every cube50_highPt band
+on its own tune runs — but nobody has measured the COMBINATION, and it is a hard gate). Also still
+unmeasured: timing, which remains owed on the round-2 ship as well.
