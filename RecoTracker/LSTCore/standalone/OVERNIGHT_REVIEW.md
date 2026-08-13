@@ -481,3 +481,74 @@ shipped retirement rule's window. I have NOT shipped it; the call is yours.
 
 Still running when this was written: agent KEY (claim ordering) and agent AT (attach retrain). Their
 sections append below.
+
+### 6i. Agent KEY — `KE50`, a third candidate, plus the round's deepest structural finding
+
+`KE50` puts an **eta-ramped weight on the hinge the order key already has**:
+`orderKey = score - alphaEff*max(0, 5 - marginX)`, with `alphaEff` ramping from 50 at
+|eta(innermost T3)| < 1.0 down to the shipped 10 by |eta| 1.3. **No new SoA column, no new kernel, no
+weight file, no bar moved** — the eta value was already computed in that same kernel for the -WZ braid
+band and is simply hoisted above the key. Patches `key_ref/key_orderkey_{inert,KE50}.patch`.
+
+Its own tune-half measurements: jets core +.0042 (p 7.1e-06), dR<.02 +.0104, **|eta| < 0.6 +.0060 and
+sim pt 100-300 +.0133** — exactly the cell JPR2 relocated the master gap into. Jet core fake DOWN
+−.0059 (p .036). PU200 dup better at −3.9 sigma, fake better at −4.9 sigma, dxy[1,5) exactly flat
+(b8 c8). **Both cubes: 0 discordant sims in all 12 cells at the full 10,000 events.** Softer jets:
+200-500 GeV exactly inert, 50-200 GeV +.0007.
+
+**The structural finding, which is worth more than the +.0042 and which unifies this round:**
+**per-chain regime conditioning of a RANK KEY is structurally broken.** The same boost conditioned on
+the chain's own `ptEst` is core **−.0747**; on junction degree **−.0360**; unconditioned it is +.0054.
+A rank key is a *global total order*, so a per-chain weight scrambles comparisons across regimes.
+**Eta is the exception because chains contending for the same hit SHARE it.** T4's density conditioning
+works for the mirror-image reason: its knob is a per-chain *threshold*, not a rank weight. That is a
+design rule for every future round: condition a threshold per chain, but only condition a rank key on
+something the competitors share.
+
+**It also closed L1 at the duel level rather than by tuning.** Of the duels the claim actually loses,
+**a third have a thief that is itself a legitimate >=75% track**, and on the remainder **no function of
+the chain's columns wins — including a trained ranker at AUC .973**, which takes only .41-.52 of them.
+The information is not on the chain. And it re-priced the weight file in this world at **+.0113**
+(C measured +.0224 pre-ship; the round-2 gate halved it again) against **+.0059** for free literals and
+an oracle ceiling of +.0483 — so the expensive option is now barely better than free, the cheap linear
+distillation is *worse* than the free form, and round 1's C1 replays at **−.0047**.
+
+Caveats it stated: +.0042 is 9% of the +.0459 target; jet-core dup drifts +.0012 (p .27, unresolved);
+jets |eta| 1.1-1.7 is −.0054 (7 sims of 1,291, where the ramp turns off); PU200 `eff_transition`
+−.0006 (p .096). `KE20` halves all three for a fifth less gain. The unconditioned form
+(`orderAlpha = 20`) is **rejected** — same jet gain, PU200 duplicates +3.4 sigma.
+
+### 6j. THE THREE-WAY UNION ON SEALED JETS — **we now BEAT master on every jet efficiency aggregate**
+
+Built in `gpu_wt/r2b` (bin `43990ea976ee`, 0 `error:`), all three patches applied, judged on jets
+rows 500-999 which no agent opened.
+
+| cell | SHIPPED | WELD | T4C1 | KE50 | UNION2 | **TRIPLE** | LST master |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| eff jet-core | .7611 | .7648 | .7695 | .7658 | .7728 | **.7788** | .7761 |
+| eff all-sim | .8081 | .8100 | .8118 | .8103 | .8136 | **.8163** | .8141 |
+| eff dR < .005 | .4051 | .4096 | .4218 | .4167 | .4288 | **.4429** | .2604 |
+| eff dR < .02 | .5172 | .5227 | .5389 | .5296 | .5424 | **.5561** | .5292 |
+| eff dR < .05 | .6097 | .6150 | .6262 | .6199 | .6310 | **.6430** | .6370 |
+| fake | .1287 | .1238 | .1282 | .1270 | .1236 | **.1203** | .2235 |
+| fake TCs/evt dR<.05 | 6.22 | 5.98 | 6.31 | 6.20 | 6.09 | 6.00 | 14.98 |
+| dup pooled | .0241 | .0235 | .0244 | .0244 | .0238 | **.0242** | .0207 |
+| dup dR < .05 | .0232 | .0231 | .0242 | .0245 | .0242 | .0253 | ~.003 |
+| **dup dR < .005** | **.0506** | .0656 | .0627 | .0620 | .0731 | **.0871** | .0000 |
+| TCs/evt | 125.6 | 125.3 | 126.0 | — | 125.7 | **125.6** | 127.6 |
+
+**The three are additive — slightly super-additive.** Separately +.0037, +.0084, +.0047 = +.0168;
+together **+.0177**.
+
+**FOR THE FIRST TIME WE BEAT LST MASTER ON EVERY JET EFFICIENCY AGGREGATE ON SEALED DATA:**
+jet-core .7788 vs .7761, all-sim .8163 vs .8141, dR<.02 .5561 vs .5292, dR<.05 .6430 vs .6370, and
+dR<.005 .4429 vs .2604 (+.183). Simultaneously jet fake is **1.86x cleaner** than master (.1203 vs
+.2235, 6.00 vs 14.98 fake TCs/evt inside dR<.05) on **fewer TCs per event** (125.6 vs 127.6).
+
+**The cost is unchanged in kind and larger in degree: duplicates in the deep core.** Pooled jet dup is
+essentially flat (.0241 -> .0242, still below master-adjacent levels in the aggregate) and dR<.05 rises
++.0021, but **dR<.005 goes .0506 -> .0871** where master carries zero. Every point of this round's
+efficiency has been paid for in that one bin.
+
+PU200 `event_2000` for KE50 and the TRIPLE was still running when this was written; those rows and the
+TRIPLE cube gates append below. **Nothing has been shipped.**

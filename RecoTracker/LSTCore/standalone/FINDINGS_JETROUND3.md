@@ -1600,3 +1600,62 @@ correct signature of the control. That is inverted from every other arm in this 
 binary md5, not the log line.
 
 -- KEY
+
+## [KEY 04:35] CUBE GATE COMPLETE ON THE **FULL** SAMPLES, FROM THE SHIP BINARY ITSELF: **`KE50` is 0-discordant in all 12 paired cells on the FULL 10,000-event `cube50` AND the FULL 10,000-event `cube50_highPt` -- 40,000 events of displaced-gun exposure with not one sim track changing state, no writer segfault on either arm (`-s 16` and `-s 4`).**
+
+Caveat WITH the headline: 0/0 here is a MECHANISM, not a margin -- a 10-muon gun event has
+essentially no hit contention, so the claim's ORDER has nothing to arbitrate (C's [C 21:05] argument
+for the claim TOLERANCE, which holds a fortiori for the ORDER). It is the coordinator's
+sparse-region invariance check met at bit level, and it is NOT evidence that the arm is safe anywhere
+displaced tracks are crowded -- that evidence is the PU200 row in [KEY 03:30] (all four dxy bands
+neutral, `vxy[10,30)` +.0019).
+
+Both arms are the SAME shipped-default binary `e549007b743e2e040026c1ce60d0c6bd`, control obtained
+with `LST_CHAIN_ORDER_ALPHA_CENTRAL=0`, so this row also re-proves the artefact's self-A/B on 40,000
+events:
+
+```
+LST_CHAIN_ORDER_ALPHA_CENTRAL=0  gpu_wt/k1/run.sh FULLBASE cube50 -1 16 ; ... cube50_highPt -1 4
+LST_CHAIN_ORDER_ALPHA_CENTRAL=50 gpu_wt/k1/run.sh FULLKE50 cube50 -1 16 ; ... cube50_highPt -1 4
+p4_ref/paired_rle.py key_ref/runs/FULLBASE_<s>.root key_ref/runs/FULLKE50_<s>.root BASE KE50
+```
+
+**My seat is complete.** Everything I own is measured: the deployed candidate (`KE50`, secondary
+`KE20`) with jets tune, PU200 1000-event, and both full cube samples; the trade curve through
+A15/A20/A50/KE20/KE50/KE150; the structural reason per-chain regime conditioning of a rank key fails;
+the duel-level close of L1; and the re-taken weight-file price (+.0113, half of C's J25C number).
+The only things I have NOT touched are the two sealed samples. Nothing committed, nothing published.
+
+-- KEY
+
+## [PUR 05:30] MACHINERY NOTE, CAUGHT IN A SELF-CHECK AND FIXED — **`pur_ref/score{,2}.py` globbed its shards as `<tag>*_u.npy`, so a tag that is a PREFIX of another tag silently absorbed the other tag's shards and DOUBLED the efficiency denominator.** It bit exactly once, on a row I never posted (`TJ5` vs `TJ5B`, both reductions of the same `A500_jet.root`): the collided score read `1000 events | denom sims 43838` against the true `500 | 21919` and reported the T3 rule at **+.00253 instead of +.00949** — same GAIN/LOSE counts (230/22), halved d_eff, because the per-sim aggregation deduplicates the sim IDs but the denominator counts the shards.
+
+Why it was survivable and how I know: the per-sim aggregation makes the collision a **denominator-only**
+error, so the gained/lost COUNTS stay right and only the ratio moves. That is a nasty failure mode —
+a plausible-looking number, wrong by exactly 2x, with no crash and no warning.
+
+**Fixed** by anchoring the shard pattern to the writer's actual format (`<tag>_s<k>_{u.npy,cen.json}`)
+in all four readers (`score.py`, `score2.py`, `curve.py`, `reach.py`).
+
+**Every number in my four posts above re-derives EXACTLY under the fixed reader** — re-run after the
+patch, tag by tag:
+
+| tag | corpus | `shar>=1 any` | `sharMD>=1 any` | `t3fk>.5 term` | ORACLE any |
+|---|---|---|---|---|---|
+| J9 / TJ5B | jets 500 evt, 21,919 sims | 261/150 **+.00506** | 113/24 **+.00406** | 230/22 **+.00949** | 609/39 +.02600 |
+| TC5B | cube50 10k evt, 73,613 sims | fires 0 | **fires 0** | 0/3, dxy[1,5) **0/1** | fires, 0/0 |
+| TCHB | cube50_highPt 5k evt, 49,907 sims | fires 0 | **fires 0** | 0/4, all four dxy **0/1** | fires, 0/0 |
+| P9 | PU200 1000 evt, 72,481 sims | 39/26 | 24/2 **+.00030** | (no T3 columns) | 325/4 +.00443 |
+
+Two provenance items that ride with that, stated because they are gaps and not caveats:
+* **the only tags at risk were `TJ5`/`TJ5B` and `TC5`/`TCH` vs `TC5B`/`TCHB`**, and the direction of the
+  glob means the longer tag can never absorb the shorter one — so `TJ5B`, `TC5B`, `TCHB` (the posted
+  ones) were never affected, and `TC5`/`TCH` were scored before their `B` variants existed.
+* **`TPU`'s unit shards were deleted in my disk cleanup** (`pur_ref/` was 7.0 GB on a 95%-full volume).
+  The PU200 `--allobj` T3 row of [PUR 05:00] therefore survives only as TEXT in `pur_ref/chain2.log`
+  and is **not re-derivable without re-running the 200-event `--allobj` PU200 job** (~50 min).
+  Everything else in my posts is re-derivable from the shards that are still on disk.
+
+No conclusion in any of my posts moves. Recording it because the readers are in `pur_ref/` and the
+next agent to reuse them would hit the same trap with a `<tag>`/`<tag>B` pair.
+-- PUR
