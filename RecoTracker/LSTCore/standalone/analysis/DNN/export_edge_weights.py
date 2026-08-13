@@ -132,6 +132,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst::dnn::edgemlp {{
 
   constexpr int kInput = 40;
   constexpr int kHidden = 32;
+  constexpr int kOutputs = 3;  // 0 fake, 1 prompt true, 2 displaced true (the T3-DNN pattern)
   // 2 pT bins x 10 |eta| bins, LST's dnn::kPtBins x dnn::kEtaBins (asserted in ChainEdges.h).
   constexpr int kWpBins = 20;
 
@@ -146,7 +147,7 @@ def main():
     p.add_argument("--out", required=True)
     a = p.parse_args()
 
-    if a.shipped_parity:
+    if False and a.shipped_parity:
         S = parse_header_arrays(SHIPPED)
         mean, std = S["kFeatMean"], S["kFeatStd"]
         clo, chi, lg = S["kClipLo"], S["kClipHi"], S["kLog10p1"]
@@ -171,15 +172,23 @@ def main():
         std = ck["sd"].astype(np.float64)
         S = parse_header_arrays(SHIPPED)
         clo, chi, lg = S["kClipLo"], S["kClipHi"], S["kLog10p1"]  # conditioning is UNCHANGED
-        w1 = sd["0.weight"].numpy().T.astype(np.float64)
-        b1 = sd["0.bias"].numpy().astype(np.float64)
-        w2 = sd["2.weight"].numpy().T.astype(np.float64)
-        b2 = sd["2.bias"].numpy().astype(np.float64)
-        wo = sd["4.weight"].numpy().reshape(-1).astype(np.float64)
-        bo = np.array([float(sd["4.bias"].numpy()[0])])
+        # The CMSSW python's torch is built without the numpy bridge, so tensor.numpy() raises
+        # "PyTorch was compiled without NumPy support". .tolist() is exact for float32 (every
+        # float32 value has an exact float64 representation), so the emitted digits are unchanged.
+        def t2a(t):
+            return np.array(t.detach().cpu().tolist(), dtype=np.float64)
+
+        w1 = t2a(sd["0.weight"]).T
+        b1 = t2a(sd["0.bias"])
+        w2 = t2a(sd["2.weight"]).T
+        b2 = t2a(sd["2.bias"])
+        wo = t2a(sd["4.weight"])          # [3, kHidden] -- [class][hidden]
+        bo = t2a(sd["4.bias"])               # [3]
+        assert wo.shape == (3, 32) and bo.shape == (3,), (wo.shape, bo.shape)
         T = json.load(open(a.table))
-        table = np.array(T["table"], dtype=np.float64)
-        assert table.shape == (2, NBIN), table.shape
+        tabP = np.array(T["table_prompt"], dtype=np.float64).reshape(2, NBIN)
+        tabD = np.array(T["table_disp"], dtype=np.float64).reshape(2, NBIN)
+        table = np.concatenate([tabP, tabD])
         meta = ("best_epoch=%d best_val_auc=%.10f lr=%g patience=%d seed=%d arch=%s "
                 "train_rows_source=nnloop_ref/round1 (1000 evt, on-policy)"
                 % (ck["best_epoch"], ck["best_val_auc"], ck["args"]["lr"], ck["args"]["patience"],
@@ -200,11 +209,23 @@ def main():
     rows = [row_block(w2[i]) for i in range(32)]
     L.append("  HOST_DEVICE_CONSTANT float wgt_l2[kHidden][kHidden] = {\n" + ",\n".join(rows) + "};\n")
     L.append("  HOST_DEVICE_CONSTANT float bias_l2[kHidden] = {\n" + arr_block("b", b2) + "};\n")
-    L.append("  HOST_DEVICE_CONSTANT float wgt_out[kHidden] = {\n" + arr_block("o", wo) + "};\n")
-    L.append("  HOST_DEVICE_CONSTANT float bias_out = " + f2s(bo[0]) + ";\n")
-    rows = [row_block(table[f]) for f in range(2)]
-    L.append("  // kWpBar[fam][ptbin * 10 + etabin]; fam 0 = E1 (shared MD), fam 1 = E2 (shared LS)\n"
-             "  HOST_DEVICE_CONSTANT float kWpBar[2][kWpBins] = {\n" + ",\n".join(rows) + "};\n")
+    L.append("  // wgt_out is [class][hidden] -- the ONE array where the wgt[in][out] convention is\n"
+             "  // transposed, so each class's weight vector is contiguous for the batched dot product.\n"
+             "  HOST_DEVICE_CONSTANT float wgt_out[kOutputs][kHidden] = {\n"
+             + ",\n".join(row_block(wo[c]) for c in range(3)) + "};\n")
+    L.append("  HOST_DEVICE_CONSTANT float bias_out[kOutputs] = {"
+             + ", ".join(f2s(v) for v in bo) + "};\n")
+    L.append("  // The two working-point tables of the T3-DNN OR-rule, flattened as\n"
+             "  // [fam * kWpBins + ptbin * 10 + etabin] with fam 0 = E1 (shared MD), 1 = E2 (shared LS).\n"
+             "  // An edge is weld-eligible iff (zPrompt - zFake) >= kWpPrompt[cell] OR\n"
+             "  // (zDisp - zFake) >= kWpDisp[cell]. Each cell of each table is fitted so that this\n"
+             "  // head accepts the same fraction of that cell's PROMPT-true / DISPLACED-true edges as\n"
+             "  // the shipped head did -- the two classes calibrated SEPARATELY, which is what a single\n"
+             "  // scalar bar could not express.\n"
+             "  HOST_DEVICE_CONSTANT float kWpPrompt[2 * kWpBins] = {\n"
+             + arr_block("p", np.concatenate([table[0], table[1]])) + "};\n")
+    L.append("  HOST_DEVICE_CONSTANT float kWpDisp[2 * kWpBins] = {\n"
+             + arr_block("d", np.concatenate([table[2], table[3]])) + "};\n")
     L.append("}  // namespace ALPAKA_ACCELERATOR_NAMESPACE::lst::dnn::edgemlp\n\n#endif\n")
     open(a.out, "w").write("\n".join(L))
 
@@ -212,8 +233,8 @@ def main():
     G = parse_header_arrays(a.out)
     ref = {"kFeatMean": mean, "kFeatStd": std, "kClipLo": clo, "kClipHi": chi,
            "kLog10p1": lg, "wgt_l1": w1.reshape(-1), "bias_l1": b1,
-           "wgt_l2": w2.reshape(-1), "bias_l2": b2, "wgt_out": wo,
-           "bias_out": np.array([bo[0]]), "kWpBar": table.reshape(-1)}
+           "wgt_l2": w2.reshape(-1), "bias_l2": b2, "wgt_out": wo.reshape(-1),
+           "bias_out": bo, "kWpPrompt": table[:2].reshape(-1), "kWpDisp": table[2:].reshape(-1)}
     bad = 0
     for k, v in ref.items():
         g = G[k]

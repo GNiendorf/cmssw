@@ -42,3 +42,6 @@ movetoweb.sh
 .directoryhash
 performance/
 notebooks/
+
+# Finished-round workspaces, moved out of the way. Content stays on disk and in git history.
+archive/
