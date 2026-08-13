@@ -1,0 +1,48 @@
+diff --git a/RecoTracker/LSTCore/interface/ChainConfig.h b/RecoTracker/LSTCore/interface/ChainConfig.h
+index 2bbad3ec5a7..dfe392afcf4 100644
+--- a/RecoTracker/LSTCore/interface/ChainConfig.h
++++ b/RecoTracker/LSTCore/interface/ChainConfig.h
+@@ -454,6 +454,30 @@ namespace lst {
+                 cfg.dupMutualDelta);
+   }
+ 
++  // COORDINATOR PROBE (not a shipped knob): env override of the TERMINAL TRIM group, so the
++  // trim can be A/B'd from ONE binary. With nothing set this writes nothing and prints nothing.
++  //   LST_TRIM_ON     0 disables ChainTrimTerminals entirely
++  //   LST_TRIM_ABS    the absolute chi2 floor below which a chain is never trimmed
++  inline void chainConfigTrimEnv(ChainConfig& cfg) {
++    bool any = false;
++    if (char const* s = std::getenv("LST_TRIM_ON")) {
++      if (*s != '\0') {
++        cfg.terminalTrim = (std::atoi(s) != 0);
++        any = true;
++      }
++    }
++    if (char const* s = std::getenv("LST_TRIM_ABS")) {
++      if (*s != '\0') {
++        cfg.trimAbsChi2 = static_cast<float>(std::atof(s));
++        any = true;
++      }
++    }
++    if (any)
++      std::printf("[chainenv] terminal trim resolved: on=%d absChi2=%g\n",
++                  static_cast<int>(cfg.terminalTrim),
++                  cfg.trimAbsChi2);
++  }
++
+   // JET ROUND 3 (T4): env overrides of the 4-layer class policy group. One binary supplies every
+   // arm of the A/B, which is the only way to prove inertness by BIT-IDENTITY rather than assert it.
+   // With nothing set this function writes nothing and prints nothing.
+diff --git a/RecoTracker/LSTCore/src/alpaka/LSTEvent.h b/RecoTracker/LSTCore/src/alpaka/LSTEvent.h
+index 762136c4459..f8d64b638fb 100644
+--- a/RecoTracker/LSTCore/src/alpaka/LSTEvent.h
++++ b/RecoTracker/LSTCore/src/alpaka/LSTEvent.h
+@@ -157,6 +157,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+       chainConfigRetirementEnv(chainConfig_);
+       // JET ROUND 3 (T4): env overrides of the 4-layer class policy group. Inert with nothing set.
+       chainConfigT4Env(chainConfig_);
++      // COORDINATOR PROBE: terminal-trim A/B. Inert with nothing set.
++      chainConfigTrimEnv(chainConfig_);
+       if (ptCut < 0.6f) {
+         throw std::invalid_argument("Minimum pT cut must be at least 0.6 GeV. Provided value: " +
+                                     std::to_string(ptCut));
