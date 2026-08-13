@@ -1255,3 +1255,348 @@ Artifacts added: `pur_ref/{TJ5B,TC5B,TCHB,T3S}_*` (the `--allobj` corpora and th
 `pur_ref/{A500_jet,A200_pu,AC50,ACHI}.root` (the four `--allobj` runs, pristine-binary md5 verified),
 `pur_ref/chain{2,3,4}.log`. **No build, no worktree, no deployment, no commit.**
 -- PUR
+
+## [PUR 05:00] THE LAST GATE ROW LANDS AND IT SHARPENS THE HANDOVER RATHER THAN CHANGING IT: **PUR-T3 PASSES PU200 — 22 gained / 1 lost (+.00142), all four dxy and all three vxy bands at ZERO discordant sims, duplicates +0 — so its ONLY failure in the whole gate set is the two displaced GUNS, where it fires 345-590 times and destroys 3-4 matches while repairing none.** Everything about it is clean except its behaviour where there is nothing to repair, which is exactly what a density-conditioned threshold is for. Caveat WITH the headline: the PU200 `--allobj` corpus is **200 events** (194,260 unit rows, ~14.8k sims), 5x smaller than the 1000-event PU200 corpus that carries PUR-SB's row, so treat +21 sims as a sign and a magnitude, not a precision measurement.
+
+| PU200 (200 evt, `--allobj`, ~14.8k in-acceptance sims) | fires | GAIN | LOSE | NET | d eff | dxy[1,5)/[5,10)/[10,30) | vxy bands | d dup |
+|---|---:|---:|---:|---:|---:|---|---|---:|
+| ORACLE any (ceiling) | 194260 | 63 | 1 | +62 | +.00421 | 0/0, 0/0, 0/0 | 2/1, 0/0, 0/0 | +2 |
+| **`t3 fakeScore > .5` terminal** | 4934 | **22** | **1** | **+21** | **+.00142** | **0/0, 0/0, 0/0** | **0/0, 0/0, 0/0** | **+0** |
+| `t3 fakeScore` terminal, unthresholded | 185397 | 50 | 38 | +12 | +.00081 | 0/0, 0/0, 0/0 | 2/3, 0/0, 0/0 | +0 |
+| `t3 fakeScore` max, ANY position | 194260 | 11 | 152 | **-141** | **-.00956** | 0/1, 0/0, 0/0 | 0/6, 0/0, 0/0 | -4 |
+| `sharMD >= 1` any | 3188 | 3 | 1 | +2 | +.00014 | 0/0, 0/0, 0/0 | 0/0, 0/0, 0/0 | -4 |
+| any, max \|xy resid\| | 194260 | 16 | 166 | -150 | -.01017 | -- | -- | -6 |
+
+(PUR-SB's authoritative PU200 row remains the **1000-event** measurement in [PUR 04:15]: 24 gained / 2
+lost, dup -13 core / -143 pooled. On this 5x smaller corpus the same rule reads 3/1, consistent.)
+
+Two things worth keeping from this table beyond the verdict:
+* **The threshold, not the ranking, is the whole safety margin, on PU200 as on jets**: terminal +
+  thresholded is 22/1; terminal unthresholded is 50/38; unrestricted position is **11/152**. The same
+  ordering appeared on jets (230/22, 439/253, 259/372). Any future version of this lever must keep
+  both restrictions.
+* **The `|xy residual|` rule is negative on every sample I measured** — jets -.0134, PU200 -.0102,
+  cube50 -.0002 — which is the deployment-side confirmation of the AUC .49-.60 finding, on three
+  independent samples. That family is closed with numbers on all of them.
+
+**Final position, unchanged from [PUR 04:15]:** one gate-clean candidate at +.0041 whose bill (a new
+kernel) I judge above its value, one better candidate at +.0095 whose only defect is sparse-region
+firing, and a named next experiment (continuous occupancy-conditioned `fakeScore` bar, ~10 lines plus
+one plumbed column) that is the cheapest remaining shot at stage g. Stage g's ceiling is +.0278, its
+measured truth-free reach is **.0095**, and the residual/chi2 and trim-relaxation families are closed.
+-- PUR
+## [KEY 03:30] **THE REGIME-CONDITIONED ORDERING CHANGE EXISTS, IS DEPLOYED AND IS CERTIFIED ON EVERY GATE I OWN -- and the regime that works is ETA, not pT and not occupancy: an eta-ramped weight on the hinge the key ALREADY has (`orderAlphaCentral`; no new column, no new kernel, no weight file) gives jets tune core +.0042 (McNemar p 7.1e-06) exactly where JPR2 relocated the problem (|eta| < 0.6 +.0060, sim pt 100-300 +.0133, dR<.02 +.0104), with jet core fake DOWN -.0059 (p .036), PU200 duplicates BETTER than base (-3.9 sigma), PU200 fake BETTER (-4.9 sigma), all four PU200 dxy bands neutral, and BOTH cubes 0-discordant in all 11 cells including round 2's .1209 headline.**
+
+**THE THREE CAVEATS, WITH THE HEADLINE.** **(1) It is 9% of the +.0459 target, and I can now bound
+why rather than guess: with a PERFECT truth-ranked order and the frozen tolerance the offline replay
+ceiling in this world is +.0483, the whole FREE plateau is +.0054 to +.0062, and a FOURTH WEIGHT FILE is now
+worth only +.0113 -- C measured +.0224 in the J25C world and the round-2 gate has halved it again.**
+**(2) The pT and occupancy conditioners the brief suggested measure NEGATIVE, badly (core -.0747 and
+-.0360 against +.0054 unconditioned), for a structural reason: a rank key is a GLOBAL total order, so
+conditioning its weight on a per-chain quantity scrambles comparisons between chains in different
+regimes. Eta is the exception because chains that CONTEND for a hit share it.** **(3) jet-core
+(dR<.05) dup drifts +.0012 (p .27, unresolved), the jet |eta| 1.1-1.7 band is -.0054 (7 sims of
+1,291, where the ramp switches the boost off), and PU200 `eff_transition` is -.0006 (b13 c5, p .096,
+8 prompt sims of 13,387). A lower setting (`orderAlphaCentral = 20`) takes all three to
++.0004 / -.0023 / b6 c0 at the cost of a fifth of the gain; both points are on the curve below.**
+
+Baseline `04c6e122e68`. Jets TUNE 0-499 only; **jets 500-999 and PU200 `event_2000` never opened.**
+
+---
+
+### 0. Provenance, and the inertness proof
+
+* Worktree **`gpu_wt/k1`** (fresh, off `04c6e122e68`), CPU build, **0 `error:`** in the fresh
+  `.make.log.1786597107`. `bin/lst_cpu` md5 **`8ccb3349f719679867f6ea25269cec66`**,
+  `LST/liblst_cpu.so` md5 **`4b77a843a78d5fb2d4b9b02487fcd464`**; every run hard-fails unless `ldd`
+  resolves the library inside k1.
+* **INERTNESS, PROVEN NOT ASSERTED.** k1 with no environment vs the **MAIN-TREE ship binary**
+  (`5293c48f2561a6968efecf4fd4b1270f`), 20 jet events at **`-s 1`**: per-event TC multisets
+  **identical, 20/20** (`p2_ref/cmproot.py`). Proven TWICE -- before and after the eta-ramp patch,
+  which HOISTS the -WZ band's `|eta(innermost T3)|` above the key; the hoist is therefore neutral by
+  bit-identity, not by argument. **Trap worth having in the record: at `-s 4` that same pair of runs
+  reports 10/20 "differing" events. That is the writer's stream-completion order, not physics
+  (`cmproot.py` pairs by tree row). Compare at `-s 1`, or use a content-keyed judge.**
+* One executable serves every arm; arms differ only by `LST_CHAIN_ORDER_*`, so no A/B below can be a
+  build artefact. The refactor is self-checked: `LST_CHAIN_ORDER_ALPHA=20` from the POST-patch binary
+  reproduces the PRE-patch A20 arm with **0 discordant sims** on 500 jet events.
+* Patch = 3 files: `ChainConfig.h` (+3 fields, all inert by default), `ChainArbitrate.h` (the aEta
+  hoist + a four-line ramp), `LSTEvent.dev.cc` (the env overrides + one `[CHAIN KEY]` print, so a
+  missing line means the variables never reached a kernel). **Zero new SoA columns, zero new kernels,
+  zero new weight files, no bar moved.**
+
+### 1. THE MISSION'S QUESTION, ANSWERED: the cheap discriminator of node-run purity is `marginX`, and the frozen key UNDER-WEIGHTS it by a factor of two to five
+
+Offline claim replay (`c2_ref/k9lib.py` + `p2_ref/claim_replay.py`) on a FRESH 200-event corpus dumped
+from the round-2 ship binary (`key_ref/prepj`; validated against the kernel's own
+`[CHAIN K9] accepted=`: mean **-0.06**, max |d| **2**, exact 166/200). Population = P2's contending
+set (candidates sharing >= 3 claim hits with a core-true candidate, i.e. the kill threshold):
+**123,135 candidates, 65,817 contending, 16,481 core-true, 48,562 fake.**
+
+| column | AUC core-true vs fake | TRUE p50 | FAKE p50 |
+|---|---:|---:|---:|
+| **`mX` (the retrained gate's own margin)** | **.9605** | 4.02 | -4.12 |
+| the FROZEN order key | .9565 | 11.75 | -78.0 |
+| `dcaXY` (reversed) -- CLOSED as a rank term | .9232 | 0.022 | 12.25 |
+| `f22 meanT3PromptScore` | .9219 | 0.289 | 0.012 |
+| `f20 minT3FakeScore` (reversed) | .8931 | 0.018 | 0.383 |
+| local candidate density `rho` (reversed) | .8419 | 4.67 | 14.5 |
+| `score` = the key's own base | .8177 | 21.6 | 14.2 |
+| every fit-quality column (f5, f6, f16, f17, f19) | **.54-.62** | | |
+| `f15 chargeConsistency` | **.4962** | 1 | 1 |
+
+**Two things this settles against the round-1 record.** (i) `mX` was AUC **.717** when
+`orderAlpha = 10` was chosen; the two gate retrains since have taken it to **.9605**, and it is now
+the best single column the chain carries -- **better than the whole frozen key**, which dilutes it
+with `score` at .82. So "`orderAlpha`/`orderHinge` are null at every value" was true of the OLD head
+and is false of this one. That is a changed world, not a re-derivation of a closed door, and it is the
+only reason I touched those two literals. (ii) My own entering hypothesis -- that FIT CONSISTENCY
+would be a displacement-neutral purity signal -- is **dead by measurement**: every fit column sits at
+.54-.62 and `chargeConsistency` is a coin flip.
+
+### 2. WHY NO CHEAP TERM RECOVERS JPR2's 903, and it is not a tuning failure
+
+Population AUC is the wrong currency. What decides stage f is a DUEL: the pure victim must out-rank
+the specific accepted chain that took its hits. Restricting to exactly those duels
+(`key_ref/duel.py`, `duel2.py`; victim = candidate whose own hit set is >= 75%/95% one CORE sim, that
+is REJECTED and whose sim is delivered by nobody; thief = the highest-key accepted owner of the hits
+it wanted; ranker fitted on even events, duels counted on odd ones):
+
+| purity bar | lost duels | thief is itself >=75% one sim | ... a CORE sim | mX wins | f22 wins | **GBDT (weight file) wins** |
+|---|---:|---:|---:|---:|---:|---:|
+| >= .75 | 745 | **.349** | .298 | .201 | .451 | **.412** |
+| >= .95 | 82 | **.329** | .268 | .280 | .622 | **.524** |
+
+**A third of the duels the claim loses are TRUE-vs-TRUE contention -- the thief is a legitimate track,
+not a stitched fake -- and on the rest NO function of the chain's own columns wins, including a
+trained one at AUC .973.** C's "victims whose thieves are all TRUE, .036 -> .145" has kept rising and
+this is where it lands. On the full 200-event corpus the frozen key's own victim census is **1,420**
+core-true candidates rejected with their sim undelivered, the thief out-ranking them **.9880** of the
+time at a median **+20.96 key units** -- the surviving inversions are LARGE, not marginal.
+**That is the honest close of L1: the information that would win these duels is not on the chain.**
+
+### 3. THE CONDITIONING RESULT, which is the part I would keep if I could keep only one thing
+
+The same boost (`alpha` 10 -> 20 on the existing hinge) conditioned four ways, 200 jet tune events,
+frozen tolerance in every row:
+
+| arm | jet-core replay proxy | jet fake proxy |
+|---|---:|---:|
+| **unconditioned** | **+.0054** | -1.5% |
+| ... conditioned on the chain's own **`ptEst`** (ramp from 10 GeV) | **-.0747** | +28.0% |
+| ... conditioned on **`maxJunctionDegProduct`** (density, ramp at 1e3) | **-.0360** | +21.2% |
+| ... conditioned on **local candidate density `rho`** (ramp at rho 10) | -.0003 | +6.0% |
+| ... conditioned on **|eta| of the innermost T3** (ramp 1.0 -> 1.3) | **+.0057** | -1.7% |
+
+**A rank key is a GLOBAL total order. Conditioning its WEIGHT on a per-chain quantity gives two
+competitors different scales and inverts their comparison** -- the M9 cross-scale lesson, measured on
+the order key instead of on a threshold. `rho` is coherent (contending chains have similar rho) but
+costs the whole gain. **Eta is coherent AND free: chains that contend for a hit are in one detector
+neighbourhood, so they share the conditioner, and the -WZ band already computes
+`|eta(innermost T3)|` in the same kernel a few lines below the key.**
+
+This is not cosmetic. The deployed PU200 duplicate cost of the UNCONDITIONED boost is **entirely
+endcap**: at `alpha = 20`, 1000 PU200 events, duplicate TCs **+239 at |eta| >= 1.7** against **-54
+barrel** and **-32 transition** -- while the jet-core gain is central barrel. Ramping the weight off
+between |eta| 1.0 and 1.3 keeps the gain and deletes the cost.
+
+### 4. THE DEPLOYED TRADE CURVE. Jets TUNE 0-499 paired (`p4_ref/jetgate.py --split tune`), PU200 1000 evt (`d3_ref/pu_judge.py` + `p4_ref/paired_rle.py` + `c2_ref/pu_rate_boot.py`), cubes 5000 evt paired (`p4_ref/paired_rle.py`)
+
+`A*` = UNCONDITIONED `orderAlpha`. `KE*` = `orderAlpha` stays 10 and `orderAlphaCentral` = the number,
+eta ramp [1.0, 1.3]. Every row is the same executable; BASE has no environment set at all.
+
+| arm | jet core | p | jet dR<.02 | jet fake | jet core fake | jet core dup | jet dup <.02 | PU200 eff | PU200 dup | PU200 fake |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| BASE | .7659 | -- | .5074 | .1317 | .3766 | .0313 | .0443 | .80970 | .04276 | .04535 |
+| A15 | +.0031 | 3.9e-06 | +.0085 | -.0018 | -.0028 | +.0003 | +.0009 | not run | | |
+| A20 | +.0035 | 2.3e-05 | +.0099 | -.0022 | -.0021 | +.0003 | +.0006 | -.0001 | **+3.36 sig FAIL** | -2.56 sig |
+| A50 | +.0045 | 2.1e-06 | +.0117 | -.0025 | -- | +.0012 | +.0025 | -.0002 | -- | -- |
+| **KE20** | +.0033 | 4.4e-05 | +.0094 | -.0023 | -.0021 | **+.0004** | +.0005 | -.0001 | **-2.50 sig** | -4.84 sig |
+| **KE50** | **+.0042** | 7.1e-06 | +.0104 | -.0024 | **-.0059 (p .036)** | +.0012 | +.0025 | -.0001 | **-3.88 sig** | -4.91 sig |
+| KE150 | +.0048 | 1.4e-06 | +.0121 | -.0025 | -.0061 (p .036) | +.0012 | **+.0040** | -.0002 | -3.43 sig | -4.09 sig |
+
+Every dup cell in the table is UNRESOLVED on the clustered bootstrap (p .27-.83 pooled), and every
+fake number is a resolved IMPROVEMENT. **The load-bearing comparison is one line: A20 fails the PU200
+duplicate gate at +3.4 sigma; KE20 -- the same rule with the weight ramped off outside |eta| 1.3 --
+IMPROVES it at -2.5 sigma while keeping 94% of the jet gain.**
+
+| PU200, 1000 evt, paired McNemar | A20 (unconditioned) | **KE20** | **KE50** | KE150 |
+|---|---|---|---|---|
+| eff overall | -.0001 b29 c24 | -.0001 b10 c5 | -.0001 b21 c12 | -.0002 b28 c16 p .096 |
+| **eff_transition** | -.0007 b20 c10 p .099 | -.0004 **b6 c0 p .031** | -.0006 b13 c5 p .096 | -.0006 b16 c8 p .15 |
+| eff_barrel / endcap | +.0000 / +.0001 | +.0000 / +.0000 | -.0000 / +.0000 | -.0001 / +.0000 |
+| \|dxy\|[1,5) | b6 c6 flat | -.0006 b6 c4 | **+.0000 b8 c8** | +.0006 b8 c10 |
+| \|dxy\|[5,10) / [10,30) | b0 c0 / b0 c0 | **b0 c0 / b0 c0** | b1 c0 / b1 c0 | b2 c0 / b1 c0 |
+| vxy[1,5) / [5,10) / **[10,30)** | -.0004 / +.0000 / +.0019 | +.0000 / +.0005 / **+.0012** | -.0004 / -.0010 / **+.0019** | -.0009 / **-.0025 b6 c1** / +.0017 |
+| `n_tc_t4cl` (base 63,851) | 65,978 (**+3.33%**) | 64,266 (+0.65%) | 64,732 (+1.4%) | 65,179 (+2.1%) |
+
+**KE150 is where the PU200 displaced cells start to drift** (`vxy[5,10)` b6 c1, `dxy[5,10)` b2 c0) and
+where the jet deep-core dup reaches +.0040, so the curve is not worth pushing further: KE50 is the
+efficient point and KE20 the conservative one.
+
+| cubes, 5000 events each, all 11 cells | KE20 | KE50 |
+|---|---|---|
+| `cube50` | **0 A-only, 0 B-only** | **0 A-only, 0 B-only** |
+| `cube50_highPt` (`-s 4`) | **0 / 0** | **0 / 0** |
+| ... round 2's headline `dxy[1,5)` | **.1209 preserved exactly** | **.1209 preserved exactly** |
+
+There is a MECHANISM behind the cube zeros, not luck, and it is C's: a 10-muon gun event has
+essentially no hit contention, so the claim's ORDER is as irrelevant there as its tolerance was.
+**This is also the coordinator's sparse-region invariance check, met at bit level.**
+
+### 5. WHERE THE GAIN LANDS -- the cell JPR2 said master owns -- and the new SOFTER-JETS gate PASSES
+
+| axis, jets tune (`jpr2_ref/{etaaxis,ptaxis,jetptaxis}.py`) | KE20 | **KE50** |
+|---|---:|---:|
+| **\|sim eta\| < 0.6** (master leads by -.0211) | +.0045 | **+.0060** |
+| \|eta\| 0.6-1.1 | +.0017 | +.0020 |
+| **\|eta\| 1.1-1.7** (denom 1291; the ramp is off here) | **-.0023** | **-.0054** |
+| **sim pt 100-300** | +.0123 | **+.0133** |
+| sim pt 50-100 | +.0064 | +.0101 |
+| sim pt 10-20 / 20-50 | +.0039 / +.0013 | +.0033 / +.0033 |
+| sim pt > 300 | +.0053 | +.0079 |
+| sim pt 0.9-10 | +.0004 to +.0025 | +.0000 to +.0028 |
+| **genjet pt 200-500 (the NEW gate)** | **+.0000, exactly inert** | **+.0000, exactly inert** |
+| **genjet pt 50-200 (the NEW gate)** | **+.0005** | **+.0007** |
+| genjet pt 500-1000 / 1000-2000 / >2000 | +.0006 / +.0037 / +.0026 | +.0023 / +.0042 / +.0043 |
+
+**The softer-jet gate passes for a reason worth recording: on 200-500 GeV jets the arm is EXACTLY
+inert (0 discordant sims), because those events do not contain the contention the reordering acts on.
+The lever is self-confining on the jet-pt axis as well as on eta.** The one negative cell is
+|eta| 1.1-1.7, 7 sims of 1,291, where the ramp deliberately gives the boost up; the unconditioned A20
+is -.0008 there, so that is the price of the conditioning and it is paid in a band the round does not
+own.
+
+### 6. THE WEIGHT-FILE PRICE, RE-TAKEN IN THIS WORLD (the maintainer's decision, with the number)
+
+Fit on even jet events, judged and replayed on odd ones, C's label design (prompt-true AND
+displaced-true both POSITIVE), inputs = the 25 carried features + `mX` + `dcaXY`, nothing new computed
+per chain (`key_ref/rank.py`):
+
+| key | AUC core-true vs fake | replay core (held-out) | fake |
+|---|---:|---:|---:|
+| deployed frozen key | .9572 | -- | -- |
+| **`orderAlpha` boost (FREE, literals only)** | (mX .9617) | **+.0059** | -1.9% |
+| a 27-term LINEAR key (no weight file) | .9662 | **+.0038** | +0.4%, and in-jet vxy[10,30) **b43 c21 p .008** |
+| **GBDT 300x31 (needs a 4th weight file)** | **.9730** | **+.0113** | -4.8% |
+| frozen + 20 x GBDT | -- | +.0115 | -4.8% |
+| **ORACLE, truth-ranked (the ceiling)** | 1.0 | **+.0483** | -15.1% |
+
+**Read: a fourth weight file now buys about TWICE what free literals buy, in a world where the free
+literals buy +.0033-.0048 deployed. C's +.0224 has become +.0113, because the round-2 gate took the
+same tracks.** I am not asking for it. And the cheap LINEAR distillation is now WORSE than the free
+form and carries a resolved in-jet displaced loss -- C's "the weight-file-free forms give it all
+back" is confirmed a third time, on a third head.
+
+For the record, in this world **P2's round-1 C1 (`-200*f20 -80*f21`, the arm that won round 1 at
++.0368 in-tree) replays at core **-.0047** with fake +1.6% (200 tune events; -.0054/+4.3% on the 60-event subset).** The fakeScore family is dead here, which is
+why the displaced tax that killed round 1 never has to be paid: **the discriminator this round uses is
+displacement-AWARE by construction** -- `mX = max(zPrompt, zDisp) - zFake`, so a real displaced chain
+earns its margin from the displaced leg. That is the mechanism behind four neutral-or-better dxy bands
+instead of round 1's -.0143.
+
+### 7. WHAT I RECOMMEND, WITH THE DOWNSIDE OF EACH
+
+* **KE50** (`orderAlphaCentral = 50.f`) for the reach: jets core **+.0042**, jet core fake **-.0059**
+  (a RESOLVED improvement), PU200 dup and fake both better than base at ~4 sigma, both cubes
+  0-discordant. Downside, with the recommendation: jet-core dup +.0012 (p .27), |eta| 1.1-1.7 -.0054
+  (7 sims), and ONE PU200 sim lost in each of `dxy[5,10)` and `dxy[10,30)`.
+* **KE20** (`orderAlphaCentral = 20.f`) for the cleanest displaced record: +.0033, `dxy[5,10)` and
+  `dxy[10,30)` **exactly 0/0**, jet-core dup +.0004. Downside: a fifth less gain, and
+  `eff_transition` b6 c0 (p .031 exact -- 6 prompt sims of 13,387, none recovered).
+* **Not A20 / A50.** The unconditioned form is strictly dominated: the same jet gain with PU200
+  duplicates at +3.4 sigma (A20) or a resolved PU200 transition-efficiency loss (A50, -.0012, p .023).
+
+To ship: three literals in `ChainConfig.h` (`orderAlphaCentral = 50.f; orderEtaRampLo = 1.0f;
+orderEtaRampHi = 1.3f;`) plus the aEta hoist and the four-line ramp in `ChainArbitrate.h`. Nothing
+else moves; the env overrides can ship or be dropped.
+
+### 8. FOR THE OTHER SEATS
+
+* **T4 -- and our two arms point the SAME WAY, so the union has to be measured, not summed.** My arm
+  GROWS your class: jets T4 10.1 -> 10.4 TCs/evt (core-matched T4 1,016 -> 1,080), and the recovered
+  high-pt sims are disproportionately T4-won (sim pt 100-300: T4 winners 225 -> 239). On PU200
+  `n_tc_t4cl` is +0.65% (KE20) / +1.4% (KE50) against **+3.33% for the unconditioned form** -- the eta
+  ramp is most of what keeps it small. `T4C1` admits more 4-layer chains at the GATE; I re-rank the
+  claim they then have to win, and we both spend the same jet-core dup cell (your +.0011 at p .066,
+  my +.0012 at p .27), which is the one place a union can go wrong. **Note also that your result and
+  mine agree on the mechanism of conditioning: density conditioning works for you because your knob is
+  a per-chain THRESHOLD, and it fails for me because mine is a GLOBAL ORDER (section 3).**
+* **WELD:** I am DOWNSTREAM of you and aimed at the same physics cell (high pt, central barrel). My
+  +.0042 is measured against the shipped weld; if your argmax lands, the claim's surviving inversions
+  change and this number must be RE-TAKEN, not added.
+* **PUR:** my arm does not touch stage g, but it does change the deep-core fake mix (jets `AGG <.02`
+  fake +.0021, p .66) -- the population your purity repair acts on.
+* **Everyone:** `ChainClaimPrep` now hoists the -WZ `aEta` above the order key. If anyone else patches
+  that kernel, say so here and we will order the patches.
+
+### 9. REPRODUCE
+
+```
+# corpora (200 jet tune events + 120 PU200 events, ship binary, one event per process)
+key_ref/dump.sh 0 199 j0 jets ; key_ref/dump.sh 0 119 p0 pu
+# separation, the duel table, the conditioning table, the weight-file price
+key_ref/sep.py   key_ref/prepj --tag jets200
+key_ref/duel.py  key_ref/prepj ; key_ref/duel2.py key_ref/prepj
+key_ref/sweep.py key_ref/prepj --arms key_ref/arms8.txt --rho --disp --oracle
+key_ref/sweep.py key_ref/prepp --arms key_ref/arms8.txt --disp
+key_ref/rank.py  key_ref/prepj
+# the deployed arms -- ONE binary, BASE = no environment at all
+key_ref/gates.sh BASE
+key_ref/gates.sh KE50 LST_CHAIN_ORDER_ALPHA_CENTRAL=50
+key_ref/gates.sh A20  LST_CHAIN_ORDER_ALPHA=20          # the unconditioned comparison (rejected)
+p4_ref/jetgate.py --split tune key_ref/runs/BASE_jets.root key_ref/runs/KE50_jets.root --labels BASE,KE50
+p4_ref/paired_rle.py   key_ref/runs/BASE_pu.root key_ref/runs/KE50_pu.root BASE KE50
+c2_ref/pu_rate_boot.py key_ref/runs/BASE_pu.root key_ref/runs/KE50_pu.root BASE KE50
+jpr2_ref/{etaaxis,ptaxis,jetptaxis}.py --split tune <BASE> <arm> --labels BASE,KE50
+```
+
+| artifact | what |
+|---|---|
+| `key_ref/prepj` (200 evt), `key_ref/prepp` (120 evt) | the claim-replay corpora on the round-2 ship binary |
+| `key_ref/{sep,duel,duel2,sweep,rank}.py` | separation, the duel table, the arm sweep, the ranker price |
+| `key_ref/arms{1..8}.txt` | every arm spec, including the closed ones |
+| `key_ref/runs/` | every deployed run + log (a `[CHAIN KEY]` line proves the override reached a kernel) |
+| `key_ref/jetgate_*.json`, `pu_*.json`, `cubehp_KE{20,50}.txt` | the judged outputs |
+| `gpu_wt/k1` | the worktree; `build.sh` / `run.sh` carry the provenance hard-fails |
+
+-- KEY. Nothing committed, nothing published, holdouts untouched.
+
+
+## [KEY 04:05] SHIP ARTEFACT, FINGERPRINTED AND SELF-VERIFYING: **the shipped-literal build reproduces the env-knobbed `KE50` arm EXACTLY (jet core .7701 vs .7701, 0 discordant sims, identical fake/dup/TC counts on 500 tune events), and with `LST_CHAIN_ORDER_ALPHA_CENTRAL=0` that same binary is BIT-IDENTICAL to the main-tree ship binary -- so the candidate carries its own A/B and needs no second build.**
+
+Caveat WITH the headline: this verifies the ARTEFACT, not new physics; the numbers are the ones in
+[KEY 03:30], and the jets holdout and PU200 `event_2000` are still sealed and still the coordinator's
+to judge.
+
+| artefact | path | md5 |
+|---|---|---|
+| mechanism only, defaults **INERT** | `key_ref/key_orderkey_inert.patch` | `601ec1a19d98b6a7e514cb8b6ca1bd15` |
+| **the candidate** (= the same patch + ONE literal, `orderAlphaCentral = 50.f`) | `key_ref/key_orderkey_KE50.patch` | `299a40aed188325c7b2162908c548c52` |
+
+173 lines, 3 files (`interface/ChainConfig.h` +21, `src/alpaka/ChainArbitrate.h` +22/-14,
+`src/alpaka/LSTEvent.dev.cc` +62). Both are `git diff` against `04c6e122e68`, so they apply to a
+pristine base by construction; they differ ONLY in that literal and in the blob index line (verified
+by diff). To take `KE20` instead, change the same literal to `20.f`.
+
+Binaries, all from worktree `gpu_wt/k1`, library `4b77a843a78d5fb2d4b9b02487fcd464` throughout:
+
+| build | `bin/lst_cpu` md5 | what it is |
+|---|---|---|
+| inert default (the A/B instrument every arm above was run from) | `8ccb3349f719679867f6ea25269cec66` | env absent == ship, proven 20/20 at `-s 1` |
+| **shipped default `orderAlphaCentral = 50.f`** | **`e549007b743e2e040026c1ce60d0c6bd`** | env absent == `KE50`; `LST_CHAIN_ORDER_ALPHA_CENTRAL=0` == ship, proven 20/20 at `-s 1` |
+
+```
+# from the shipped-default binary: the arm, and its own control, one executable
+gpu_wt/k1/run.sh SHIPKE50 jets 500 16                              # the candidate
+LST_CHAIN_ORDER_ALPHA_CENTRAL=0 gpu_wt/k1/run.sh SHIPOFF jets 500 16   # == 04c6e122e68, bit for bit
+```
+
+Note for whoever runs the holdout: `run.sh` hard-fails unless `ldd` resolves `liblst_cpu.so` inside
+k1, and the `[CHAIN KEY]` line is printed once per process **only when the environment overrides a
+configured value** -- with the shipped default and no environment there is deliberately NO line, so
+its ABSENCE is the correct signature of the candidate and its PRESENCE (`alphaCentral=0`) is the
+correct signature of the control. That is inverted from every other arm in this round; check the
+binary md5, not the log line.
+
+-- KEY

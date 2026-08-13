@@ -378,3 +378,106 @@ Both cube samples on the UNION binary are running now (T4C1 alone is bit-identic
 the full 10,000-event `cube50_highPt`; WELD alone measured exactly .00000 on every cube50_highPt band
 on its own tune runs — but nobody has measured the COMBINATION, and it is a hard gate). Also still
 unmeasured: timing, which remains owed on the round-2 ship as well.
+
+### 6g. Agent PUR — stage-g purity repair: **REFUSAL, and the ceiling is structurally unreachable**
+
+Five posts in `FINDINGS_JETROUND3.md`. Nothing built, nothing committed, working tree untouched.
+
+**The signal I named in the brief is the wrong one, and PUR killed it with physics.** Per-mini-doublet
+AUC for "is this MD foreign": leave-one-out combined chi2 **.494 (anti-informative)**, |xy resid|
+.596, |rz resid| .517. Deployed as rules they lose on THREE independent samples (jets −.0134, PU200
+−.0102, cube50 −.0002). The reason is physical and worth remembering: **inside dR<.05 the thief and
+the victim are collinear at hit-resolution scale, so a stolen mini-doublet lies on the fitted circle
+just as well as the track's own hits.** Fit quality cannot see the theft. Relatedly, the existing K6f
+terminal trim cannot be relaxed into this population either — only 26.4% of it passes K6f's
+`chi2Full > 1` guard, because a stitched jet-core chain FITS WELL.
+
+**Ceiling reconfirmed at +.0258/+.0278** (D had +.0244), and **100% of stage-g owners are chain TCs**,
+so the whole leg is ours. Two candidates were priced:
+
+| | `sharMD>=1` (another emitted chain TC carries the same MD) | `t3 fakeScore > .5` on the terminal node |
+|---|---|---|
+| jets core | +.0041 (113 gained / 24 lost) | **+.0095** (230/22) — 36% of the ceiling |
+| PU200 | +22 sims, all 7 displaced bands 0/0, dup BETTER | +21 sims, all 7 bands 0/0, dup +0 |
+| cubes | **fires 0 times, bit-identical** | **FAILS**: 0 gained / 3-4 lost, dxy[1,5) 0/1 |
+| cost | new kernel + per-MD counter | ~10 lines in `ChainEmitTCs`, no new launch |
+
+**Why PUR refused anyway, and it is the important number: 65.0% of the mini-doublets that must be
+removed are carried by nothing else in the event** (87.9% at MD granularity). So the ceiling is
+**structurally unreachable rather than classifier-limited** — there is no evidence to find. Where
+evidence does exist, the argmax is right **74 of 74**.
+
+`t3 fakeScore` is the better physics in the wrong shape: clean on jets and PU200, failing only on the
+displaced guns because it fires where there is nothing to repair (its AUC there is .42-.53). **Named
+next experiment: a continuous occupancy-conditioned `fakeScore` bar** — the round's own allowed
+conditioning shape, ~10 lines plus one plumbed column, and the cheapest remaining shot at this stage.
+
+**Instrument note worth keeping:** PUR's purity rule reproduces the ntuple's own `tc_isFake` on
+**1,226,917 of 1,226,917** chain-backed TC rows with zero disagreements, across jets, PU200 and both
+cubes — an exact proxy for a K10-slot-skip. It was still never deployed, and deployment remains the
+only referee.
+
+**For agent T4's ledger:** a purity repair pushes ~169 five-layer chains per 500 jet events INTO the
+4-layer class (+0.06-0.34 T4/evt) and none the other way; 70% of the population is 6-layer and never
+leaves T5.
+
+### 6h. UNION CUBE GATES — both pass, essentially bit-clean (10,000 common events each, paired)
+
+| cell | cube50_highPt SHIPPED -> UNION | cube50 SHIPPED -> UNION |
+|---|---|---|
+| overall | .3678 -> .3678, **0/0** | .3509 -> .3509, **0/0** |
+| dxy[1,5) | .1120 -> .1120, **0/0** | .1329 -> .1329, **0/0** |
+| dxy[5,10) | .0630 -> .0630, **0/0** | .0828 -> .0826, 1 sim, p 1.0 |
+| dxy[10,30) | .0085 -> .0085, **0/0** | .0299 -> .0299, **0/0** |
+| vxy[1,5) / [5,10) / [10,30) | **0/0 / 0/0 / 0/0** | 0/0 / 1 sim p 1.0 / 0/0 |
+| barrel / transition / endcap | **0/0 on all three** | **0/0 on all three** |
+
+**cube50_highPt is 0/0 on every one of the twelve cells.** cube50 moves **two sims in 10,000 events**,
+both at p = 1.0. Round 2's displaced headline is fully preserved. (Note SF's warning confirmed: that
+headline reads **.1120 over 10,000 events**, not the .1209 of the 5,000-event slice — quote the event
+count with it from now on.)
+
+---
+
+## 7. THE DECISION WAITING FOR YOU — the additive union, complete ledger
+
+`weld_S02` (md5 `baa19ab0654220cc445f2287bb876dd1`, ONE constant) + `T4C1`
+(md5 `6550c79df1ff469319bdb44fbeabd606`, three floats, inert by default). No new kernels, no new
+networks, no new weight files, and the weld does a THIRD LESS WORK than it does today.
+
+| gate | result | verdict |
+|---|---|---|
+| jets holdout core eff | .7611 -> **.7728** (master .7761) | gap .0150 -> **.0033** |
+| **jets dR < .02** | .5172 -> **.5424** (master .5292) | **WE PASS MASTER** |
+| jets dR < .005 | .4051 -> **.4288** (master .2604) | +.168 above master |
+| jets fake | .1287 -> **.1236** (master .2235) | 1.8x cleaner than master |
+| jets dup pooled | .0241 -> **.0238** | better |
+| PU200 eff overall | .8107 -> **.8112** | **resolved GAIN**, p .0044 |
+| PU200 eff dxy[1,5) | .5748 -> **.5799** | **resolved DISPLACED GAIN**, p .023 |
+| PU200 other displaced bands | all neutral | pass |
+| PU200 dup / fake | .04315 -> .04283 / .04466 -> **.04373** | both better; recovers 64% of round 2's fake regression |
+| cube50_highPt | **0/0 on all 12 cells** | pass |
+| cube50 | 2 sims of 10,000, p 1.0 | pass |
+| softer jets (200-500 GeV) | WELD +.0047, T4C1 +.0000 | pass |
+| **jet-core dup dR < .005** | **.0506 -> .0731** | **the ONLY adverse cell** |
+| jet-core dup dR < .05 | .0232 -> .0242 | +.0010 |
+| timing | **NOT MEASURED** | owed, on this and on the round-2 ship |
+
+**Every gate in the set passes except the deepest duplicate bin.** That is the same cell round 2 also
+paid in, where master carries zero duplicates and we were already ~8x worse — and pooled jet dup and
+all four PU200 dup cells actually IMPROVE, so it is a narrow concentration rather than a broad
+regression.
+
+**What I would want you to weigh:** the prize is passing master inside dR<.02 on sealed data and
+closing the core gap to .0033, with PU200 efficiency and displaced BOTH improving and the round-2 fake
+regression partly repaid — against duplicates in the innermost jet bin getting worse in a cell we
+already owed. Under your stated priority (efficiency >> dup > fake) the efficiency and fake columns
+both move the right way and only one dup cell moves the wrong way.
+
+**My recommendation: ship the union, and open the next round on the deep-core duplicate**, which is now
+the single cell blocking a clean sweep and which three agents have independently localised to the
+(delivered chain, un-retired bare pLS) pair — barrel, high-pT, hit-disjoint, and provably outside the
+shipped retirement rule's window. I have NOT shipped it; the call is yours.
+
+Still running when this was written: agent KEY (claim ordering) and agent AT (attach retrain). Their
+sections append below.
