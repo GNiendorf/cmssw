@@ -157,6 +157,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
       chainConfigRetirementEnv(chainConfig_);
       // JET ROUND 3 (T4): env overrides of the 4-layer class policy group. Inert with nothing set.
       chainConfigT4Env(chainConfig_);
+      // COORDINATOR PROBE: terminal-trim A/B. Inert with nothing set.
+      chainConfigTrimEnv(chainConfig_);
       if (ptCut < 0.6f) {
         throw std::invalid_argument("Minimum pT cut must be at least 0.6 GeV. Provided value: " +
                                     std::to_string(ptCut));
@@ -309,6 +311,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     void dumpChainTCs();
     // Optional parity sidecar, enabled by the LST_CHAIN_CHAIN_DUMP environment variable.
     void dumpChains();
+    // TRIM-NN probe sidecar, enabled by LST_CHAIN_VARIANT_DUMP: one P22C record per TERMINAL
+    // VARIANT of every chain with nNodes >= 3, taken PRE-TRIM. Writes nothing otherwise.
+    void dumpChainVariants(char const* path, uint32_t const* innerMDDev, float const* probeDev);
 
     unsigned int getNumberOfChains() const { return nChainCount_; }
     double getChainBuildMs() const { return chainBuildMs_; }

@@ -48,6 +48,9 @@ namespace lst {
                       SOA_COLUMN(int8_t, branch),
                       // 0 = untrimmed, 1 = innermost node dropped, 2 = outermost node dropped.
                       SOA_COLUMN(int8_t, trimAction),
+                      // COORDINATOR: 1 = ChainTrimLearned already wrote features[] and dcaXY for the
+                      // WINNING variant, so K7a must not rebuild them. 0 = K7a owns this row.
+                      SOA_COLUMN(uint8_t, featValid),
                       // bit0 killed by the gate, bit1 exempt (large-DCA) branch, bit2 |eta| band,
                       // bit3 killed by the C1 (nNodes == 2, nLayers == 5) cell rule.
                       SOA_COLUMN(uint8_t, flags),

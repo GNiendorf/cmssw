@@ -55,6 +55,23 @@ namespace lst {
     float trimAbsChi2 = 1.f;
     int trimMinLayersAfter = 5;
     int trimPasses = 1;
+    // TRIM-NN: WHICH RULE takes the terminal-trim decision. The variants are constructed either
+    // way -- that half is mechanical -- so this selects only who chooses between them.
+    //   0 the K6f chi2 improvement ratio (the shipped rule)
+    //   1 the chain head's argmax over the variant margin mX, no guard at all
+    //   2 as 1, but a dropped variant must still keep trimMinLayersAfter layers
+    //   3 as 1, but only on chains the K6f concentrating guard admits (chi2Full > trimAbsChi2)
+    //   4 REFEREE CONTROL, not a candidate: the same unguarded 3-way argmax as 1, decided by the
+    //     chi2 PROXY instead of by the head, so "the head chooses better" can be separated from
+    //     "trimming more is better".
+    //   5 as 1, but the winning variant must beat the full chain by trimMarginGap logit units
+    // SHIPPED (trim-NN round, arm L1): the terminal-trim DECISION is the chain head's argmax over
+    // the three variants, with every guard of the chi2 rule deleted. 0 restores the chi2 rule
+    // (kept reachable for A/B via LST_TRIM_MODE and scheduled for deletion once it has been
+    // unused for a round). See standalone/FINDINGS_TRIMNN.md.
+    int trimMode = 1;
+    // The one constant the learned rule can need: how decisively the head must prefer a drop.
+    float trimMarginGap = 0.f;
 
     // -X 0.5 : IP-compatibility boundary on the chain dcaXY, cm.
     float dcaSplit = 0.5f;
@@ -452,6 +469,44 @@ namespace lst {
                 cfg.xcThetaE,
                 cfg.attachThetaT3,
                 cfg.dupMutualDelta);
+  }
+
+  // COORDINATOR PROBE (not a shipped knob): env override of the TERMINAL TRIM group, so the
+  // trim can be A/B'd from ONE binary. With nothing set this writes nothing and prints nothing.
+  //   LST_TRIM_ON     0 disables ChainTrimTerminals entirely
+  //   LST_TRIM_ABS    the absolute chi2 floor below which a chain is never trimmed
+  inline void chainConfigTrimEnv(ChainConfig& cfg) {
+    bool any = false;
+    if (char const* s = std::getenv("LST_TRIM_ON")) {
+      if (*s != '\0') {
+        cfg.terminalTrim = (std::atoi(s) != 0);
+        any = true;
+      }
+    }
+    if (char const* s = std::getenv("LST_TRIM_ABS")) {
+      if (*s != '\0') {
+        cfg.trimAbsChi2 = static_cast<float>(std::atof(s));
+        any = true;
+      }
+    }
+    if (char const* s = std::getenv("LST_TRIM_MODE")) {
+      if (*s != '\0') {
+        cfg.trimMode = std::atoi(s);
+        any = true;
+      }
+    }
+    if (char const* s = std::getenv("LST_TRIM_GAP")) {
+      if (*s != '\0') {
+        cfg.trimMarginGap = static_cast<float>(std::atof(s));
+        any = true;
+      }
+    }
+    if (any)
+      std::printf("[chainenv] terminal trim resolved: on=%d absChi2=%g mode=%d gap=%g\n",
+                  static_cast<int>(cfg.terminalTrim),
+                  cfg.trimAbsChi2,
+                  cfg.trimMode,
+                  cfg.trimMarginGap);
   }
 
   // JET ROUND 3 (T4): env overrides of the 4-layer class policy group. One binary supplies every

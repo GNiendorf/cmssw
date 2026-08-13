@@ -12,6 +12,7 @@
 #include "ChainEdges.h"
 #include "ChainGate.h"
 #include "ChainGraph.h"
+#include "ChainTrimLearn.h"
 #include "ChainWeld.h"
 #include "Hit.h"
 #include "Kernels.h"
@@ -1548,6 +1549,14 @@ void LSTEvent::buildChains() {
   // storage contract in ChainsSoA.h), so no second prefix pass and no reservation are needed.
   chainsDC_.emplace(queue_, nChainCount_);
   chainItemsDC_.emplace(queue_, 3 * nChainWeldedNodes_);
+  // COORDINATOR: featValid must start at 0 for EVERY chain. Only chains the learned trim visits
+  // (nNodes >= 3) ever set it, and K7a skips a row that claims to be published -- an uninitialised
+  // byte here would silently drop feature rows, so this memset is a correctness requirement, not a
+  // tidiness one.
+  {
+    auto fvView = cms::alpakatools::make_device_view(queue_, chainsDC_->view().featValid(), nChainCount_);
+    alpaka::memset(queue_, fvView, 0u);
+  }
   if (objectsStatistics_) {
     double mb =
         (alpaka::getExtentProduct(chainsDC_->buffer()) + alpaka::getExtentProduct(chainItemsDC_->buffer())) / 1e6;
@@ -1578,20 +1587,64 @@ void LSTEvent::buildChains() {
 
   auto const t3 = stamp();
 
+  // TRIM-NN probe (env-gated, PRE-TRIM, pure observation). Allocates nothing and runs nothing
+  // unless LST_CHAIN_VARIANT_DUMP names an output file.
+  if (char const* vpath = std::getenv("LST_CHAIN_VARIANT_DUMP"); vpath != nullptr && *vpath != '\0') {
+    auto innerMD_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, 3 * nChainWeldedNodes_);
+    auto probe_buf = cms::alpakatools::make_device_buffer<float[]>(
+        queue_, static_cast<size_t>(nChainCount_) * chaintrim::kProbeWords);
+    alpaka::exec<Acc1D>(queue_,
+                        chainFlat_workDiv,
+                        ChainVariantProbe{},
+                        modules_.const_view().modules(),
+                        miniDoubletsDC_->const_view().miniDoublets(),
+                        segmentsDC_->const_view().segments(),
+                        tripletsDC_->const_view().triplets(),
+                        chainNodesDC_->const_view(),
+                        chainEdgesDC_->const_view(),
+                        chainMdIncidenceDC_->const_view(),
+                        chainLsIncidenceDC_->const_view(),
+                        chainItemsDC_->const_view(),
+                        chainsDC_->const_view(),
+                        innerMD_buf.data(),
+                        probe_buf.data());
+    alpaka::wait(queue_);
+    dumpChainVariants(vpath, innerMD_buf.data(), probe_buf.data());
+  }
+
   if (chainConfig_.terminalTrim && chainConfig_.trimFactor > 0.f) {
-    for (int pass = 0; pass < chainConfig_.trimPasses; ++pass)
-      alpaka::exec<Acc1D>(queue_,
-                          chainFlat_workDiv,
-                          ChainTrimTerminals{},
-                          segmentsDC_->const_view().segments(),
-                          tripletsDC_->const_view().triplets(),
-                          modules_.const_view().modules(),
-                          miniDoubletsDC_->const_view().miniDoublets(),
-                          chainNodesDC_->const_view(),
-                          chainEdgesDC_->const_view(),
-                          chainsDC_->view(),
-                          chainItemsDC_->view(),
-                          chainConfig_);
+    for (int pass = 0; pass < chainConfig_.trimPasses; ++pass) {
+      if (chainConfig_.trimMode == 0) {
+        alpaka::exec<Acc1D>(queue_,
+                            chainFlat_workDiv,
+                            ChainTrimTerminals{},
+                            segmentsDC_->const_view().segments(),
+                            tripletsDC_->const_view().triplets(),
+                            modules_.const_view().modules(),
+                            miniDoubletsDC_->const_view().miniDoublets(),
+                            chainNodesDC_->const_view(),
+                            chainEdgesDC_->const_view(),
+                            chainsDC_->view(),
+                            chainItemsDC_->view(),
+                            chainConfig_);
+      } else {
+        alpaka::exec<Acc1D>(queue_,
+                            chainFlat_workDiv,
+                            ChainTrimLearned{},
+                            modules_.const_view().modules(),
+                            miniDoubletsDC_->const_view().miniDoublets(),
+                            segmentsDC_->const_view().segments(),
+                            tripletsDC_->const_view().triplets(),
+                            chainNodesDC_->const_view(),
+                            chainEdgesDC_->const_view(),
+                            chainMdIncidenceDC_->const_view(),
+                            chainLsIncidenceDC_->const_view(),
+                            chainItemsDC_->const_view(),
+                            chainsDC_->view(),
+                            chainItemsDC_->view(),
+                            chainConfig_);
+      }
+    }
   }
 
   auto const t4 = stamp();
@@ -3482,6 +3535,123 @@ void LSTEvent::dumpChains() {
       uint32_t const md = mdItems[3u * off + k];
       put32(hitIdx[mdAnchorHit[md]]);
       put32(hitIdx[mdOuterHit[md]]);
+    }
+  }
+  std::fclose(f);
+}
+
+// TRIM-NN probe sidecar. Emits, in the SAME byte layout dumpChains uses ('P22C', so every existing
+// reader and the offline truth join work unchanged), ONE record per TERMINAL VARIANT of every
+// PRE-TRIM chain with nNodes >= 3:
+//     preN = nNodes = the variant's node count      branch = variant id (0 full, 1 inner-dropped,
+//     nMDs / nLayers = the variant's MD union                          2 outer-dropped)
+//     score = the variant's COMBINED-FIT chi2       drop   = the chain index within the event
+//     dcaXY / logits / margins / features           hits   = the variant's own MD hit list
+// so the K6f rule's decision (a ratio of the score column) and the head's decision (the margin
+// columns) can be compared to the >= 75% sim-match label of each variant on the same rows.
+void LSTEvent::dumpChainVariants(char const* path, uint32_t const* innerMDDev, float const* probeDev) {
+  if (path == nullptr || *path == '\0' || !chainsDC_.has_value())
+    return;
+
+  alpaka::wait(queue_);
+
+  auto pullTo = [&](auto* hostPtr, auto column, unsigned int n) {
+    auto host_view = cms::alpakatools::make_host_view(hostPtr, n);
+    auto dev_view = cms::alpakatools::make_device_view(queue_, column, n);
+    alpaka::memcpy(queue_, host_view, dev_view);
+    alpaka::wait(queue_);
+  };
+
+  uint32_t const nC = nChainCount_;
+  uint32_t const nItems = 3u * nChainWeldedNodes_;
+  auto ch = chainsDC_->view();
+  auto it = chainItemsDC_->view();
+
+  std::vector<uint32_t> nodeOffset(nC);
+  std::vector<uint16_t> nNodes(nC), nMDs(nC);
+  std::vector<uint8_t> nLayers(nC);
+  pullTo(nodeOffset.data(), ch.nodeOffset(), nC);
+  pullTo(nNodes.data(), ch.nNodes(), nC);
+  pullTo(nMDs.data(), ch.nMDs(), nC);
+  pullTo(nLayers.data(), ch.nLayers(), nC);
+
+  std::vector<uint32_t> nodeItems(nItems), edgeItems(nItems), mdItems(nItems), innerMD(nItems);
+  pullTo(nodeItems.data(), it.nodeItems(), nItems);
+  pullTo(edgeItems.data(), it.edgeItems(), nItems);
+  pullTo(mdItems.data(), it.mdItems(), nItems);
+  pullTo(innerMD.data(), innerMDDev, nItems);
+
+  std::vector<float> probe(static_cast<size_t>(nC) * chaintrim::kProbeWords);
+  pullTo(probe.data(), probeDev, static_cast<unsigned int>(probe.size()));
+
+  uint32_t const nEdges = static_cast<uint32_t>(chainEdgesDC_->view().metadata().size());
+  std::vector<uint8_t> edgeType(nEdges);
+  pullTo(edgeType.data(), chainEdgesDC_->view().type(), nEdges);
+
+  unsigned int const nMDTotal = static_cast<unsigned int>(miniDoubletsDC_->view().miniDoublets().metadata().size());
+  unsigned int const nHitsTotal = static_cast<unsigned int>(lstInputDC_->const_view().hits().metadata().size());
+  std::vector<unsigned int> mdAnchorHit(nMDTotal), mdOuterHit(nMDTotal), hitIdx(nHitsTotal);
+  pullTo(mdAnchorHit.data(), miniDoubletsDC_->view().miniDoublets().anchorHitIndices(), nMDTotal);
+  pullTo(mdOuterHit.data(), miniDoubletsDC_->view().miniDoublets().outerHitIndices(), nMDTotal);
+  pullTo(hitIdx.data(), lstInputDC_->const_view().hits().idxs(), nHitsTotal);
+
+  uint32_t nRec = 0;
+  for (uint32_t c = 0; c < nC; ++c)
+    if (nNodes[c] >= 3)
+      nRec += chaintrim::kVariants;
+
+  static std::atomic<uint32_t> variantEventCounter{0};
+  uint32_t const ievt = variantEventCounter.fetch_add(1);
+  static std::mutex variantDumpMutex;
+  std::lock_guard<std::mutex> lock(variantDumpMutex);
+  std::FILE* f = std::fopen(path, (ievt == 0) ? "wb" : "ab");
+  if (f == nullptr)
+    return;
+  auto put32 = [&](uint32_t v) { std::fwrite(&v, sizeof(v), 1, f); };
+  auto putf = [&](float v) { std::fwrite(&v, sizeof(v), 1, f); };
+
+  put32(0x50323243u);  // 'P22C'
+  put32(ievt);
+  put32(nChainNodes_);
+  put32(nEdges);
+  put32(nRec);
+  for (uint32_t c = 0; c < nC; ++c) {
+    if (nNodes[c] < 3)
+      continue;
+    uint32_t const off = nodeOffset[c];
+    float const* row = probe.data() + static_cast<size_t>(c) * chaintrim::kProbeWords;
+    for (int v = 0; v < chaintrim::kVariants; ++v) {
+      float const* b = row + 3 + v * chaintrim::kVarWords;
+      uint32_t const offv = (v == 1) ? off + 1u : off;
+      uint32_t const nNv = (v == 0) ? nNodes[c] : nNodes[c] - 1u;
+      uint32_t const nMDv = static_cast<uint32_t>(b[0]);
+      uint32_t const* mdv = (v == 1) ? &innerMD[3u * off] : &mdItems[3u * off];
+      put32(nNv);
+      put32(nNv);
+      put32(nMDv);
+      put32(static_cast<uint32_t>(b[1]));
+      put32(static_cast<uint32_t>(v));
+      put32(c);
+      put32(0u);
+      putf(row[v]);  // the variant's combined-fit chi2, in the score slot
+      putf(b[2]);    // dcaXY
+      putf(b[3]);
+      putf(b[4]);
+      putf(b[5]);
+      putf(b[4] - b[3]);
+      putf(b[5] - b[3]);
+      putf((b[4] > b[5] ? b[4] : b[5]) - b[3]);
+      for (int k = 0; k < Params_ChainFeat::kFeatures; ++k)
+        putf(b[6 + k]);
+      for (uint32_t k = 0; k < nNv; ++k)
+        put32(nodeItems[offv + k]);
+      for (uint32_t k = 0; k + 1 < nNv; ++k)
+        put32(edgeType[edgeItems[offv + k]]);
+      for (uint32_t k = 0; k < nMDv; ++k) {
+        uint32_t const md = mdv[k];
+        put32(hitIdx[mdAnchorHit[md]]);
+        put32(hitIdx[mdOuterHit[md]]);
+      }
     }
   }
   std::fclose(f);

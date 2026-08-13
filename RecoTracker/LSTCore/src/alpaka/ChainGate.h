@@ -137,7 +137,348 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
   }
 
   // ------------------------------------------------------------------------------------------
-  // K7a. The 25 frozen chain features plus the chain dcaXY.
+  // K7a core. The 25 frozen chain features plus the chain dcaXY, as a function of an EXPLICIT
+  // (node run, MD union) rather than of a chain row, so a candidate TERMINAL VARIANT of a chain
+  // can be scored with the identical function. `fout` receives the sanitized row.
+  ALPAKA_FN_ACC ALPAKA_FN_INLINE void chainBuildFeatures(Acc1D const& acc,
+                                                         ModulesConst modules,
+                                                         MiniDoubletsConst mds,
+                                                         SegmentsConst segments,
+                                                         TripletsConst triplets,
+                                                         ChainNodesConst nodes,
+                                                         ChainEdgesConst edges,
+                                                         ChainIncidenceConst mdIncidence,
+                                                         ChainIncidenceConst lsIncidence,
+                                                         ChainItemsConst items,
+                                                         uint32_t off,
+                                                         int nNodes,
+                                                         uint32_t const* mdList,
+                                                         int nMD,
+                                                         int nLayersIn,
+                                                         float* fout,
+                                                         float& dcaOut) {
+    int const nE = nNodes - 1;
+
+    // --- 2-4, 18: member weld-edge logit aggregates -------------------------------------
+    float sumL = 0.f, minL = 0.f;
+    double sumL2 = 0.0;
+    if (nE > 0) {
+      minL = edges.logOdds()[items.edgeItems()[off]];
+      for (int k = 0; k < nE; ++k) {
+        float const lo = edges.logOdds()[items.edgeItems()[off + k]];
+        sumL += lo;
+        sumL2 += static_cast<double>(lo) * static_cast<double>(lo);
+        if (lo < minL)
+          minL = lo;
+      }
+    }
+    float const meanL = nE > 0 ? sumL / static_cast<float>(nE) : 0.f;
+    float stdL = 0.f;
+    if (nE > 1) {
+      double const var = sumL2 / nE - static_cast<double>(meanL) * static_cast<double>(meanL);
+      stdL = static_cast<float>(alpaka::math::sqrt(acc, chainMaxd(var, 0.0)));
+    }
+
+    // --- 5, 7, 16 and the dcaXY: Kasa circle fit over all anchor hits --------------------
+    double fitChi2PerHit = 0.0, fitKappa = 0.0, maxXyResid = 0.0;
+    float dcaXY = 1e9f;
+    bool circleOk = false;
+    if (nMD >= 3) {
+      double xbar = 0.0, ybar = 0.0;
+      for (int k = 0; k < nMD; ++k) {
+        xbar += mds.anchorX()[mdList[k]];
+        ybar += mds.anchorY()[mdList[k]];
+      }
+      xbar /= nMD;
+      ybar /= nMD;
+      double Suu = 0.0, Svv = 0.0, Suv = 0.0, Suw = 0.0, Svw = 0.0, Sw = 0.0;
+      for (int k = 0; k < nMD; ++k) {
+        double const u = mds.anchorX()[mdList[k]] - xbar, v = mds.anchorY()[mdList[k]] - ybar;
+        double const w = u * u + v * v;
+        Suu += u * u;
+        Svv += v * v;
+        Suv += u * v;
+        Suw += u * w;
+        Svw += v * w;
+        Sw += w;
+      }
+      double const det = Suu * Svv - Suv * Suv;
+      double const scale = Suu + Svv;
+      if (det > 1e-12 * scale * scale) {  // degenerate (collinear) -> flags stay 0 / 0
+        circleOk = true;
+        double const uc = (Svv * (0.5 * Suw) - Suv * (0.5 * Svw)) / det;
+        double const vc = (Suu * (0.5 * Svw) - Suv * (0.5 * Suw)) / det;
+        double const R = alpaka::math::sqrt(acc, chainMaxd(uc * uc + vc * vc + Sw / nMD, 0.0));
+        double chi2 = 0.0;
+        for (int k = 0; k < nMD; ++k) {
+          double const du = (mds.anchorX()[mdList[k]] - xbar) - uc;
+          double const dv = (mds.anchorY()[mdList[k]] - ybar) - vc;
+          double const resid = alpaka::math::sqrt(acc, du * du + dv * dv) - R;
+          chi2 += resid * resid;
+          maxXyResid = chainMaxd(maxXyResid, alpaka::math::abs(acc, resid));
+        }
+        fitChi2PerHit = chi2 / nMD;
+        double crossSum = 0.0;
+        for (int k = 0; k + 2 < nMD; ++k) {
+          double const ax =
+              static_cast<double>(mds.anchorX()[mdList[k + 1]]) - static_cast<double>(mds.anchorX()[mdList[k]]);
+          double const ay =
+              static_cast<double>(mds.anchorY()[mdList[k + 1]]) - static_cast<double>(mds.anchorY()[mdList[k]]);
+          double const bx =
+              static_cast<double>(mds.anchorX()[mdList[k + 2]]) - static_cast<double>(mds.anchorX()[mdList[k + 1]]);
+          double const by =
+              static_cast<double>(mds.anchorY()[mdList[k + 2]]) - static_cast<double>(mds.anchorY()[mdList[k + 1]]);
+          crossSum += ax * by - ay * bx;
+        }
+        double const rotSign = (crossSum >= 0.0) ? 1.0 : -1.0;
+        fitKappa = rotSign / chainMaxd(R, 1e-6);
+
+        // prototype/PixelAttach.cc k8ChainDcaXY reuses this exact fit (same accumulation
+        // order, same guard) and only adds the absolute centre and the origin distance.
+        double const cx = xbar + uc, cy = ybar + vc;
+        dcaXY = static_cast<float>(alpaka::math::abs(acc, alpaka::math::sqrt(acc, cx * cx + cy * cy) - R));
+      }
+    }
+    if (!circleOk) {
+      // Degenerate (or nMD < 3) fit: straight-line limit, the perpendicular distance from the
+      // origin to the line through the innermost and outermost anchor hits. nMD < 2 is
+      // unreachable by the K6 contract and is never IP-compatible.
+      if (nMD < 2) {
+        dcaXY = 1e9f;
+      } else {
+        double const x1 = mds.anchorX()[mdList[0]], y1 = mds.anchorY()[mdList[0]];
+        double const x2 = mds.anchorX()[mdList[nMD - 1]], y2 = mds.anchorY()[mdList[nMD - 1]];
+        double const len = alpaka::math::sqrt(acc, (x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1));
+        dcaXY = (len < 1e-9) ? 1e9f : static_cast<float>(alpaka::math::abs(acc, x1 * y2 - x2 * y1) / len);
+      }
+    }
+
+    // --- 6, 17: rz straight-line fit z vs s (s = cumulative xy chord length) -------------
+    double rzChi2PerHit = 0.0, maxRzResid = 0.0;
+    {
+      double s = 0.0, sbar = 0.0, zbar = 0.0;
+      for (int k = 0; k < nMD; ++k) {
+        if (k > 0) {
+          double const dx =
+              static_cast<double>(mds.anchorX()[mdList[k]]) - static_cast<double>(mds.anchorX()[mdList[k - 1]]);
+          double const dy =
+              static_cast<double>(mds.anchorY()[mdList[k]]) - static_cast<double>(mds.anchorY()[mdList[k - 1]]);
+          s += alpaka::math::sqrt(acc, dx * dx + dy * dy);
+        }
+        sbar += s;
+        zbar += mds.anchorZ()[mdList[k]];
+      }
+      sbar /= nMD;
+      zbar /= nMD;
+      double Sss = 0.0, Ssz = 0.0;
+      s = 0.0;
+      for (int k = 0; k < nMD; ++k) {
+        if (k > 0) {
+          double const dx =
+              static_cast<double>(mds.anchorX()[mdList[k]]) - static_cast<double>(mds.anchorX()[mdList[k - 1]]);
+          double const dy =
+              static_cast<double>(mds.anchorY()[mdList[k]]) - static_cast<double>(mds.anchorY()[mdList[k - 1]]);
+          s += alpaka::math::sqrt(acc, dx * dx + dy * dy);
+        }
+        double const ds = s - sbar;
+        Sss += ds * ds;
+        Ssz += ds * (mds.anchorZ()[mdList[k]] - zbar);
+      }
+      if (Sss > 1e-12) {  // degenerate abscissa -> flag stays 0
+        double const b = Ssz / Sss;
+        double const a = zbar - b * sbar;
+        double chi2 = 0.0;
+        s = 0.0;
+        for (int k = 0; k < nMD; ++k) {
+          if (k > 0) {
+            double const dx =
+                static_cast<double>(mds.anchorX()[mdList[k]]) - static_cast<double>(mds.anchorX()[mdList[k - 1]]);
+            double const dy =
+                static_cast<double>(mds.anchorY()[mdList[k]]) - static_cast<double>(mds.anchorY()[mdList[k - 1]]);
+            s += alpaka::math::sqrt(acc, dx * dx + dy * dy);
+          }
+          double const r = mds.anchorZ()[mdList[k]] - a - b * s;
+          chi2 += r * r;
+          maxRzResid = chainMaxd(maxRzResid, alpaka::math::abs(acc, r));
+        }
+        rzChi2PerHit = chi2 / nMD;
+      }
+    }
+
+    // --- 8, 9, 15, 20-24: member-T3 aggregates -------------------------------------------
+    int nPos = 0, nNeg = 0;
+    float minFakeT3 = 0.f, maxFakeT3 = 0.f, minDispT3 = 0.f;
+    double sumPromptT3 = 0.0, sumDispT3 = 0.0;
+    for (int k = 0; k < nNodes; ++k) {
+      uint32_t const t3 = nodes.tripletIndex()[items.nodeItems()[off + k]];
+      float const rs = chainT3RotSign(triplets, segments, mds, t3);
+      (rs >= 0.f ? nPos : nNeg) += 1;
+      float const fs = triplets.fakeScore()[t3];
+      float const ps = triplets.promptScore()[t3];
+      float const ds = triplets.displacedScore()[t3];
+      if (k == 0) {
+        minFakeT3 = maxFakeT3 = fs;
+        minDispT3 = ds;
+      } else {
+        minFakeT3 = chainMinf(minFakeT3, fs);
+        maxFakeT3 = chainMaxf(maxFakeT3, fs);
+        minDispT3 = chainMinf(minDispT3, ds);
+      }
+      sumPromptT3 += ps;
+      sumDispT3 += ds;
+    }
+    float const meanPromptT3 = static_cast<float>(sumPromptT3 / nNodes);
+    float const meanDispT3 = static_cast<float>(sumDispT3 / nNodes);
+
+    // LOWER median = the ((n - 1) / 2)-th order statistic, which is exactly the value
+    // std::nth_element leaves at that position. Selected by rank counting so no scratch
+    // array (and no sort) is needed for a list this short.
+    int const mid = (nNodes - 1) / 2;
+    float medianKappaT3 = 0.f, ptEst = 0.f;
+    for (int pass = 0; pass < 2; ++pass) {
+      float chosen = 0.f;
+      bool found = false;
+      for (int i = 0; i < nNodes && !found; ++i) {
+        uint32_t const t3i = nodes.tripletIndex()[items.nodeItems()[off + i]];
+        float vi;
+        if (pass == 0) {
+          float const rs = chainT3RotSign(triplets, segments, mds, t3i);
+          vi = rs / chainMaxf(chainCleanRadius(triplets.radius()[t3i]), chaingate::kEps);
+        } else {
+          vi = chaingate::t3Pt(triplets, t3i);
+        }
+        int nLess = 0, nEq = 0;
+        for (int j = 0; j < nNodes; ++j) {
+          uint32_t const t3j = nodes.tripletIndex()[items.nodeItems()[off + j]];
+          float vj;
+          if (pass == 0) {
+            float const rs = chainT3RotSign(triplets, segments, mds, t3j);
+            vj = rs / chainMaxf(chainCleanRadius(triplets.radius()[t3j]), chaingate::kEps);
+          } else {
+            vj = chaingate::t3Pt(triplets, t3j);
+          }
+          if (vj < vi)
+            ++nLess;
+          else if (vj == vi)
+            ++nEq;
+        }
+        if (nLess <= mid && mid < nLess + nEq) {
+          chosen = vi;
+          found = true;
+        }
+      }
+      if (pass == 0)
+        medianKappaT3 = chosen;
+      else
+        ptEst = chosen;
+    }
+    float const dKappaFitVsMedianT3 = static_cast<float>(fitKappa) - medianKappaT3;
+
+    long long const totPairs = static_cast<long long>(nNodes) * (nNodes - 1) / 2;
+    long long const eqPairs =
+        static_cast<long long>(nPos) * (nPos - 1) / 2 + static_cast<long long>(nNeg) * (nNeg - 1) / 2;
+    float const chargeConsistency = totPairs > 0 ? static_cast<float>(eqPairs) / static_cast<float>(totPairs) : 1.f;
+
+    // --- 10-13: MD-set detector-category aggregates --------------------------------------
+    int const innermostLayer = chainMdLayer(modules, mds, mdList[0]);
+    int minLay = innermostLayer, maxLay = innermostLayer, nPS = 0, nBarrel = 0;
+    for (int k = 0; k < nMD; ++k) {
+      int const lay = chainMdLayer(modules, mds, mdList[k]);
+      minLay = (lay < minLay) ? lay : minLay;
+      maxLay = (lay > maxLay) ? lay : maxLay;
+      nPS += chainMdIsPS(modules, mds, mdList[k]);
+      nBarrel += (lay <= 6) ? 1 : 0;
+    }
+
+    // --- 14: max junction degree product over the member weld edges ----------------------
+    long long maxDegProd = 0;
+    for (int k = 0; k < nE; ++k) {
+      uint32_t const e = items.edgeItems()[off + k];
+      // The junction is the inner node's "in" side, whose dense incidence keys K1c stored on
+      // the node; same values the K5 edge features used, one load instead of three.
+      uint32_t const innerNode = edges.inner()[e];
+      long long degIn, degOut;
+      if (edges.type()[e] == 1u) {
+        uint32_t const m = nodes.mdKeyIn()[innerNode];
+        degIn = mdIncidence.t3InOffsets()[m + 1u] - mdIncidence.t3InOffsets()[m];
+        degOut = mdIncidence.t3OutOffsets()[m + 1u] - mdIncidence.t3OutOffsets()[m];
+      } else {
+        uint32_t const l = nodes.lsKeyIn()[innerNode];
+        degIn = lsIncidence.t3InOffsets()[l + 1u] - lsIncidence.t3InOffsets()[l];
+        degOut = lsIncidence.t3OutOffsets()[l + 1u] - lsIncidence.t3OutOffsets()[l];
+      }
+      long long const prod = degIn * degOut;
+      maxDegProd = (prod > maxDegProd) ? prod : maxDegProd;
+    }
+
+    // --- 19: bridge-circle chi2 over consecutive member-T3 pairs -------------------------
+    double maxBridgeChi2 = 0.0;
+    {
+      double bx[6], by[6];
+      unsigned int bmd[6];
+      for (int k = 0; k + 1 < nNodes; ++k) {
+        uint32_t const ti = nodes.tripletIndex()[items.nodeItems()[off + k]];
+        uint32_t const to = nodes.tripletIndex()[items.nodeItems()[off + k + 1]];
+        unsigned int i0, i1, i2, o0, o1, o2;
+        chainNodeMDs(triplets, segments, ti, i0, i1, i2);
+        chainNodeMDs(triplets, segments, to, o0, o1, o2);
+        unsigned int const src[6] = {i0, i1, i2, o0, o1, o2};
+        int n = 0;
+        for (int q = 0; q < 6; ++q) {
+          bool dup = false;
+          for (int p = 0; p < n; ++p)
+            if (bmd[p] == src[q]) {
+              dup = true;
+              break;
+            }
+          if (dup)
+            continue;
+          bmd[n] = src[q];
+          bx[n] = mds.anchorX()[src[q]];
+          by[n] = mds.anchorY()[src[q]];
+          ++n;
+        }
+        maxBridgeChi2 = chainMaxd(maxBridgeChi2, chainKasaChi2PerHit(acc, bx, by, n));
+      }
+    }
+
+    // --- store (order = the frozen contract in ChainsSoA.h) ------------------------------
+    float f[Params_ChainFeat::kFeatures];
+    f[0] = static_cast<float>(nNodes);
+    f[1] = static_cast<float>(nLayersIn);
+    f[2] = sumL;
+    f[3] = minL;
+    f[4] = meanL;
+    f[5] = static_cast<float>(fitChi2PerHit);
+    f[6] = static_cast<float>(rzChi2PerHit);
+    f[7] = static_cast<float>(fitKappa);
+    f[8] = dKappaFitVsMedianT3;
+    f[9] = ptEst;
+    f[10] = static_cast<float>(innermostLayer);
+    f[11] = static_cast<float>(maxLay - minLay);
+    f[12] = static_cast<float>(nPS);
+    f[13] = static_cast<float>(nBarrel);
+    f[14] = static_cast<float>(maxDegProd);
+    f[15] = chargeConsistency;
+    f[16] = static_cast<float>(maxXyResid);
+    f[17] = static_cast<float>(maxRzResid);
+    f[18] = stdL;
+    f[19] = static_cast<float>(maxBridgeChi2);
+    f[20] = minFakeT3;
+    f[21] = maxFakeT3;
+    f[22] = meanPromptT3;
+    f[23] = minDispT3;
+    f[24] = meanDispT3;
+
+
+    CMS_UNROLL_LOOP
+    for (int i = 0; i < Params_ChainFeat::kFeatures; ++i)
+      fout[i] = chainSanitize(f[i]);
+    dcaOut = dcaXY;
+  }
+
+  // ------------------------------------------------------------------------------------------
+  // K7a. One frozen feature row per chain.
   struct ChainFeaturesKernel {
     ALPAKA_FN_ACC void operator()(Acc1D const& acc,
                                   ModulesConst modules,
@@ -153,331 +494,36 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
       uint32_t const nChains = static_cast<uint32_t>(chains.metadata().size());
 
       for (uint32_t c : cms::alpakatools::uniform_elements(acc, nChains)) {
-        uint32_t const off = chains.nodeOffset()[c];
+        if (chains.featValid()[c] != 0u)
+          continue;  // COORDINATOR: ChainTrimLearned already published this row (identical build)
         int const nNodes = chains.nNodes()[c];
         int const nMD = chains.nMDs()[c];
-        int const nE = nNodes - 1;
-        uint32_t const mdBase = 3u * off;
-        uint32_t const* mdList = &items.mdItems()[mdBase];
-
         if (nNodes < 1 || nMD < 1)
           continue;  // unreachable by the K6 contract; the row stays zeroed
-
-        // --- 2-4, 18: member weld-edge logit aggregates -------------------------------------
-        float sumL = 0.f, minL = 0.f;
-        double sumL2 = 0.0;
-        if (nE > 0) {
-          minL = edges.logOdds()[items.edgeItems()[off]];
-          for (int k = 0; k < nE; ++k) {
-            float const lo = edges.logOdds()[items.edgeItems()[off + k]];
-            sumL += lo;
-            sumL2 += static_cast<double>(lo) * static_cast<double>(lo);
-            if (lo < minL)
-              minL = lo;
-          }
-        }
-        float const meanL = nE > 0 ? sumL / static_cast<float>(nE) : 0.f;
-        float stdL = 0.f;
-        if (nE > 1) {
-          double const var = sumL2 / nE - static_cast<double>(meanL) * static_cast<double>(meanL);
-          stdL = static_cast<float>(alpaka::math::sqrt(acc, chainMaxd(var, 0.0)));
-        }
-
-        // --- 5, 7, 16 and the dcaXY: Kasa circle fit over all anchor hits --------------------
-        double fitChi2PerHit = 0.0, fitKappa = 0.0, maxXyResid = 0.0;
-        float dcaXY = 1e9f;
-        bool circleOk = false;
-        if (nMD >= 3) {
-          double xbar = 0.0, ybar = 0.0;
-          for (int k = 0; k < nMD; ++k) {
-            xbar += mds.anchorX()[mdList[k]];
-            ybar += mds.anchorY()[mdList[k]];
-          }
-          xbar /= nMD;
-          ybar /= nMD;
-          double Suu = 0.0, Svv = 0.0, Suv = 0.0, Suw = 0.0, Svw = 0.0, Sw = 0.0;
-          for (int k = 0; k < nMD; ++k) {
-            double const u = mds.anchorX()[mdList[k]] - xbar, v = mds.anchorY()[mdList[k]] - ybar;
-            double const w = u * u + v * v;
-            Suu += u * u;
-            Svv += v * v;
-            Suv += u * v;
-            Suw += u * w;
-            Svw += v * w;
-            Sw += w;
-          }
-          double const det = Suu * Svv - Suv * Suv;
-          double const scale = Suu + Svv;
-          if (det > 1e-12 * scale * scale) {  // degenerate (collinear) -> flags stay 0 / 0
-            circleOk = true;
-            double const uc = (Svv * (0.5 * Suw) - Suv * (0.5 * Svw)) / det;
-            double const vc = (Suu * (0.5 * Svw) - Suv * (0.5 * Suw)) / det;
-            double const R = alpaka::math::sqrt(acc, chainMaxd(uc * uc + vc * vc + Sw / nMD, 0.0));
-            double chi2 = 0.0;
-            for (int k = 0; k < nMD; ++k) {
-              double const du = (mds.anchorX()[mdList[k]] - xbar) - uc;
-              double const dv = (mds.anchorY()[mdList[k]] - ybar) - vc;
-              double const resid = alpaka::math::sqrt(acc, du * du + dv * dv) - R;
-              chi2 += resid * resid;
-              maxXyResid = chainMaxd(maxXyResid, alpaka::math::abs(acc, resid));
-            }
-            fitChi2PerHit = chi2 / nMD;
-            double crossSum = 0.0;
-            for (int k = 0; k + 2 < nMD; ++k) {
-              double const ax =
-                  static_cast<double>(mds.anchorX()[mdList[k + 1]]) - static_cast<double>(mds.anchorX()[mdList[k]]);
-              double const ay =
-                  static_cast<double>(mds.anchorY()[mdList[k + 1]]) - static_cast<double>(mds.anchorY()[mdList[k]]);
-              double const bx =
-                  static_cast<double>(mds.anchorX()[mdList[k + 2]]) - static_cast<double>(mds.anchorX()[mdList[k + 1]]);
-              double const by =
-                  static_cast<double>(mds.anchorY()[mdList[k + 2]]) - static_cast<double>(mds.anchorY()[mdList[k + 1]]);
-              crossSum += ax * by - ay * bx;
-            }
-            double const rotSign = (crossSum >= 0.0) ? 1.0 : -1.0;
-            fitKappa = rotSign / chainMaxd(R, 1e-6);
-
-            // prototype/PixelAttach.cc k8ChainDcaXY reuses this exact fit (same accumulation
-            // order, same guard) and only adds the absolute centre and the origin distance.
-            double const cx = xbar + uc, cy = ybar + vc;
-            dcaXY = static_cast<float>(alpaka::math::abs(acc, alpaka::math::sqrt(acc, cx * cx + cy * cy) - R));
-          }
-        }
-        if (!circleOk) {
-          // Degenerate (or nMD < 3) fit: straight-line limit, the perpendicular distance from the
-          // origin to the line through the innermost and outermost anchor hits. nMD < 2 is
-          // unreachable by the K6 contract and is never IP-compatible.
-          if (nMD < 2) {
-            dcaXY = 1e9f;
-          } else {
-            double const x1 = mds.anchorX()[mdList[0]], y1 = mds.anchorY()[mdList[0]];
-            double const x2 = mds.anchorX()[mdList[nMD - 1]], y2 = mds.anchorY()[mdList[nMD - 1]];
-            double const len = alpaka::math::sqrt(acc, (x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1));
-            dcaXY = (len < 1e-9) ? 1e9f : static_cast<float>(alpaka::math::abs(acc, x1 * y2 - x2 * y1) / len);
-          }
-        }
-
-        // --- 6, 17: rz straight-line fit z vs s (s = cumulative xy chord length) -------------
-        double rzChi2PerHit = 0.0, maxRzResid = 0.0;
-        {
-          double s = 0.0, sbar = 0.0, zbar = 0.0;
-          for (int k = 0; k < nMD; ++k) {
-            if (k > 0) {
-              double const dx =
-                  static_cast<double>(mds.anchorX()[mdList[k]]) - static_cast<double>(mds.anchorX()[mdList[k - 1]]);
-              double const dy =
-                  static_cast<double>(mds.anchorY()[mdList[k]]) - static_cast<double>(mds.anchorY()[mdList[k - 1]]);
-              s += alpaka::math::sqrt(acc, dx * dx + dy * dy);
-            }
-            sbar += s;
-            zbar += mds.anchorZ()[mdList[k]];
-          }
-          sbar /= nMD;
-          zbar /= nMD;
-          double Sss = 0.0, Ssz = 0.0;
-          s = 0.0;
-          for (int k = 0; k < nMD; ++k) {
-            if (k > 0) {
-              double const dx =
-                  static_cast<double>(mds.anchorX()[mdList[k]]) - static_cast<double>(mds.anchorX()[mdList[k - 1]]);
-              double const dy =
-                  static_cast<double>(mds.anchorY()[mdList[k]]) - static_cast<double>(mds.anchorY()[mdList[k - 1]]);
-              s += alpaka::math::sqrt(acc, dx * dx + dy * dy);
-            }
-            double const ds = s - sbar;
-            Sss += ds * ds;
-            Ssz += ds * (mds.anchorZ()[mdList[k]] - zbar);
-          }
-          if (Sss > 1e-12) {  // degenerate abscissa -> flag stays 0
-            double const b = Ssz / Sss;
-            double const a = zbar - b * sbar;
-            double chi2 = 0.0;
-            s = 0.0;
-            for (int k = 0; k < nMD; ++k) {
-              if (k > 0) {
-                double const dx =
-                    static_cast<double>(mds.anchorX()[mdList[k]]) - static_cast<double>(mds.anchorX()[mdList[k - 1]]);
-                double const dy =
-                    static_cast<double>(mds.anchorY()[mdList[k]]) - static_cast<double>(mds.anchorY()[mdList[k - 1]]);
-                s += alpaka::math::sqrt(acc, dx * dx + dy * dy);
-              }
-              double const r = mds.anchorZ()[mdList[k]] - a - b * s;
-              chi2 += r * r;
-              maxRzResid = chainMaxd(maxRzResid, alpaka::math::abs(acc, r));
-            }
-            rzChi2PerHit = chi2 / nMD;
-          }
-        }
-
-        // --- 8, 9, 15, 20-24: member-T3 aggregates -------------------------------------------
-        int nPos = 0, nNeg = 0;
-        float minFakeT3 = 0.f, maxFakeT3 = 0.f, minDispT3 = 0.f;
-        double sumPromptT3 = 0.0, sumDispT3 = 0.0;
-        for (int k = 0; k < nNodes; ++k) {
-          uint32_t const t3 = nodes.tripletIndex()[items.nodeItems()[off + k]];
-          float const rs = chainT3RotSign(triplets, segments, mds, t3);
-          (rs >= 0.f ? nPos : nNeg) += 1;
-          float const fs = triplets.fakeScore()[t3];
-          float const ps = triplets.promptScore()[t3];
-          float const ds = triplets.displacedScore()[t3];
-          if (k == 0) {
-            minFakeT3 = maxFakeT3 = fs;
-            minDispT3 = ds;
-          } else {
-            minFakeT3 = chainMinf(minFakeT3, fs);
-            maxFakeT3 = chainMaxf(maxFakeT3, fs);
-            minDispT3 = chainMinf(minDispT3, ds);
-          }
-          sumPromptT3 += ps;
-          sumDispT3 += ds;
-        }
-        float const meanPromptT3 = static_cast<float>(sumPromptT3 / nNodes);
-        float const meanDispT3 = static_cast<float>(sumDispT3 / nNodes);
-
-        // LOWER median = the ((n - 1) / 2)-th order statistic, which is exactly the value
-        // std::nth_element leaves at that position. Selected by rank counting so no scratch
-        // array (and no sort) is needed for a list this short.
-        int const mid = (nNodes - 1) / 2;
-        float medianKappaT3 = 0.f, ptEst = 0.f;
-        for (int pass = 0; pass < 2; ++pass) {
-          float chosen = 0.f;
-          bool found = false;
-          for (int i = 0; i < nNodes && !found; ++i) {
-            uint32_t const t3i = nodes.tripletIndex()[items.nodeItems()[off + i]];
-            float vi;
-            if (pass == 0) {
-              float const rs = chainT3RotSign(triplets, segments, mds, t3i);
-              vi = rs / chainMaxf(chainCleanRadius(triplets.radius()[t3i]), chaingate::kEps);
-            } else {
-              vi = chaingate::t3Pt(triplets, t3i);
-            }
-            int nLess = 0, nEq = 0;
-            for (int j = 0; j < nNodes; ++j) {
-              uint32_t const t3j = nodes.tripletIndex()[items.nodeItems()[off + j]];
-              float vj;
-              if (pass == 0) {
-                float const rs = chainT3RotSign(triplets, segments, mds, t3j);
-                vj = rs / chainMaxf(chainCleanRadius(triplets.radius()[t3j]), chaingate::kEps);
-              } else {
-                vj = chaingate::t3Pt(triplets, t3j);
-              }
-              if (vj < vi)
-                ++nLess;
-              else if (vj == vi)
-                ++nEq;
-            }
-            if (nLess <= mid && mid < nLess + nEq) {
-              chosen = vi;
-              found = true;
-            }
-          }
-          if (pass == 0)
-            medianKappaT3 = chosen;
-          else
-            ptEst = chosen;
-        }
-        float const dKappaFitVsMedianT3 = static_cast<float>(fitKappa) - medianKappaT3;
-
-        long long const totPairs = static_cast<long long>(nNodes) * (nNodes - 1) / 2;
-        long long const eqPairs =
-            static_cast<long long>(nPos) * (nPos - 1) / 2 + static_cast<long long>(nNeg) * (nNeg - 1) / 2;
-        float const chargeConsistency = totPairs > 0 ? static_cast<float>(eqPairs) / static_cast<float>(totPairs) : 1.f;
-
-        // --- 10-13: MD-set detector-category aggregates --------------------------------------
-        int const innermostLayer = chainMdLayer(modules, mds, mdList[0]);
-        int minLay = innermostLayer, maxLay = innermostLayer, nPS = 0, nBarrel = 0;
-        for (int k = 0; k < nMD; ++k) {
-          int const lay = chainMdLayer(modules, mds, mdList[k]);
-          minLay = (lay < minLay) ? lay : minLay;
-          maxLay = (lay > maxLay) ? lay : maxLay;
-          nPS += chainMdIsPS(modules, mds, mdList[k]);
-          nBarrel += (lay <= 6) ? 1 : 0;
-        }
-
-        // --- 14: max junction degree product over the member weld edges ----------------------
-        long long maxDegProd = 0;
-        for (int k = 0; k < nE; ++k) {
-          uint32_t const e = items.edgeItems()[off + k];
-          // The junction is the inner node's "in" side, whose dense incidence keys K1c stored on
-          // the node; same values the K5 edge features used, one load instead of three.
-          uint32_t const innerNode = edges.inner()[e];
-          long long degIn, degOut;
-          if (edges.type()[e] == 1u) {
-            uint32_t const m = nodes.mdKeyIn()[innerNode];
-            degIn = mdIncidence.t3InOffsets()[m + 1u] - mdIncidence.t3InOffsets()[m];
-            degOut = mdIncidence.t3OutOffsets()[m + 1u] - mdIncidence.t3OutOffsets()[m];
-          } else {
-            uint32_t const l = nodes.lsKeyIn()[innerNode];
-            degIn = lsIncidence.t3InOffsets()[l + 1u] - lsIncidence.t3InOffsets()[l];
-            degOut = lsIncidence.t3OutOffsets()[l + 1u] - lsIncidence.t3OutOffsets()[l];
-          }
-          long long const prod = degIn * degOut;
-          maxDegProd = (prod > maxDegProd) ? prod : maxDegProd;
-        }
-
-        // --- 19: bridge-circle chi2 over consecutive member-T3 pairs -------------------------
-        double maxBridgeChi2 = 0.0;
-        {
-          double bx[6], by[6];
-          unsigned int bmd[6];
-          for (int k = 0; k + 1 < nNodes; ++k) {
-            uint32_t const ti = nodes.tripletIndex()[items.nodeItems()[off + k]];
-            uint32_t const to = nodes.tripletIndex()[items.nodeItems()[off + k + 1]];
-            unsigned int i0, i1, i2, o0, o1, o2;
-            chainNodeMDs(triplets, segments, ti, i0, i1, i2);
-            chainNodeMDs(triplets, segments, to, o0, o1, o2);
-            unsigned int const src[6] = {i0, i1, i2, o0, o1, o2};
-            int n = 0;
-            for (int q = 0; q < 6; ++q) {
-              bool dup = false;
-              for (int p = 0; p < n; ++p)
-                if (bmd[p] == src[q]) {
-                  dup = true;
-                  break;
-                }
-              if (dup)
-                continue;
-              bmd[n] = src[q];
-              bx[n] = mds.anchorX()[src[q]];
-              by[n] = mds.anchorY()[src[q]];
-              ++n;
-            }
-            maxBridgeChi2 = chainMaxd(maxBridgeChi2, chainKasaChi2PerHit(acc, bx, by, n));
-          }
-        }
-
-        // --- store (order = the frozen contract in ChainsSoA.h) ------------------------------
+        uint32_t const off = chains.nodeOffset()[c];
         float f[Params_ChainFeat::kFeatures];
-        f[0] = static_cast<float>(nNodes);
-        f[1] = static_cast<float>(chains.nLayers()[c]);
-        f[2] = sumL;
-        f[3] = minL;
-        f[4] = meanL;
-        f[5] = static_cast<float>(fitChi2PerHit);
-        f[6] = static_cast<float>(rzChi2PerHit);
-        f[7] = static_cast<float>(fitKappa);
-        f[8] = dKappaFitVsMedianT3;
-        f[9] = ptEst;
-        f[10] = static_cast<float>(innermostLayer);
-        f[11] = static_cast<float>(maxLay - minLay);
-        f[12] = static_cast<float>(nPS);
-        f[13] = static_cast<float>(nBarrel);
-        f[14] = static_cast<float>(maxDegProd);
-        f[15] = chargeConsistency;
-        f[16] = static_cast<float>(maxXyResid);
-        f[17] = static_cast<float>(maxRzResid);
-        f[18] = stdL;
-        f[19] = static_cast<float>(maxBridgeChi2);
-        f[20] = minFakeT3;
-        f[21] = maxFakeT3;
-        f[22] = meanPromptT3;
-        f[23] = minDispT3;
-        f[24] = meanDispT3;
-
+        float dca = 1e9f;
+        chainBuildFeatures(acc,
+                           modules,
+                           mds,
+                           segments,
+                           triplets,
+                           nodes,
+                           edges,
+                           mdIncidence,
+                           lsIncidence,
+                           items,
+                           off,
+                           nNodes,
+                           &items.mdItems()[3u * off],
+                           nMD,
+                           chains.nLayers()[c],
+                           f,
+                           dca);
         CMS_UNROLL_LOOP
         for (int i = 0; i < Params_ChainFeat::kFeatures; ++i)
-          chains.features()[c][i] = chainSanitize(f[i]);
-        chains.dcaXY()[c] = dcaXY;
+          chains.features()[c][i] = f[i];
+        chains.dcaXY()[c] = dca;
       }
     }
   };
@@ -505,6 +551,37 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
   }
 
   // ------------------------------------------------------------------------------------------
+  // K7b core. The 25 -> 32 -> 32 -> 3 head with the kSrcCol gather (column -1 = the chain dcaXY)
+  // and NO softmax: every downstream decision is on the logit MARGINS. Taking the feature row as a
+  // POINTER lets a candidate terminal variant be scored by the same head as the chain itself.
+  ALPAKA_FN_ACC ALPAKA_FN_INLINE void chainGateLogits(Acc1D const& acc,
+                                                     float const* feat,
+                                                     float dca,
+                                                     float (&z)[dnn::chain3mlp::kOutput]) {
+    float x[dnn::chain3mlp::kInput];
+    for (int i = 0; i < dnn::chain3mlp::kInput; ++i) {
+      int const col = dnn::chain3mlp::kSrcCol[i];
+      float v = (col < 0) ? dca : feat[col];
+      if (dnn::chain3mlp::kLog10p1[i])
+        v = alpaka::math::log10(acc, 1.f + v);
+      v = chainMinf(chainMaxf(v, dnn::chain3mlp::kClipLo[i]), dnn::chain3mlp::kClipHi[i]);
+      x[i] = (v - dnn::chain3mlp::kFeatMean[i]) / dnn::chain3mlp::kFeatStd[i];
+    }
+
+    float x1[dnn::chain3mlp::kHidden];
+    float x2[dnn::chain3mlp::kHidden];
+
+    linear_layer<dnn::chain3mlp::kInput, dnn::chain3mlp::kHidden>(
+        x, x1, dnn::chain3mlp::wgt_l1, dnn::chain3mlp::bias_l1);
+    relu_activation<dnn::chain3mlp::kHidden>(x1);
+    linear_layer<dnn::chain3mlp::kHidden, dnn::chain3mlp::kHidden>(
+        x1, x2, dnn::chain3mlp::wgt_l2, dnn::chain3mlp::bias_l2);
+    relu_activation<dnn::chain3mlp::kHidden>(x2);
+    linear_layer<dnn::chain3mlp::kHidden, dnn::chain3mlp::kOutput>(
+        x2, z, dnn::chain3mlp::wgt_out, dnn::chain3mlp::bias_out);
+  }
+
+  // ------------------------------------------------------------------------------------------
   // K7b + K7c, fused. The head is 25 -> 32 -> 32 -> 3 with the kSrcCol gather (column -1 = the
   // chain dcaXY) and NO softmax: every downstream decision is on the logit MARGINS.
   struct ChainGateKernel {
@@ -527,28 +604,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         float const dca = chains.dcaXY()[c];
 
         // --- K7b: the 3-class head ----------------------------------------------------------
-        float x[dnn::chain3mlp::kInput];
-        for (int i = 0; i < dnn::chain3mlp::kInput; ++i) {
-          int const col = dnn::chain3mlp::kSrcCol[i];
-          float v = (col < 0) ? dca : chains.features()[c][col];
-          if (dnn::chain3mlp::kLog10p1[i])
-            v = alpaka::math::log10(acc, 1.f + v);
-          v = chainMinf(chainMaxf(v, dnn::chain3mlp::kClipLo[i]), dnn::chain3mlp::kClipHi[i]);
-          x[i] = (v - dnn::chain3mlp::kFeatMean[i]) / dnn::chain3mlp::kFeatStd[i];
-        }
-
-        float x1[dnn::chain3mlp::kHidden];
-        float x2[dnn::chain3mlp::kHidden];
         float z[dnn::chain3mlp::kOutput];
-
-        linear_layer<dnn::chain3mlp::kInput, dnn::chain3mlp::kHidden>(
-            x, x1, dnn::chain3mlp::wgt_l1, dnn::chain3mlp::bias_l1);
-        relu_activation<dnn::chain3mlp::kHidden>(x1);
-        linear_layer<dnn::chain3mlp::kHidden, dnn::chain3mlp::kHidden>(
-            x1, x2, dnn::chain3mlp::wgt_l2, dnn::chain3mlp::bias_l2);
-        relu_activation<dnn::chain3mlp::kHidden>(x2);
-        linear_layer<dnn::chain3mlp::kHidden, dnn::chain3mlp::kOutput>(
-            x2, z, dnn::chain3mlp::wgt_out, dnn::chain3mlp::bias_out);
+        chainGateLogits(acc, chains.features()[c].data(), dca, z);
 
         float const mP = z[1] - z[0];
         float const mD = z[2] - z[0];

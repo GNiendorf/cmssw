@@ -1,0 +1,1119 @@
+diff --git a/RecoTracker/LSTCore/interface/ChainConfig.h b/RecoTracker/LSTCore/interface/ChainConfig.h
+index 2bbad3ec5a7..8b48a6be595 100644
+--- a/RecoTracker/LSTCore/interface/ChainConfig.h
++++ b/RecoTracker/LSTCore/interface/ChainConfig.h
+@@ -55,6 +55,19 @@ namespace lst {
+     float trimAbsChi2 = 1.f;
+     int trimMinLayersAfter = 5;
+     int trimPasses = 1;
++    // TRIM-NN: WHICH RULE takes the terminal-trim decision. The variants are constructed either
++    // way -- that half is mechanical -- so this selects only who chooses between them.
++    //   0 the K6f chi2 improvement ratio (the shipped rule)
++    //   1 the chain head's argmax over the variant margin mX, no guard at all
++    //   2 as 1, but a dropped variant must still keep trimMinLayersAfter layers
++    //   3 as 1, but only on chains the K6f concentrating guard admits (chi2Full > trimAbsChi2)
++    //   4 REFEREE CONTROL, not a candidate: the same unguarded 3-way argmax as 1, decided by the
++    //     chi2 PROXY instead of by the head, so "the head chooses better" can be separated from
++    //     "trimming more is better".
++    //   5 as 1, but the winning variant must beat the full chain by trimMarginGap logit units
++    int trimMode = 0;
++    // The one constant the learned rule can need: how decisively the head must prefer a drop.
++    float trimMarginGap = 0.f;
+ 
+     // -X 0.5 : IP-compatibility boundary on the chain dcaXY, cm.
+     float dcaSplit = 0.5f;
+@@ -454,6 +467,44 @@ namespace lst {
+                 cfg.dupMutualDelta);
+   }
+ 
++  // COORDINATOR PROBE (not a shipped knob): env override of the TERMINAL TRIM group, so the
++  // trim can be A/B'd from ONE binary. With nothing set this writes nothing and prints nothing.
++  //   LST_TRIM_ON     0 disables ChainTrimTerminals entirely
++  //   LST_TRIM_ABS    the absolute chi2 floor below which a chain is never trimmed
++  inline void chainConfigTrimEnv(ChainConfig& cfg) {
++    bool any = false;
++    if (char const* s = std::getenv("LST_TRIM_ON")) {
++      if (*s != '\0') {
++        cfg.terminalTrim = (std::atoi(s) != 0);
++        any = true;
++      }
++    }
++    if (char const* s = std::getenv("LST_TRIM_ABS")) {
++      if (*s != '\0') {
++        cfg.trimAbsChi2 = static_cast<float>(std::atof(s));
++        any = true;
++      }
++    }
++    if (char const* s = std::getenv("LST_TRIM_MODE")) {
++      if (*s != '\0') {
++        cfg.trimMode = std::atoi(s);
++        any = true;
++      }
++    }
++    if (char const* s = std::getenv("LST_TRIM_GAP")) {
++      if (*s != '\0') {
++        cfg.trimMarginGap = static_cast<float>(std::atof(s));
++        any = true;
++      }
++    }
++    if (any)
++      std::printf("[chainenv] terminal trim resolved: on=%d absChi2=%g mode=%d gap=%g\n",
++                  static_cast<int>(cfg.terminalTrim),
++                  cfg.trimAbsChi2,
++                  cfg.trimMode,
++                  cfg.trimMarginGap);
++  }
++
+   // JET ROUND 3 (T4): env overrides of the 4-layer class policy group. One binary supplies every
+   // arm of the A/B, which is the only way to prove inertness by BIT-IDENTITY rather than assert it.
+   // With nothing set this function writes nothing and prints nothing.
+diff --git a/RecoTracker/LSTCore/interface/ChainsSoA.h b/RecoTracker/LSTCore/interface/ChainsSoA.h
+index 8f2b8dec2fd..9c06979eb1c 100644
+--- a/RecoTracker/LSTCore/interface/ChainsSoA.h
++++ b/RecoTracker/LSTCore/interface/ChainsSoA.h
+@@ -48,6 +48,9 @@ namespace lst {
+                       SOA_COLUMN(int8_t, branch),
+                       // 0 = untrimmed, 1 = innermost node dropped, 2 = outermost node dropped.
+                       SOA_COLUMN(int8_t, trimAction),
++                      // COORDINATOR: 1 = ChainTrimLearned already wrote features[] and dcaXY for the
++                      // WINNING variant, so K7a must not rebuild them. 0 = K7a owns this row.
++                      SOA_COLUMN(uint8_t, featValid),
+                       // bit0 killed by the gate, bit1 exempt (large-DCA) branch, bit2 |eta| band,
+                       // bit3 killed by the C1 (nNodes == 2, nLayers == 5) cell rule.
+                       SOA_COLUMN(uint8_t, flags),
+diff --git a/RecoTracker/LSTCore/src/alpaka/ChainGate.h b/RecoTracker/LSTCore/src/alpaka/ChainGate.h
+index a50d45857f3..ac936b1b62e 100644
+--- a/RecoTracker/LSTCore/src/alpaka/ChainGate.h
++++ b/RecoTracker/LSTCore/src/alpaka/ChainGate.h
+@@ -137,347 +137,393 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+   }
+ 
+   // ------------------------------------------------------------------------------------------
+-  // K7a. The 25 frozen chain features plus the chain dcaXY.
+-  struct ChainFeaturesKernel {
+-    ALPAKA_FN_ACC void operator()(Acc1D const& acc,
+-                                  ModulesConst modules,
+-                                  MiniDoubletsConst mds,
+-                                  SegmentsConst segments,
+-                                  TripletsConst triplets,
+-                                  ChainNodesConst nodes,
+-                                  ChainEdgesConst edges,
+-                                  ChainIncidenceConst mdIncidence,
+-                                  ChainIncidenceConst lsIncidence,
+-                                  ChainItemsConst items,
+-                                  Chains chains) const {
+-      uint32_t const nChains = static_cast<uint32_t>(chains.metadata().size());
+-
+-      for (uint32_t c : cms::alpakatools::uniform_elements(acc, nChains)) {
+-        uint32_t const off = chains.nodeOffset()[c];
+-        int const nNodes = chains.nNodes()[c];
+-        int const nMD = chains.nMDs()[c];
+-        int const nE = nNodes - 1;
+-        uint32_t const mdBase = 3u * off;
+-        uint32_t const* mdList = &items.mdItems()[mdBase];
+-
+-        if (nNodes < 1 || nMD < 1)
+-          continue;  // unreachable by the K6 contract; the row stays zeroed
++  // K7a core. The 25 frozen chain features plus the chain dcaXY, as a function of an EXPLICIT
++  // (node run, MD union) rather than of a chain row, so a candidate TERMINAL VARIANT of a chain
++  // can be scored with the identical function. `fout` receives the sanitized row.
++  ALPAKA_FN_ACC ALPAKA_FN_INLINE void chainBuildFeatures(Acc1D const& acc,
++                                                         ModulesConst modules,
++                                                         MiniDoubletsConst mds,
++                                                         SegmentsConst segments,
++                                                         TripletsConst triplets,
++                                                         ChainNodesConst nodes,
++                                                         ChainEdgesConst edges,
++                                                         ChainIncidenceConst mdIncidence,
++                                                         ChainIncidenceConst lsIncidence,
++                                                         ChainItemsConst items,
++                                                         uint32_t off,
++                                                         int nNodes,
++                                                         uint32_t const* mdList,
++                                                         int nMD,
++                                                         int nLayersIn,
++                                                         float* fout,
++                                                         float& dcaOut) {
++    int const nE = nNodes - 1;
++
++    // --- 2-4, 18: member weld-edge logit aggregates -------------------------------------
++    float sumL = 0.f, minL = 0.f;
++    double sumL2 = 0.0;
++    if (nE > 0) {
++      minL = edges.logOdds()[items.edgeItems()[off]];
++      for (int k = 0; k < nE; ++k) {
++        float const lo = edges.logOdds()[items.edgeItems()[off + k]];
++        sumL += lo;
++        sumL2 += static_cast<double>(lo) * static_cast<double>(lo);
++        if (lo < minL)
++          minL = lo;
++      }
++    }
++    float const meanL = nE > 0 ? sumL / static_cast<float>(nE) : 0.f;
++    float stdL = 0.f;
++    if (nE > 1) {
++      double const var = sumL2 / nE - static_cast<double>(meanL) * static_cast<double>(meanL);
++      stdL = static_cast<float>(alpaka::math::sqrt(acc, chainMaxd(var, 0.0)));
++    }
+ 
+-        // --- 2-4, 18: member weld-edge logit aggregates -------------------------------------
+-        float sumL = 0.f, minL = 0.f;
+-        double sumL2 = 0.0;
+-        if (nE > 0) {
+-          minL = edges.logOdds()[items.edgeItems()[off]];
+-          for (int k = 0; k < nE; ++k) {
+-            float const lo = edges.logOdds()[items.edgeItems()[off + k]];
+-            sumL += lo;
+-            sumL2 += static_cast<double>(lo) * static_cast<double>(lo);
+-            if (lo < minL)
+-              minL = lo;
+-          }
++    // --- 5, 7, 16 and the dcaXY: Kasa circle fit over all anchor hits --------------------
++    double fitChi2PerHit = 0.0, fitKappa = 0.0, maxXyResid = 0.0;
++    float dcaXY = 1e9f;
++    bool circleOk = false;
++    if (nMD >= 3) {
++      double xbar = 0.0, ybar = 0.0;
++      for (int k = 0; k < nMD; ++k) {
++        xbar += mds.anchorX()[mdList[k]];
++        ybar += mds.anchorY()[mdList[k]];
++      }
++      xbar /= nMD;
++      ybar /= nMD;
++      double Suu = 0.0, Svv = 0.0, Suv = 0.0, Suw = 0.0, Svw = 0.0, Sw = 0.0;
++      for (int k = 0; k < nMD; ++k) {
++        double const u = mds.anchorX()[mdList[k]] - xbar, v = mds.anchorY()[mdList[k]] - ybar;
++        double const w = u * u + v * v;
++        Suu += u * u;
++        Svv += v * v;
++        Suv += u * v;
++        Suw += u * w;
++        Svw += v * w;
++        Sw += w;
++      }
++      double const det = Suu * Svv - Suv * Suv;
++      double const scale = Suu + Svv;
++      if (det > 1e-12 * scale * scale) {  // degenerate (collinear) -> flags stay 0 / 0
++        circleOk = true;
++        double const uc = (Svv * (0.5 * Suw) - Suv * (0.5 * Svw)) / det;
++        double const vc = (Suu * (0.5 * Svw) - Suv * (0.5 * Suw)) / det;
++        double const R = alpaka::math::sqrt(acc, chainMaxd(uc * uc + vc * vc + Sw / nMD, 0.0));
++        double chi2 = 0.0;
++        for (int k = 0; k < nMD; ++k) {
++          double const du = (mds.anchorX()[mdList[k]] - xbar) - uc;
++          double const dv = (mds.anchorY()[mdList[k]] - ybar) - vc;
++          double const resid = alpaka::math::sqrt(acc, du * du + dv * dv) - R;
++          chi2 += resid * resid;
++          maxXyResid = chainMaxd(maxXyResid, alpaka::math::abs(acc, resid));
+         }
+-        float const meanL = nE > 0 ? sumL / static_cast<float>(nE) : 0.f;
+-        float stdL = 0.f;
+-        if (nE > 1) {
+-          double const var = sumL2 / nE - static_cast<double>(meanL) * static_cast<double>(meanL);
+-          stdL = static_cast<float>(alpaka::math::sqrt(acc, chainMaxd(var, 0.0)));
++        fitChi2PerHit = chi2 / nMD;
++        double crossSum = 0.0;
++        for (int k = 0; k + 2 < nMD; ++k) {
++          double const ax =
++              static_cast<double>(mds.anchorX()[mdList[k + 1]]) - static_cast<double>(mds.anchorX()[mdList[k]]);
++          double const ay =
++              static_cast<double>(mds.anchorY()[mdList[k + 1]]) - static_cast<double>(mds.anchorY()[mdList[k]]);
++          double const bx =
++              static_cast<double>(mds.anchorX()[mdList[k + 2]]) - static_cast<double>(mds.anchorX()[mdList[k + 1]]);
++          double const by =
++              static_cast<double>(mds.anchorY()[mdList[k + 2]]) - static_cast<double>(mds.anchorY()[mdList[k + 1]]);
++          crossSum += ax * by - ay * bx;
+         }
++        double const rotSign = (crossSum >= 0.0) ? 1.0 : -1.0;
++        fitKappa = rotSign / chainMaxd(R, 1e-6);
+ 
+-        // --- 5, 7, 16 and the dcaXY: Kasa circle fit over all anchor hits --------------------
+-        double fitChi2PerHit = 0.0, fitKappa = 0.0, maxXyResid = 0.0;
+-        float dcaXY = 1e9f;
+-        bool circleOk = false;
+-        if (nMD >= 3) {
+-          double xbar = 0.0, ybar = 0.0;
+-          for (int k = 0; k < nMD; ++k) {
+-            xbar += mds.anchorX()[mdList[k]];
+-            ybar += mds.anchorY()[mdList[k]];
+-          }
+-          xbar /= nMD;
+-          ybar /= nMD;
+-          double Suu = 0.0, Svv = 0.0, Suv = 0.0, Suw = 0.0, Svw = 0.0, Sw = 0.0;
+-          for (int k = 0; k < nMD; ++k) {
+-            double const u = mds.anchorX()[mdList[k]] - xbar, v = mds.anchorY()[mdList[k]] - ybar;
+-            double const w = u * u + v * v;
+-            Suu += u * u;
+-            Svv += v * v;
+-            Suv += u * v;
+-            Suw += u * w;
+-            Svw += v * w;
+-            Sw += w;
+-          }
+-          double const det = Suu * Svv - Suv * Suv;
+-          double const scale = Suu + Svv;
+-          if (det > 1e-12 * scale * scale) {  // degenerate (collinear) -> flags stay 0 / 0
+-            circleOk = true;
+-            double const uc = (Svv * (0.5 * Suw) - Suv * (0.5 * Svw)) / det;
+-            double const vc = (Suu * (0.5 * Svw) - Suv * (0.5 * Suw)) / det;
+-            double const R = alpaka::math::sqrt(acc, chainMaxd(uc * uc + vc * vc + Sw / nMD, 0.0));
+-            double chi2 = 0.0;
+-            for (int k = 0; k < nMD; ++k) {
+-              double const du = (mds.anchorX()[mdList[k]] - xbar) - uc;
+-              double const dv = (mds.anchorY()[mdList[k]] - ybar) - vc;
+-              double const resid = alpaka::math::sqrt(acc, du * du + dv * dv) - R;
+-              chi2 += resid * resid;
+-              maxXyResid = chainMaxd(maxXyResid, alpaka::math::abs(acc, resid));
+-            }
+-            fitChi2PerHit = chi2 / nMD;
+-            double crossSum = 0.0;
+-            for (int k = 0; k + 2 < nMD; ++k) {
+-              double const ax =
+-                  static_cast<double>(mds.anchorX()[mdList[k + 1]]) - static_cast<double>(mds.anchorX()[mdList[k]]);
+-              double const ay =
+-                  static_cast<double>(mds.anchorY()[mdList[k + 1]]) - static_cast<double>(mds.anchorY()[mdList[k]]);
+-              double const bx =
+-                  static_cast<double>(mds.anchorX()[mdList[k + 2]]) - static_cast<double>(mds.anchorX()[mdList[k + 1]]);
+-              double const by =
+-                  static_cast<double>(mds.anchorY()[mdList[k + 2]]) - static_cast<double>(mds.anchorY()[mdList[k + 1]]);
+-              crossSum += ax * by - ay * bx;
+-            }
+-            double const rotSign = (crossSum >= 0.0) ? 1.0 : -1.0;
+-            fitKappa = rotSign / chainMaxd(R, 1e-6);
++        // prototype/PixelAttach.cc k8ChainDcaXY reuses this exact fit (same accumulation
++        // order, same guard) and only adds the absolute centre and the origin distance.
++        double const cx = xbar + uc, cy = ybar + vc;
++        dcaXY = static_cast<float>(alpaka::math::abs(acc, alpaka::math::sqrt(acc, cx * cx + cy * cy) - R));
++      }
++    }
++    if (!circleOk) {
++      // Degenerate (or nMD < 3) fit: straight-line limit, the perpendicular distance from the
++      // origin to the line through the innermost and outermost anchor hits. nMD < 2 is
++      // unreachable by the K6 contract and is never IP-compatible.
++      if (nMD < 2) {
++        dcaXY = 1e9f;
++      } else {
++        double const x1 = mds.anchorX()[mdList[0]], y1 = mds.anchorY()[mdList[0]];
++        double const x2 = mds.anchorX()[mdList[nMD - 1]], y2 = mds.anchorY()[mdList[nMD - 1]];
++        double const len = alpaka::math::sqrt(acc, (x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1));
++        dcaXY = (len < 1e-9) ? 1e9f : static_cast<float>(alpaka::math::abs(acc, x1 * y2 - x2 * y1) / len);
++      }
++    }
+ 
+-            // prototype/PixelAttach.cc k8ChainDcaXY reuses this exact fit (same accumulation
+-            // order, same guard) and only adds the absolute centre and the origin distance.
+-            double const cx = xbar + uc, cy = ybar + vc;
+-            dcaXY = static_cast<float>(alpaka::math::abs(acc, alpaka::math::sqrt(acc, cx * cx + cy * cy) - R));
+-          }
++    // --- 6, 17: rz straight-line fit z vs s (s = cumulative xy chord length) -------------
++    double rzChi2PerHit = 0.0, maxRzResid = 0.0;
++    {
++      double s = 0.0, sbar = 0.0, zbar = 0.0;
++      for (int k = 0; k < nMD; ++k) {
++        if (k > 0) {
++          double const dx =
++              static_cast<double>(mds.anchorX()[mdList[k]]) - static_cast<double>(mds.anchorX()[mdList[k - 1]]);
++          double const dy =
++              static_cast<double>(mds.anchorY()[mdList[k]]) - static_cast<double>(mds.anchorY()[mdList[k - 1]]);
++          s += alpaka::math::sqrt(acc, dx * dx + dy * dy);
+         }
+-        if (!circleOk) {
+-          // Degenerate (or nMD < 3) fit: straight-line limit, the perpendicular distance from the
+-          // origin to the line through the innermost and outermost anchor hits. nMD < 2 is
+-          // unreachable by the K6 contract and is never IP-compatible.
+-          if (nMD < 2) {
+-            dcaXY = 1e9f;
+-          } else {
+-            double const x1 = mds.anchorX()[mdList[0]], y1 = mds.anchorY()[mdList[0]];
+-            double const x2 = mds.anchorX()[mdList[nMD - 1]], y2 = mds.anchorY()[mdList[nMD - 1]];
+-            double const len = alpaka::math::sqrt(acc, (x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1));
+-            dcaXY = (len < 1e-9) ? 1e9f : static_cast<float>(alpaka::math::abs(acc, x1 * y2 - x2 * y1) / len);
+-          }
++        sbar += s;
++        zbar += mds.anchorZ()[mdList[k]];
++      }
++      sbar /= nMD;
++      zbar /= nMD;
++      double Sss = 0.0, Ssz = 0.0;
++      s = 0.0;
++      for (int k = 0; k < nMD; ++k) {
++        if (k > 0) {
++          double const dx =
++              static_cast<double>(mds.anchorX()[mdList[k]]) - static_cast<double>(mds.anchorX()[mdList[k - 1]]);
++          double const dy =
++              static_cast<double>(mds.anchorY()[mdList[k]]) - static_cast<double>(mds.anchorY()[mdList[k - 1]]);
++          s += alpaka::math::sqrt(acc, dx * dx + dy * dy);
+         }
+-
+-        // --- 6, 17: rz straight-line fit z vs s (s = cumulative xy chord length) -------------
+-        double rzChi2PerHit = 0.0, maxRzResid = 0.0;
+-        {
+-          double s = 0.0, sbar = 0.0, zbar = 0.0;
+-          for (int k = 0; k < nMD; ++k) {
+-            if (k > 0) {
+-              double const dx =
+-                  static_cast<double>(mds.anchorX()[mdList[k]]) - static_cast<double>(mds.anchorX()[mdList[k - 1]]);
+-              double const dy =
+-                  static_cast<double>(mds.anchorY()[mdList[k]]) - static_cast<double>(mds.anchorY()[mdList[k - 1]]);
+-              s += alpaka::math::sqrt(acc, dx * dx + dy * dy);
+-            }
+-            sbar += s;
+-            zbar += mds.anchorZ()[mdList[k]];
+-          }
+-          sbar /= nMD;
+-          zbar /= nMD;
+-          double Sss = 0.0, Ssz = 0.0;
+-          s = 0.0;
+-          for (int k = 0; k < nMD; ++k) {
+-            if (k > 0) {
+-              double const dx =
+-                  static_cast<double>(mds.anchorX()[mdList[k]]) - static_cast<double>(mds.anchorX()[mdList[k - 1]]);
+-              double const dy =
+-                  static_cast<double>(mds.anchorY()[mdList[k]]) - static_cast<double>(mds.anchorY()[mdList[k - 1]]);
+-              s += alpaka::math::sqrt(acc, dx * dx + dy * dy);
+-            }
+-            double const ds = s - sbar;
+-            Sss += ds * ds;
+-            Ssz += ds * (mds.anchorZ()[mdList[k]] - zbar);
+-          }
+-          if (Sss > 1e-12) {  // degenerate abscissa -> flag stays 0
+-            double const b = Ssz / Sss;
+-            double const a = zbar - b * sbar;
+-            double chi2 = 0.0;
+-            s = 0.0;
+-            for (int k = 0; k < nMD; ++k) {
+-              if (k > 0) {
+-                double const dx =
+-                    static_cast<double>(mds.anchorX()[mdList[k]]) - static_cast<double>(mds.anchorX()[mdList[k - 1]]);
+-                double const dy =
+-                    static_cast<double>(mds.anchorY()[mdList[k]]) - static_cast<double>(mds.anchorY()[mdList[k - 1]]);
+-                s += alpaka::math::sqrt(acc, dx * dx + dy * dy);
+-              }
+-              double const r = mds.anchorZ()[mdList[k]] - a - b * s;
+-              chi2 += r * r;
+-              maxRzResid = chainMaxd(maxRzResid, alpaka::math::abs(acc, r));
+-            }
+-            rzChi2PerHit = chi2 / nMD;
++        double const ds = s - sbar;
++        Sss += ds * ds;
++        Ssz += ds * (mds.anchorZ()[mdList[k]] - zbar);
++      }
++      if (Sss > 1e-12) {  // degenerate abscissa -> flag stays 0
++        double const b = Ssz / Sss;
++        double const a = zbar - b * sbar;
++        double chi2 = 0.0;
++        s = 0.0;
++        for (int k = 0; k < nMD; ++k) {
++          if (k > 0) {
++            double const dx =
++                static_cast<double>(mds.anchorX()[mdList[k]]) - static_cast<double>(mds.anchorX()[mdList[k - 1]]);
++            double const dy =
++                static_cast<double>(mds.anchorY()[mdList[k]]) - static_cast<double>(mds.anchorY()[mdList[k - 1]]);
++            s += alpaka::math::sqrt(acc, dx * dx + dy * dy);
+           }
++          double const r = mds.anchorZ()[mdList[k]] - a - b * s;
++          chi2 += r * r;
++          maxRzResid = chainMaxd(maxRzResid, alpaka::math::abs(acc, r));
+         }
++        rzChi2PerHit = chi2 / nMD;
++      }
++    }
+ 
+-        // --- 8, 9, 15, 20-24: member-T3 aggregates -------------------------------------------
+-        int nPos = 0, nNeg = 0;
+-        float minFakeT3 = 0.f, maxFakeT3 = 0.f, minDispT3 = 0.f;
+-        double sumPromptT3 = 0.0, sumDispT3 = 0.0;
+-        for (int k = 0; k < nNodes; ++k) {
+-          uint32_t const t3 = nodes.tripletIndex()[items.nodeItems()[off + k]];
+-          float const rs = chainT3RotSign(triplets, segments, mds, t3);
+-          (rs >= 0.f ? nPos : nNeg) += 1;
+-          float const fs = triplets.fakeScore()[t3];
+-          float const ps = triplets.promptScore()[t3];
+-          float const ds = triplets.displacedScore()[t3];
+-          if (k == 0) {
+-            minFakeT3 = maxFakeT3 = fs;
+-            minDispT3 = ds;
++    // --- 8, 9, 15, 20-24: member-T3 aggregates -------------------------------------------
++    int nPos = 0, nNeg = 0;
++    float minFakeT3 = 0.f, maxFakeT3 = 0.f, minDispT3 = 0.f;
++    double sumPromptT3 = 0.0, sumDispT3 = 0.0;
++    for (int k = 0; k < nNodes; ++k) {
++      uint32_t const t3 = nodes.tripletIndex()[items.nodeItems()[off + k]];
++      float const rs = chainT3RotSign(triplets, segments, mds, t3);
++      (rs >= 0.f ? nPos : nNeg) += 1;
++      float const fs = triplets.fakeScore()[t3];
++      float const ps = triplets.promptScore()[t3];
++      float const ds = triplets.displacedScore()[t3];
++      if (k == 0) {
++        minFakeT3 = maxFakeT3 = fs;
++        minDispT3 = ds;
++      } else {
++        minFakeT3 = chainMinf(minFakeT3, fs);
++        maxFakeT3 = chainMaxf(maxFakeT3, fs);
++        minDispT3 = chainMinf(minDispT3, ds);
++      }
++      sumPromptT3 += ps;
++      sumDispT3 += ds;
++    }
++    float const meanPromptT3 = static_cast<float>(sumPromptT3 / nNodes);
++    float const meanDispT3 = static_cast<float>(sumDispT3 / nNodes);
++
++    // LOWER median = the ((n - 1) / 2)-th order statistic, which is exactly the value
++    // std::nth_element leaves at that position. Selected by rank counting so no scratch
++    // array (and no sort) is needed for a list this short.
++    int const mid = (nNodes - 1) / 2;
++    float medianKappaT3 = 0.f, ptEst = 0.f;
++    for (int pass = 0; pass < 2; ++pass) {
++      float chosen = 0.f;
++      bool found = false;
++      for (int i = 0; i < nNodes && !found; ++i) {
++        uint32_t const t3i = nodes.tripletIndex()[items.nodeItems()[off + i]];
++        float vi;
++        if (pass == 0) {
++          float const rs = chainT3RotSign(triplets, segments, mds, t3i);
++          vi = rs / chainMaxf(chainCleanRadius(triplets.radius()[t3i]), chaingate::kEps);
++        } else {
++          vi = chaingate::t3Pt(triplets, t3i);
++        }
++        int nLess = 0, nEq = 0;
++        for (int j = 0; j < nNodes; ++j) {
++          uint32_t const t3j = nodes.tripletIndex()[items.nodeItems()[off + j]];
++          float vj;
++          if (pass == 0) {
++            float const rs = chainT3RotSign(triplets, segments, mds, t3j);
++            vj = rs / chainMaxf(chainCleanRadius(triplets.radius()[t3j]), chaingate::kEps);
+           } else {
+-            minFakeT3 = chainMinf(minFakeT3, fs);
+-            maxFakeT3 = chainMaxf(maxFakeT3, fs);
+-            minDispT3 = chainMinf(minDispT3, ds);
++            vj = chaingate::t3Pt(triplets, t3j);
+           }
+-          sumPromptT3 += ps;
+-          sumDispT3 += ds;
++          if (vj < vi)
++            ++nLess;
++          else if (vj == vi)
++            ++nEq;
+         }
+-        float const meanPromptT3 = static_cast<float>(sumPromptT3 / nNodes);
+-        float const meanDispT3 = static_cast<float>(sumDispT3 / nNodes);
+-
+-        // LOWER median = the ((n - 1) / 2)-th order statistic, which is exactly the value
+-        // std::nth_element leaves at that position. Selected by rank counting so no scratch
+-        // array (and no sort) is needed for a list this short.
+-        int const mid = (nNodes - 1) / 2;
+-        float medianKappaT3 = 0.f, ptEst = 0.f;
+-        for (int pass = 0; pass < 2; ++pass) {
+-          float chosen = 0.f;
+-          bool found = false;
+-          for (int i = 0; i < nNodes && !found; ++i) {
+-            uint32_t const t3i = nodes.tripletIndex()[items.nodeItems()[off + i]];
+-            float vi;
+-            if (pass == 0) {
+-              float const rs = chainT3RotSign(triplets, segments, mds, t3i);
+-              vi = rs / chainMaxf(chainCleanRadius(triplets.radius()[t3i]), chaingate::kEps);
+-            } else {
+-              vi = chaingate::t3Pt(triplets, t3i);
+-            }
+-            int nLess = 0, nEq = 0;
+-            for (int j = 0; j < nNodes; ++j) {
+-              uint32_t const t3j = nodes.tripletIndex()[items.nodeItems()[off + j]];
+-              float vj;
+-              if (pass == 0) {
+-                float const rs = chainT3RotSign(triplets, segments, mds, t3j);
+-                vj = rs / chainMaxf(chainCleanRadius(triplets.radius()[t3j]), chaingate::kEps);
+-              } else {
+-                vj = chaingate::t3Pt(triplets, t3j);
+-              }
+-              if (vj < vi)
+-                ++nLess;
+-              else if (vj == vi)
+-                ++nEq;
+-            }
+-            if (nLess <= mid && mid < nLess + nEq) {
+-              chosen = vi;
+-              found = true;
+-            }
+-          }
+-          if (pass == 0)
+-            medianKappaT3 = chosen;
+-          else
+-            ptEst = chosen;
++        if (nLess <= mid && mid < nLess + nEq) {
++          chosen = vi;
++          found = true;
+         }
+-        float const dKappaFitVsMedianT3 = static_cast<float>(fitKappa) - medianKappaT3;
++      }
++      if (pass == 0)
++        medianKappaT3 = chosen;
++      else
++        ptEst = chosen;
++    }
++    float const dKappaFitVsMedianT3 = static_cast<float>(fitKappa) - medianKappaT3;
++
++    long long const totPairs = static_cast<long long>(nNodes) * (nNodes - 1) / 2;
++    long long const eqPairs =
++        static_cast<long long>(nPos) * (nPos - 1) / 2 + static_cast<long long>(nNeg) * (nNeg - 1) / 2;
++    float const chargeConsistency = totPairs > 0 ? static_cast<float>(eqPairs) / static_cast<float>(totPairs) : 1.f;
++
++    // --- 10-13: MD-set detector-category aggregates --------------------------------------
++    int const innermostLayer = chainMdLayer(modules, mds, mdList[0]);
++    int minLay = innermostLayer, maxLay = innermostLayer, nPS = 0, nBarrel = 0;
++    for (int k = 0; k < nMD; ++k) {
++      int const lay = chainMdLayer(modules, mds, mdList[k]);
++      minLay = (lay < minLay) ? lay : minLay;
++      maxLay = (lay > maxLay) ? lay : maxLay;
++      nPS += chainMdIsPS(modules, mds, mdList[k]);
++      nBarrel += (lay <= 6) ? 1 : 0;
++    }
+ 
+-        long long const totPairs = static_cast<long long>(nNodes) * (nNodes - 1) / 2;
+-        long long const eqPairs =
+-            static_cast<long long>(nPos) * (nPos - 1) / 2 + static_cast<long long>(nNeg) * (nNeg - 1) / 2;
+-        float const chargeConsistency = totPairs > 0 ? static_cast<float>(eqPairs) / static_cast<float>(totPairs) : 1.f;
++    // --- 14: max junction degree product over the member weld edges ----------------------
++    long long maxDegProd = 0;
++    for (int k = 0; k < nE; ++k) {
++      uint32_t const e = items.edgeItems()[off + k];
++      // The junction is the inner node's "in" side, whose dense incidence keys K1c stored on
++      // the node; same values the K5 edge features used, one load instead of three.
++      uint32_t const innerNode = edges.inner()[e];
++      long long degIn, degOut;
++      if (edges.type()[e] == 1u) {
++        uint32_t const m = nodes.mdKeyIn()[innerNode];
++        degIn = mdIncidence.t3InOffsets()[m + 1u] - mdIncidence.t3InOffsets()[m];
++        degOut = mdIncidence.t3OutOffsets()[m + 1u] - mdIncidence.t3OutOffsets()[m];
++      } else {
++        uint32_t const l = nodes.lsKeyIn()[innerNode];
++        degIn = lsIncidence.t3InOffsets()[l + 1u] - lsIncidence.t3InOffsets()[l];
++        degOut = lsIncidence.t3OutOffsets()[l + 1u] - lsIncidence.t3OutOffsets()[l];
++      }
++      long long const prod = degIn * degOut;
++      maxDegProd = (prod > maxDegProd) ? prod : maxDegProd;
++    }
+ 
+-        // --- 10-13: MD-set detector-category aggregates --------------------------------------
+-        int const innermostLayer = chainMdLayer(modules, mds, mdList[0]);
+-        int minLay = innermostLayer, maxLay = innermostLayer, nPS = 0, nBarrel = 0;
+-        for (int k = 0; k < nMD; ++k) {
+-          int const lay = chainMdLayer(modules, mds, mdList[k]);
+-          minLay = (lay < minLay) ? lay : minLay;
+-          maxLay = (lay > maxLay) ? lay : maxLay;
+-          nPS += chainMdIsPS(modules, mds, mdList[k]);
+-          nBarrel += (lay <= 6) ? 1 : 0;
++    // --- 19: bridge-circle chi2 over consecutive member-T3 pairs -------------------------
++    double maxBridgeChi2 = 0.0;
++    {
++      double bx[6], by[6];
++      unsigned int bmd[6];
++      for (int k = 0; k + 1 < nNodes; ++k) {
++        uint32_t const ti = nodes.tripletIndex()[items.nodeItems()[off + k]];
++        uint32_t const to = nodes.tripletIndex()[items.nodeItems()[off + k + 1]];
++        unsigned int i0, i1, i2, o0, o1, o2;
++        chainNodeMDs(triplets, segments, ti, i0, i1, i2);
++        chainNodeMDs(triplets, segments, to, o0, o1, o2);
++        unsigned int const src[6] = {i0, i1, i2, o0, o1, o2};
++        int n = 0;
++        for (int q = 0; q < 6; ++q) {
++          bool dup = false;
++          for (int p = 0; p < n; ++p)
++            if (bmd[p] == src[q]) {
++              dup = true;
++              break;
++            }
++          if (dup)
++            continue;
++          bmd[n] = src[q];
++          bx[n] = mds.anchorX()[src[q]];
++          by[n] = mds.anchorY()[src[q]];
++          ++n;
+         }
++        maxBridgeChi2 = chainMaxd(maxBridgeChi2, chainKasaChi2PerHit(acc, bx, by, n));
++      }
++    }
+ 
+-        // --- 14: max junction degree product over the member weld edges ----------------------
+-        long long maxDegProd = 0;
+-        for (int k = 0; k < nE; ++k) {
+-          uint32_t const e = items.edgeItems()[off + k];
+-          // The junction is the inner node's "in" side, whose dense incidence keys K1c stored on
+-          // the node; same values the K5 edge features used, one load instead of three.
+-          uint32_t const innerNode = edges.inner()[e];
+-          long long degIn, degOut;
+-          if (edges.type()[e] == 1u) {
+-            uint32_t const m = nodes.mdKeyIn()[innerNode];
+-            degIn = mdIncidence.t3InOffsets()[m + 1u] - mdIncidence.t3InOffsets()[m];
+-            degOut = mdIncidence.t3OutOffsets()[m + 1u] - mdIncidence.t3OutOffsets()[m];
+-          } else {
+-            uint32_t const l = nodes.lsKeyIn()[innerNode];
+-            degIn = lsIncidence.t3InOffsets()[l + 1u] - lsIncidence.t3InOffsets()[l];
+-            degOut = lsIncidence.t3OutOffsets()[l + 1u] - lsIncidence.t3OutOffsets()[l];
+-          }
+-          long long const prod = degIn * degOut;
+-          maxDegProd = (prod > maxDegProd) ? prod : maxDegProd;
+-        }
++    // --- store (order = the frozen contract in ChainsSoA.h) ------------------------------
++    float f[Params_ChainFeat::kFeatures];
++    f[0] = static_cast<float>(nNodes);
++    f[1] = static_cast<float>(nLayersIn);
++    f[2] = sumL;
++    f[3] = minL;
++    f[4] = meanL;
++    f[5] = static_cast<float>(fitChi2PerHit);
++    f[6] = static_cast<float>(rzChi2PerHit);
++    f[7] = static_cast<float>(fitKappa);
++    f[8] = dKappaFitVsMedianT3;
++    f[9] = ptEst;
++    f[10] = static_cast<float>(innermostLayer);
++    f[11] = static_cast<float>(maxLay - minLay);
++    f[12] = static_cast<float>(nPS);
++    f[13] = static_cast<float>(nBarrel);
++    f[14] = static_cast<float>(maxDegProd);
++    f[15] = chargeConsistency;
++    f[16] = static_cast<float>(maxXyResid);
++    f[17] = static_cast<float>(maxRzResid);
++    f[18] = stdL;
++    f[19] = static_cast<float>(maxBridgeChi2);
++    f[20] = minFakeT3;
++    f[21] = maxFakeT3;
++    f[22] = meanPromptT3;
++    f[23] = minDispT3;
++    f[24] = meanDispT3;
++
++
++    CMS_UNROLL_LOOP
++    for (int i = 0; i < Params_ChainFeat::kFeatures; ++i)
++      fout[i] = chainSanitize(f[i]);
++    dcaOut = dcaXY;
++  }
+ 
+-        // --- 19: bridge-circle chi2 over consecutive member-T3 pairs -------------------------
+-        double maxBridgeChi2 = 0.0;
+-        {
+-          double bx[6], by[6];
+-          unsigned int bmd[6];
+-          for (int k = 0; k + 1 < nNodes; ++k) {
+-            uint32_t const ti = nodes.tripletIndex()[items.nodeItems()[off + k]];
+-            uint32_t const to = nodes.tripletIndex()[items.nodeItems()[off + k + 1]];
+-            unsigned int i0, i1, i2, o0, o1, o2;
+-            chainNodeMDs(triplets, segments, ti, i0, i1, i2);
+-            chainNodeMDs(triplets, segments, to, o0, o1, o2);
+-            unsigned int const src[6] = {i0, i1, i2, o0, o1, o2};
+-            int n = 0;
+-            for (int q = 0; q < 6; ++q) {
+-              bool dup = false;
+-              for (int p = 0; p < n; ++p)
+-                if (bmd[p] == src[q]) {
+-                  dup = true;
+-                  break;
+-                }
+-              if (dup)
+-                continue;
+-              bmd[n] = src[q];
+-              bx[n] = mds.anchorX()[src[q]];
+-              by[n] = mds.anchorY()[src[q]];
+-              ++n;
+-            }
+-            maxBridgeChi2 = chainMaxd(maxBridgeChi2, chainKasaChi2PerHit(acc, bx, by, n));
+-          }
+-        }
++  // ------------------------------------------------------------------------------------------
++  // K7a. One frozen feature row per chain.
++  struct ChainFeaturesKernel {
++    ALPAKA_FN_ACC void operator()(Acc1D const& acc,
++                                  ModulesConst modules,
++                                  MiniDoubletsConst mds,
++                                  SegmentsConst segments,
++                                  TripletsConst triplets,
++                                  ChainNodesConst nodes,
++                                  ChainEdgesConst edges,
++                                  ChainIncidenceConst mdIncidence,
++                                  ChainIncidenceConst lsIncidence,
++                                  ChainItemsConst items,
++                                  Chains chains) const {
++      uint32_t const nChains = static_cast<uint32_t>(chains.metadata().size());
+ 
+-        // --- store (order = the frozen contract in ChainsSoA.h) ------------------------------
++      for (uint32_t c : cms::alpakatools::uniform_elements(acc, nChains)) {
++        if (chains.featValid()[c] != 0u)
++          continue;  // COORDINATOR: ChainTrimLearned already published this row (identical build)
++        int const nNodes = chains.nNodes()[c];
++        int const nMD = chains.nMDs()[c];
++        if (nNodes < 1 || nMD < 1)
++          continue;  // unreachable by the K6 contract; the row stays zeroed
++        uint32_t const off = chains.nodeOffset()[c];
+         float f[Params_ChainFeat::kFeatures];
+-        f[0] = static_cast<float>(nNodes);
+-        f[1] = static_cast<float>(chains.nLayers()[c]);
+-        f[2] = sumL;
+-        f[3] = minL;
+-        f[4] = meanL;
+-        f[5] = static_cast<float>(fitChi2PerHit);
+-        f[6] = static_cast<float>(rzChi2PerHit);
+-        f[7] = static_cast<float>(fitKappa);
+-        f[8] = dKappaFitVsMedianT3;
+-        f[9] = ptEst;
+-        f[10] = static_cast<float>(innermostLayer);
+-        f[11] = static_cast<float>(maxLay - minLay);
+-        f[12] = static_cast<float>(nPS);
+-        f[13] = static_cast<float>(nBarrel);
+-        f[14] = static_cast<float>(maxDegProd);
+-        f[15] = chargeConsistency;
+-        f[16] = static_cast<float>(maxXyResid);
+-        f[17] = static_cast<float>(maxRzResid);
+-        f[18] = stdL;
+-        f[19] = static_cast<float>(maxBridgeChi2);
+-        f[20] = minFakeT3;
+-        f[21] = maxFakeT3;
+-        f[22] = meanPromptT3;
+-        f[23] = minDispT3;
+-        f[24] = meanDispT3;
+-
++        float dca = 1e9f;
++        chainBuildFeatures(acc,
++                           modules,
++                           mds,
++                           segments,
++                           triplets,
++                           nodes,
++                           edges,
++                           mdIncidence,
++                           lsIncidence,
++                           items,
++                           off,
++                           nNodes,
++                           &items.mdItems()[3u * off],
++                           nMD,
++                           chains.nLayers()[c],
++                           f,
++                           dca);
+         CMS_UNROLL_LOOP
+         for (int i = 0; i < Params_ChainFeat::kFeatures; ++i)
+-          chains.features()[c][i] = chainSanitize(f[i]);
+-        chains.dcaXY()[c] = dcaXY;
++          chains.features()[c][i] = f[i];
++        chains.dcaXY()[c] = dca;
+       }
+     }
+   };
+@@ -504,6 +550,37 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+     return cfg.t4DensDelta * w;
+   }
+ 
++  // ------------------------------------------------------------------------------------------
++  // K7b core. The 25 -> 32 -> 32 -> 3 head with the kSrcCol gather (column -1 = the chain dcaXY)
++  // and NO softmax: every downstream decision is on the logit MARGINS. Taking the feature row as a
++  // POINTER lets a candidate terminal variant be scored by the same head as the chain itself.
++  ALPAKA_FN_ACC ALPAKA_FN_INLINE void chainGateLogits(Acc1D const& acc,
++                                                     float const* feat,
++                                                     float dca,
++                                                     float (&z)[dnn::chain3mlp::kOutput]) {
++    float x[dnn::chain3mlp::kInput];
++    for (int i = 0; i < dnn::chain3mlp::kInput; ++i) {
++      int const col = dnn::chain3mlp::kSrcCol[i];
++      float v = (col < 0) ? dca : feat[col];
++      if (dnn::chain3mlp::kLog10p1[i])
++        v = alpaka::math::log10(acc, 1.f + v);
++      v = chainMinf(chainMaxf(v, dnn::chain3mlp::kClipLo[i]), dnn::chain3mlp::kClipHi[i]);
++      x[i] = (v - dnn::chain3mlp::kFeatMean[i]) / dnn::chain3mlp::kFeatStd[i];
++    }
++
++    float x1[dnn::chain3mlp::kHidden];
++    float x2[dnn::chain3mlp::kHidden];
++
++    linear_layer<dnn::chain3mlp::kInput, dnn::chain3mlp::kHidden>(
++        x, x1, dnn::chain3mlp::wgt_l1, dnn::chain3mlp::bias_l1);
++    relu_activation<dnn::chain3mlp::kHidden>(x1);
++    linear_layer<dnn::chain3mlp::kHidden, dnn::chain3mlp::kHidden>(
++        x1, x2, dnn::chain3mlp::wgt_l2, dnn::chain3mlp::bias_l2);
++    relu_activation<dnn::chain3mlp::kHidden>(x2);
++    linear_layer<dnn::chain3mlp::kHidden, dnn::chain3mlp::kOutput>(
++        x2, z, dnn::chain3mlp::wgt_out, dnn::chain3mlp::bias_out);
++  }
++
+   // ------------------------------------------------------------------------------------------
+   // K7b + K7c, fused. The head is 25 -> 32 -> 32 -> 3 with the kSrcCol gather (column -1 = the
+   // chain dcaXY) and NO softmax: every downstream decision is on the logit MARGINS.
+@@ -527,28 +604,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+         float const dca = chains.dcaXY()[c];
+ 
+         // --- K7b: the 3-class head ----------------------------------------------------------
+-        float x[dnn::chain3mlp::kInput];
+-        for (int i = 0; i < dnn::chain3mlp::kInput; ++i) {
+-          int const col = dnn::chain3mlp::kSrcCol[i];
+-          float v = (col < 0) ? dca : chains.features()[c][col];
+-          if (dnn::chain3mlp::kLog10p1[i])
+-            v = alpaka::math::log10(acc, 1.f + v);
+-          v = chainMinf(chainMaxf(v, dnn::chain3mlp::kClipLo[i]), dnn::chain3mlp::kClipHi[i]);
+-          x[i] = (v - dnn::chain3mlp::kFeatMean[i]) / dnn::chain3mlp::kFeatStd[i];
+-        }
+-
+-        float x1[dnn::chain3mlp::kHidden];
+-        float x2[dnn::chain3mlp::kHidden];
+         float z[dnn::chain3mlp::kOutput];
+-
+-        linear_layer<dnn::chain3mlp::kInput, dnn::chain3mlp::kHidden>(
+-            x, x1, dnn::chain3mlp::wgt_l1, dnn::chain3mlp::bias_l1);
+-        relu_activation<dnn::chain3mlp::kHidden>(x1);
+-        linear_layer<dnn::chain3mlp::kHidden, dnn::chain3mlp::kHidden>(
+-            x1, x2, dnn::chain3mlp::wgt_l2, dnn::chain3mlp::bias_l2);
+-        relu_activation<dnn::chain3mlp::kHidden>(x2);
+-        linear_layer<dnn::chain3mlp::kHidden, dnn::chain3mlp::kOutput>(
+-            x2, z, dnn::chain3mlp::wgt_out, dnn::chain3mlp::bias_out);
++        chainGateLogits(acc, chains.features()[c].data(), dca, z);
+ 
+         float const mP = z[1] - z[0];
+         float const mD = z[2] - z[0];
+diff --git a/RecoTracker/LSTCore/src/alpaka/LSTEvent.dev.cc b/RecoTracker/LSTCore/src/alpaka/LSTEvent.dev.cc
+index 6ff156b889a..1400997a44b 100644
+--- a/RecoTracker/LSTCore/src/alpaka/LSTEvent.dev.cc
++++ b/RecoTracker/LSTCore/src/alpaka/LSTEvent.dev.cc
+@@ -12,6 +12,7 @@
+ #include "ChainEdges.h"
+ #include "ChainGate.h"
+ #include "ChainGraph.h"
++#include "ChainTrimLearn.h"
+ #include "ChainWeld.h"
+ #include "Hit.h"
+ #include "Kernels.h"
+@@ -1548,6 +1549,14 @@ void LSTEvent::buildChains() {
+   // storage contract in ChainsSoA.h), so no second prefix pass and no reservation are needed.
+   chainsDC_.emplace(queue_, nChainCount_);
+   chainItemsDC_.emplace(queue_, 3 * nChainWeldedNodes_);
++  // COORDINATOR: featValid must start at 0 for EVERY chain. Only chains the learned trim visits
++  // (nNodes >= 3) ever set it, and K7a skips a row that claims to be published -- an uninitialised
++  // byte here would silently drop feature rows, so this memset is a correctness requirement, not a
++  // tidiness one.
++  {
++    auto fvView = cms::alpakatools::make_device_view(queue_, chainsDC_->view().featValid(), nChainCount_);
++    alpaka::memset(queue_, fvView, 0u);
++  }
+   if (objectsStatistics_) {
+     double mb =
+         (alpaka::getExtentProduct(chainsDC_->buffer()) + alpaka::getExtentProduct(chainItemsDC_->buffer())) / 1e6;
+@@ -1578,20 +1587,64 @@ void LSTEvent::buildChains() {
+ 
+   auto const t3 = stamp();
+ 
++  // TRIM-NN probe (env-gated, PRE-TRIM, pure observation). Allocates nothing and runs nothing
++  // unless LST_CHAIN_VARIANT_DUMP names an output file.
++  if (char const* vpath = std::getenv("LST_CHAIN_VARIANT_DUMP"); vpath != nullptr && *vpath != '\0') {
++    auto innerMD_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, 3 * nChainWeldedNodes_);
++    auto probe_buf = cms::alpakatools::make_device_buffer<float[]>(
++        queue_, static_cast<size_t>(nChainCount_) * chaintrim::kProbeWords);
++    alpaka::exec<Acc1D>(queue_,
++                        chainFlat_workDiv,
++                        ChainVariantProbe{},
++                        modules_.const_view().modules(),
++                        miniDoubletsDC_->const_view().miniDoublets(),
++                        segmentsDC_->const_view().segments(),
++                        tripletsDC_->const_view().triplets(),
++                        chainNodesDC_->const_view(),
++                        chainEdgesDC_->const_view(),
++                        chainMdIncidenceDC_->const_view(),
++                        chainLsIncidenceDC_->const_view(),
++                        chainItemsDC_->const_view(),
++                        chainsDC_->const_view(),
++                        innerMD_buf.data(),
++                        probe_buf.data());
++    alpaka::wait(queue_);
++    dumpChainVariants(vpath, innerMD_buf.data(), probe_buf.data());
++  }
++
+   if (chainConfig_.terminalTrim && chainConfig_.trimFactor > 0.f) {
+-    for (int pass = 0; pass < chainConfig_.trimPasses; ++pass)
+-      alpaka::exec<Acc1D>(queue_,
+-                          chainFlat_workDiv,
+-                          ChainTrimTerminals{},
+-                          segmentsDC_->const_view().segments(),
+-                          tripletsDC_->const_view().triplets(),
+-                          modules_.const_view().modules(),
+-                          miniDoubletsDC_->const_view().miniDoublets(),
+-                          chainNodesDC_->const_view(),
+-                          chainEdgesDC_->const_view(),
+-                          chainsDC_->view(),
+-                          chainItemsDC_->view(),
+-                          chainConfig_);
++    for (int pass = 0; pass < chainConfig_.trimPasses; ++pass) {
++      if (chainConfig_.trimMode == 0) {
++        alpaka::exec<Acc1D>(queue_,
++                            chainFlat_workDiv,
++                            ChainTrimTerminals{},
++                            segmentsDC_->const_view().segments(),
++                            tripletsDC_->const_view().triplets(),
++                            modules_.const_view().modules(),
++                            miniDoubletsDC_->const_view().miniDoublets(),
++                            chainNodesDC_->const_view(),
++                            chainEdgesDC_->const_view(),
++                            chainsDC_->view(),
++                            chainItemsDC_->view(),
++                            chainConfig_);
++      } else {
++        alpaka::exec<Acc1D>(queue_,
++                            chainFlat_workDiv,
++                            ChainTrimLearned{},
++                            modules_.const_view().modules(),
++                            miniDoubletsDC_->const_view().miniDoublets(),
++                            segmentsDC_->const_view().segments(),
++                            tripletsDC_->const_view().triplets(),
++                            chainNodesDC_->const_view(),
++                            chainEdgesDC_->const_view(),
++                            chainMdIncidenceDC_->const_view(),
++                            chainLsIncidenceDC_->const_view(),
++                            chainItemsDC_->const_view(),
++                            chainsDC_->view(),
++                            chainItemsDC_->view(),
++                            chainConfig_);
++      }
++    }
+   }
+ 
+   auto const t4 = stamp();
+@@ -3487,6 +3540,123 @@ void LSTEvent::dumpChains() {
+   std::fclose(f);
+ }
+ 
++// TRIM-NN probe sidecar. Emits, in the SAME byte layout dumpChains uses ('P22C', so every existing
++// reader and the offline truth join work unchanged), ONE record per TERMINAL VARIANT of every
++// PRE-TRIM chain with nNodes >= 3:
++//     preN = nNodes = the variant's node count      branch = variant id (0 full, 1 inner-dropped,
++//     nMDs / nLayers = the variant's MD union                          2 outer-dropped)
++//     score = the variant's COMBINED-FIT chi2       drop   = the chain index within the event
++//     dcaXY / logits / margins / features           hits   = the variant's own MD hit list
++// so the K6f rule's decision (a ratio of the score column) and the head's decision (the margin
++// columns) can be compared to the >= 75% sim-match label of each variant on the same rows.
++void LSTEvent::dumpChainVariants(char const* path, uint32_t const* innerMDDev, float const* probeDev) {
++  if (path == nullptr || *path == '\0' || !chainsDC_.has_value())
++    return;
++
++  alpaka::wait(queue_);
++
++  auto pullTo = [&](auto* hostPtr, auto column, unsigned int n) {
++    auto host_view = cms::alpakatools::make_host_view(hostPtr, n);
++    auto dev_view = cms::alpakatools::make_device_view(queue_, column, n);
++    alpaka::memcpy(queue_, host_view, dev_view);
++    alpaka::wait(queue_);
++  };
++
++  uint32_t const nC = nChainCount_;
++  uint32_t const nItems = 3u * nChainWeldedNodes_;
++  auto ch = chainsDC_->view();
++  auto it = chainItemsDC_->view();
++
++  std::vector<uint32_t> nodeOffset(nC);
++  std::vector<uint16_t> nNodes(nC), nMDs(nC);
++  std::vector<uint8_t> nLayers(nC);
++  pullTo(nodeOffset.data(), ch.nodeOffset(), nC);
++  pullTo(nNodes.data(), ch.nNodes(), nC);
++  pullTo(nMDs.data(), ch.nMDs(), nC);
++  pullTo(nLayers.data(), ch.nLayers(), nC);
++
++  std::vector<uint32_t> nodeItems(nItems), edgeItems(nItems), mdItems(nItems), innerMD(nItems);
++  pullTo(nodeItems.data(), it.nodeItems(), nItems);
++  pullTo(edgeItems.data(), it.edgeItems(), nItems);
++  pullTo(mdItems.data(), it.mdItems(), nItems);
++  pullTo(innerMD.data(), innerMDDev, nItems);
++
++  std::vector<float> probe(static_cast<size_t>(nC) * chaintrim::kProbeWords);
++  pullTo(probe.data(), probeDev, static_cast<unsigned int>(probe.size()));
++
++  uint32_t const nEdges = static_cast<uint32_t>(chainEdgesDC_->view().metadata().size());
++  std::vector<uint8_t> edgeType(nEdges);
++  pullTo(edgeType.data(), chainEdgesDC_->view().type(), nEdges);
++
++  unsigned int const nMDTotal = static_cast<unsigned int>(miniDoubletsDC_->view().miniDoublets().metadata().size());
++  unsigned int const nHitsTotal = static_cast<unsigned int>(lstInputDC_->const_view().hits().metadata().size());
++  std::vector<unsigned int> mdAnchorHit(nMDTotal), mdOuterHit(nMDTotal), hitIdx(nHitsTotal);
++  pullTo(mdAnchorHit.data(), miniDoubletsDC_->view().miniDoublets().anchorHitIndices(), nMDTotal);
++  pullTo(mdOuterHit.data(), miniDoubletsDC_->view().miniDoublets().outerHitIndices(), nMDTotal);
++  pullTo(hitIdx.data(), lstInputDC_->const_view().hits().idxs(), nHitsTotal);
++
++  uint32_t nRec = 0;
++  for (uint32_t c = 0; c < nC; ++c)
++    if (nNodes[c] >= 3)
++      nRec += chaintrim::kVariants;
++
++  static std::atomic<uint32_t> variantEventCounter{0};
++  uint32_t const ievt = variantEventCounter.fetch_add(1);
++  static std::mutex variantDumpMutex;
++  std::lock_guard<std::mutex> lock(variantDumpMutex);
++  std::FILE* f = std::fopen(path, (ievt == 0) ? "wb" : "ab");
++  if (f == nullptr)
++    return;
++  auto put32 = [&](uint32_t v) { std::fwrite(&v, sizeof(v), 1, f); };
++  auto putf = [&](float v) { std::fwrite(&v, sizeof(v), 1, f); };
++
++  put32(0x50323243u);  // 'P22C'
++  put32(ievt);
++  put32(nChainNodes_);
++  put32(nEdges);
++  put32(nRec);
++  for (uint32_t c = 0; c < nC; ++c) {
++    if (nNodes[c] < 3)
++      continue;
++    uint32_t const off = nodeOffset[c];
++    float const* row = probe.data() + static_cast<size_t>(c) * chaintrim::kProbeWords;
++    for (int v = 0; v < chaintrim::kVariants; ++v) {
++      float const* b = row + 3 + v * chaintrim::kVarWords;
++      uint32_t const offv = (v == 1) ? off + 1u : off;
++      uint32_t const nNv = (v == 0) ? nNodes[c] : nNodes[c] - 1u;
++      uint32_t const nMDv = static_cast<uint32_t>(b[0]);
++      uint32_t const* mdv = (v == 1) ? &innerMD[3u * off] : &mdItems[3u * off];
++      put32(nNv);
++      put32(nNv);
++      put32(nMDv);
++      put32(static_cast<uint32_t>(b[1]));
++      put32(static_cast<uint32_t>(v));
++      put32(c);
++      put32(0u);
++      putf(row[v]);  // the variant's combined-fit chi2, in the score slot
++      putf(b[2]);    // dcaXY
++      putf(b[3]);
++      putf(b[4]);
++      putf(b[5]);
++      putf(b[4] - b[3]);
++      putf(b[5] - b[3]);
++      putf((b[4] > b[5] ? b[4] : b[5]) - b[3]);
++      for (int k = 0; k < Params_ChainFeat::kFeatures; ++k)
++        putf(b[6 + k]);
++      for (uint32_t k = 0; k < nNv; ++k)
++        put32(nodeItems[offv + k]);
++      for (uint32_t k = 0; k + 1 < nNv; ++k)
++        put32(edgeType[edgeItems[offv + k]]);
++      for (uint32_t k = 0; k < nMDv; ++k) {
++        uint32_t const md = mdv[k];
++        put32(hitIdx[mdAnchorHit[md]]);
++        put32(hitIdx[mdOuterHit[md]]);
++      }
++    }
++  }
++  std::fclose(f);
++}
++
+ void LSTEvent::createTrackCandidates(bool no_pls_dupclean, bool tc_pls_triplets) {
+   // Post-deletion TC sequence: the chain pipeline is the only outer-tracker track builder. What
+   // remains of the baseline sequence is the pLS self-cleaning (CheckHitspLS pass 2 -- pass 1 ran
+diff --git a/RecoTracker/LSTCore/src/alpaka/LSTEvent.h b/RecoTracker/LSTCore/src/alpaka/LSTEvent.h
+index 762136c4459..e91a93b3f92 100644
+--- a/RecoTracker/LSTCore/src/alpaka/LSTEvent.h
++++ b/RecoTracker/LSTCore/src/alpaka/LSTEvent.h
+@@ -157,6 +157,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+       chainConfigRetirementEnv(chainConfig_);
+       // JET ROUND 3 (T4): env overrides of the 4-layer class policy group. Inert with nothing set.
+       chainConfigT4Env(chainConfig_);
++      // COORDINATOR PROBE: terminal-trim A/B. Inert with nothing set.
++      chainConfigTrimEnv(chainConfig_);
+       if (ptCut < 0.6f) {
+         throw std::invalid_argument("Minimum pT cut must be at least 0.6 GeV. Provided value: " +
+                                     std::to_string(ptCut));
+@@ -309,6 +311,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+     void dumpChainTCs();
+     // Optional parity sidecar, enabled by the LST_CHAIN_CHAIN_DUMP environment variable.
+     void dumpChains();
++    // TRIM-NN probe sidecar, enabled by LST_CHAIN_VARIANT_DUMP: one P22C record per TERMINAL
++    // VARIANT of every chain with nNodes >= 3, taken PRE-TRIM. Writes nothing otherwise.
++    void dumpChainVariants(char const* path, uint32_t const* innerMDDev, float const* probeDev);
+ 
+     unsigned int getNumberOfChains() const { return nChainCount_; }
+     double getChainBuildMs() const { return chainBuildMs_; }
