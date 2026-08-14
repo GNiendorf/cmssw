@@ -580,6 +580,36 @@ namespace lst {
   // efficiency +.0002, cube50 exactly .00000 on every band). Caveat that rides with the constant:
   // jet-core (dR < .05) duplicate goes .0313 -> .0345 (p = .017), in a cell we already owe master.
   static constexpr int kChainWeldSweeps = 2;
+  // JET ROUND 5 (W5). THE WELD ARGMAX'S DENSITY-CONDITIONED FAMILY ORDER.
+  //
+  // K6a puts both adjacency families into ONE atomicMax on `logOdds`, but the head's eligibility
+  // bar is fitted PER FAMILY and per (pT,|eta|) cell (the 80 weld WPs) at equal per-cell SIGNAL
+  // efficiency -- so it admits 92-97% of E2 rows against 23-45% of E1 rows, and the two eligible
+  // pools it hands the argmax are NOT of equal purity. E2 (shared line segment) therefore wins
+  // slots on a scale it was never calibrated against E1 (shared middle MD) on.
+  //
+  // The variable that actually carries the miscalibration is LOCAL OCCUPANCY, not family. Measured
+  // on 7.1M PU200 and 347M jets eligible edge rows, the same-sim rate of an eligible edge falls
+  // from .84 at junction degree product 1 to .0001 above 16384, and INSIDE every occupancy decade
+  // of both samples E1 is the better family, LR(E2/E1) = .72 -> .013, never above 1. The pooled
+  // "E2 is 6.8x more likely" is a composition artefact: 99.2% of jets' eligible E1 rows sit in the
+  // >=16384 bin. Ordering E2 first EVERYWHERE therefore demotes E1 exactly where E1 is
+  // unambiguous, which is the sparse regime a displaced track lives in -- and that is what cost
+  // PU200 `dxy[1,5)` -.021 and `vxy[10,30)` -.021 when the family order was applied globally.
+  //
+  // So the family term is admitted ONLY at junctions with at least this many competing T3 pairs.
+  // The junction's incidence degree product is ChainGate feature 14's per-edge summand, read from
+  // the same two CSRs (ChainGate.h:393-412), so the two agree by construction. 0 disables the
+  // family term entirely and reproduces the shipped weld bit for bit.
+  //
+  // Deployed at 128 (jets TUNE 500 events, PU200 event_1000 1000 events, paired McNemar):
+  // jet core .8197 -> .8413 (+.0216, p 1.1e-30), deep core [0,.0025) +.0591, ALL FIFTEEN fine dR
+  // bins >= 0, jets fake -.0002 (n.s.) and jets duplicate -.0008; PU200 has NO resolved cell in
+  // either direction -- worst is `vxy[10,30)` -.0007 (4 lost / 1 gained of 4178, p .375), overall
+  // -.00005, and the whole PU200 TC count moves by 24 of 1,582,757. The knee is NOT a softening:
+  // at 8 the arm is WORSE on PU200 than at 0, because the weld is a global matching and a partial
+  // family term produces a different matching, not a partial one.
+  static constexpr long long kChainWeldFamilyDegKnee = 128;
   // prototype/K9K10.cc k10AssembleChainTCs: a chain shorter than this emits no TC.
   static constexpr int kChainTCMinLayers = 4;
   // -H 1 is FROZEN: the claim universe is hit rows, not MiniDoublets.

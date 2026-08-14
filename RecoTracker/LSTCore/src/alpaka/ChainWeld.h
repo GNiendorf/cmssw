@@ -75,11 +75,53 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     return (static_cast<uint64_t>(chainOrderFloat(logOdds)) << 32) | static_cast<uint64_t>(tie);
   }
 
+  // The junction incidence degree product of an edge: ChainGate feature 14's per-edge summand,
+  // read from the same two CSRs the gate reads (ChainGate.h:393-412). For an E1 edge the junction
+  // is the shared middle MD, for an E2 edge the shared line segment; the offsets are the CAPPED
+  // degrees (kChainDegreeCap per side), which cannot move a row across a knee at or below the cap.
+  ALPAKA_FN_ACC ALPAKA_FN_INLINE long long chainWeldDegProd(ChainEdgesConst const& edges,
+                                                            ChainNodesConst const& nodes,
+                                                            ChainIncidenceConst const& mdInc,
+                                                            ChainIncidenceConst const& lsInc,
+                                                            uint32_t e) {
+    uint32_t const innerNode = edges.inner()[e];
+    if (edges.type()[e] == 1u) {
+      uint32_t const m = nodes.mdKeyIn()[innerNode];
+      long long const dIn = mdInc.t3InOffsets()[m + 1u] - mdInc.t3InOffsets()[m];
+      long long const dOut = mdInc.t3OutOffsets()[m + 1u] - mdInc.t3OutOffsets()[m];
+      return dIn * dOut;
+    }
+    uint32_t const l = nodes.lsKeyIn()[innerNode];
+    long long const dIn = lsInc.t3InOffsets()[l + 1u] - lsInc.t3InOffsets()[l];
+    long long const dOut = lsInc.t3OutOffsets()[l + 1u] - lsInc.t3OutOffsets()[l];
+    return dIn * dOut;
+  }
+
+  // The DENSITY-CONDITIONED weld key (ChainConfig::kChainWeldFamilyDegKnee, and the long note
+  // there is the whole justification). One extra bit of order in front of logOdds: the E2 family
+  // wins a slot outright, but ONLY where its junction has at least the knee's worth of competing
+  // T3 pairs. Every row goes through the SAME monotone transform, so the comparison is still one
+  // unsigned total order and the 32-bit stable tie word survives intact -- the family bit is taken
+  // out of the float's last mantissa bit, not out of the tie word.
+  //
+  // This changes only WHICH edge wins a slot. chains.score() still sums the untouched logOdds, so
+  // the gate, the K9 order key and every chain feature are bit-for-bit what they were.
+  ALPAKA_FN_ACC ALPAKA_FN_INLINE uint64_t chainWeldKeyDense(float logOdds, uint32_t tie, uint8_t type, long long degProd) {
+    if constexpr (kChainWeldFamilyDegKnee <= 0)
+      return chainWeldKey(logOdds, tie);
+    bool const first = (type == 2u) && (degProd >= kChainWeldFamilyDegKnee);
+    uint32_t const w = (chainOrderFloat(logOdds) >> 1) | (first ? 0x80000000u : 0u);
+    return (static_cast<uint64_t>(w) << 32) | static_cast<uint64_t>(tie);
+  }
+
   // ------------------------------------------------------------------------------------------
   // K6a. Per-sweep argmax over a frozen snapshot of the weld slots.
   struct ChainWeldArgmax {
     ALPAKA_FN_ACC void operator()(Acc1D const& acc,
                                   ChainEdgesConst edges,
+                                  ChainNodesConst nodes,
+                                  ChainIncidenceConst mdInc,
+                                  ChainIncidenceConst lsInc,
                                   int32_t const* outWeld,
                                   int32_t const* inWeld,
                                   uint64_t* bestOut,
@@ -103,7 +145,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         uint32_t const m = edges.outer()[e];
         if (outWeld[n] != -1 || inWeld[m] != -1)
           continue;  // tail's out-slot or head's in-slot already taken
-        uint64_t const key = chainWeldKey(lo, edges.tie()[e]);
+        uint64_t const key =
+            chainWeldKeyDense(lo, edges.tie()[e], etype, chainWeldDegProd(edges, nodes, mdInc, lsInc, e));
         alpaka::atomicMax(acc, &bestOut[n], key, alpaka::hierarchy::Threads{});
         alpaka::atomicMax(acc, &bestIn[m], key, alpaka::hierarchy::Threads{});
       }
@@ -127,6 +170,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
   struct ChainWeldMutual {
     ALPAKA_FN_ACC void operator()(Acc1D const& acc,
                                   ChainEdgesConst edges,
+                                  ChainNodesConst nodes,
+                                  ChainIncidenceConst mdInc,
+                                  ChainIncidenceConst lsInc,
                                   int32_t* outWeld,
                                   int32_t* inWeld,
                                   uint64_t const* bestOut,
@@ -148,7 +194,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         float const lo = edges.logOdds()[e];
         if (lo < edges.weldBar()[e])
           continue;
-        if (bestKey != chainWeldKey(lo, edges.tie()[e]))
+        if (bestKey != chainWeldKeyDense(lo, edges.tie()[e], etype, chainWeldDegProd(edges, nodes, mdInc, lsInc, e)))
           continue;
         uint32_t const m = edges.outer()[e];
         if (bestIn[m] != bestKey)
