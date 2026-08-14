@@ -1,0 +1,196 @@
+#!/usr/bin/env python3
+"""Generate RecoTracker/LSTCore/src/alpaka/AttachNetworkWeights.h from a trained pixel-seed attach
+head and its normalisation json. This script is the only supported way to regenerate that header.
+
+The header is a set of HOST_DEVICE_CONSTANT arrays in
+ALPAKA_ACCELERATOR_NAMESPACE::lst::dnn::attachmlp: the preprocessing arrays and the
+kInput->kHidden->kHidden->1 weights. Preprocessing is applied as log10(1+x), then clip, then
+standardize, and the order is not interchangeable: for a log-scaled input the clip bounds and the
+mean/std are both measured in log space, so any other order feeds the network different numbers
+than training saw.
+
+Inputs (NEITHER of the trained artefacts lives in this repository -- the script cannot run out of
+the box, they have to be supplied from wherever training wrote them):
+  --model  a PyTorch checkpoint (.pt) holding "state_dict" (keys 0/2/4 .weight and .bias) and the
+           metadata "best_epoch", "best_val_auc", "seed" and "arch". The output layer must have a
+           single row: only a scalar-output head is expressible in AttachInference.cc.
+  --norm   a JSON file with "feature_names" (one per network input), "mean", "std", and a
+           "conditioning" list of {"feature", "op"} entries, "op" being "log10_1p" or "clip" with
+           "lo"/"hi". An unknown op is a hard error rather than a silently dropped transform.
+The attach pair row is kAttachFeatures floats wide, and AttachInference.cc feeds inputs
+f[0 .. kInput-1] positionally, so the checkpoint's feature list must be a PREFIX of
+PixelAttach.cc's kAttachFeatNames -- the header banner records that list so the prefix can be
+checked by eye against the C++.
+
+Output: the header written to --out, with a banner recording the checkpoint paths, the invocation
+and the model metadata.
+
+Run:
+  python3 export_attach_weights.py --model <head>.pt --norm <head_norm>.json --out <path to header>
+                                   [--verify <existing header>] [--cmd "<invocation to record>"]
+--verify compares the generated text byte for byte against an existing header and exits non-zero at
+the first differing line instead of writing anything. The comparison covers the banner as well as
+the numbers, and the banner embeds the absolute checkpoint paths and the invocation, so it only
+reproduces a header that was generated from the same inputs by the same command; --cmd exists to
+pin that line. A difference confined to the banner shows up as the first differing line.
+"""
+import argparse
+import json
+import os
+
+import numpy as np
+
+UNCLIPPED = 1e30
+
+
+def f32(v):
+    """Decimal literal for a value rounded to float32, in the committed headers' style."""
+    s = "%.9g" % float(np.float32(v))
+    if "." not in s and "e" not in s and "n" not in s and "i" not in s:
+        s += ".0"
+    return s + "f"
+
+
+def arr1(vals, per_line=6, indent="      "):
+    """Flat array initialiser, `per_line` literals per line to stay inside CMSSW's 120 columns."""
+    lines = []
+    for i in range(0, len(vals), per_line):
+        lines.append(indent + ", ".join(f32(v) for v in vals[i:i + per_line]) + ",")
+    body = "\n".join(lines)[:-1]
+    return "{\n" + body + "\n  }"
+
+
+def arr2(rows, per_line=6):
+    """Matrix initialiser: one braced arr1 block per row, wrapped the same way."""
+    out = []
+    for r in rows:
+        out.append("      " + arr1(r, per_line, "          "))
+    return "{\n" + ",\n".join(out) + "\n  }"
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--model", required=True)
+    ap.add_argument("--norm", required=True)
+    ap.add_argument("--out", required=True)
+    ap.add_argument("--verify")
+    ap.add_argument("--cmd", default="")
+    a = ap.parse_args()
+
+    import torch
+    blob = torch.load(a.model, map_location="cpu", weights_only=False)
+    sd = blob["state_dict"]
+    tonp = lambda t: np.array(t.detach().cpu().tolist(), dtype=np.float64)
+    w1 = tonp(sd["0.weight"]); b1 = tonp(sd["0.bias"])
+    w2 = tonp(sd["2.weight"]); b2 = tonp(sd["2.bias"])
+    wo = tonp(sd["4.weight"]); bo = tonp(sd["4.bias"])
+    assert wo.shape[0] == 1, "only the scalar-output head is expressible in AttachInference.cc"
+    n_in, n_hid = w1.shape[1], w1.shape[0]
+
+    nm = json.load(open(a.norm))
+    names = nm["feature_names"]
+    assert len(names) == n_in
+    mean = nm["mean"]; std = nm["std"]
+    clip_lo = [-UNCLIPPED] * n_in
+    clip_hi = [UNCLIPPED] * n_in
+    log10p1 = [False] * n_in
+    for c in nm["conditioning"]:
+        i = names.index(c["feature"])
+        if c["op"] == "log10_1p":
+            log10p1[i] = True
+        elif c["op"] == "clip":
+            clip_lo[i] = c["lo"]; clip_hi[i] = c["hi"]
+        else:
+            raise SystemExit("unknown conditioning op %s" % c["op"])
+
+    meta = "best_epoch=%s best_val_auc=%s" % (blob.get("best_epoch"), blob.get("best_val_auc"))
+    seed = blob.get("seed")
+    banner = []
+    banner.append("// GENERATED by standalone/analysis/DNN/export_attach_weights.py -- DO NOT EDIT BY HAND.")
+    banner.append("// Sources:")
+    banner.append("//   model: %s" % os.path.abspath(a.model))
+    banner.append("//   norm:  %s" % os.path.abspath(a.norm))
+    banner.append("// Command:")
+    banner.append("//   %s" % (a.cmd or "python3 export_attach_weights.py --model %s --norm %s --out %s"
+                               % (os.path.abspath(a.model), os.path.abspath(a.norm), a.out)))
+    banner.append("// Model meta: %s" % meta)
+    banner.append("//             seed=%s arch=%s" % (seed, blob.get("arch")))
+    banner.append("//")
+    banner.append("// Convention (mirrors src/alpaka/NeuralNetwork.h): weights are stored TRANSPOSED,")
+    banner.append("// wgt[in][out], so the inference inner loop is output[o] += input[i] * wgt[i][o].")
+    banner.append("//")
+    banner.append("// Per-input preprocessing, applied in this order (bakes in the norm json's")
+    banner.append('// "conditioning" spec):')
+    banner.append("//   1. if (kLog10p1[i]) x = log10(1 + x)")
+    banner.append("//   2. x = min(max(x, kClipLo[i]), kClipHi[i])   (+-1e30 = unclipped)")
+    banner.append("//   3. x = (x - kFeatMean[i]) / kFeatStd[i]")
+    banner.append("//")
+    banner.append("// Input feature order (the LEADING %d slots of the PixelAttach.h kAttachFeat layout;" % n_in)
+    banner.append("// AttachInference.cc feeds f[0..kInput-1], so this list must be a PREFIX of")
+    banner.append("// PixelAttach.cc kAttachFeatNames):")
+    for i, n in enumerate(names):
+        banner.append("//  [%2d] %s" % (i, n))
+
+    G = "RecoTracker_LSTCore_src_alpaka_AttachNetworkWeights_h"
+    body = """{banner}
+#ifndef {G}
+#define {G}
+
+#include <alpaka/alpaka.hpp>
+
+#include "FWCore/Utilities/interface/HostDeviceConstant.h"
+
+namespace ALPAKA_ACCELERATOR_NAMESPACE::lst::dnn::attachmlp {{
+
+  constexpr int kInput = {n_in};
+  constexpr int kHidden = {n_hid};
+
+  HOST_DEVICE_CONSTANT float kFeatMean[kInput] = {kFeatMean};
+
+  HOST_DEVICE_CONSTANT float kFeatStd[kInput] = {kFeatStd};
+
+  HOST_DEVICE_CONSTANT float kClipLo[kInput] = {kClipLo};
+
+  HOST_DEVICE_CONSTANT float kClipHi[kInput] = {kClipHi};
+
+  HOST_DEVICE_CONSTANT bool kLog10p1[kInput] = {{{kLog10p1}}};
+
+  HOST_DEVICE_CONSTANT float wgt_l1[kInput][kHidden] = {wgt_l1};
+
+  HOST_DEVICE_CONSTANT float bias_l1[kHidden] = {bias_l1};
+
+  HOST_DEVICE_CONSTANT float wgt_l2[kHidden][kHidden] = {wgt_l2};
+
+  HOST_DEVICE_CONSTANT float bias_l2[kHidden] = {bias_l2};
+
+  HOST_DEVICE_CONSTANT float wgt_out[kHidden] = {wgt_out};
+
+  constexpr float bias_out = {bias_out};
+
+}}  // namespace ALPAKA_ACCELERATOR_NAMESPACE::lst::dnn::attachmlp
+
+#endif
+""".format(banner="\n".join(banner), G=G, n_in=n_in, n_hid=n_hid,
+           kFeatMean=arr1(mean), kFeatStd=arr1(std), kClipLo=arr1(clip_lo), kClipHi=arr1(clip_hi),
+           kLog10p1=", ".join("true" if v else "false" for v in log10p1),
+           wgt_l1=arr2(w1.T), bias_l1=arr1(b1), wgt_l2=arr2(w2.T), bias_l2=arr1(b2),
+           wgt_out=arr1(wo[0]), bias_out=f32(bo[0]))
+
+    if a.verify:
+        ref = open(a.verify).read()
+        if ref == body:
+            print("PORT VERIFIED: byte-identical to %s" % a.verify)
+        else:
+            rl, bl = ref.splitlines(), body.splitlines()
+            print("VERIFY FAILED: %d vs %d lines" % (len(rl), len(bl)))
+            for i in range(min(len(rl), len(bl))):
+                if rl[i] != bl[i]:
+                    print("first diff at line %d:\n  ref: %r\n  new: %r" % (i + 1, rl[i], bl[i]))
+                    break
+            raise SystemExit(2)
+    open(a.out, "w").write(body)
+    print("wrote %s: kInput=%d kHidden=%d" % (a.out, n_in, n_hid))
+
+
+if __name__ == "__main__":
+    main()

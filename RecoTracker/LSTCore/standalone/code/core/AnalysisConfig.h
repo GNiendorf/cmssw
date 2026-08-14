@@ -6,6 +6,10 @@
 #include "Trktree.h"
 #include "ModuleConnectionMap.h"
 
+// Run configuration of the standalone harness: one global instance, `ana`, filled from the command
+// line in bin/lst.cc and read everywhere else. It holds the input/output handles, the event
+// selection, the cut values passed down to LSTEvent, and one flag per optional block of output
+// ntuple branches.
 class AnalysisConfig {
 public:
   // Analysis run mode
@@ -144,32 +148,14 @@ public:
   // Boolean to enable T3 branches
   bool t3_branches;
 
-  // Boolean to enable T5 branches
-  bool t5_branches;
-
   // Boolean to enable pLS branches
   bool pls_branches;
-
-  // Boolean to enable pT3 branches
-  bool pt3_branches;
-
-  // Boolean to enable pT5 branches
-  bool pt5_branches;
-
-  // Boolean to enable T4 branches
-  bool t4_branches;
 
   // Boolean to enable occupancy branches
   bool occ_branches;
 
   // Boolean to enable T3 DNN branches
   bool t3dnn_branches;
-
-  // Boolean to enable T5 DNN branches
-  bool t5dnn_branches;
-
-  // Boolean to enable T4 DNN branches
-  bool t4dnn_branches;
 
   // Boolean to enable jet branches
   bool jet_branches;

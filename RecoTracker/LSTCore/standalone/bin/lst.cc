@@ -1,3 +1,11 @@
+// Entry point of the standalone harness: run LST outside CMSSW, straight off a tracking ntuple.
+//
+// It parses the command line into the global AnalysisConfig, opens the input ntuple, and then for
+// each event builds the LST input collection, runs the pipeline stage by stage (mini-doublets,
+// line segments, triplets and the chain graph, pixel line segments, track candidates and the chain
+// arbitration), times each stage, and hands the result to the output ntuple writer. Events can be
+// processed on several alpaka queues at once; the per-stage timings are reported at the end.
+
 #include "lst.h"
 #include "LSTPrepareInput.h"
 
@@ -74,13 +82,10 @@ int main(int argc, char **argv) {
       cxxopts::value<int>())("3,tc_pls_triplets", "Allow triplet pLSs in TC collection")(
       "2,no_pls_dupclean", "Disable pLS duplicate cleaning (both steps)")(
       "reduce_mem_by_full_precompute",
-      "Run extra counting kernels to exactly size MD/LS/T3/T5/T4 buffers (lower mem, small runtime cost)")(
+      "Run extra counting kernels to exactly size MD/LS/T3 buffers (lower mem, small runtime cost)")(
       "h,help", "Print help")("md", "Write MD branches in output ntuple.")("ls", "Write LS branches in output ntuple.")(
-      "t3", "Write T3 branches in output ntuple.")("t5", "Write T5 branches in output ntuple.")(
-      "pls", "Write pLS branches in output ntuple.")("pt3", "Write pT3 branches in output ntuple.")(
-      "pt5", "Write pT5 branches in output ntuple.")("occ", "Write occupancy branches in output ntuple.")(
-      "t5dnn", "Write T5 DNN branches in output ntuple.")("t3dnn", "Write T3 DNN branches in output ntuple.")(
-      "t4", "Write T4 branches in output ntuple.")("t4dnn", "Write T4 DNN branches in output ntuple.")(
+      "t3", "Write T3 branches in output ntuple.")("pls", "Write pLS branches in output ntuple.")(
+      "occ", "Write occupancy branches in output ntuple.")("t3dnn", "Write T3 DNN branches in output ntuple.")(
       "allobj", "Write all object branches in output ntuple.")(
       "J,jet", "Accounts for specific jet branches in input root file for testing")(
       "sim", "Write extra sim branches in output ntuple");
@@ -274,40 +279,23 @@ int main(int argc, char **argv) {
   ana.t3_branches = result["t3"].as<bool>() || result["allobj"].as<bool>();
 
   //_______________________________________________________________________________
-  // --t5
-  ana.t5_branches = result["t5"].as<bool>() || result["allobj"].as<bool>();
-
-  //_______________________________________________________________________________
   // --pls
   ana.pls_branches = result["pls"].as<bool>() || result["allobj"].as<bool>();
 
   //_______________________________________________________________________________
-  // --pt3
-  ana.pt3_branches = result["pt3"].as<bool>() || result["allobj"].as<bool>();
-
-  //_______________________________________________________________________________
-  // --pt5
-  ana.pt5_branches = result["pt5"].as<bool>() || result["allobj"].as<bool>();
-
-  //_______________________________________________________________________________
-  // --t4
-  ana.t4_branches = result["t4"].as<bool>() || result["allobj"].as<bool>();
+  // The algorithmic isDup snapshots inside LSTCore exist only to feed the pLS branches above, and
+  // cost extra host copies. Enable them exactly when that branch block is being written; every
+  // other run of the harness, and every CMSSW job, leaves them off and pays nothing.
+  if (ana.pls_branches)
+    setenv("LST_DUP_SNAPSHOTS", "1", 1);
 
   //_______________________________________________________________________________
   // --occ
   ana.occ_branches = result["occ"].as<bool>() || result["allobj"].as<bool>();
 
   //_______________________________________________________________________________
-  // --t5dnn
-  ana.t5dnn_branches = result["t5dnn"].as<bool>() || result["allobj"].as<bool>();
-
-  //_______________________________________________________________________________
   // --t3dnn
   ana.t3dnn_branches = result["t3dnn"].as<bool>() || result["allobj"].as<bool>();
-
-  //_______________________________________________________________________________
-  // --t4dnn
-  ana.t4dnn_branches = result["t4dnn"].as<bool>() || result["allobj"].as<bool>();
 
   //_______________________________________________________________________________
   // --jet (Not triggered by allobj since most files don't have jet info)
@@ -409,6 +397,35 @@ void run_lst() {
     const auto trk_ph2_clustSize =
         hasClustSize ? trk.getVUS("ph2_clustSize") : std::vector<uint16_t>(trk.getVF("ph2_x").size());
 
+    // The pixel-seed attach propagates a seed helix outward and needs the global position of every
+    // seed's INNERMOST rec hit to start from. It is not derivable from the LST hits SoA, whose
+    // pixel rows carry trajectory quantities rather than hit positions, so read it straight off the
+    // tracking ntuple -- resolving the row exactly as the writer's pLS_hit0_* branches do. A seed
+    // with no hits keeps the zero-initialised entry.
+    std::vector<float> see_hit0X, see_hit0Y, see_hit0Z;
+    {
+      auto const &see_hitIdx = trk.getVVI("see_hitIdx");
+      auto const &see_hitType = trk.getVVI("see_hitType");
+      auto const &pix_x = trk.getVF("pix_x");
+      auto const &pix_y = trk.getVF("pix_y");
+      auto const &pix_z = trk.getVF("pix_z");
+      auto const &ph2_x = trk.getVF("ph2_x");
+      auto const &ph2_y = trk.getVF("ph2_y");
+      auto const &ph2_z = trk.getVF("ph2_z");
+      see_hit0X.resize(see_hitIdx.size(), 0.f);
+      see_hit0Y.resize(see_hitIdx.size(), 0.f);
+      see_hit0Z.resize(see_hitIdx.size(), 0.f);
+      for (size_t iSeed = 0; iSeed < see_hitIdx.size(); ++iSeed) {
+        if (see_hitIdx[iSeed].empty())
+          continue;
+        int const hitRow = see_hitIdx[iSeed][0];
+        bool const isPixel = static_cast<lst::HitType>(see_hitType[iSeed][0]) == lst::HitType::Pixel;
+        see_hit0X[iSeed] = isPixel ? pix_x[hitRow] : ph2_x[hitRow];
+        see_hit0Y[iSeed] = isPixel ? pix_y[hitRow] : ph2_y[hitRow];
+        see_hit0Z[iSeed] = isPixel ? pix_z[hitRow] : ph2_z[hitRow];
+      }
+    }
+
     auto lstInputHC = prepareInput(trk.getVF("see_px"),
                                    trk.getVF("see_py"),
                                    trk.getVF("see_pz"),
@@ -431,6 +448,9 @@ void run_lst() {
                                    trk.getVF("ph2_x"),
                                    trk.getVF("ph2_y"),
                                    trk.getVF("ph2_z"),
+                                   see_hit0X,
+                                   see_hit0Y,
+                                   see_hit0Z,
                                    ana.ptCut,
                                    queues[0]);
 
@@ -464,11 +484,7 @@ void run_lst() {
     float timing_MD;
     float timing_LS;
     float timing_T3;
-    float timing_T5;
     float timing_pLS;
-    float timing_T4;
-    float timing_pT5;
-    float timing_pT3;
     float timing_TC;
 
 #pragma omp for  // nowait// private(event)
@@ -488,13 +504,16 @@ void run_lst() {
       timing_MD = runMiniDoublet(events.at(omp_get_thread_num()), evt);
       timing_LS = runSegment(events.at(omp_get_thread_num()));
       timing_T3 = runT3(events.at(omp_get_thread_num()));
-      timing_T5 = runQuintuplet(events.at(omp_get_thread_num()));
-
       timing_pLS = runPixelLineSegment(events.at(omp_get_thread_num()), ana.no_pls_dupclean);
-      timing_T4 = runQuadruplet(events.at(omp_get_thread_num()));
-      timing_pT5 = runPixelQuintuplet(events.at(omp_get_thread_num()));
-      timing_pT3 = runpT3(events.at(omp_get_thread_num()));
       timing_TC = runTrackCandidate(events.at(omp_get_thread_num()), ana.no_pls_dupclean, ana.tc_pls_triplets);
+      // Chain-stage attribution. The graph build (incidence, edges, weld, gate) runs inside the T3
+      // stage, and the chain track-candidate work (hit claim, pixel attach, cross-clean, emission,
+      // seed retirement) inside the TC stage. Subtract each out of its host stage so the timing
+      // table reports the chain cost in its own columns instead of hiding it in T3 and TC.
+      float const timing_chain_graph = static_cast<float>(events.at(omp_get_thread_num())->getChainBuildMs()) / 1000.f;
+      float const timing_chain_tc = static_cast<float>(events.at(omp_get_thread_num())->getChainTCMs()) / 1000.f;
+      timing_T3 -= timing_chain_graph;
+      timing_TC -= timing_chain_tc;
 
       if (ana.verbose == 4) {
 #pragma omp critical
@@ -535,11 +554,9 @@ void run_lst() {
                                     timing_MD,
                                     timing_LS,
                                     timing_T3,
-                                    timing_T5,
+                                    timing_chain_graph,
                                     timing_pLS,
-                                    timing_T4,
-                                    timing_pT5,
-                                    timing_pT3,
+                                    timing_chain_tc,
                                     timing_TC,
                                     timing_resetEvent});
     }

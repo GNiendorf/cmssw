@@ -68,68 +68,6 @@ namespace lst {
     }
   }
 
-  inline std::tuple<unsigned int,
-                    std::vector<unsigned int>,
-                    unsigned int,
-                    std::vector<unsigned int>,
-                    unsigned int,
-                    std::vector<unsigned int>>
-  getConnectedPixels(uint16_t nModules, unsigned int& nPixels, PixelMap& pixelMapping, MapPLStoLayer const& pLStoLayer) {
-    std::vector<unsigned int> connectedModuleDetIds;
-    std::vector<unsigned int> connectedModuleDetIds_pos;
-    std::vector<unsigned int> connectedModuleDetIds_neg;
-
-    unsigned int totalSizes = 0;
-    unsigned int totalSizes_pos = 0;
-    unsigned int totalSizes_neg = 0;
-    for (unsigned int isuperbin = 0; isuperbin < size_superbins; isuperbin++) {
-      int sizes = 0;
-      for (auto const& mCM_pLS : pLStoLayer[0]) {
-        std::vector<unsigned int> connectedModuleDetIds_pLS =
-            mCM_pLS.getConnectedModuleDetIds(isuperbin + size_superbins);
-        connectedModuleDetIds.insert(
-            connectedModuleDetIds.end(), connectedModuleDetIds_pLS.begin(), connectedModuleDetIds_pLS.end());
-        sizes += connectedModuleDetIds_pLS.size();
-      }
-      pixelMapping.connectedPixelsIndex[isuperbin] = totalSizes;
-      pixelMapping.connectedPixelsSizes[isuperbin] = sizes;
-      totalSizes += sizes;
-
-      int sizes_pos = 0;
-      for (auto const& mCM_pLS : pLStoLayer[1]) {
-        std::vector<unsigned int> connectedModuleDetIds_pLS_pos = mCM_pLS.getConnectedModuleDetIds(isuperbin);
-        connectedModuleDetIds_pos.insert(connectedModuleDetIds_pos.end(),
-                                         connectedModuleDetIds_pLS_pos.begin(),
-                                         connectedModuleDetIds_pLS_pos.end());
-        sizes_pos += connectedModuleDetIds_pLS_pos.size();
-      }
-      pixelMapping.connectedPixelsIndexPos[isuperbin] = totalSizes_pos;
-      pixelMapping.connectedPixelsSizesPos[isuperbin] = sizes_pos;
-      totalSizes_pos += sizes_pos;
-
-      int sizes_neg = 0;
-      for (auto const& mCM_pLS : pLStoLayer[2]) {
-        std::vector<unsigned int> connectedModuleDetIds_pLS_neg = mCM_pLS.getConnectedModuleDetIds(isuperbin);
-        connectedModuleDetIds_neg.insert(connectedModuleDetIds_neg.end(),
-                                         connectedModuleDetIds_pLS_neg.begin(),
-                                         connectedModuleDetIds_pLS_neg.end());
-        sizes_neg += connectedModuleDetIds_pLS_neg.size();
-      }
-      pixelMapping.connectedPixelsIndexNeg[isuperbin] = totalSizes_neg;
-      pixelMapping.connectedPixelsSizesNeg[isuperbin] = sizes_neg;
-      totalSizes_neg += sizes_neg;
-    }
-
-    nPixels = totalSizes + totalSizes_pos + totalSizes_neg;
-
-    return {totalSizes,
-            connectedModuleDetIds,
-            totalSizes_pos,
-            connectedModuleDetIds_pos,
-            totalSizes_neg,
-            connectedModuleDetIds_neg};
-  }
-
   inline void fillConnectedModuleArrayExplicit(Modules modules,
                                                ModuleMetaData const& mmd,
                                                ModuleConnectionMap const& moduleConnectionMap) {
@@ -233,7 +171,6 @@ namespace lst {
   }
 
   inline std::shared_ptr<ModulesHostCollection> constructModuleCollection(
-      MapPLStoLayer const& pLStoLayer,
       ModuleMetaData& mmd,
       uint16_t& nModules,
       uint16_t& nLowerModules,
@@ -242,13 +179,9 @@ namespace lst {
       const EndcapGeometry& endcapGeometry,
       const TiltedGeometry& tiltedGeometry,
       const ModuleConnectionMap& moduleConnectionMap) {
-    // TODO: this whole section could use some refactoring
-    auto [totalSizes,
-          connectedModuleDetIds,
-          totalSizes_pos,
-          connectedModuleDetIds_pos,
-          totalSizes_neg,
-          connectedModuleDetIds_neg] = getConnectedPixels(nModules, nPixels, pixelMapping, pLStoLayer);
+    // Post-deletion: the superbin connection maps are gone; the modulesPixel block is a one-row
+    // stub kept only so the multi-block collection layout is unchanged.
+    nPixels = 1u;
 
     auto modulesHC = std::make_shared<ModulesHostCollection>(cms::alpakatools::host(), nModules, nPixels);
 
@@ -398,27 +331,13 @@ namespace lst {
     // Fill pixel part
     pixelMapping.pixelModuleIndex = mmd.detIdToIndex.at(kPixelModuleId);
 
-    auto modulesPixel_view = modulesHC->view().modulesPixel();
-    auto connectedPixels =
-        cms::alpakatools::make_host_view(modulesPixel_view.connectedPixels(), modulesPixel_view.metadata().size());
-    for (unsigned int icondet = 0; icondet < totalSizes; icondet++) {
-      connectedPixels[icondet] = mmd.detIdToIndex.at(connectedModuleDetIds[icondet]);
-    }
-    for (unsigned int icondet = 0; icondet < totalSizes_pos; icondet++) {
-      connectedPixels[icondet + totalSizes] = mmd.detIdToIndex.at(connectedModuleDetIds_pos[icondet]);
-    }
-    for (unsigned int icondet = 0; icondet < totalSizes_neg; icondet++) {
-      connectedPixels[icondet + totalSizes + totalSizes_pos] = mmd.detIdToIndex.at(connectedModuleDetIds_neg[icondet]);
-    }
-
     fillConnectedModuleArrayExplicit(modules_view, mmd, moduleConnectionMap);
     fillMapArraysExplicit(modules_view, mmd);
 
     return modulesHC;
   }
 
-  inline std::shared_ptr<ModulesHostCollection> loadModulesFromFile(MapPLStoLayer const& pLStoLayer,
-                                                                    const char* moduleMetaDataFilePath,
+  inline std::shared_ptr<ModulesHostCollection> loadModulesFromFile(const char* moduleMetaDataFilePath,
                                                                     uint16_t& nModules,
                                                                     uint16_t& nLowerModules,
                                                                     unsigned int& nPixels,
@@ -429,15 +348,8 @@ namespace lst {
     ModuleMetaData mmd;
 
     loadCentroidsFromFile(moduleMetaDataFilePath, mmd, nModules);
-    return constructModuleCollection(pLStoLayer,
-                                     mmd,
-                                     nModules,
-                                     nLowerModules,
-                                     nPixels,
-                                     pixelMapping,
-                                     endcapGeometry,
-                                     tiltedGeometry,
-                                     moduleConnectionMap);
+    return constructModuleCollection(
+        mmd, nModules, nLowerModules, nPixels, pixelMapping, endcapGeometry, tiltedGeometry, moduleConnectionMap);
   }
 
 }  // namespace lst

@@ -1,0 +1,280 @@
+#!/usr/bin/env python3
+"""Generate RecoTracker/LSTCore/src/alpaka/EdgeNetworkWeights.h from a trained edge head and a
+weld working-point table. This script is the only supported way to regenerate that header.
+
+The header carries the head's whole artefact: the 40-input preprocessing arrays (kLog10p1 /
+kClipLo / kClipHi / kFeatMean / kFeatStd), the 40->32->32->3 weights, and the per-cell weld
+working-point tables kWpPrompt / kWpDisp, indexed [fam * kWpBins + ptbin * kEtaBins + etabin],
+that ChainEdges turns into ChainEdgesSoA::weldBar. The preprocessing order baked into the header
+is log10(1+x), then clip, then standardize, and it is not interchangeable: for a log-scaled input
+the clip bounds and the mean/std are both measured in log space, so applying them in any other
+order feeds the network different numbers than training saw.
+
+Inputs (NONE of the trained artefacts live in this repository -- the script cannot run out of
+the box, they have to be supplied from wherever training wrote them):
+  --model  a PyTorch checkpoint (.pt) holding "state_dict" (a 40->32->32->3 Sequential, so keys
+           0/2/4 .weight and .bias), the standardisation vectors "mu" and "sd", and the metadata
+           "best_epoch", "best_val_auc", "args" (lr / patience / seed) and "arch".
+  --table  a JSON file with "table_prompt" and "table_disp", each 2 x 20 (E1 and E2 rows over the
+           2 pT x 10 |eta| bins), plus an optional "note" copied into the header banner.
+It also reads the committed EdgeNetworkWeights.h, resolved relative to this file: the clip bounds
+and the log10(1+x) flags are properties of the input definitions rather than of a given training,
+so they are carried over unchanged instead of being re-derived.
+
+Output: the header written to --out. Every emitted numeric literal is then read back out of that
+file and compared against the checkpoint and the table, as float32 values rather than as decimal
+text (a shortest round-trip literal is allowed to print fewer digits than the source). A mismatch
+prints the offending array and exits non-zero, so a silent transcription error cannot ship.
+
+Run:
+  python3 export_edge_weights.py --model <head>.pt --table <wp>.json --out <path to header>
+--shipped-parity is still accepted on the command line but is currently inert: the branch that
+would re-emit the committed weights with a constant table is disabled, so the export always reads
+--model and --table.
+"""
+import argparse
+import json
+import os
+import re
+import sys
+
+import numpy as np
+
+import os
+
+# The committed header, resolved relative to this script so the export works in any checkout.
+SHIPPED = os.path.normpath(
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "src", "alpaka",
+                 "EdgeNetworkWeights.h"))
+NPT, NETA = 2, 10
+NBIN = NPT * NETA
+
+
+def f2s(x):
+    """Shortest decimal literal that round-trips through float32, in the committed headers' style."""
+    v = np.float32(x)
+    for p in range(1, 10):
+        s = "%.*g" % (p, v)
+        if np.float32(float(s)) == v:
+            break
+    if "e" not in s and "." not in s and "inf" not in s and "nan" not in s:
+        s += ".0"
+    return s + "f"
+
+
+def row_block(vals, indent=6, width=118):
+    """One braced matrix row, wrapped so no line exceeds `width` (CMSSW's code format limit is 120)."""
+    out = []
+    line = " " * indent + "{"
+    for i, v in enumerate(vals):
+        t = f2s(v) + ("," if i + 1 < len(vals) else "}")
+        if len(line) + len(t) + 1 > width:
+            out.append(line)
+            line = " " * (indent + 1)
+        line += t + (" " if i + 1 < len(vals) else "")
+    out.append(line.rstrip())
+    out = [l.rstrip() for l in out]
+    return "\n".join(out)
+
+
+def arr_block(name, vals, per=7, indent=6):
+    """One flat array initialiser body, wrapped on token boundaries to stay inside 120 columns."""
+    out = []
+    line = " " * indent
+    for i, v in enumerate(vals):
+        t = f2s(v) + ("," if i + 1 < len(vals) else "")
+        if len(line) + len(t) + 1 > 118:
+            out.append(line.rstrip())
+            line = " " * indent
+        line += t + " "
+    out.append(line.rstrip())
+    return "\n".join(out)
+
+
+def parse_header_arrays(path):
+    """Re-parse every float literal of every array declared in a generated header, by array name."""
+    txt = open(path).read()
+    txt = re.sub(r"//[^\n]*", "", txt)
+    out = {}
+    for m in re.finditer(r"(?:float|bool)\s+(\w+)\s*(\[[^=]*)?=\s*([^;]+);", txt):
+        name, body = m.group(1), m.group(3)
+        body = body.replace("{", " ").replace("}", " ")
+        toks = [t for t in re.split(r"[,\s]+", body) if t]
+        vals = []
+        for t in toks:
+            if t in ("true", "false"):
+                vals.append(1.0 if t == "true" else 0.0)
+            else:
+                vals.append(float(t.rstrip("f")))
+        out[name] = np.array(vals, dtype=np.float64)
+    return out
+
+
+HDR = '''// GENERATED by standalone/analysis/DNN/export_edge_weights.py -- DO NOT EDIT BY HAND.
+// Sources:
+//   model: {model}
+//   table: {table}
+// Model meta: {meta}
+//
+// Convention (mirrors src/alpaka/NeuralNetwork.h): weights are stored TRANSPOSED,
+// wgt[in][out], so the inference inner loop is output[o] += input[i] * wgt[i][o].
+//
+// Per-input preprocessing, applied in this order:
+//   1. if (kLog10p1[i]) x = log10(1 + x)
+//   2. x = min(max(x, kClipLo[i]), kClipHi[i])   (+-1e30 = unclipped)
+//   3. x = (x - kFeatMean[i]) / kFeatStd[i]
+//
+// Input feature order (ni_00..ni_12, no_00..no_12, ef_00..ef_13):
+//  [ 0] ni_kappaSigned      [10] ni_nBarrel        [20] no_drt01          [30] ef_dTanLambda
+//  [ 1] ni_log10R           [11] ni_nPS            [21] no_drt12          [31] ef_kinkPhi
+//  [ 2] ni_tanLambda        [12] ni_fakeScoreT3    [22] no_innermostLayer [32] ef_kinkTheta
+//  [ 3] ni_chordEta         [13] no_kappaSigned    [23] no_nBarrel        [33] ef_centerDist
+//  [ 4] ni_dphi01           [14] no_log10R         [24] no_nPS            [34] ef_centerDistRel
+//  [ 5] ni_dz01             [15] no_tanLambda      [25] no_fakeScoreT3    [35] ef_sharedLayer
+//  [ 6] ni_dz12             [16] no_chordEta       [26] ef_etype          [36] ef_sharedIsPS
+//  [ 7] ni_drt01            [17] no_dphi01         [27] ef_dKappa         [37] ef_sharedIsBarrel
+//  [ 8] ni_drt12            [18] no_dz01           [28] ef_dKappaRel      [38] ef_degIn
+//  [ 9] ni_innermostLayer   [19] no_dz12           [29] ef_chargeAgree    [39] ef_degOut
+//
+// kWpBar is the weld WORKING POINT, not part of the network: kWpBar[fam][ptbin*kEtaBins+etabin]
+// is the log-odds an edge of family fam+1 (1 = E1 shared-MD, 2 = E2 shared-LS) must reach to be
+// eligible for the weld, on LST's T3-DNN binning keyed on the INNER node (ChainNodesSoA::wpBin).
+// Every cell is fitted so that this head's TRUE-edge acceptance in that cell equals the SHIPPED
+// head's acceptance there, measured on held-out events -- so a head swap moves the false-edge rate
+// and nothing else by construction. Fitting a threshold on labelled dumps is offline calibration;
+// no truth is read at reco time.
+// {wpnote}
+#ifndef RecoTracker_LSTCore_src_alpaka_EdgeNetworkWeights_h
+#define RecoTracker_LSTCore_src_alpaka_EdgeNetworkWeights_h
+
+#include <alpaka/alpaka.hpp>
+
+#include "FWCore/Utilities/interface/HostDeviceConstant.h"
+
+namespace ALPAKA_ACCELERATOR_NAMESPACE::lst::dnn::edgemlp {{
+
+  constexpr int kInput = 40;
+  constexpr int kHidden = 32;
+  constexpr int kOutputs = 3;  // 0 fake, 1 prompt true, 2 displaced true (the T3-DNN pattern)
+  // 2 pT bins x 10 |eta| bins, LST's dnn::kPtBins x dnn::kEtaBins (asserted in ChainEdges.h).
+  constexpr int kWpBins = 20;
+
+'''
+
+
+def main():
+    p = argparse.ArgumentParser()
+    p.add_argument("--model", default="")
+    p.add_argument("--table", default="")
+    p.add_argument("--shipped-parity", action="store_true")
+    p.add_argument("--out", required=True)
+    a = p.parse_args()
+
+    if False and a.shipped_parity:
+        S = parse_header_arrays(SHIPPED)
+        mean, std = S["kFeatMean"], S["kFeatStd"]
+        clo, chi, lg = S["kClipLo"], S["kClipHi"], S["kLog10p1"]
+        w1 = S["wgt_l1"].reshape(40, 32)
+        b1 = S["bias_l1"]
+        w2 = S["wgt_l2"].reshape(32, 32)
+        b2 = S["bias_l2"]
+        wo, bo = S["wgt_out"], S["bias_out"]
+        table = np.zeros((2, NBIN))
+        table[0, :] = 0.0
+        table[1, :] = -2.0
+        meta = "committed edge head weights, re-emitted unchanged (parity build)"
+        wpnote = ("PARITY BUILD: every E1 cell is thetaEdge = 0 and every E2 cell is "
+                  "thetaEdgeE2 = -2.0, i.e. the scalar bars the table replaced, so this header and "
+                  "the table plumbing must reproduce the scalar-bar binary bit for bit.")
+        model_s, table_s = "src/alpaka/EdgeNetworkWeights.h (committed, re-emitted)", "constant (scalar bars)"
+    else:
+        import torch
+        ck = torch.load(a.model, map_location="cpu", weights_only=False)
+        sd = ck["state_dict"]
+        mean = ck["mu"].astype(np.float64)
+        std = ck["sd"].astype(np.float64)
+        S = parse_header_arrays(SHIPPED)
+        # The clip bounds and log10 flags describe the input definitions, not this training, so
+        # they are carried over from the committed header instead of being re-derived.
+        clo, chi, lg = S["kClipLo"], S["kClipHi"], S["kLog10p1"]
+        # The CMSSW python's torch is built without the numpy bridge, so tensor.numpy() raises
+        # "PyTorch was compiled without NumPy support". .tolist() is exact for float32 (every
+        # float32 value has an exact float64 representation), so the emitted digits are unchanged.
+        def t2a(t):
+            return np.array(t.detach().cpu().tolist(), dtype=np.float64)
+
+        w1 = t2a(sd["0.weight"]).T
+        b1 = t2a(sd["0.bias"])
+        w2 = t2a(sd["2.weight"]).T
+        b2 = t2a(sd["2.bias"])
+        wo = t2a(sd["4.weight"])          # [3, kHidden] -- [class][hidden]
+        bo = t2a(sd["4.bias"])               # [3]
+        assert wo.shape == (3, 32) and bo.shape == (3,), (wo.shape, bo.shape)
+        T = json.load(open(a.table))
+        tabP = np.array(T["table_prompt"], dtype=np.float64).reshape(2, NBIN)
+        tabD = np.array(T["table_disp"], dtype=np.float64).reshape(2, NBIN)
+        table = np.concatenate([tabP, tabD])
+        meta = ("best_epoch=%d best_val_auc=%.10f lr=%g patience=%d seed=%d arch=%s "
+                "train_rows=on-policy dump from the deployed binary"
+                % (ck["best_epoch"], ck["best_val_auc"], ck["args"]["lr"], ck["args"]["patience"],
+                   ck["args"]["seed"], ck["arch"]))
+        wpnote = T.get("note", "")
+        model_s, table_s = os.path.basename(a.model), os.path.basename(a.table)
+
+    L = [HDR.format(model=model_s, table=table_s, meta=meta, wpnote=wpnote)]
+    L.append("  HOST_DEVICE_CONSTANT float kFeatMean[kInput] = {\n" + arr_block("m", mean) + "};\n")
+    L.append("  HOST_DEVICE_CONSTANT float kFeatStd[kInput] = {\n" + arr_block("s", std) + "};\n")
+    L.append("  HOST_DEVICE_CONSTANT float kClipLo[kInput] = {\n" + arr_block("l", clo) + "};\n")
+    L.append("  HOST_DEVICE_CONSTANT float kClipHi[kInput] = {\n" + arr_block("h", chi) + "};\n")
+    lgs = ", ".join("true" if v else "false" for v in lg)
+    L.append("  HOST_DEVICE_CONSTANT bool kLog10p1[kInput] = {" + lgs + "};\n")
+    rows = [row_block(w1[i]) for i in range(40)]
+    L.append("  HOST_DEVICE_CONSTANT float wgt_l1[kInput][kHidden] = {\n" + ",\n".join(rows) + "};\n")
+    L.append("  HOST_DEVICE_CONSTANT float bias_l1[kHidden] = {\n" + arr_block("b", b1) + "};\n")
+    rows = [row_block(w2[i]) for i in range(32)]
+    L.append("  HOST_DEVICE_CONSTANT float wgt_l2[kHidden][kHidden] = {\n" + ",\n".join(rows) + "};\n")
+    L.append("  HOST_DEVICE_CONSTANT float bias_l2[kHidden] = {\n" + arr_block("b", b2) + "};\n")
+    L.append("  // wgt_out is [class][hidden] -- the ONE array where the wgt[in][out] convention is\n"
+             "  // transposed, so each class's weight vector is contiguous for the batched dot product.\n"
+             "  HOST_DEVICE_CONSTANT float wgt_out[kOutputs][kHidden] = {\n"
+             + ",\n".join(row_block(wo[c]) for c in range(3)) + "};\n")
+    L.append("  HOST_DEVICE_CONSTANT float bias_out[kOutputs] = {"
+             + ", ".join(f2s(v) for v in bo) + "};\n")
+    L.append("  // The two working-point tables of the T3-DNN OR-rule, flattened as\n"
+             "  // [fam * kWpBins + ptbin * 10 + etabin] with fam 0 = E1 (shared MD), 1 = E2 (shared LS).\n"
+             "  // An edge is weld-eligible iff (zPrompt - zFake) >= kWpPrompt[cell] OR\n"
+             "  // (zDisp - zFake) >= kWpDisp[cell]. Each cell of each table is fitted so that this\n"
+             "  // head accepts the same fraction of that cell's PROMPT-true / DISPLACED-true edges as\n"
+             "  // the shipped head did -- the two classes calibrated SEPARATELY, which is what a single\n"
+             "  // scalar bar could not express.\n"
+             "  HOST_DEVICE_CONSTANT float kWpPrompt[2 * kWpBins] = {\n"
+             + arr_block("p", np.concatenate([table[0], table[1]])) + "};\n")
+    L.append("  HOST_DEVICE_CONSTANT float kWpDisp[2 * kWpBins] = {\n"
+             + arr_block("d", np.concatenate([table[2], table[3]])) + "};\n")
+    L.append("}  // namespace ALPAKA_ACCELERATOR_NAMESPACE::lst::dnn::edgemlp\n\n#endif\n")
+    open(a.out, "w").write("\n".join(L))
+
+    # Prove the port: re-read the file just written and compare every literal against its source.
+    G = parse_header_arrays(a.out)
+    ref = {"kFeatMean": mean, "kFeatStd": std, "kClipLo": clo, "kClipHi": chi,
+           "kLog10p1": lg, "wgt_l1": w1.reshape(-1), "bias_l1": b1,
+           "wgt_l2": w2.reshape(-1), "bias_l2": b2, "wgt_out": wo.reshape(-1),
+           "bias_out": bo, "kWpPrompt": table[:2].reshape(-1), "kWpDisp": table[2:].reshape(-1)}
+    bad = 0
+    for k, v in ref.items():
+        g = G[k]
+        assert len(g) == len(v), (k, len(g), len(v))
+        # the literals are float32 CONSTANTS: the check is float32 equality of the value the
+        # compiler will see, not decimal equality of the text (a shortest round-trip literal is
+        # allowed to differ in the digits it prints).
+        d = np.abs(np.float32(g).astype(np.float64) - np.float32(v).astype(np.float64))
+        if d.max() > 0:
+            print("MISMATCH %s max %g" % (k, d.max()))
+            bad += 1
+    n = sum(len(v) for v in ref.values())
+    print("port check: %d literals, %d arrays, %s" % (n, len(ref), "OK" if bad == 0 else "FAILED"))
+    sys.exit(1 if bad else 0)
+
+
+if __name__ == "__main__":
+    main()

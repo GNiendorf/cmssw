@@ -16,22 +16,19 @@ namespace lst {
                       SOA_COLUMN(Params_T3::ArrayU16xLayers, lowerModuleIndices),  // lower module index in each layer
                       SOA_COLUMN(Params_T3::ArrayU8xLayers, logicalLayers),        // layer ID
                       SOA_COLUMN(Params_T3::ArrayUxHits, hitIndices),              // hit indices
-                      SOA_COLUMN(FPX, betaIn),                 // beta/chord angle of the inner segment
-                      SOA_COLUMN(float, centerX),              // lower/anchor-hit based circle center x
-                      SOA_COLUMN(float, centerY),              // lower/anchor-hit based circle center y
-                      SOA_COLUMN(float, radius),               // lower/anchor-hit based circle radius
-                      SOA_COLUMN(float, fakeScore),            // DNN confidence score for fake t3
-                      SOA_COLUMN(float, promptScore),          // DNN confidence score for real (prompt) t3
-                      SOA_COLUMN(float, displacedScore),       // DNN confidence score for real (displaced) t3
-                      SOA_COLUMN(unsigned int, connectedMax),  // number of outer-triplets that pass the MD-equality cut
-                      SOA_COLUMN(unsigned int, connectedLSMax),  // n of outer-triplets that pass the LS-equality cut
-                      SOA_COLUMN(short, charge),
+                      SOA_COLUMN(FPX, betaIn),            // beta/chord angle of the inner segment
+                      SOA_COLUMN(float, centerX),         // lower/anchor-hit based circle center x
+                      SOA_COLUMN(float, centerY),         // lower/anchor-hit based circle center y
+                      SOA_COLUMN(float, radius),          // lower/anchor-hit based circle radius
+                      SOA_COLUMN(float, fakeScore),       // DNN confidence score for fake t3
+                      SOA_COLUMN(float, promptScore),     // DNN confidence score for real (prompt) t3
+                      SOA_COLUMN(float, displacedScore),  // DNN confidence score for real (displaced) t3
+                      SOA_COLUMN(short, charge)
 #ifdef CUT_VALUE_DEBUG
-                      SOA_COLUMN(float, betaInCut),
+                          ,
+                      SOA_COLUMN(float, betaInCut)
 #endif
-                      SOA_COLUMN(bool, partOfPT5),   // is it used in a pT5
-                      SOA_COLUMN(bool, partOfT5),    // is it used in a T5
-                      SOA_COLUMN(bool, partOfPT3));  // is it used in a pT3
+  );
 
   using TripletsSoA = TripletsSoALayout<>;
   using Triplets = TripletsSoA::View;

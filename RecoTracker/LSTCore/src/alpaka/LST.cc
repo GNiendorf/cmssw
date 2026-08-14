@@ -18,8 +18,9 @@ void LST::run(Queue& queue,
               LSTInputDeviceCollection const* lstInputDC,
               bool no_pls_dupclean,
               bool tc_pls_triplets,
-              bool reduce_mem_by_full_precompute) {
-  auto event = LSTEvent(verbose, ptCut, clustSizeCut, queue, deviceESData, reduce_mem_by_full_precompute);
+              bool reduce_mem_by_full_precompute,
+              ::lst::ChainConfig const& chainConfig) {
+  auto event = LSTEvent(verbose, ptCut, clustSizeCut, queue, deviceESData, reduce_mem_by_full_precompute, chainConfig);
 
   event.addInputToEvent(lstInputDC);
   event.addHitToEvent();
@@ -60,6 +61,10 @@ void LST::run(Queue& queue,
   event.createTriplets();
   if (verbose) {
     alpaka::wait(queue);  // event calls are asynchronous: wait before printing
+    printf("# of chain nodes (dense T3s): %d\n", event.getNumberOfChainNodes());
+    printf("# of chain E1 edges (MD keyed): %d\n", event.getNumberOfChainE1Edges());
+    printf("# of chain E2 edges (LS keyed): %d\n", event.getNumberOfChainE2Edges());
+    printf("# of chain edges total: %d\n", event.getNumberOfChainE1Edges() + event.getNumberOfChainE2Edges());
     printf("# of T3s produced: %d\n", event.getNumberOfTriplets());
     printf("# of T3s produced layer 1-2-3: %d\n", event.getNumberOfTripletsByLayerBarrel(0));
     printf("# of T3s produced layer 2-3-4: %d\n", event.getNumberOfTripletsByLayerBarrel(1));
@@ -75,55 +80,9 @@ void LST::run(Queue& queue,
     printf("# of T3s produced endcap layer 5: %d\n", event.getNumberOfTripletsByLayerEndcap(4));
   }
 
-  event.createQuintuplets();
-  if (verbose) {
-    alpaka::wait(queue);  // event calls are asynchronous: wait before printing
-    printf("# of Quintuplets produced: %d\n", event.getNumberOfQuintuplets());
-    printf("# of Quintuplets produced layer 1-2-3-4-5-6: %d\n", event.getNumberOfQuintupletsByLayerBarrel(0));
-    printf("# of Quintuplets produced layer 2: %d\n", event.getNumberOfQuintupletsByLayerBarrel(1));
-    printf("# of Quintuplets produced layer 3: %d\n", event.getNumberOfQuintupletsByLayerBarrel(2));
-    printf("# of Quintuplets produced layer 4: %d\n", event.getNumberOfQuintupletsByLayerBarrel(3));
-    printf("# of Quintuplets produced layer 5: %d\n", event.getNumberOfQuintupletsByLayerBarrel(4));
-    printf("# of Quintuplets produced layer 6: %d\n", event.getNumberOfQuintupletsByLayerBarrel(5));
-    printf("# of Quintuplets produced endcap layer 1: %d\n", event.getNumberOfQuintupletsByLayerEndcap(0));
-    printf("# of Quintuplets produced endcap layer 2: %d\n", event.getNumberOfQuintupletsByLayerEndcap(1));
-    printf("# of Quintuplets produced endcap layer 3: %d\n", event.getNumberOfQuintupletsByLayerEndcap(2));
-    printf("# of Quintuplets produced endcap layer 4: %d\n", event.getNumberOfQuintupletsByLayerEndcap(3));
-    printf("# of Quintuplets produced endcap layer 5: %d\n", event.getNumberOfQuintupletsByLayerEndcap(4));
-  }
-
   event.addPixelSegmentToEventFinalize();
 
   event.pixelLineSegmentCleaning(no_pls_dupclean);
-
-  event.createPixelQuintuplets();
-  if (verbose) {
-    alpaka::wait(queue);  // event calls are asynchronous: wait before printing
-    printf("# of Pixel Quintuplets produced: %d\n", event.getNumberOfPixelQuintuplets());
-  }
-
-  event.createPixelTriplets();
-  if (verbose) {
-    alpaka::wait(queue);  // event calls are asynchronous: wait before printing
-    printf("# of Pixel T3s produced: %d\n", event.getNumberOfPixelTriplets());
-  }
-
-  event.createQuadruplets();
-  if (verbose) {
-    alpaka::wait(queue);  // event calls are asynchronous: wait before printing
-    printf("# of Quadruplets produced: %d\n", event.getNumberOfQuadruplets());
-    printf("# of Quadruplets produced layer 1-2-3-4: %d\n", event.getNumberOfQuadrupletsByLayerBarrel(0));
-    printf("# of Quadruplets produced layer 2: %d\n", event.getNumberOfQuadrupletsByLayerBarrel(1));
-    printf("# of Quadruplets produced layer 3: %d\n", event.getNumberOfQuadrupletsByLayerBarrel(2));
-    printf("# of Quadruplets produced layer 4: %d\n", event.getNumberOfQuadrupletsByLayerBarrel(3));
-    printf("# of Quadruplets produced layer 5: %d\n", event.getNumberOfQuadrupletsByLayerBarrel(4));
-    printf("# of Quadruplets produced layer 6: %d\n", event.getNumberOfQuadrupletsByLayerBarrel(5));
-    printf("# of Quadruplets produced endcap layer 1: %d\n", event.getNumberOfQuadrupletsByLayerEndcap(0));
-    printf("# of Quadruplets produced endcap layer 2: %d\n", event.getNumberOfQuadrupletsByLayerEndcap(1));
-    printf("# of Quadruplets produced endcap layer 3: %d\n", event.getNumberOfQuadrupletsByLayerEndcap(2));
-    printf("# of Quadruplets produced endcap layer 4: %d\n", event.getNumberOfQuadrupletsByLayerEndcap(3));
-    printf("# of Quadruplets produced endcap layer 5: %d\n", event.getNumberOfQuadrupletsByLayerEndcap(4));
-  }
 
   event.createTrackCandidates(no_pls_dupclean, tc_pls_triplets);
   if (verbose) {

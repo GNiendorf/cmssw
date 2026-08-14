@@ -1,6 +1,17 @@
 #ifndef trkCore_h
 #define trkCore_h
 
+// Core services of the standalone harness, in four groups:
+//   - stage drivers (runMiniDoublet .. runTrackCandidate): call one LSTEvent stage, wait for the
+//     device, and return its wall time; the timing table is assembled from their return values;
+//   - truth matching (matchedSimTrkIdxs*, getDenomSimTrkType): map a reco object's hit rows onto
+//     sim tracks by shared hits, and classify a sim track into the MTV denominator tiers;
+//   - sim-helix geometry (drfrac/distxySimHitConsistentWithHelix): how far a sim hit sits from the
+//     helix implied by the sim track's own parameters, used to select well-behaved denominators;
+//   - input loading, timing report and run metadata.
+//
+// Everything here reads the global tracking-ntuple reader for truth and LSTEvent for reco.
+
 #include "LSTEvent.h"
 
 #include "Trktree.h"
@@ -21,15 +32,9 @@ using ::lst::PixelType;
 bool goodEvent();
 float runMiniDoublet(LSTEvent* event, int evt);
 float runSegment(LSTEvent* event);
-float runT4(LSTEvent* event);
-float runT4x(LSTEvent* event);
 float runT3(LSTEvent* event);
 float runTrackCandidate(LSTEvent* event, bool no_pls_dupclean, bool tc_pls_triplets);
-float runQuadruplet(LSTEvent* event);
-float runQuintuplet(LSTEvent* event);
-float runPixelQuintuplet(LSTEvent* event);
 float runPixelLineSegment(LSTEvent* event, bool no_pls_dupclean);
-float runpT3(LSTEvent* event);
 
 // --------------------- ======================== ---------------------
 
