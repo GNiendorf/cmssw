@@ -55,6 +55,7 @@ Run:
 import argparse
 import json
 import os
+import re
 
 import numpy as np
 
@@ -73,11 +74,30 @@ def tonp(t):
 # TRUE-pair acceptance to. They pair with the dump's `lgt` column, which is that same head's logit
 # on that exact row, so the reference is in the data and the fit needs no free parameter. Update
 # these together with the dump, never separately.
-SHIPPED = {
-    "attachTheta": 6.626049, "attachThetaT": 5.753662, "attachThetaE": 5.907102,
-    "attachThetaT3": 5.515511, "rpsThetaChain": 5.480793,
-    "xcTheta": 3.430463, "xcThetaT": 2.82865, "xcThetaE": 3.641699,
-}
+def _bars_from_chainconfig():
+    """Read the eight reference bars from interface/ChainConfig.h.
+
+    They were hardcoded here once and silently went stale: five of the eight had drifted from the
+    deployed values, xcTheta by 1.32, so every bar this script fitted was matching the acceptance of
+    an operating point that does not run. Parsing the header instead means the reference cannot
+    disagree with what is deployed. The env overrides in that file (LST_D_*) are all default-off, so
+    the struct defaults are the deployed bars.
+    """
+    here = os.path.dirname(os.path.abspath(__file__))
+    hdr = os.path.normpath(os.path.join(here, "..", "..", "..", "interface", "ChainConfig.h"))
+    want = ("attachTheta", "attachThetaT", "attachThetaE", "attachThetaT3",
+            "rpsThetaChain", "xcTheta", "xcThetaT", "xcThetaE")
+    src = open(hdr).read()
+    out = {}
+    for name in want:
+        m = re.search(r"float\s+%s\s*=\s*([0-9.eE+-]+)f?\s*;" % re.escape(name), src)
+        if not m:
+            raise SystemExit("could not read bar %s from %s" % (name, hdr))
+        out[name] = float(m.group(1))
+    return out
+
+
+SHIPPED = _bars_from_chainconfig()
 # universe: 'A' chain 5+ (stage 0), 'B' bare T3 (stage 1), 'C' chain-kind (stage 0 + 2)
 BARS = [
     ("attachTheta", "A", 0), ("attachThetaT", "A", 1), ("attachThetaE", "A", 2),
@@ -155,6 +175,28 @@ def main():
     zsd = np.array(blob["z3_std"], np.float32)
     n_in, n_hid = blob["arch"][0], blob["arch"][1]
     n_out = blob["arch"][3]
+    # A head wider than the dump's own row expects the probe columns appended (see
+    # PAIRDUMP_FORMAT.md). Its standardization constants live ONLY in the checkpoint, so a head
+    # trained with them cannot be judged without them.
+    pmu = psd = pclip = None
+    nprobe = int(n_in) - int(X20.shape[1])
+    if nprobe > 0:
+        if blob.get("probe_mean") is None:
+            raise SystemExit("head expects %d probe column(s) but the checkpoint has no probe_mean"
+                             % nprobe)
+        pmu = np.array(blob["probe_mean"], np.float32)
+        psd = np.array(blob["probe_std"], np.float32)
+        pclip = float(blob.get("args", {}).get("probe_clip", 5.0))
+        probe = np.load(L + "/probe.npy", mmap_mode="r")
+        if probe.shape[1] != nprobe:
+            raise SystemExit("probe.npy has %d columns, head wants %d" % (probe.shape[1], nprobe))
+
+    def add_probe(a, src, i, j):
+        if nprobe <= 0:
+            return a
+        p = (np.asarray(src[i:j], dtype=np.float32) - pmu) / psd
+        np.clip(p, -pclip, pclip, out=p)
+        return np.concatenate([a, p], axis=1)
     import torch.nn as nn
     model = nn.Sequential(nn.Linear(n_in, n_hid), nn.ReLU(), nn.Linear(n_hid, n_hid), nn.ReLU(),
                           nn.Linear(n_hid, n_out))
@@ -185,6 +227,7 @@ def main():
         for i in range(0, n, B):
             a = np.array(X20[i:i + B], dtype=np.float32)
             a[:, 11:14] = (np.asarray(z3[i:i + B], dtype=np.float32) - zmu) / zsd
+            a = add_probe(a, probe if nprobe > 0 else None, i, i + B)
             zz = model(torch.tensor(a, dtype=torch.float32).to(dev))
             s = zz[:, 0] if n_out == 1 else (torch.logsumexp(zz[:, 1:3], dim=1) - zz[:, 0])
             snew[i:i + B] = tonp(s)
@@ -208,12 +251,14 @@ def main():
         st2 = np.load(L2 + "/st.npy")
         peta2 = np.load(L2 + "/peta.npy")
         lgt2 = np.load(L2 + "/lgt.npy")
+        probe2 = np.load(L2 + "/probe.npy", mmap_mode="r") if nprobe > 0 else None
         n2 = len(y2)
         s2 = np.empty(n2, np.float32)
         with torch.no_grad():
             for i in range(0, n2, B):
                 a = np.array(X2[i:i + B], dtype=np.float32)
                 a[:, 11:14] = (np.asarray(z32[i:i + B], dtype=np.float32) - zmu) / zsd
+                a = add_probe(a, probe2, i, i + B)
                 zz = model(torch.tensor(a, dtype=torch.float32).to(dev))
                 sc = zz[:, 0] if n_out == 1 else (torch.logsumexp(zz[:, 1:3], dim=1) - zz[:, 0])
                 s2[i:i + B] = tonp(sc)
