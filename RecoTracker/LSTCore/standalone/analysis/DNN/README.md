@@ -53,6 +53,46 @@ Iterate rounds until a round is a no-op -- the retrain barely moves the metrics.
 rounds is typical. If the metrics oscillate instead of settling, stop: that is a result worth
 reporting, not something to average away.
 
+## What each shipped head was actually trained on
+
+**The three heads were fitted on THREE DIFFERENT sample mixes.** This is recorded here because it
+is not discoverable from the scripts: the trainers take arbitrary corpora via `--lab NAME=dir`, so
+the sample choice lives in the invocation, and the only durable record is the saved `args` inside
+the `.pt`.
+
+| head | model | corpora | jet share |
+|---|---|---|---|
+| edge | `edge_G_pinned.pt` | **PU200 only** | -- |
+| chain gate | `chain3_A02.pt` | **PU200 + jets + cube5_highPt** | .25 jets, .02 gun (flat per-row) |
+| attach | `ATJ25.pt` | **PU200 + jets** | .25 |
+
+`cube50_highPt` is **never** trained on. It is a pure gate, which is what makes "the cube samples
+are bit-identical" a meaningful statement when it appears in a findings file. The enrichment gun,
+where one is used, is `cube5_highPt` -- a corpus that is 99.8% true, which is why a 2% loss share
+is worth anything against 7M PU200 rows.
+
+To check any model for yourself, rather than trusting this table:
+
+```python
+import torch
+d = torch.load("models/<head>.pt", map_location="cpu", weights_only=False)
+print(d["args"]["lab"], d["args"].get("share"))
+```
+
+### KNOWN ISSUE: the corpora are inconsistent and nobody has justified it
+
+The heads run in sequence and each one's working point changes the population the next one sees --
+that is the whole reason the on-policy loop above exists. Yet the **edge** head, which runs FIRST
+and whose bar decides which edges exist for everything downstream, was trained with **no jet rows
+and no gun rows at all**, while the gate immediately downstream of it saw both.
+
+That asymmetry looks like drift across rounds rather than a decision. It is an open item: either
+normalise the corpora across the three heads, or write down why each one differs. **Until that is
+resolved, retraining a single head will silently fit it to a different population than its
+neighbours, and the resulting weights will differ from the shipped ones for reasons that have
+nothing to do with your change.** If you retrain, reproduce the corpus in the table above first
+and confirm you can regenerate the shipped weights before changing anything.
+
 ## Working points
 
 Calibrate at **fixed per-bin signal efficiency**, on the same pt x eta binning LST's T5 DNN uses
