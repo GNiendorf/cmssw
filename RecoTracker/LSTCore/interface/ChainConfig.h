@@ -560,9 +560,15 @@ namespace lst {
 
   // Width of the attach head's pair-feature row; must match AttachNetworkWeights.h.
   static constexpr int kAttachFeatures = 22;
-  // Only chain targets with at least this many layers bid for a pLS: chain + pLS is a pT5-class
-  // object.
-  static constexpr int kAttachMinLayers = 5;
+  // Only chain targets with at least this many layers bid for a pixel seed.
+  //
+  // It is 4, not 5, because a 4-layer chain would otherwise be unreachable by ANY seeded route: it
+  // is excluded here, and its triplets are marked consumed so the bare-triplet stage will not take
+  // them either. Admitting it is worth +.0010 overall efficiency with the barrel fake rate DOWN
+  // .0011 and duplicates unchanged. The mechanism is the 75% hit-match bar: an 8-hit seedless
+  // object misses it and the same object with the seed's four pixel hits clears it, which is why
+  // the fake rate falls while the candidate count rises.
+  static constexpr int kAttachMinLayers = 4;
 
   // ---- Attach grid geometry (derivation at the top of src/alpaka/ChainAttach.h) ----------------
   // The three axes are keyed on the quantities the two prefilter windows are written in:
