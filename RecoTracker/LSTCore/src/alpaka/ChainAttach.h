@@ -260,14 +260,11 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     uint32_t pls;
     float logit;
     float x[kAttachFeatures];
-    // Probe column, NOT a head input: master's tracklet closure for this same pair, so a trainer
-    // can ask whether the head is missing it. See attachDBetaOf. Header records how many probe
-    // columns follow the head inputs, so a reader never has to assume this width.
-    float dBeta;
   };
 
-  // Number of probe columns on the record. Written into the dump header as nProbe.
-  static constexpr uint32_t kAttachProbeColumns = 1;
+  // Probe columns carried after the head inputs on each row. dBeta became head input 22, so there
+  // are none at present; the header still reports the count so a reader never assumes a width.
+  static constexpr uint32_t kAttachProbeColumns = 0;
 
   // Control block of the pair dump: [0] the append cursor (may run past the capacity), [1] the
   // number of rows dropped because it did.
@@ -919,6 +916,12 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
       residInw = alpaka::math::sqrt(acc, hitToCentreX * hitToCentreX + hitToCentreY * hitToCentreY) - target.radius;
     }
     featuresOut[21 * featureStride] = attachStdz<21>(acc, residInw);
+    // 22 dBeta: master's tracklet closure for this pair. It is the one quantity LST's pixel path
+    // cuts on that this head had no equivalent of, and offline it is worth more than everything the
+    // on-policy retrain bought on its own. Clipping happens inside attachStdz from the header's
+    // kClipLo/kClipHi, which are the training clip mapped back through the standardization -- clip
+    // then standardize is the same as standardize then clip for a monotonic affine map.
+    featuresOut[22 * featureStride] = attachStdz<22>(acc, attachDBetaOf(acc, seed, target));
     return true;
   }
 
@@ -1101,7 +1104,6 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                 row.logit = logit;
                 for (int i = 0; i < kInputs; ++i)
                   row.x[i] = inputsTransposed[i * kBatch + batchIdx];
-                row.dBeta = attachDBetaOf(acc, seed, target);
               } else {
                 alpaka::atomicAdd(acc, pairCtl + 1u, 1u, alpaka::hierarchy::Threads{});
               }

@@ -249,9 +249,6 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
 
       alignas(64) float inputsTransposed[kInputs * kBatch];
       int32_t batchRow[kBatch];
-      // MEASUREMENT ONLY: the staged seed records, so the pair dump can read the pixel side. Stage
-      // A already keeps this; stage B did not need it until the probe column.
-      AttachPlsPre const* batchSeed[kBatch];
       float logits[kBatch];
       for (int i = 0; i < kInputs * kBatch; ++i)
         inputsTransposed[i] = 0.f;
@@ -289,7 +286,6 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                 row.logit = logit;
                 for (int i = 0; i < kInputs; ++i)
                   row.x[i] = inputsTransposed[i * kBatch + batchIdx];
-                row.dBeta = attachDBetaOf(acc, *batchSeed[batchIdx], target);
               } else {
                 alpaka::atomicAdd(acc, pairCtl + 1u, 1u, alpaka::hierarchy::Threads{});
               }
@@ -347,7 +343,6 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                 continue;
               inputsTransposed[20 * kBatch + nStaged] = t3Type;  // the ONLY input that differs by target kind
               batchRow[nStaged] = static_cast<int32_t>(seedIdx);
-              batchSeed[nStaged] = &seed;
               ++nStaged;
               if (nStaged == kBatch)
                 flush();

@@ -223,16 +223,16 @@ namespace lst {
     // carrying one across a retrain silently moves the operating point. The direction that hurts
     // is LOOSENING: a bare chain converted with the wrong seed loses its match outright, so a
     // looser attach costs displaced efficiency.
-    float attachTheta = 6.64275f;    // |seed eta| < 1.1
-    float attachThetaT = 6.23461f;   // 1.1 <= |seed eta| < 1.7
-    float attachThetaE = 6.209162f;  // |seed eta| >= 1.7
+    float attachTheta = 6.785090f;   // |seed eta| < 1.1
+    float attachThetaT = 5.986921f;  // 1.1 <= |seed eta| < 1.7
+    float attachThetaE = 6.056449f;  // |seed eta| >= 1.7
     // Delivery margin of the bare-T3 attach (ChainAttachT3.h), global -- no eta bands. Doubles as
     // the T3-side retirement bar of the carried-pLS retirement predicate.
-    float attachThetaT3 = 5.558521f;
+    float attachThetaT3 = 5.811417f;
     // Chain-side retirement bar of that same predicate. Deliberately NOT banded; a banded version
     // measured dominated. The retirement kernels must read THIS and never attachTheta -- reusing
     // the delivery margin is wrong now that delivery is banded.
-    float rpsThetaChain = 5.32247f;
+    float rpsThetaChain = 5.386236f;
     // Bare-T3 target admission on the production T3 fake score (node feature 12). Written in the
     // NaN-rejecting form !(fakeScore <= t3FakeMax), and applied to the target mask, so a rejected
     // T3 is never scored and never becomes a seed's best T3.
@@ -251,9 +251,9 @@ namespace lst {
     // additionally required; see ChainCrossClean.h and ChainAttach.h for which, and why each was
     // measured inert. Set by the same fixed-acceptance rule as the attach bars above, so likewise
     // tied to AttachNetworkWeights.h.
-    float xcTheta = 2.114034f;   // |seed eta| < 1.1
-    float xcThetaT = 2.120019f;  // 1.1 <= |seed eta| < 1.7
-    float xcThetaE = 3.401128f;  // |seed eta| >= 1.7
+    float xcTheta = 1.922617f;   // |seed eta| < 1.1
+    float xcThetaT = 2.080702f;  // 1.1 <= |seed eta| < 1.7
+    float xcThetaE = 3.541193f;  // |seed eta| >= 1.7
     // Cross-clean of the delivered SEEDLESS chain rows against the delivered SEEDED ones: drop a
     // seedless row sharing this many outer-tracker hits (2 = one full mini-doublet) with a
     // delivered pT5- or pT3-class row. 0 disables it. Effectively binary, because a seedless row
@@ -559,7 +559,7 @@ namespace lst {
   static constexpr unsigned int kChainBareT3TCHeadroom = 4096u;
 
   // Width of the attach head's pair-feature row; must match AttachNetworkWeights.h.
-  static constexpr int kAttachFeatures = 22;
+  static constexpr int kAttachFeatures = 23;
   // Only chain targets with at least this many layers bid for a pixel seed.
   //
   // It is 4, not 5, because a 4-layer chain would otherwise be unreachable by ANY seeded route: it
