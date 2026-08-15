@@ -220,6 +220,11 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     float xcThr;
     uint8_t isQuad;
     uint16_t phiMask;  // the phi-cell set this copy was scattered under; 0 in the per-seed array
+    // MEASUREMENT ONLY: the pixel-side quantities master's tracklet closure starts from, which no
+    // other field here carries. innerHit{X,Y} above is the INNER pixel anchor; the tracklet is
+    // built from the OUTER one. Read only by attachDBetaOf, and only when the pair dump is on.
+    float probePx, probePy, probePtIn;
+    float probeOuterX, probeOuterY;
   };
 
   // One filtered (chain, seed) pair of the bare-chain cross-clean, appended at attach-scoring time
@@ -255,7 +260,14 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     uint32_t pls;
     float logit;
     float x[kAttachFeatures];
+    // Probe column, NOT a head input: master's tracklet closure for this same pair, so a trainer
+    // can ask whether the head is missing it. See attachDBetaOf. Header records how many probe
+    // columns follow the head inputs, so a reader never has to assume this width.
+    float dBeta;
   };
+
+  // Number of probe columns on the record. Written into the dump header as nProbe.
+  static constexpr uint32_t kAttachProbeColumns = 1;
 
   // Control block of the pair dump: [0] the append cursor (may run past the capacity), [1] the
   // number of rows dropped because it did.
@@ -290,7 +302,64 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     // The chain row for a chain target; the sparse triplet index for a bare-triplet target.
     uint32_t chain;
     uint8_t centerValid;
+    // MEASUREMENT ONLY: the target's two innermost anchors, which are the outer leg of master's
+    // tracklet. Both target-pre kernels already load these MDs for other features, so filling them
+    // costs no extra read. probeNAnchor < 2 marks a target too short to form the tracklet.
+    float probeAx0, probeAy0, probeAx1, probeAy1;
+    int32_t probeNAnchor;
   };
+
+  // MEASUREMENT ONLY -- master's tracklet closure dBeta for one (seed, target) pair, the quantity
+  // LST's pT3 path cuts on and our attach head has no equivalent of. Transcribed from
+  // CMSSW_17_0_X @ b42d8f97ad5: PixelTriplet.h runTripletDefaultAlgoPPBB / PPEE beta block, with
+  // runDeltaBetaIterations reduced to its lIn == 0 branch exactly as master's pT3 path reduces it.
+  //
+  // It is the angle the seed's momentum makes with the seed-to-target chord, minus the angle the
+  // target's own first segment makes with it. Needing NO fit of either object is the point: it
+  // survives on the contaminated-chain population where a fitted-circle residual does not.
+  //
+  // dBeta itself is EXACT here. Master's dBetaCut2 is not reproduced -- that is the acceptance
+  // threshold, and only the quantity is wanted. Returns 0 for a degenerate tracklet or a target
+  // too short to form one; a trainer must treat 0 as "not available", not as a small value.
+  template <typename TAcc>
+  ALPAKA_FN_ACC ALPAKA_FN_INLINE float attachDBetaOf(TAcc const& acc,
+                                                     AttachPlsPre const& seed,
+                                                     AttachTargetPre const& target) {
+    if (target.probeNAnchor < 2)
+      return 0.f;
+    float const outLoX = target.probeAx0, outLoY = target.probeAy0;
+    float const outUpX = target.probeAx1, outUpY = target.probeAy1;
+    float const alphaOutUp = cms::alpakatools::deltaPhi(acc, outUpX, outUpY, outUpX - outLoX, outUpY - outLoY);
+    float const chordX = outUpX - seed.probeOuterX, chordY = outUpY - seed.probeOuterY;
+    float const chordLen = alpaka::math::sqrt(acc, chordX * chordX + chordY * chordY);
+    if (chordLen < 0.2f)
+      return 0.f;
+    float betaIn = -cms::alpakatools::deltaPhi(acc, seed.probePx, seed.probePy, chordX, chordY);
+    float betaOut = -alphaOutUp + cms::alpakatools::deltaPhi(acc, outUpX, outUpY, chordX, chordY);
+    float const innerChord = alpaka::math::sqrt(acc,
+                                                (outLoX - seed.probeOuterX) * (outLoX - seed.probeOuterX) +
+                                                    (outLoY - seed.probeOuterY) * (outLoY - seed.probeOuterY));
+    if (innerChord < 0.1f && alpaka::math::abs(acc, betaOut) < 1e-3f)
+      betaOut = alpaka::math::copysign(acc, betaOut, betaIn);
+    float const segLen =
+        alpaka::math::sqrt(acc, (outUpX - outLoX) * (outUpX - outLoX) + (outUpY - outLoY) * (outUpY - outLoY));
+    bool const useBetaInSign = (chordLen < segLen) && (innerChord < segLen);
+    float const ptBeta = alpaka::math::max(acc, seed.probePtIn, float{1e-6f});
+    betaOut += alpaka::math::copysign(
+        acc,
+        alpaka::math::asin(
+            acc, alpaka::math::min(acc, segLen * k2Rinv1GeVf / alpaka::math::abs(acc, ptBeta), float{kSinAlphaMax})),
+        useBetaInSign ? betaIn : betaOut);
+    constexpr float kHalfPi = std::numbers::pi_v<float> / 2.f;
+    if (alpaka::math::abs(acc, betaIn) > kHalfPi || alpaka::math::abs(acc, betaOut) > kHalfPi) {
+      betaIn = cms::alpakatools::reducePhiRange(acc, std::numbers::pi_v<float> - betaIn);
+      betaOut = cms::alpakatools::reducePhiRange(acc, std::numbers::pi_v<float> - betaOut);
+    }
+    float const dBeta = betaIn - betaOut;
+    // A NaN or infinity here would poison a training column silently; flag it the same way a
+    // missing anchor is flagged.
+    return (dBeta == dBeta && alpaka::math::abs(acc, dBeta) < 1e30f) ? dBeta : 0.f;
+  }
 
   // The direction of motion of the seed helix where it crosses the given radius outbound. This is the
   // quantity the phi window is written in and the one the grid needs to be monotone in radius (file
@@ -452,6 +521,13 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     ALPAKA_FN_ACC void operator()(Acc1D const& acc,
                                   PixelSeedsConst pixelSeeds,
                                   PixelSegmentsConst pixelSegments,
+                                  // MEASUREMENT ONLY: the seed's OUTER pixel anchor, which master's
+                                  // tracklet starts from and no other field of the record carries.
+                                  // Read only by the probe fill below.
+                                  MiniDoubletsConst miniDoublets,
+                                  SegmentsConst segments,
+                                  ObjectRangesConst ranges,
+                                  uint16_t pixelModuleIndex,
                                   AttachPlsPre* outRecords,
                                   uint32_t nPls,
                                   ChainConfig config) const {
@@ -503,6 +579,17 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         record.innerHitY = hitY;
         record.seedRow = seedIdx;
         record.phiMask = 0u;  // only the scattered copies carry a cell set
+        // MEASUREMENT ONLY: master's PixelSeedData, restricted to what attachDBetaOf reads.
+        {
+          uint32_t const pixelSegment =
+              static_cast<uint32_t>(ranges.segmentModuleIndices()[pixelModuleIndex]) + seedIdx;
+          uint32_t const outerMd = segments.mdIndices()[pixelSegment][1];
+          record.probePx = pixelSeeds.px()[seedIdx];
+          record.probePy = pixelSeeds.py()[seedIdx];
+          record.probePtIn = pixelSeeds.ptIn()[seedIdx];
+          record.probeOuterX = miniDoublets.anchorX()[outerMd];
+          record.probeOuterY = miniDoublets.anchorY()[outerMd];
+        }
         outRecords[seedIdx] = record;
       }
     }
@@ -534,6 +621,11 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         record.centerX = 0.f;
         record.centerY = 0.f;
         record.centerValid = 0u;
+        record.probeAx0 = 0.f;
+        record.probeAy0 = 0.f;
+        record.probeAx1 = 0.f;
+        record.probeAy1 = 0.f;
+        record.probeNAnchor = 0;
 
         uint32_t const mdBase = 3u * chains.nodeOffset()[chainIdx];
         int const nMiniDoublets = chains.nMDs()[chainIdx];
@@ -544,12 +636,19 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
           record.rtInner =
               static_cast<float>(alpaka::math::sqrt(acc, innerAnchorX * innerAnchorX + innerAnchorY * innerAnchorY));
           record.zInner = miniDoublets.anchorZ()[mdInner];
+          // MEASUREMENT ONLY: the same anchors, kept for attachDBetaOf. No extra load.
+          record.probeAx0 = miniDoublets.anchorX()[mdInner];
+          record.probeAy0 = miniDoublets.anchorY()[mdInner];
+          record.probeNAnchor = 1;
           if (nMiniDoublets >= 2) {
             uint32_t const mdSecond = items.mdItems()[mdBase + 1];
             record.chordPhi = static_cast<float>(
                 alpaka::math::atan2(acc,
                                     static_cast<double>(miniDoublets.anchorY()[mdSecond]) - innerAnchorY,
                                     static_cast<double>(miniDoublets.anchorX()[mdSecond]) - innerAnchorX));
+            record.probeAx1 = miniDoublets.anchorX()[mdSecond];
+            record.probeAy1 = miniDoublets.anchorY()[mdSecond];
+            record.probeNAnchor = 2;
           }
 
           // rz straight-line fit, slope only: the target tanLambda.
@@ -1002,6 +1101,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                 row.logit = logit;
                 for (int i = 0; i < kInputs; ++i)
                   row.x[i] = inputsTransposed[i * kBatch + batchIdx];
+                row.dBeta = attachDBetaOf(acc, seed, target);
               } else {
                 alpaka::atomicAdd(acc, pairCtl + 1u, 1u, alpaka::hierarchy::Threads{});
               }

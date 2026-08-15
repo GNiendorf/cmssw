@@ -42,7 +42,7 @@ env-gated and inert unless set:
 The pair dump takes two more knobs: `LST_CHAIN_PAIR_CAP` (device rows per event, default 1e6; a
 non-zero `nDrop` in the header means the event was truncated, so raise it) and
 `LST_CHAIN_PAIR_DSB` (stage-B keep factor, default 16 -- stage A is always kept whole). Its byte
-layout is `standalone/nnloop_ref/PAIRDUMP_FORMAT.md`; take the row width from the header, never
+layout is `analysis/DNN/PAIRDUMP_FORMAT.md`; take the row width from the header, never
 from a constant in a script.
 
 Per round, in **topological order, re-dumping between every stage**:

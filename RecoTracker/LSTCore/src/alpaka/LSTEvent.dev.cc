@@ -234,7 +234,7 @@ namespace {
 
   // ---- ATTACH PAIR DUMP (LST_CHAIN_PAIR_DUMP) -----------------------------------------------
   // MEASUREMENT ONLY, default OFF. These are the on-policy training rows for the attach head; see
-  // ChainAttachPairRow in ChainAttach.h for the record and standalone/nnloop_ref/PAIRDUMP_FORMAT.md
+  // ChainAttachPairRow in ChainAttach.h for the record and standalone/analysis/DNN/PAIRDUMP_FORMAT.md
   // for the byte layout. With the variable unset every accessor below is dead: no buffer is
   // allocated and both scorers receive nullptr.
   char const* chainPairDumpPath() {
@@ -2181,6 +2181,10 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
                         ChainAttachPlsPre{},
                         lstInputDC_->const_view().pixelSeeds(),
                         pixelSegmentsDC_->const_view(),
+                        miniDoubletsDC_->const_view().miniDoublets(),
+                        segmentsDC_->const_view().segments(),
+                        rangesDC_->const_view(),
+                        pixelModuleIndex_,
                         plsPre_buf.data(),
                         pixelSize_,
                         chainConfig_);
@@ -3699,7 +3703,7 @@ void LSTEvent::dumpChainPairs() {
   // memory the scorers wrote into a buffer nothing else touches; the ntuple and the track candidate
   // collection are identical with and without it.
   //
-  // Byte layout: standalone/nnloop_ref/PAIRDUMP_FORMAT.md, reader standalone/nnloop_ref/read_pairs.py.
+  // Byte layout: standalone/analysis/DNN/PAIRDUMP_FORMAT.md.
   char const* path = chainPairDumpPath();
   if (path == nullptr || !pairDumpRows_.has_value() || !pairDumpCtl_.has_value())
     return;
@@ -3737,7 +3741,9 @@ void LSTEvent::dumpChainPairs() {
     return;
   auto put32 = [&](uint32_t v) { std::fwrite(&v, sizeof(v), 1, dumpFile); };
   put32(0x50414952u);  // 'PAIR'
-  put32(1u);           // format version
+  // Format 2 appends kAttachProbeColumns probe floats after the head inputs on every row. A version
+  // 1 reader must REJECT this file rather than read the head inputs and silently mis-stride.
+  put32(2u);
   put32(ievt);
   put32(nChainCount_);
   put32(nT3);
@@ -3746,8 +3752,10 @@ void LSTEvent::dumpChainPairs() {
   put32(1u);      // stage-A downsample factor (kept whole)
   put32(chainPairDumpDsB());
   put32(static_cast<uint32_t>(kAttachFeatures));
-  static_assert(sizeof(ChainAttachPairRow) == 4 * sizeof(uint32_t) + kAttachFeatures * sizeof(float),
-                "the pair record must be densely packed for the raw dump");
+  put32(kAttachProbeColumns);  // probe floats following the head inputs on each row
+  static_assert(
+      sizeof(ChainAttachPairRow) == 4 * sizeof(uint32_t) + (kAttachFeatures + kAttachProbeColumns) * sizeof(float),
+      "the pair record must be densely packed for the raw dump");
   if (nRows > 0)
     std::fwrite(rows.data(), sizeof(ChainAttachPairRow), nRows, dumpFile);
   std::fclose(dumpFile);

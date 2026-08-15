@@ -171,6 +171,13 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         record.zInner = miniDoublets.anchorZ()[mdFirst];
         record.chordPhi = alpaka::math::atan2(
             acc, miniDoublets.anchorY()[mdSecond] - innerAnchorY, miniDoublets.anchorX()[mdSecond] - innerAnchorX);
+        // MEASUREMENT ONLY: the same two anchors, kept for attachDBetaOf. No extra load. A bare
+        // triplet always has both, so probeNAnchor is unconditionally 2 here.
+        record.probeAx0 = innerAnchorX;
+        record.probeAy0 = innerAnchorY;
+        record.probeAx1 = miniDoublets.anchorX()[mdSecond];
+        record.probeAy1 = miniDoublets.anchorY()[mdSecond];
+        record.probeNAnchor = 2;
         record.tanLambda = nodes.features()[nodeIdx][2];
         record.fitKappa = nodes.features()[nodeIdx][0];
         record.rotSign = (record.fitKappa >= 0.f) ? 1.f : -1.f;
@@ -242,6 +249,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
 
       alignas(64) float inputsTransposed[kInputs * kBatch];
       int32_t batchRow[kBatch];
+      // MEASUREMENT ONLY: the staged seed records, so the pair dump can read the pixel side. Stage
+      // A already keeps this; stage B did not need it until the probe column.
+      AttachPlsPre const* batchSeed[kBatch];
       float logits[kBatch];
       for (int i = 0; i < kInputs * kBatch; ++i)
         inputsTransposed[i] = 0.f;
@@ -279,6 +289,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                 row.logit = logit;
                 for (int i = 0; i < kInputs; ++i)
                   row.x[i] = inputsTransposed[i * kBatch + batchIdx];
+                row.dBeta = attachDBetaOf(acc, *batchSeed[batchIdx], target);
               } else {
                 alpaka::atomicAdd(acc, pairCtl + 1u, 1u, alpaka::hierarchy::Threads{});
               }
@@ -336,6 +347,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                 continue;
               inputsTransposed[20 * kBatch + nStaged] = t3Type;  // the ONLY input that differs by target kind
               batchRow[nStaged] = static_cast<int32_t>(seedIdx);
+              batchSeed[nStaged] = &seed;
               ++nStaged;
               if (nStaged == kBatch)
                 flush();
