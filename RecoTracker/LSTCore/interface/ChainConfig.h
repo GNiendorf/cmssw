@@ -223,12 +223,12 @@ namespace lst {
     // carrying one across a retrain silently moves the operating point. The direction that hurts
     // is LOOSENING: a bare chain converted with the wrong seed loses its match outright, so a
     // looser attach costs displaced efficiency.
-    float attachTheta = 6.785090f;   // |seed eta| < 1.1
-    float attachThetaT = 5.986921f;  // 1.1 <= |seed eta| < 1.7
-    float attachThetaE = 6.056449f;  // |seed eta| >= 1.7
+    float attachTheta = 6.519017f;   // |seed eta| < 1.1
+    float attachThetaT = 5.810568f;  // 1.1 <= |seed eta| < 1.7
+    float attachThetaE = 5.834996f;  // |seed eta| >= 1.7
     // Delivery margin of the bare-T3 attach (ChainAttachT3.h), global -- no eta bands. Doubles as
     // the T3-side retirement bar of the carried-pLS retirement predicate.
-    float attachThetaT3 = 5.811417f;
+    float attachThetaT3 = 5.440334f;
     // Chain-side retirement bar of that same predicate. Deliberately NOT banded; a banded version
     // measured dominated. The retirement kernels must read THIS and never attachTheta -- reusing
     // the delivery margin is wrong now that delivery is banded.
