@@ -36,6 +36,14 @@ env-gated and inert unless set:
     LST_CHAIN_NODE_DUMP     node rows
     LST_CHAIN_CHAIN_DUMP    chain rows
     LST_CHAIN_TC_DUMP       track-candidate rows
+    LST_CHAIN_PAIR_DUMP     attach (target, seed) rows -- the attach head's training rows
+    LST_CHAIN_JOIN_DUMP     the truth-join keys the pair rows deliberately do not carry
+
+The pair dump takes two more knobs: `LST_CHAIN_PAIR_CAP` (device rows per event, default 1e6; a
+non-zero `nDrop` in the header means the event was truncated, so raise it) and
+`LST_CHAIN_PAIR_DSB` (stage-B keep factor, default 16 -- stage A is always kept whole). Its byte
+layout is `standalone/nnloop_ref/PAIRDUMP_FORMAT.md`; take the row width from the header, never
+from a constant in a script.
 
 Per round, in **topological order, re-dumping between every stage**:
 
@@ -142,7 +150,8 @@ These scripts document the method; they are **not runnable end to end from a fre
 * `train_edge.py` builds a single-logit head while `export_edge_weights.py` expects the deployed
   3-output form and a working-point table that nothing here produces -- the two are **not currently
   plug-compatible**, and reconciling them is outstanding work.
-* No pair-dump writer exists in the committed C++, so `label_attach.py` -> `train_attach.py` has no
-  in-tree way to produce its input.
+* `train_attach.py` reads pair rows whose width comes from the dump header (`nFeat`). Do NOT reuse
+  any splice that hardcodes a 20-wide row: `kAttachFeatures` is 22, and a hardcoded splice drops one
+  column and shifts eight others **with no error**.
 
 Each script's docstring repeats the specific inputs it needs.

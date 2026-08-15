@@ -47,6 +47,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
   struct AttachPlsPre;
   struct AttachTargetPre;
   struct ChainXcPair;
+  struct ChainAttachPairRow;
 
   class LSTEvent {
   private:
@@ -301,6 +302,27 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     std::vector<char> plsIsDupSelf_;   // end of pixelLineSegmentCleaning (CheckHitspLS pass 1)
     std::vector<char> plsIsDupPass2_;  // after the second CheckHitspLS (both self-clean passes)
     std::vector<char> plsIsDupFinal_;  // after CrossCleanpLS, before AddpLSasTrackCandidate
+
+    // Env-gated (LST_CHAIN_PAIR_DUMP) attach-pair sidecar: one record per scored (target, pLS)
+    // pair of both attach scoring stages, carrying the standardized head inputs as consumed and
+    // the resulting logit. These are the on-policy training rows for the attach head. Both
+    // buffers stay empty and both scorers get nullptr unless the variable names an output file,
+    // so with it unset nothing here is allocated, written or read.
+    //   rows  append buffer, capacity chainPairDumpCap()
+    //   ctl   [0] append cursor (may run past capacity), [1] rows dropped because it did
+    // Allocated once on first use and reused every event, for the same caching-allocator reason
+    // rdHashOwner_ is persistent.
+    std::optional<cms::alpakatools::device_buffer<Device, ChainAttachPairRow[]>> pairDumpRows_;
+    std::optional<cms::alpakatools::device_buffer<Device, uint32_t[]>> pairDumpCtl_;
+    void beginChainPairDump();
+    void dumpChainPairs();
+    // Env-gated (LST_CHAIN_JOIN_DUMP) truth-join keys the pair dump deliberately does not carry:
+    // per chain node its sparse triplet index and its three MDs' (anchor, other) ph2 hit rows,
+    // and per pLS its tracking-ntuple see_* row and its eta. Identities only: no sim information
+    // and no label.
+    void dumpChainJoin();
+    ChainAttachPairRow* pairDumpRowPtr() { return pairDumpRows_.has_value() ? pairDumpRows_->data() : nullptr; }
+    uint32_t* pairDumpCtlPtr() { return pairDumpCtl_.has_value() ? pairDumpCtl_->data() : nullptr; }
 
     // Env-gated (LST_CHAIN_TC_DUMP) candidate-level sidecar; writes nothing otherwise.
     void dumpChainTCs();

@@ -232,6 +232,51 @@ namespace {
     return enabled;
   }
 
+  // ---- ATTACH PAIR DUMP (LST_CHAIN_PAIR_DUMP) -----------------------------------------------
+  // MEASUREMENT ONLY, default OFF. These are the on-policy training rows for the attach head; see
+  // ChainAttachPairRow in ChainAttach.h for the record and standalone/nnloop_ref/PAIRDUMP_FORMAT.md
+  // for the byte layout. With the variable unset every accessor below is dead: no buffer is
+  // allocated and both scorers receive nullptr.
+  char const* chainPairDumpPath() {
+    static char const* const path = []() {
+      char const* s = std::getenv("LST_CHAIN_PAIR_DUMP");
+      return (s != nullptr && *s != '\0') ? s : nullptr;
+    }();
+    return path;
+  }
+
+  // Row capacity of the per-event device buffer. Stage A whole plus stage B downsampled measures
+  // 2.0e5 rows/event MEAN at PU200 and 4.7e5 on the busiest of 30 events, so the 1e6-row default
+  // (96 MB) is 5x the mean and 2.1x that peak; a production training dump should pass
+  // LST_CHAIN_PAIR_CAP=2000000. A pair arriving after the cursor passes the capacity is DROPPED and
+  // counted in the header -- never a partial record, never a crash, and read_pairs.py fails any
+  // file with a non-zero drop count.
+  uint32_t chainPairDumpCap() {
+    static uint32_t const cap = []() {
+      char const* s = std::getenv("LST_CHAIN_PAIR_CAP");
+      if (s == nullptr)
+        return uint32_t{1000000};
+      long const v = std::atol(s);
+      return (v > 0) ? static_cast<uint32_t>(v) : uint32_t{1000000};
+    }();
+    return cap;
+  }
+
+  // Device-side downsample factor of the STAGE-B rows (~1e6 scored pairs/event, against ~1.3e5 for
+  // stage A). Keep one in N by attachPairKeep's hash of the row's own two identities: label-free,
+  // score-free, deterministic, and recorded in the header so the trainer can weight. Stage A is
+  // always kept whole. LST_CHAIN_PAIR_DSB overrides it (1 = keep everything).
+  uint32_t chainPairDumpDsB() {
+    static uint32_t const factor = []() {
+      char const* s = std::getenv("LST_CHAIN_PAIR_DSB");
+      if (s == nullptr)
+        return uint32_t{16};
+      int const v = std::atoi(s);
+      return (v > 0) ? static_cast<uint32_t>(v) : uint32_t{16};
+    }();
+    return factor;
+  }
+
   // Every event-sized chain buffer is a PortableCollection, i.e. ONE
   // `make_device_buffer<std::byte[]>(queue, Layout::computeDataSize(rows))`, and there are three
   // ceilings on that single call. All three are read from the platform headers rather than
@@ -1924,8 +1969,17 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
   }
   auto const tAfterCompact = stamp();
 
-  if (nChainCount_ == 0 || !chainsDC_.has_value())
+  if (nChainCount_ == 0 || !chainsDC_.has_value()) {
+    // MEASUREMENT ONLY: keep the pair dump's event index aligned with the chain dump's. dumpChains()
+    // emits a record for every event that has a chain collection, so this degenerate leg (no attach
+    // stage runs at all) emits an empty pair record for the same events. Inert with the env unset.
+    if (chainsDC_.has_value()) {
+      beginChainPairDump();
+      dumpChainPairs();
+      dumpChainJoin();
+    }
     return;
+  }
 
   unsigned int const nHits = static_cast<unsigned int>(lstInputDC_->const_view().hits().metadata().size());
   unsigned int const nMDall = static_cast<unsigned int>(miniDoubletsDC_->view().miniDoublets().metadata().size());
@@ -2131,6 +2185,9 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
                         pixelSize_,
                         chainConfig_);
 
+  // MEASUREMENT ONLY: arm the attach pair dump for this event (no-op unless LST_CHAIN_PAIR_DUMP).
+  beginChainPairDump();
+
   // The stage-B TARGET UNIVERSE first: it depends only on the accepted-chain array, and the ONE
   // grid both attach stages share needs both target sets to form its union hull. Stage B's
   // SCORING still runs after stage A, because that is what honours the live ownership.
@@ -2158,6 +2215,9 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
   // scorer reads the live ownership those produced.
   attachBareT3(
       nHits, plsPre_buf.data(), plsOwned_buf.data(), plsBestT3_buf.data(), rdHashKey_buf.data(), rdHashVal_buf.data());
+  // MEASUREMENT ONLY: both scoring stages have run, so the event's pair rows are complete.
+  dumpChainPairs();
+  dumpChainJoin();
   // The shared grid has no reader left (the contention sweep reads only the bareT3* owner arrays),
   // so its ~10 MB items payload goes back to the caching allocator here.
   attachGridOffs_.reset();
@@ -2742,6 +2802,12 @@ void LSTEvent::attachPixels(unsigned int nHits,
                       xcCursor,
                       xcCap,
                       stats_buf.data(),
+                      // MEASUREMENT ONLY: nullptr unless LST_CHAIN_PAIR_DUMP is set. Stage A is kept
+                      // WHOLE (keep factor 1); only stage B is downsampled.
+                      pairDumpRowPtr(),
+                      pairDumpCtlPtr(),
+                      chainPairDumpCap(),
+                      1u,
                       attachSlices,
                       chainConfig_);
   alpaka::exec<Acc1D>(queue_,
@@ -3302,6 +3368,12 @@ void LSTEvent::attachBareT3(unsigned int nHits,
                       tgtScored_buf.data(),
                       plsBestT3,
                       stats_buf.data(),
+                      // MEASUREMENT ONLY: nullptr unless LST_CHAIN_PAIR_DUMP is set. Stage B is
+                      // downsampled 1-in-chainPairDumpDsB() by attachPairKeep's identity hash.
+                      pairDumpRowPtr(),
+                      pairDumpCtlPtr(),
+                      chainPairDumpCap(),
+                      chainPairDumpDsB(),
                       theta,
                       t3Slices,
                       cfgT3);
@@ -3604,6 +3676,157 @@ void LSTEvent::dumpChainTCs() {
     put32(static_cast<uint32_t>(otHitRows.size()));
     for (uint32_t hitRow : otHitRows)
       put32(hitRow);
+  }
+  std::fclose(dumpFile);
+}
+
+void LSTEvent::beginChainPairDump() {
+  // MEASUREMENT ONLY (LST_CHAIN_PAIR_DUMP). Allocates the row buffer on first use and zeroes the
+  // control block for this event. Returns immediately -- with no allocation, no memset and no
+  // queue traffic -- when the variable is unset, which is the shipped configuration.
+  if (chainPairDumpPath() == nullptr)
+    return;
+  if (!pairDumpRows_.has_value()) {
+    pairDumpRows_.emplace(cms::alpakatools::make_device_buffer<ChainAttachPairRow[]>(queue_, chainPairDumpCap()));
+    pairDumpCtl_.emplace(cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, kAttachPairCtl));
+  }
+  alpaka::memset(queue_, *pairDumpCtl_, 0u);
+}
+
+void LSTEvent::dumpChainPairs() {
+  // MEASUREMENT ONLY (LST_CHAIN_PAIR_DUMP): the on-policy training rows for the attach head. Called
+  // after BOTH attach scoring stages, so one record holds the whole event. It only READS device
+  // memory the scorers wrote into a buffer nothing else touches; the ntuple and the track candidate
+  // collection are identical with and without it.
+  //
+  // Byte layout: standalone/nnloop_ref/PAIRDUMP_FORMAT.md, reader standalone/nnloop_ref/read_pairs.py.
+  char const* path = chainPairDumpPath();
+  if (path == nullptr || !pairDumpRows_.has_value() || !pairDumpCtl_.has_value())
+    return;
+
+  alpaka::wait(queue_);
+
+  uint32_t const cap = chainPairDumpCap();
+  uint32_t ctl[kAttachPairCtl] = {0u, 0u};
+  {
+    auto host_view = cms::alpakatools::make_host_view(ctl, kAttachPairCtl);
+    auto dev_view = cms::alpakatools::make_device_view(queue_, pairDumpCtl_->data(), kAttachPairCtl);
+    alpaka::memcpy(queue_, host_view, dev_view);
+    alpaka::wait(queue_);
+  }
+  uint32_t const nRows = std::min(ctl[0], cap);
+
+  std::vector<ChainAttachPairRow> rows(nRows);
+  if (nRows > 0) {
+    auto host_view = cms::alpakatools::make_host_view(rows.data(), nRows);
+    auto dev_view = cms::alpakatools::make_device_view(queue_, pairDumpRows_->data(), nRows);
+    alpaka::memcpy(queue_, host_view, dev_view);
+    alpaka::wait(queue_);
+  }
+
+  uint32_t const nT3 = static_cast<uint32_t>(tripletsDC_->view().triplets().metadata().size());
+
+  // Sequential event counter, as in every other sidecar here: the file is only unambiguous for a
+  // single-stream run, which is how the dump is taken.
+  static std::atomic<uint32_t> pairEventCounter{0};
+  uint32_t const ievt = pairEventCounter.fetch_add(1);
+  static std::mutex pairDumpMutex;
+  std::lock_guard<std::mutex> lock(pairDumpMutex);
+  std::FILE* dumpFile = std::fopen(path, (ievt == 0) ? "wb" : "ab");
+  if (dumpFile == nullptr)
+    return;
+  auto put32 = [&](uint32_t v) { std::fwrite(&v, sizeof(v), 1, dumpFile); };
+  put32(0x50414952u);  // 'PAIR'
+  put32(1u);           // format version
+  put32(ievt);
+  put32(nChainCount_);
+  put32(nT3);
+  put32(nRows);
+  put32(ctl[1]);  // rows dropped on capacity overflow
+  put32(1u);      // stage-A downsample factor (kept whole)
+  put32(chainPairDumpDsB());
+  put32(static_cast<uint32_t>(kAttachFeatures));
+  static_assert(sizeof(ChainAttachPairRow) == 4 * sizeof(uint32_t) + kAttachFeatures * sizeof(float),
+                "the pair record must be densely packed for the raw dump");
+  if (nRows > 0)
+    std::fwrite(rows.data(), sizeof(ChainAttachPairRow), nRows, dumpFile);
+  std::fclose(dumpFile);
+}
+
+void LSTEvent::dumpChainJoin() {
+  // MEASUREMENT ONLY (LST_CHAIN_JOIN_DUMP). The pair dump carries IDENTITIES (chain row, sparse
+  // triplet row, pLS row) and no geometry a truth matcher can use; this sidecar closes that gap with
+  // the two lookup tables an offline labeller needs, and nothing else. It is called from exactly the
+  // two places dumpChainPairs() is, so record i of this file is record i of the pair file, and the
+  // (nChains, nT3) pair is written as a fingerprint. No sim information is read or written.
+  char const* path = std::getenv("LST_CHAIN_JOIN_DUMP");
+  if (path == nullptr || *path == '\0')
+    return;
+
+  alpaka::wait(queue_);
+
+  auto pullTo = [&](auto* hostPtr, auto column, unsigned int nElements) {
+    if (nElements == 0u)
+      return;
+    auto host_view = cms::alpakatools::make_host_view(hostPtr, nElements);
+    auto dev_view = cms::alpakatools::make_device_view(queue_, column, nElements);
+    alpaka::memcpy(queue_, host_view, dev_view);
+    alpaka::wait(queue_);
+  };
+
+  uint32_t const nNodes = (chainNodesDC_.has_value()) ? nChainNodes_ : 0u;
+  uint32_t const nT3 = static_cast<uint32_t>(tripletsDC_->view().triplets().metadata().size());
+  uint32_t const nLS = static_cast<uint32_t>(segmentsDC_->view().segments().metadata().size());
+  uint32_t const nMD = static_cast<uint32_t>(miniDoubletsDC_->view().miniDoublets().metadata().size());
+  uint32_t const nHits = static_cast<uint32_t>(lstInputDC_->const_view().hits().metadata().size());
+  uint32_t const nPls = pixelSize_;
+
+  std::vector<uint32_t> tripletIndex(nNodes);
+  pullTo(tripletIndex.data(), chainNodesDC_->view().tripletIndex(), nNodes);
+  std::vector<ArrayUx2> t3Seg(nT3);
+  std::vector<Params_LS::ArrayUxLayers> lsMD(nLS);
+  std::vector<unsigned int> mdAnchor(nMD), mdOuter(nMD), hitIdx(nHits);
+  pullTo(t3Seg.data(), tripletsDC_->view().triplets().segmentIndices(), nT3);
+  pullTo(lsMD.data(), segmentsDC_->view().segments().mdIndices(), nLS);
+  pullTo(mdAnchor.data(), miniDoubletsDC_->view().miniDoublets().anchorHitIndices(), nMD);
+  pullTo(mdOuter.data(), miniDoubletsDC_->view().miniDoublets().outerHitIndices(), nMD);
+  pullTo(hitIdx.data(), lstInputDC_->const_view().hits().idxs(), nHits);
+
+  std::vector<unsigned int> seedIdx(nPls);
+  std::vector<float> plsEta(nPls);
+  pullTo(seedIdx.data(), lstInputDC_->const_view().pixelSeeds().seedIdx(), nPls);
+  pullTo(plsEta.data(), lstInputDC_->const_view().pixelSeeds().eta(), nPls);
+
+  static std::atomic<uint32_t> joinEventCounter{0};
+  uint32_t const ievt = joinEventCounter.fetch_add(1);
+  static std::mutex joinDumpMutex;
+  std::lock_guard<std::mutex> lock(joinDumpMutex);
+  std::FILE* dumpFile = std::fopen(path, (ievt == 0) ? "wb" : "ab");
+  if (dumpFile == nullptr)
+    return;
+  auto put32 = [&](uint32_t v) { std::fwrite(&v, sizeof(v), 1, dumpFile); };
+  auto putFloat = [&](float v) { std::fwrite(&v, sizeof(v), 1, dumpFile); };
+
+  put32(0x504A3031u);  // 'PJ01'
+  put32(ievt);
+  put32(nChainCount_);
+  put32(nT3);
+  put32(nNodes);
+  put32(nPls);
+  for (uint32_t n = 0; n < nNodes; ++n) {
+    uint32_t const t3 = tripletIndex[n];
+    unsigned int const innerSeg = t3Seg[t3][0];
+    unsigned int const outerSeg = t3Seg[t3][1];
+    unsigned int const md[3] = {lsMD[innerSeg][0], lsMD[innerSeg][1], lsMD[outerSeg][1]};
+    put32(t3);
+    for (int k = 0; k < 3; ++k) {
+      put32(hitIdx[mdAnchor[md[k]]]);
+      put32(hitIdx[mdOuter[md[k]]]);
+    }
+  }
+  for (uint32_t p = 0; p < nPls; ++p) {
+    put32(static_cast<uint32_t>(seedIdx[p]));
+    putFloat(plsEta[p]);
   }
   std::fclose(dumpFile);
 }

@@ -226,6 +226,12 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                   uint32_t* tgtScored,
                                   uint32_t* plsBest,
                                   uint32_t* stats,
+                                  // MEASUREMENT ONLY, inert when pairRows == nullptr (see
+                                  // ChainAttachPairRow in ChainAttach.h).
+                                  ChainAttachPairRow* pairRows,
+                                  uint32_t* pairCtl,
+                                  uint32_t pairCap,
+                                  uint32_t pairKeep,
                                   float theta,
                                   uint32_t nSlices,
                                   ChainConfig config) const {
@@ -261,6 +267,22 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
           for (int batchIdx = 0; batchIdx < nStaged; ++batchIdx) {
             float const logit = logits[batchIdx];
             int32_t const seedIdx = batchRow[batchIdx];
+            // MEASUREMENT ONLY: the stage-B pair row, taken here so the captured x INCLUDES the
+            // target-kind overwrite above -- this is the vector the head actually consumed.
+            if (pairRows != nullptr && attachPairKeep(target.chain, static_cast<uint32_t>(seedIdx), pairKeep)) {
+              uint32_t const slot = alpaka::atomicAdd(acc, pairCtl, 1u, alpaka::hierarchy::Threads{});
+              if (slot < pairCap) {
+                ChainAttachPairRow& row = pairRows[slot];
+                row.stage = 1u;
+                row.target = target.chain;  // the sparse triplet index for the bare-triplet kind
+                row.pls = static_cast<uint32_t>(seedIdx);
+                row.logit = logit;
+                for (int i = 0; i < kInputs; ++i)
+                  row.x[i] = inputsTransposed[i * kBatch + batchIdx];
+              } else {
+                alpaka::atomicAdd(acc, pairCtl + 1u, 1u, alpaka::hierarchy::Threads{});
+              }
+            }
             alpaka::atomicMax(
                 acc, &plsBest[static_cast<uint32_t>(seedIdx)], chainOrderFloat(logit), alpaka::hierarchy::Threads{});
             if (logit >= theta)

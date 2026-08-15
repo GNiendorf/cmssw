@@ -230,6 +230,47 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     uint32_t plsRow;
   };
 
+  // MEASUREMENT ONLY -- the LST_CHAIN_PAIR_DUMP attach pair row: the on-policy training rows for
+  // the attach head. One record per SCORED pair, i.e. per pair that survived the accept test and
+  // was therefore pushed through the head. Nothing in the algorithm reads it back; the scorers
+  // write it only when the row pointer is non-null, which happens only when the environment
+  // variable names an output file.
+  //
+  //   stage  0 chain target at or above the attach layer floor (the delivery-eligible stage-A list)
+  //          1 bare-triplet target (stage B, ChainAttachT3Score)
+  //          2 chain target from the auxiliary 4-layer tail of the stage-A launch -- score-only
+  //            targets, outside the stage-A census, kept apart so a trainer can drop or keep them
+  //            deliberately
+  //   target stage 0 / 2: the CHAIN index, the row LST_CHAIN_CHAIN_DUMP enumerates;
+  //          stage 1: the sparse triplet index
+  //   pls    the pLS row. The pre-record carries no seed index, so the join to the ntuple goes
+  //          through the pLS collection order.
+  //   x      the standardized head inputs AS CONSUMED, read back out of the batch stage after any
+  //          per-kind overwrite (stage B rewrites the target-kind input); de-standardize offline
+  //          with the constants in AttachNetworkWeights.h
+  //   logit  the head output for exactly that x
+  struct ChainAttachPairRow {
+    uint32_t stage;
+    uint32_t target;
+    uint32_t pls;
+    float logit;
+    float x[kAttachFeatures];
+  };
+
+  // Control block of the pair dump: [0] the append cursor (may run past the capacity), [1] the
+  // number of rows dropped because it did.
+  static constexpr uint32_t kAttachPairCtl = 2;
+
+  // Deterministic, LABEL-FREE and SCORE-FREE keep test for the pair dump. keep == 1 keeps every
+  // pair; otherwise one pair in keep survives, chosen by a hash of the two identities the record
+  // itself carries, so the decision is reproducible bit-for-bit across reruns AND verifiable
+  // offline from the dump alone.
+  ALPAKA_FN_ACC ALPAKA_FN_INLINE bool attachPairKeep(uint32_t target, uint32_t pls, uint32_t keep) {
+    if (keep <= 1u)
+      return true;
+    return (((target * 2654435761u) ^ (pls * 40503u)) % keep) == 0u;
+  }
+
   // The resolved stage-A attach length floor: a configured override, else the compiled-in default.
   ALPAKA_FN_ACC ALPAKA_FN_INLINE int chainAttachMinLayers(ChainConfig const& config) {
     return (config.t4AttachMinLayers > 0) ? config.t4AttachMinLayers : kAttachMinLayers;
@@ -874,6 +915,13 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                   uint32_t* xcCursor,
                                   uint32_t xcCap,
                                   uint32_t* stats,
+                                  // MEASUREMENT ONLY, all four inert when pairRows == nullptr, which
+                                  // is the case unless LST_CHAIN_PAIR_DUMP names a file (the same
+                                  // discipline as the edge head's LST_CHAIN_FEAT_DUMP tap).
+                                  ChainAttachPairRow* pairRows,
+                                  uint32_t* pairCtl,
+                                  uint32_t pairCap,
+                                  uint32_t pairKeep,
                                   uint32_t nSlices,
                                   ChainConfig config) const {
       constexpr bool kHost = cms::alpakatools::requires_single_thread_per_block_v<TAcc>;
@@ -941,6 +989,23 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
             float const logit = logits[batchIdx];
             int32_t const seedIdx = batchRow[batchIdx];
             AttachPlsPre const& seed = *batchSeed[batchIdx];
+            // MEASUREMENT ONLY: the on-policy pair row. Emitted BEFORE any verdict so the row set
+            // is the SCORED stream, not the delivered one, and with no dependence on the logit
+            // beyond copying it out.
+            if (pairRows != nullptr && attachPairKeep(target.chain, static_cast<uint32_t>(seedIdx), pairKeep)) {
+              uint32_t const slot = alpaka::atomicAdd(acc, pairCtl, 1u, alpaka::hierarchy::Threads{});
+              if (slot < pairCap) {
+                ChainAttachPairRow& row = pairRows[slot];
+                row.stage = is4L ? 2u : 0u;
+                row.target = target.chain;
+                row.pls = static_cast<uint32_t>(seedIdx);
+                row.logit = logit;
+                for (int i = 0; i < kInputs; ++i)
+                  row.x[i] = inputsTransposed[i * kBatch + batchIdx];
+              } else {
+                alpaka::atomicAdd(acc, pairCtl + 1u, 1u, alpaka::hierarchy::Threads{});
+              }
+            }
             if (!is4L)
               alpaka::atomicMax(
                   acc, &plsBest[static_cast<uint32_t>(seedIdx)], chainOrderFloat(logit), alpaka::hierarchy::Threads{});
