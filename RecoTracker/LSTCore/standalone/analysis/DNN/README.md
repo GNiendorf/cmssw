@@ -133,25 +133,74 @@ Per network, a trainer, an exporter and a parity check:
 | attach | `train_attach.py` (rows from `label_attach.py`) | `export_attach_weights.py` | `attach_parity.py` |
 
 `barfit_attach.py` fits the attach delivery bars that live in `interface/ChainConfig.h`.
+`pair_dump_io.py` and `join_dump_io.py` read the two attach sidecars; nothing outside this
+directory is imported.
 
 The **parity checks are the important ones for a reviewer**: each loads the trained model, recomputes
 the logits in Python, and compares against the hand-written C++ inference in `src/alpaka/`. They are
 what makes the committed weight headers verifiable rather than trusted.
 
+## Retraining the attach head, end to end
+
+The commands below are the whole path. `$S` is the standalone directory, `$W` a scratch directory
+for the dumps and corpora. Budget roughly 25 GB of dump and 27 GB of labelled columns per 1000
+PU200 events, and note the dumps can be deleted once labelled.
+
+**1. Dump, SINGLE STREAM.** `-s 1` is not a performance choice: the sidecars use a sequential
+per-event counter, so record *i* is entry *i* only for one stream. Dump from a binary whose weight
+headers are the ones that will be deployed, or the rows are off-policy.
+
+```bash
+export LST_CHAIN_PAIR_DUMP=$W/pu/pairs.bin LST_CHAIN_JOIN_DUMP=$W/pu/join.bin \
+       LST_CHAIN_CHAIN_DUMP=$W/pu/chains.bin LST_CHAIN_PAIR_CAP=2000000
+lst_cpu -i <ntuple>.root -n 1000 -p 0.8 -s 1 -w 1 -o $W/pu/run.root
+```
+
+**2. Count the rows, then label.** The labeller memory-maps its output at fixed length, so the
+total must be known first. `--rows` fails loudly if any event dropped rows.
+
+```bash
+N=$(python3 pair_dump_io.py --rows $W/pu/pairs.bin)
+python3 label_attach.py $W/pu/chains.bin $W/pu/join.bin $W/pu/pairs.bin $W/lab/pu 1000 $N <ntuple>.root
+```
+
+Repeat both steps per corpus (the shipped attach head used PU200 plus jets; see the table above).
+The labeller reads truth from the ORIGINAL tracking ntuple, not from `run.root` -- no `--allobj`
+and no `-d` build flag are needed for any of this.
+
+**3. Train**, with the corpora mixed by loss share:
+
+```bash
+python3 train_attach.py --lab pu=$W/lab/pu --lab jet=$W/lab/jet --share jet=0.25 \
+    --arm scalar --epochs 200 --hidden 24 --lr 3e-3 --sched cos --out $W/models/NEW.pt
+```
+
+**4. Export, check parity, refit the bars, rebuild:**
+
+```bash
+python3 export_attach_weights.py $W/models/NEW.pt > ../../src/alpaka/AttachNetworkWeights.h
+python3 attach_parity.py $W/models/NEW.pt      # must pass before the header is trusted
+python3 barfit_attach.py $W/lab/pu $W/lab/jet  # delivery bars -> interface/ChainConfig.h
+```
+
+Then rebuild and measure **paired, on a sealed holdout**, never on the events the head was tuned on.
+
 ## What is not in this repository
 
-These scripts document the method; they are **not runnable end to end from a fresh checkout**:
+The **attach** path above is runnable from a fresh checkout given a tracking ntuple. The rest is
+not, and these are the gaps:
 
-* The **dumps** they train on are produced by running the binary with the env vars above. They are
-  large and are not committed.
+* The **dumps** are produced by running the binary with the env vars above. They are large and are
+  not committed.
 * The **trained checkpoints** (`.pt`) and their **normalisation JSONs** are not committed, so the
   exporters need `MODEL_DIR` pointed at wherever those live, and the export self-tests skip
   without it.
 * `train_edge.py` builds a single-logit head while `export_edge_weights.py` expects the deployed
   3-output form and a working-point table that nothing here produces -- the two are **not currently
   plug-compatible**, and reconciling them is outstanding work.
-* `train_attach.py` reads pair rows whose width comes from the dump header (`nFeat`). Do NOT reuse
-  any splice that hardcodes a 20-wide row: `kAttachFeatures` is 22, and a hardcoded splice drops one
-  column and shifts eight others **with no error**.
+* Row widths come from the dump header (`nFeat`, `nProbe`). Do NOT reuse any splice that hardcodes
+  a width: `kAttachFeatures` is 22, and a hardcoded 20-wide splice drops one column and shifts eight
+  others **with no error**. `pair_dump_io.py` rejects a format version it does not know rather than
+  guessing.
 
 Each script's docstring repeats the specific inputs it needs.

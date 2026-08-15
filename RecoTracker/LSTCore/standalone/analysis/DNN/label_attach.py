@@ -38,22 +38,27 @@ The three sidecars are written by the same single-stream run, so record i of eac
 ntuple; the per-record (nChains, nT3) fingerprint and the event index are asserted, so a misaligned
 set of files fails loudly instead of producing plausible nonsense.
 
-Inputs -- NONE of the binaries live in this repository. pairs.bin, chains.bin and join.bin are
-sidecars of an instrumented run: chains.bin is written when LST_CHAIN_CHAIN_DUMP names an output
-file, while the pair and join sidecars need a build instrumented to emit them (no environment
-variable in this repository writes either). The tracking ntuple is an external file, and the
-default NTUPLE path below is an absolute path on the machine this was run on. The sidecar readers
-`joinio` and `read_pairs` are external modules too, imported from the sys.path entries added below.
+Inputs -- the three binaries are sidecars of a run with the dump variables set, not files in this
+repository. Produce them with a SINGLE-STREAM run (record i must be entry i):
 
-Output: one set of flat .npy columns in <outdir> -- X, y, st, vxy, spt, peta, lgt, evt, z3 -- all
-row-aligned with pairs.bin's own row order, plus labstats.npz with the run counters.
+    LST_CHAIN_PAIR_DUMP=pairs.bin LST_CHAIN_JOIN_DUMP=join.bin LST_CHAIN_CHAIN_DUMP=chains.bin \
+    LST_CHAIN_PAIR_CAP=2000000 lst_cpu -i <ntuple> -n <N> -p 0.8 -s 1 -w 1 -o run.root
+
+The tracking ntuple is an external file; the default NTUPLE path below is an absolute path on the
+machine this was run on, and is overridden by the last positional argument. The sidecar readers are
+`pair_dump_io` and `join_dump_io`, beside this file.
+
+Output: one set of flat .npy columns in <outdir> -- X, y, st, vxy, spt, peta, lgt, evt, z3, and on
+a format-2 pair dump also probe -- all row-aligned with pairs.bin's own row order, plus
+labstats.npz with the run counters. `probe` holds the probe columns, which are NOT head inputs: it
+is a separate array so a trainer opts into them explicitly.
 
 Run:
   python3 label_attach.py <chains.bin> <join.bin> <pairs.bin> <outdir> [nEntries] [nRowsTotal] \
       [ntuple.root]
 nEntries defaults to 1000. nRowsTotal is the total pair-row count and is REQUIRED in practice: the
 output columns are memory-mapped at fixed length, so it has to be known before the first batch is
-written (count the rows with a first pass over pairs.bin).
+written. Get it with `python3 pair_dump_io.py --rows <pairs.bin>`.
 """
 import os
 import sys
@@ -64,12 +69,9 @@ import numpy as np
 import uproot
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-_STANDALONE = os.path.dirname(_HERE)
 sys.path.insert(0, _HERE)
-sys.path.insert(0, os.path.join(_STANDALONE, "nnloop_ref"))
-sys.path.insert(0, os.path.join(_STANDALONE, "nnloop_ref", "s3_work"))
-from joinio import iter_events as iter_join            # noqa: E402
-from read_pairs import read_events as iter_pairs       # noqa: E402
+from join_dump_io import iter_events as iter_join      # noqa: E402
+from pair_dump_io import read_events as iter_pairs     # noqa: E402
 
 T0 = time.time()
 BR = ["ph2_simHitIdx", "pix_simHitIdx", "simhit_simTrkIdx", "see_hitIdx", "see_hitType",
@@ -433,8 +435,17 @@ def main():
                     zf=np.lib.format.open_memmap(os.path.join(outdir, "z3.npy"), mode="w+",
                                                  dtype=np.float32, shape=(ntot, 3)),
                 )
+                # Format-2 probe columns (currently just dBeta). NOT head inputs -- kept in their
+                # own array so a trainer opts in explicitly rather than finding the feature width
+                # silently changed under it. Absent on a format-1 dump.
+                if int(hdr.get("nProbe", 0)) > 0:
+                    cols["pb"] = np.lib.format.open_memmap(
+                        os.path.join(outdir, "probe.npy"), mode="w+",
+                        dtype=np.float32, shape=(ntot, int(hdr["nProbe"])))
             sl = slice(pos, pos + nr)
             cols["X"][sl] = rows["x"]
+            if "pb" in cols:
+                cols["pb"][sl] = rows["probe"]
             cols["y"][sl] = lab.astype(np.int8)
             cols["st"][sl] = st.astype(np.int8)
             cols["vxy"][sl] = vxy
