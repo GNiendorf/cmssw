@@ -317,15 +317,20 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
             cms::alpakatools::phi(acc, miniDoublets.anchorX()[innerMD], miniDoublets.anchorY()[innerMD]);
 
         // --- an attached pixel seed is an IN-PLACE UPGRADE of this row -------------------------
-        // A granted pLS turns the row from its bare class into pT5, with the seed's pixel hits
-        // prepended and pt taken from the seed (better measured than the member-triplet median).
-        // eta, phi and the outer-tracker hits stay the chain's: no row is added and none is
-        // skipped, so the attach never changes how many candidates come out.
+        // A granted pLS turns the row from its bare class into the seeded class of the same length,
+        // with the seed's pixel hits prepended and pt taken from the seed (better measured than the
+        // member-triplet median). eta, phi and the outer-tracker hits stay the chain's: no row is
+        // added and none is skipped, so the attach never changes how many candidates come out.
         int32_t const attachedPls = chains.attachPls()[chainIdx];
 
         // --- the TC row ------------------------------------------------------------------------
+        // The length split is the same on both sides: 5+ layers is the T5/pT5 pair, 4 is T4/pT4.
+        // Collapsing the seeded side onto pT5 would make a 4-layer seeded chain indistinguishable
+        // from a genuine 5-layer one in every per-type count.
+        bool const isLong = (nLayers >= 5);
         candsBase.trackCandidateType()[tcRow] =
-            (attachedPls >= 0) ? LSTObjType::pT5 : ((nLayers >= 5) ? LSTObjType::T5 : LSTObjType::T4);
+            (attachedPls >= 0) ? (isLong ? LSTObjType::pT5 : LSTObjType::pT4)
+                               : (isLong ? LSTObjType::T5 : LSTObjType::T4);
         candsBase.pixelSeedIndex()[tcRow] =
             (attachedPls >= 0) ? pixelSeeds.seedIdx()[attachedPls] : static_cast<unsigned int>(-1);
         candsExtended.directObjectIndices()[tcRow] = chainIdx;
@@ -462,7 +467,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
   // it. The chain rows are the tail of the collection and are kept verbatim -- `boundary` is where
   // they start. The kept per-class tallies are integer sums, so atomic accumulation is
   // order-independent.
-  //   classCounts[0] pT5   [1] pT3   [2] pLS   [3] T5   [4] T4
+  //   classCounts[0] pT5   [1] pT3   [2] pLS   [3] T5   [4] T4   [5] pT4
   struct ChainTCKeepSuppress {
     ALPAKA_FN_ACC void operator()(Acc1D const& acc,
                                   TrackCandidatesBaseConst candsBase,
@@ -521,6 +526,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
           alpaka::atomicAdd(acc, &classCounts[3], 1u, alpaka::hierarchy::Blocks{});
         else if (type == LSTObjType::T4)
           alpaka::atomicAdd(acc, &classCounts[4], 1u, alpaka::hierarchy::Blocks{});
+        else if (type == LSTObjType::pT4)
+          alpaka::atomicAdd(acc, &classCounts[5], 1u, alpaka::hierarchy::Blocks{});
       }
     }
   };
@@ -616,6 +623,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
       candsExtended.nTrackCandidatespLS() = classCounts[2];
       candsExtended.nTrackCandidatesT5() = classCounts[3];
       candsExtended.nTrackCandidatesT4() = classCounts[4];
+      candsExtended.nTrackCandidatespT4() = classCounts[5];
     }
   };
 

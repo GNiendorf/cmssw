@@ -10,7 +10,7 @@ from math import sqrt
 sel_choices = ["base", "loweta", "xtr", "vtr", "none"]
 metric_choices = ["eff", "fakerate", "duplrate", "fakeorduplrate", "avgOTlen"]
 variable_choices = ["pt", "ptmtv", "ptlow", "eta", "phi", "dxy", "dz", "vxy", "deltaEta", "deltaPhi", "deltaR", "genJetEta", "genJetPhi", "genJetPt"]
-objecttype_choices = ["TC", "pT5", "T5", "pT3", "pLS", "T4", "pT5_lower", "pT3_lower", "T5_lower", "pLS_lower"]
+objecttype_choices = ["TC", "pT5", "T5", "pT3", "pLS", "T4", "pT4", "pT5_lower", "pT3_lower", "T5_lower", "pLS_lower"]
 #lowerObjectType = ["pT5_lower", "pT3_lower", "T5_lower"]
 
 r.gROOT.SetBatch(True)
@@ -134,7 +134,7 @@ def plot(args):
     else:
         numer.append(params["input_file"].Get(params["numer"]).Clone())
 
-    breakdown_hist_types = ["pT5", "pT3", "T5", "pLS", "T4"]
+    breakdown_hist_types = ["pT5", "pT3", "T5", "pLS", "T4", "pT4"]
     print("breakdown = ", params["breakdown"])
     if params["breakdown"]:
         for breakdown_hist_type in breakdown_hist_types:
@@ -157,7 +157,7 @@ def plot(args):
 
 
     if params["breakdown"]:
-        params["legend_labels"] = ["TC" ,"pT5" ,"pT3" ,"T5" ,"pLS", "T4"]
+        params["legend_labels"] = ["TC" ,"pT5" ,"pT3" ,"T5" ,"pLS", "T4", "pT4"]
     else:
         params["legend_labels"] = [args.objecttype]
 

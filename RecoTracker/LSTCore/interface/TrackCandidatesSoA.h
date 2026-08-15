@@ -29,7 +29,10 @@ namespace lst {
                       SOA_SCALAR(unsigned int, nTrackCandidatespT5),
                       SOA_SCALAR(unsigned int, nTrackCandidatespLS),
                       SOA_SCALAR(unsigned int, nTrackCandidatesT5),
-                      SOA_SCALAR(unsigned int, nTrackCandidatesT4))
+                      SOA_SCALAR(unsigned int, nTrackCandidatesT4),
+                      // Appended last on purpose: inserting ahead of an existing column moves
+                      // every later offset, which has cost ~1 ms/event here before.
+                      SOA_SCALAR(unsigned int, nTrackCandidatespT4))
 
   using TrackCandidatesBaseSoA = TrackCandidatesBaseSoALayout<>;
   using TrackCandidatesExtendedSoA = TrackCandidatesExtendedSoALayout<>;

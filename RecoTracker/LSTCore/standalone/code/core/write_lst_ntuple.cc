@@ -210,7 +210,7 @@ void createTrackCandidateBranches() {
   ana.tx->createBranch<std::vector<float>>("tc_eta");  // eta
   ana.tx->createBranch<std::vector<float>>("tc_phi");  // phi
   ana.tx->createBranch<std::vector<float>>("tc_pMatched");
-  ana.tx->createBranch<std::vector<int>>("tc_type");         // type = 7 (pT5), 5 (pT3), 4 (T5), 8 (pLS), 9 (T4)
+  ana.tx->createBranch<std::vector<int>>("tc_type");         // type = 7 (pT5), 5 (pT3), 4 (T5), 8 (pLS), 9 (T4), 10 (pT4)
   ana.tx->createBranch<std::vector<int>>("tc_isFake");       // 1 if tc is fake 0 other if not
   ana.tx->createBranch<std::vector<int>>("tc_isDuplicate");  // 1 if tc is duplicate 0 other if not
   ana.tx->createBranch<std::vector<int>>("tc_simIdx");  // idx of best matched (highest nhit and > 75%) simulated track

@@ -274,7 +274,11 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         if (rowIdx >= nCandidates || keep[rowIdx] == 0u)
           continue;
         LSTObjType const candidateType = candsBase.trackCandidateType()[rowIdx];
-        if (candidateType != LSTObjType::pT5 && candidateType != LSTObjType::pT3)
+        // pT4 is here because a seeded 4-layer chain used to be typed pT5 and pre-claimed its
+        // mini-doublets like any other pixel-seeded row. Omitting it would silently change the
+        // cross-clean, so the type split stays a pure relabelling.
+        if (candidateType != LSTObjType::pT5 && candidateType != LSTObjType::pT3 &&
+            candidateType != LSTObjType::pT4)
           continue;
         for (int layer = 0; layer < Params_TC::kLayers; ++layer) {
           if (candsExtended.logicalLayers()[rowIdx][layer] == 0)

@@ -19,8 +19,12 @@ namespace lst {
   // Named constants for pixelTypes
   enum PixelType : int8_t { kInvalid = -1, kHighPt = 0, kLowPtPosCurv = 1, kLowPtNegCurv = 2 };
 
-  // Named types for LST objects
-  enum LSTObjType : int8_t { T5 = 4, pT3 = 5, pT5 = 7, pLS = 8, T4 = 9 };
+  // Named types for LST objects.
+  //
+  // T4 and pT4 are the chain pipeline's 4-layer classes; the values 4/5/7/8 are LST's own and are
+  // not ours to renumber. pT4 is a 4-layer chain that was granted a pixel seed -- without it such a
+  // row would be typed pT5 and every per-type count would silently mix two different objects.
+  enum LSTObjType : int8_t { T5 = 4, pT3 = 5, pT5 = 7, pLS = 8, T4 = 9, pT4 = 10 };
 
   enum class HitType : int { Pixel = 0, Invalid = 3, Phase2OT = 4 };  // as in TrackingNtuple.cc
 

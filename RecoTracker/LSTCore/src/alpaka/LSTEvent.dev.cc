@@ -2413,7 +2413,7 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
     auto keep_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, std::max(1u, nRowsBound));
     auto offs_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, nRowsBound + 1u);
     auto total_buf = cms::alpakatools::make_device_buffer<uint32_t>(queue_);
-    auto class_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, 5u);
+    auto class_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, 6u);
     auto stage_buf = cms::alpakatools::make_device_buffer<ChainTCRowPayload[]>(queue_, std::max(1u, nRowsBound));
     alpaka::memset(queue_, class_buf, 0u);
     alpaka::exec<Acc1D>(queue_,
