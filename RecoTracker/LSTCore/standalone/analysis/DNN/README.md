@@ -134,8 +134,35 @@ Per network, a trainer, an exporter and a parity check:
 
 `barfit_attach.py` re-derives the attach bars at matched per-cell SIGNAL ACCEPTANCE;
 `barfit_attach_fpr.py` re-derives the four DELIVERY bars at matched per-cell FAKE rate instead --
-the tool that fitted the SHIPPED delivery bars (it spends head improvements on acceptance, the
-axis this project ranks first). Both write values for `interface/ChainConfig.h`.
+the tool that fitted the < 5 GeV delivery row (it spends head improvements on acceptance, the axis
+this project ranks first). `attach_bar_cells.py` produces the per-cell (2 pt rows x 10 |eta| bins)
+occupancy, current acceptance/FPR and true-pair quantile ladders over the labelled corpora -- the
+groundwork behind the 3-row delivery bar TABLE. All write values for `interface/ChainConfig.h`.
+
+### How the 3-row delivery bar table was derived (exact provenance)
+
+The table in ChainConfig.h (low / high / displaced rows x 3 eta bands, split at seed ptIn = 5 GeV
+and target dcaXY = dcaSplit) was set as follows; every number is reproducible from these steps:
+
+1. **Per-cell groundwork**: `python3 attach_bar_cells.py` over the labelled corpora (the pair-dump
+   pipeline above), giving cell occupancy and the bar-for-acceptance ladders. This showed the
+   >= 5 GeV cells sitting at .55-.78 true-pair acceptance in barrel/transition under the low-row
+   bars (endcap already .90+), and 4-layer margins ABOVE 5-layer ones (no per-length row needed).
+2. **High row**: a deployed env sweep (`LST_D_AHI_DELTA` at 0.5/1/2/3/5, edge 5) on sealed PU200
+   holdout, recon HP, FINDINGS_GAPS.md `# [HP]`: the pT5 share saturates at a relaxation of 3
+   logits, long before any fake price (nothing degrades until 8), and the endcap is the one cell a
+   uniform relaxation harms -- hence barrel/transition -3, endcap unchanged.
+3. **Low row**: the same sweep form (`LST_D_A_DELTA=x` with `LST_D_AHI_DELTA=-x` cancelling the
+   high row) at x = 0.5/1/1.5/2/2.5/3: share rises .749 -> .853 with fake flat and dup falling;
+   1.5 chosen as the knee with the displaced guard in place.
+4. **Displaced row**: frozen at the matched-FPR (`barfit_attach_fpr.py`) values. Every relaxation
+   was measured to leak vxy-displaced sims one-directionally via wrong-seed dilution of the 75%
+   matcher; routing pairs whose TARGET has reconstructed dcaXY >= dcaSplit to the unrelaxed bars
+   closed every dxy band completely. The residual (radially-emitted displaced, small fitted dca)
+   is not taggable by any sweep-time observable tested and is priced in the ship record.
+
+No simulation information enters any of these decisions at runtime: the rows are selected on the
+seed's reconstructed ptIn and the chain's reconstructed dcaXY only.
 `pair_dump_io.py` and `join_dump_io.py` read the two attach sidecars; nothing outside this
 directory is imported.
 

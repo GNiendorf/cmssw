@@ -217,6 +217,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     //   isQuad     whether the seed is a quadruplet, which the cross-clean requires
     float eta;
     float attachThr;
+    // The displaced-target bar for this seed's |eta| band (config attachThetaDisp*): used instead
+    // of attachThr when the PAIR's target chain is displaced (dcaXY >= dcaSplit). See the config
+    // comment for why relaxation never applies to displaced targets.
+    float attachThrDisp;
     float xcThr;
     uint8_t isQuad;
     uint16_t phiMask;  // the phi-cell set this copy was scattered under; 0 in the per-seed array
@@ -299,6 +303,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     // The chain row for a chain target; the sparse triplet index for a bare-triplet target.
     uint32_t chain;
     uint8_t centerValid;
+    // The target chain sits outside the IP-compatibility boundary (dcaXY >= dcaSplit): its pairs
+    // are judged by the seed's attachThrDisp instead of attachThr. Always 0 for bare-T3 targets
+    // (stage B has its own scalar bar and never reads this).
+    uint8_t dispTarget;
     // MEASUREMENT ONLY: the target's two innermost anchors, which are the outer leg of master's
     // tracklet. Both target-pre kernels already load these MDs for other features, so filling them
     // costs no extra read. probeNAnchor < 2 marks a target too short to form the tracklet.
@@ -554,8 +562,20 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         // two boundaries; resolving them here keeps eta out of the pair loop entirely.
         record.eta = pixelSeeds.eta()[seedIdx];
         float const absEta = alpaka::math::abs(acc, record.eta);
-        record.attachThr =
-            (absEta < 1.1f) ? config.attachTheta : ((absEta < 1.7f) ? config.attachThetaT : config.attachThetaE);
+        // The 2 x 3 (pt x |eta|) delivery bar table; row by the seed's raw ptIn on LST's own
+        // 5 GeV boundary. See the table's rationale at its definition in ChainConfig.h.
+        bool const hiPt = pixelSeeds.ptIn()[seedIdx] >= config.attachPtSplit;
+        record.attachThr = hiPt ? ((absEta < 1.1f) ? config.attachThetaHi
+                                                   : ((absEta < 1.7f) ? config.attachThetaHiT : config.attachThetaHiE))
+                                : ((absEta < 1.1f) ? config.attachTheta
+                                                   : ((absEta < 1.7f) ? config.attachThetaT : config.attachThetaE));
+        // Measurement knobs, inert at 0 (see ChainConfig): a global stage-A delivery delta and a
+        // high-pT-binned one on the seed's raw ptIn.
+        record.attachThr -= config.attachADelta;
+        if (config.attachHighPtDelta != 0.f && pixelSeeds.ptIn()[seedIdx] >= config.attachHighPtEdge)
+          record.attachThr -= config.attachHighPtDelta;
+        record.attachThrDisp = (absEta < 1.1f) ? config.attachThetaDisp
+                                               : ((absEta < 1.7f) ? config.attachThetaDispT : config.attachThetaDispE);
         record.xcThr = (absEta < 1.1f) ? config.xcTheta : ((absEta < 1.7f) ? config.xcThetaT : config.xcThetaE);
         // Region-conditioned relaxation of the cross-clean bar. The duplicate seeds this bar exists
         // to retire sit almost entirely at |eta| >= 1.1 and low pt, so relaxing it globally spends
@@ -611,11 +631,14 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                   ChainsConst chains,
                                   uint32_t const* targets,
                                   uint32_t nTargets,
-                                  AttachTargetPre* outRecords) const {
+                                  AttachTargetPre* outRecords,
+                                  ChainConfig config) const {
       for (uint32_t targetIdx : cms::alpakatools::uniform_elements(acc, nTargets)) {
         uint32_t const chainIdx = targets[targetIdx];
         AttachTargetPre record;
         record.chain = chainIdx;
+        // NaN-rejecting form: an unfittable dca (1e9 sentinel) counts as displaced, never prompt.
+        record.dispTarget = !(chains.dcaXY()[chainIdx] < config.dcaSplit) ? 1u : 0u;
         record.rtInner = 0.f;
         record.zInner = 0.f;
         record.chordPhi = 0.f;
@@ -653,8 +676,11 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
             record.probeAx1 = miniDoublets.anchorX()[mdSecond];
             record.probeAy1 = miniDoublets.anchorY()[mdSecond];
             record.probeNAnchor = 2;
-            record.probeAlphaOutUp = cms::alpakatools::deltaPhi(
-                acc, record.probeAx1, record.probeAy1, record.probeAx1 - record.probeAx0, record.probeAy1 - record.probeAy0);
+            record.probeAlphaOutUp = cms::alpakatools::deltaPhi(acc,
+                                                                record.probeAx1,
+                                                                record.probeAy1,
+                                                                record.probeAx1 - record.probeAx0,
+                                                                record.probeAy1 - record.probeAy0);
             record.probeSegLen =
                 alpaka::math::sqrt(acc,
                                    (record.probeAx1 - record.probeAx0) * (record.probeAx1 - record.probeAx0) +
@@ -1143,9 +1169,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                 (bestPrePls < 0 || logit > bestPreLogit || (logit == bestPreLogit && seedIdx < bestPrePls))) {
               bestPrePls = seedIdx;
               bestPreLogit = logit;
-              bestPreThr = seed.attachThr;  // this pair's OWN banded margin, for the floor below
+              bestPreThr = target.dispTarget ? seed.attachThrDisp : seed.attachThr;  // this pair's OWN margin
             }
-            if (logit < seed.attachThr)
+            if (logit < (target.dispTarget ? seed.attachThrDisp : seed.attachThr))
               continue;  // the eta-banded delivery margin
             if (bestPls < 0 || logit > bestLogit || (logit == bestLogit && seedIdx < bestPls)) {
               bestPls = seedIdx;

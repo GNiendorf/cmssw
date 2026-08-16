@@ -223,9 +223,35 @@ namespace lst {
     // carrying one across a retrain silently moves the operating point. The direction that hurts
     // is LOOSENING: a bare chain converted with the wrong seed loses its match outright, so a
     // looser attach costs displaced efficiency.
-    float attachTheta = 6.519017f;   // |seed eta| < 1.1
-    float attachThetaT = 5.810568f;  // 1.1 <= |seed eta| < 1.7
-    float attachThetaE = 5.834996f;  // |seed eta| >= 1.7
+    // The bars are a 2 x 3 (pt x |seed eta|) TABLE, the same two-row pt structure (split at
+    // 5 GeV) LST's own working points carry and the same convention as the edge and gate WP
+    // tables. The high-pT row exists because the head's margin slides down with pT while a
+    // single bar stands still: at the low-row bars the >= 5 GeV cells sat at .55-.78 true-pair
+    // acceptance in the barrel and transition (the endcap was already .90+), and our pT5 share
+    // collapsed .75 -> .09 by 50 GeV while master holds ~.88 flat, with our pT5 fake rate 3x
+    // BELOW master's -- a bar mis-set against a population it was never fitted on. The deployed
+    // sweep (recon HP, FINDINGS_GAPS.md) showed share saturating at 3 logits of relaxation, long
+    // before any fake price (nothing breaks until 8), pT5 fake rate still 2-4x below master's,
+    // jets fake -23% relative; the endcap cell is deliberately UNCHANGED because it is already
+    // above master there and the uniform relaxation was the one thing that harmed it.
+    float attachTheta = 5.019017f;     // pt < 5,  |seed eta| < 1.1
+    float attachThetaT = 4.310568f;    // pt < 5,  1.1 <= |seed eta| < 1.7
+    float attachThetaE = 4.334996f;    // pt < 5,  |seed eta| >= 1.7
+    float attachThetaHi = 3.519017f;   // pt >= 5, |seed eta| < 1.1
+    float attachThetaHiT = 2.810568f;  // pt >= 5, 1.1 <= |seed eta| < 1.7
+    float attachThetaHiE = 5.834996f;  // pt >= 5, |seed eta| >= 1.7 (= low row: no relaxation)
+    float attachPtSplit = 5.0f;        // LST's own WP bin boundary
+    // The DISPLACED-TARGET row: a pair whose TARGET chain has dcaXY >= dcaSplit is judged by
+    // these bars regardless of the seed's pt row. They are frozen at the displaced-validated
+    // matched-FPR values: a displaced chain does not point at the beamline, so a beamline seed
+    // sharing its hits is the wrong-seed case, and four wrong pixel hits dilute the 75% matcher
+    // below the bar -- the sim then LOSES a track it had. Every relaxation of the rows above was
+    // measured to leak displaced sims one-directionally through exactly this channel (5-10 lost /
+    // 0 gained per 1000 events, growing with the relaxation), and this row is what closes it:
+    // relaxation is a prompt-side instrument, and the displaced operating point stays put.
+    float attachThetaDisp = 6.519017f;   // |seed eta| < 1.1
+    float attachThetaDispT = 5.810568f;  // 1.1 <= |seed eta| < 1.7
+    float attachThetaDispE = 5.834996f;  // |seed eta| >= 1.7
     // Delivery margin of the bare-T3 attach (ChainAttachT3.h), global -- no eta bands. Doubles as
     // the T3-side retirement bar of the carried-pLS retirement predicate.
     // DELIVERY margin of the bare-triplet attach (stage B). Split from the retirement bar below
@@ -239,6 +265,13 @@ namespace lst {
     // unchanged. A carried pixel row still retires only on evidence at the historical bar, so the
     // delivery loosening above cannot delete anyone's pixel-only track.
     float rpsThetaT3 = 5.440334f;
+    // MEASUREMENT KNOBS for the high-pT attach recon, both inert at 0: subtract attachADelta from
+    // all three stage-A delivery bars, and additionally attachHighPtDelta from pairs whose seed
+    // ptIn is at or above attachHighPtEdge (LST's own WP bin boundary). Deployed sweeps only; any
+    // shipped bar change goes through the fitted constants above, not these.
+    float attachADelta = 0.f;
+    float attachHighPtDelta = 0.f;
+    float attachHighPtEdge = 5.f;
     // Chain-side retirement bar of that same predicate. Deliberately NOT banded; a banded version
     // measured dominated. The retirement kernels must read THIS and never attachTheta -- reusing
     // the delivery margin is wrong now that delivery is banded.
@@ -415,6 +448,19 @@ namespace lst {
     if (dT3 != 0.f) {
       cfg.attachThetaT3 -= dT3;
       std::printf("[chainenv] attachThetaT3: -%g -> %g\n", dT3, cfg.attachThetaT3);
+    }
+    char const* dA = std::getenv("LST_D_A_DELTA");
+    if (dA != nullptr && *dA != '\0') {
+      cfg.attachADelta = static_cast<float>(std::atof(dA));
+      std::printf("[chainenv] attachADelta: 0 -> %g\n", cfg.attachADelta);
+    }
+    char const* dAHi = std::getenv("LST_D_AHI_DELTA");
+    if (dAHi != nullptr && *dAHi != '\0') {
+      cfg.attachHighPtDelta = static_cast<float>(std::atof(dAHi));
+      char const* dAHiEdge = std::getenv("LST_D_AHI_EDGE");
+      if (dAHiEdge != nullptr && *dAHiEdge != '\0')
+        cfg.attachHighPtEdge = static_cast<float>(std::atof(dAHiEdge));
+      std::printf("[chainenv] attachHighPtDelta: 0 -> %g (edge %g)\n", cfg.attachHighPtDelta, cfg.attachHighPtEdge);
     }
     char const* dT3Ret = std::getenv("LST_D_T3RET_DELTA");
     if (dT3Ret != nullptr && *dT3Ret != '\0') {

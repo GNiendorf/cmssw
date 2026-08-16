@@ -2748,7 +2748,8 @@ void LSTEvent::attachPixels(unsigned int nHits,
                       chainsDC_->const_view(),
                       targets_buf.data(),
                       nTgtAll,
-                      tgtPre_buf.data());
+                      tgtPre_buf.data(),
+                      chainConfig_);
   auto const tAfterTargetPre = stamp();
 
   // THE ONE GRID, over the UNION of this stage's hull (all targets, the deliverable ones plus the
