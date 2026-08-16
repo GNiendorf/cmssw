@@ -574,6 +574,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         record.attachThr -= config.attachADelta;
         if (config.attachHighPtDelta != 0.f && pixelSeeds.ptIn()[seedIdx] >= config.attachHighPtEdge)
           record.attachThr -= config.attachHighPtDelta;
+        record.attachThr -=
+            (absEta < 1.1f) ? config.attachBandDeltaB
+                            : ((absEta < 1.7f) ? config.attachBandDeltaT : config.attachBandDeltaE);
         record.attachThrDisp = (absEta < 1.1f) ? config.attachThetaDisp
                                                : ((absEta < 1.7f) ? config.attachThetaDispT : config.attachThetaDispE);
         record.xcThr = (absEta < 1.1f) ? config.xcTheta : ((absEta < 1.7f) ? config.xcThetaT : config.xcThetaE);

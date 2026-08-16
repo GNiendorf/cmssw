@@ -272,6 +272,11 @@ namespace lst {
     float attachADelta = 0.f;
     float attachHighPtDelta = 0.f;
     float attachHighPtEdge = 5.f;
+    // Per-eta-band measurement deltas, applied AFTER row selection (so they reach whichever of
+    // the low/high row served the pair; the displaced row stays untouched). Inert at 0.
+    float attachBandDeltaB = 0.f;  // |seed eta| < 1.1
+    float attachBandDeltaT = 0.f;  // 1.1 <= |seed eta| < 1.7
+    float attachBandDeltaE = 0.f;  // |seed eta| >= 1.7
     // Chain-side retirement bar of that same predicate. Deliberately NOT banded; a banded version
     // measured dominated. The retirement kernels must read THIS and never attachTheta -- reusing
     // the delivery margin is wrong now that delivery is banded.
@@ -462,6 +467,20 @@ namespace lst {
         cfg.attachHighPtEdge = static_cast<float>(std::atof(dAHiEdge));
       std::printf("[chainenv] attachHighPtDelta: 0 -> %g (edge %g)\n", cfg.attachHighPtDelta, cfg.attachHighPtEdge);
     }
+    char const* dAB = std::getenv("LST_D_AB_DELTA");
+    char const* dAT = std::getenv("LST_D_AT_DELTA");
+    char const* dAE = std::getenv("LST_D_AE_DELTA");
+    if (dAB != nullptr && *dAB != '\0')
+      cfg.attachBandDeltaB = static_cast<float>(std::atof(dAB));
+    if (dAT != nullptr && *dAT != '\0')
+      cfg.attachBandDeltaT = static_cast<float>(std::atof(dAT));
+    if (dAE != nullptr && *dAE != '\0')
+      cfg.attachBandDeltaE = static_cast<float>(std::atof(dAE));
+    if (cfg.attachBandDeltaB != 0.f || cfg.attachBandDeltaT != 0.f || cfg.attachBandDeltaE != 0.f)
+      std::printf("[chainenv] attach band deltas: B %g T %g E %g\n",
+                  cfg.attachBandDeltaB,
+                  cfg.attachBandDeltaT,
+                  cfg.attachBandDeltaE);
     char const* dT3Ret = std::getenv("LST_D_T3RET_DELTA");
     if (dT3Ret != nullptr && *dT3Ret != '\0') {
       cfg.rpsThetaT3 -= static_cast<float>(std::atof(dT3Ret));
