@@ -228,7 +228,17 @@ namespace lst {
     float attachThetaE = 5.834996f;  // |seed eta| >= 1.7
     // Delivery margin of the bare-T3 attach (ChainAttachT3.h), global -- no eta bands. Doubles as
     // the T3-side retirement bar of the carried-pLS retirement predicate.
-    float attachThetaT3 = 5.440334f;
+    // DELIVERY margin of the bare-triplet attach (stage B). Split from the retirement bar below
+    // (they were ONE constant doing both jobs): 61-66% of the [0.6,0.9) band's master-only sims are
+    // scored stage-B pairs a median 0.46 logits under the old shared value, and 96% of the band's
+    // gate victims exit through this same valve. Loosening DELIVERY alone buys the band back
+    // (measured: band barrel +.0073, transition +.0176 at -1.0) without touching what the
+    // retirement bar protects.
+    float attachThetaT3 = 4.440334f;
+    // RETIREMENT bar of the carried bare-pLS rows against stage-B evidence -- the OLD shared value,
+    // unchanged. A carried pixel row still retires only on evidence at the historical bar, so the
+    // delivery loosening above cannot delete anyone's pixel-only track.
+    float rpsThetaT3 = 5.440334f;
     // Chain-side retirement bar of that same predicate. Deliberately NOT banded; a banded version
     // measured dominated. The retirement kernels must read THIS and never attachTheta -- reusing
     // the delivery margin is wrong now that delivery is banded.
@@ -405,6 +415,11 @@ namespace lst {
     if (dT3 != 0.f) {
       cfg.attachThetaT3 -= dT3;
       std::printf("[chainenv] attachThetaT3: -%g -> %g\n", dT3, cfg.attachThetaT3);
+    }
+    char const* dT3Ret = std::getenv("LST_D_T3RET_DELTA");
+    if (dT3Ret != nullptr && *dT3Ret != '\0') {
+      cfg.rpsThetaT3 -= static_cast<float>(std::atof(dT3Ret));
+      std::printf("[chainenv] rpsThetaT3: -%s -> %g\n", dT3Ret, cfg.rpsThetaT3);
     }
     std::printf(
         "[chainenv] D retirement resolved: rpsThetaChain=%g xcTheta=%g/%g/%g attachThetaT3=%g"

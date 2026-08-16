@@ -178,6 +178,14 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         record.probeAx1 = miniDoublets.anchorX()[mdSecond];
         record.probeAy1 = miniDoublets.anchorY()[mdSecond];
         record.probeNAnchor = 2;
+        record.probeAlphaOutUp = cms::alpakatools::deltaPhi(acc,
+                                                            record.probeAx1,
+                                                            record.probeAy1,
+                                                            record.probeAx1 - record.probeAx0,
+                                                            record.probeAy1 - record.probeAy0);
+        record.probeSegLen = alpaka::math::sqrt(acc,
+                                                (record.probeAx1 - record.probeAx0) * (record.probeAx1 - record.probeAx0) +
+                                                    (record.probeAy1 - record.probeAy0) * (record.probeAy1 - record.probeAy0));
         record.tanLambda = nodes.features()[nodeIdx][2];
         record.fitKappa = nodes.features()[nodeIdx][0];
         record.rotSign = (record.fitKappa >= 0.f) ? 1.f : -1.f;

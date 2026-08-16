@@ -109,6 +109,18 @@ int main(int argc, char** argv) {
               return lstEff_sim_tcIdx.at(isim) >= 0 ? lstEff_tc_type.at(lstEff_sim_tcIdx.at(isim)) == T4 : false;
             },
             /* sel   */ sels[isel]));
+        list_effSetDef.push_back(SimTrackSetDefinition(
+            /* name  */
+            TString("pT4_") + selnames[isel],
+            /* pdgid */ pdgid,
+            /* q     */ charge,
+            /* pass  */
+            [&](unsigned int isim) {
+              auto& lstEff_sim_tcIdx = lstEff.getVI("sim_tcIdx");
+              auto& lstEff_tc_type = lstEff.getVI("tc_type");
+              return lstEff_sim_tcIdx.at(isim) >= 0 ? lstEff_tc_type.at(lstEff_sim_tcIdx.at(isim)) == pT4 : false;
+            },
+            /* sel   */ sels[isel]));
 
         if (ana.do_lower_level) {
           //lower objects - name will have pT5_lower_, T5_lower_, pT3_lower_

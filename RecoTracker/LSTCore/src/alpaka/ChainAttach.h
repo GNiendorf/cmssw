@@ -304,6 +304,12 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     // costs no extra read. probeNAnchor < 2 marks a target too short to form the tracklet.
     float probeAx0, probeAy0, probeAx1, probeAy1;
     int32_t probeNAnchor;
+    // The two PAIR-INVARIANT terms of attachDBetaOf, hoisted here because they depend on the
+    // target's anchors alone and were being recomputed for every scored pair (measured: 19-22% of
+    // the dBeta cost). Same expressions on the same floats, so the hoist is bit-identical by
+    // construction. Valid only when probeNAnchor >= 2; 0 otherwise, never read on that path.
+    float probeAlphaOutUp;
+    float probeSegLen;
   };
 
   // MEASUREMENT ONLY -- master's tracklet closure dBeta for one (seed, target) pair, the quantity
@@ -326,7 +332,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
       return 0.f;
     float const outLoX = target.probeAx0, outLoY = target.probeAy0;
     float const outUpX = target.probeAx1, outUpY = target.probeAy1;
-    float const alphaOutUp = cms::alpakatools::deltaPhi(acc, outUpX, outUpY, outUpX - outLoX, outUpY - outLoY);
+    float const alphaOutUp = target.probeAlphaOutUp;  // hoisted, pair-invariant, bit-identical
     float const chordX = outUpX - seed.probeOuterX, chordY = outUpY - seed.probeOuterY;
     float const chordLen = alpaka::math::sqrt(acc, chordX * chordX + chordY * chordY);
     if (chordLen < 0.2f)
@@ -338,8 +344,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                                     (outLoY - seed.probeOuterY) * (outLoY - seed.probeOuterY));
     if (innerChord < 0.1f && alpaka::math::abs(acc, betaOut) < 1e-3f)
       betaOut = alpaka::math::copysign(acc, betaOut, betaIn);
-    float const segLen =
-        alpaka::math::sqrt(acc, (outUpX - outLoX) * (outUpX - outLoX) + (outUpY - outLoY) * (outUpY - outLoY));
+    float const segLen = target.probeSegLen;  // hoisted, pair-invariant, bit-identical
     bool const useBetaInSign = (chordLen < segLen) && (innerChord < segLen);
     float const ptBeta = alpaka::math::max(acc, seed.probePtIn, float{1e-6f});
     betaOut += alpaka::math::copysign(
@@ -623,6 +628,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         record.probeAx1 = 0.f;
         record.probeAy1 = 0.f;
         record.probeNAnchor = 0;
+        record.probeAlphaOutUp = 0.f;
+        record.probeSegLen = 0.f;
 
         uint32_t const mdBase = 3u * chains.nodeOffset()[chainIdx];
         int const nMiniDoublets = chains.nMDs()[chainIdx];
@@ -646,6 +653,12 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
             record.probeAx1 = miniDoublets.anchorX()[mdSecond];
             record.probeAy1 = miniDoublets.anchorY()[mdSecond];
             record.probeNAnchor = 2;
+            record.probeAlphaOutUp = cms::alpakatools::deltaPhi(
+                acc, record.probeAx1, record.probeAy1, record.probeAx1 - record.probeAx0, record.probeAy1 - record.probeAy0);
+            record.probeSegLen =
+                alpaka::math::sqrt(acc,
+                                   (record.probeAx1 - record.probeAx0) * (record.probeAx1 - record.probeAx0) +
+                                       (record.probeAy1 - record.probeAy0) * (record.probeAy1 - record.probeAy0));
           }
 
           // rz straight-line fit, slope only: the target tanLambda.

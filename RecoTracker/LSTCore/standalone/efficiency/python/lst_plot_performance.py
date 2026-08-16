@@ -610,8 +610,8 @@ def draw_plot(effs, nums, dens, params):
     effs[0].SetTitle(parse_plot_name(output_name))
 
     # Draw the efficiency graphs
-    colors = [1, 2, 3, 4, 6, 7]
-    markerstyles = [20, 26, 28, 24, 27, 25]
+    colors = [1, 2, 3, 4, 6, 7, 9]
+    markerstyles = [20, 26, 28, 24, 27, 25, 32]
     markersize = 1.2
     linewidth = 2
     for i, eff in enumerate(effs):

@@ -485,7 +485,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                   uint32_t* stats,
                                   ChainConfig config) const {
       uint32_t const keyChain = chainOrderFloat(config.rpsThetaChain);
-      uint32_t const keyT3 = chainOrderFloat(config.attachThetaT3);
+      uint32_t const keyT3 = chainOrderFloat(config.rpsThetaT3);
       uint32_t const nInputRows = candsBase.nTrackCandidates();
       uint32_t const nChainRows = chains.nChainTCs();
       uint32_t const boundary = (nChainRows <= nInputRows) ? (nInputRows - nChainRows) : 0u;
