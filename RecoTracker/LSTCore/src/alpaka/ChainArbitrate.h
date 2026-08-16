@@ -799,6 +799,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                   int32_t const* bandItems,
                                   float const* bandFrac,
                                   float const* bandBraid,
+                                  int32_t* blockedBy,
+                                  int32_t* blockedOther,
                                   uint32_t* stats,
                                   ChainConfig config) const {
       ALPAKA_ASSERT_ACC((alpaka::getWorkDiv<alpaka::Grid, alpaka::Blocks>(acc)[0u] == 1));
@@ -953,6 +955,54 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
           break;
         }
       }
+
+      // --- [RESCUE bookkeeping] who ate each rejected candidate --------------------------------
+      // For every REJECTED candidate, the accepted owner holding the LARGEST share of its claim
+      // hits (ties to the lower chain index), and the count of its claimed hits held by owners
+      // OTHER than that one. Read by the attach rescue (ChainRescueSelect / ChainRescueSwap);
+      // pure bookkeeping -- nothing in this kernel or the epilogue reads it back, and the claim
+      // verdicts are untouched. Runs over the FINAL owner map, after the walk has converged.
+      if (blockedBy != nullptr) {
+        for (uint32_t orderPos = worker; orderPos < nCand; orderPos += nWorkers) {
+          if (state[orderPos] != chainpar::kRejected)
+            continue;
+          uint32_t const chainIdx = order[orderPos];
+          uint32_t const hitBase = 6u * chains.nodeOffset()[chainIdx];
+          int const nOwnHits = chains.nClaimHits()[chainIdx];
+          int maxShared = 0;
+          int32_t argOwner = chainarb::kFree;
+          int ownedTotal = 0;
+          for (int k = 0; k < nOwnHits; ++k) {
+            int32_t const ownerIdx = owner[claimHits[hitBase + k]];
+            if (ownerIdx == chainarb::kFree)
+              continue;
+            ++ownedTotal;
+            if (ownerIdx <= chainarb::kPixOwner)
+              continue;  // pixel owners cannot be replaced, so they are never the blocker
+            bool first = true;
+            for (int j = 0; j < k; ++j)
+              if (owner[claimHits[hitBase + j]] == ownerIdx) {
+                first = false;
+                break;
+              }
+            if (!first)
+              continue;
+            int shared = 0;
+            for (int j = 0; j < nOwnHits; ++j)
+              shared += (owner[claimHits[hitBase + j]] == ownerIdx) ? 1 : 0;
+            if (shared > maxShared || (shared == maxShared && argOwner != chainarb::kFree && ownerIdx < argOwner) ||
+                (shared == maxShared && argOwner == chainarb::kFree && shared > 0)) {
+              maxShared = shared;
+              argOwner = ownerIdx;
+            }
+          }
+          if (argOwner >= 0) {
+            blockedBy[chainIdx] = argOwner;
+            blockedOther[chainIdx] = ownedTotal - maxShared;
+          }
+        }
+      }
+      alpaka::syncBlockThreads(acc);
 
       // --- the accepted list, still in best-first order ----------------------------------------
       // Every later stage (the attach targets, the bare-triplet universe, the row assignment) reads

@@ -281,6 +281,21 @@ namespace lst {
     // measured dominated. The retirement kernels must read THIS and never attachTheta -- reusing
     // the delivery margin is wrong now that delivery is banded.
     float rpsThetaChain = 5.386236f;
+    // SEED-DRIVEN CLAIM RESCUE (measurement arm, default OFF -- bit-identical when false).
+    // Mechanism, from the [LSTMATCH] census: the greedy claim removes 59% of gate-alive chains
+    // before the attach ever lists a target, and in the |eta| 1.5-2.0 band 58% of the seedless-T5
+    // deficit is a 5/6-layer chain of a real track whose hits were taken by a 4-LAYER chain of
+    // the SAME track (the order key is seed-blind and ranks gate margin over length). Master has
+    // no pre-match claim at all. The rescue: a gate-alive, claim-REJECTED chain of >= 5 layers
+    // joins the attach target list as a deliverable target; if it wins a seed at the ordinary
+    // delivery bar, it REPLACES its blocker in the accepted list -- but only when the blocker
+    // took no seed itself, is strictly shorter, and the rescue's claimed hits held by owners
+    // OTHER than the blocker number at most rescueOtherItems (near-exclusivity is preserved).
+    // A rescue that wins a seed but fails those conditions is revoked and the seed released.
+    // Rescue pairs contribute NO retirement evidence and NO cross-clean arms (the chain may
+    // never emit), and lose exact contention ties to accepted targets by position.
+    bool attachRescue = false;
+    int rescueOtherItems = 2;
     // Bare-T3 target admission on the production T3 fake score (node feature 12). Written in the
     // NaN-rejecting form !(fakeScore <= t3FakeMax), and applied to the target mask, so a rejected
     // T3 is never scored and never becomes a seed's best T3.
@@ -453,6 +468,14 @@ namespace lst {
     if (dT3 != 0.f) {
       cfg.attachThetaT3 -= dT3;
       std::printf("[chainenv] attachThetaT3: -%g -> %g\n", dT3, cfg.attachThetaT3);
+    }
+    char const* rescueEnv = std::getenv("LST_CHAIN_RESCUE");
+    if (rescueEnv != nullptr && *rescueEnv != '\0' && std::atoi(rescueEnv) != 0) {
+      cfg.attachRescue = true;
+      char const* rescueOther = std::getenv("LST_CHAIN_RESCUE_OTHER");
+      if (rescueOther != nullptr && *rescueOther != '\0')
+        cfg.rescueOtherItems = std::atoi(rescueOther);
+      std::printf("[chainenv] attachRescue: OFF -> ON (rescueOtherItems %d)\n", cfg.rescueOtherItems);
     }
     char const* dA = std::getenv("LST_D_A_DELTA");
     if (dA != nullptr && *dA != '\0') {

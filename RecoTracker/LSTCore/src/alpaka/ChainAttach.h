@@ -1050,6 +1050,12 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                   AttachTargetPre const* targets,
                                   uint32_t nTargets,
                                   uint32_t nTgtAll,
+                                  // [RESCUE] the accepted-deliverable bound: positions in
+                                  // [nEvidence, nTargets) are claim-rescue targets -- deliverable,
+                                  // but contributing no retirement evidence, no cross-clean arms
+                                  // and no mutual-best key, because the chain may never emit.
+                                  // nEvidence == nTargets whenever the rescue is off.
+                                  uint32_t nEvidence,
                                   uint32_t const* offsets,
                                   AttachPlsPre const* items,
                                   uint64_t* tgtKey,
@@ -1105,6 +1111,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         // row has to be re-read to tell them apart. They ride in THIS launch rather than a second
         // one because the append reads nothing the contention stage produces.
         bool const is4L = (targetIdx >= nTargets);
+        bool const isRescue = !is4L && (targetIdx >= nEvidence);
         AttachTargetPre const target = targets[targetIdx];
         int32_t bestPls = -1;
         float bestLogit = kAttachNoLogit;
@@ -1140,7 +1147,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
               uint32_t const slot = alpaka::atomicAdd(acc, pairCtl, 1u, alpaka::hierarchy::Threads{});
               if (slot < pairCap) {
                 ChainAttachPairRow& row = pairRows[slot];
-                row.stage = is4L ? 2u : 0u;
+                // Stage tag 3 marks a rescue pair: excluded by every existing corpus labeler, so
+                // enabling the rescue cannot silently contaminate a training dump.
+                row.stage = is4L ? 2u : (isRescue ? 3u : 0u);
                 row.target = target.chain;
                 row.pls = static_cast<uint32_t>(seedIdx);
                 row.logit = logit;
@@ -1150,7 +1159,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                 alpaka::atomicAdd(acc, pairCtl + 1u, 1u, alpaka::hierarchy::Threads{});
               }
             }
-            if (!is4L)
+            if (!is4L && !isRescue)
               alpaka::atomicMax(
                   acc, &plsBest[static_cast<uint32_t>(seedIdx)], chainOrderFloat(logit), alpaka::hierarchy::Threads{});
             // Bare-chain cross-clean, pass 1: the filtered (chain, seed) compaction of the
@@ -1159,7 +1168,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
             // which for a chain spanning several layers is not where the seed's helix points, and
             // it vetoes pairs the head has already scored as matches. Ordering: BEFORE the delivery
             // threshold, so the cross-clean sees sub-margin pairs too (xcThr sits below attachThr).
-            if (xcPairs != nullptr && seed.isQuad != 0u && logit >= seed.xcThr) {
+            if (xcPairs != nullptr && !isRescue && seed.isQuad != 0u && logit >= seed.xcThr) {
               uint32_t const slot = alpaka::atomicAdd(acc, xcCursor, 1u, alpaka::hierarchy::Threads{});
               if (slot < xcCap) {
                 xcPairs[slot].chain = target.chain;
@@ -1168,7 +1177,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                 alpaka::atomicAdd(acc, &stats[11], 1u, alpaka::hierarchy::Threads{});  // overflow census
               }
             }
-            if (!is4L && config.dupMutualDelta >= 0.f &&
+            if (!is4L && !isRescue && config.dupMutualDelta >= 0.f &&
                 (bestPrePls < 0 || logit > bestPreLogit || (logit == bestPreLogit && seedIdx < bestPrePls))) {
               bestPrePls = seedIdx;
               bestPreLogit = logit;
@@ -1316,6 +1325,52 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         if (tgtScored != nullptr && tgtScored[targetIdx] > 0u)
           alpaka::atomicAdd(acc, &stats[8], 1u, alpaka::hierarchy::Threads{});
       }
+    }
+  };
+
+  // [RESCUE] The claim-rescue target list: gate-alive chains the greedy claim REJECTED
+  // (blockedBy set by ChainClaimRounds), >= 5 layers, dca-eligible, appended AFTER the accepted
+  // deliverable targets and BEFORE the auxiliary 4-layer tail, in chain-index order. They are
+  // DELIVERABLE -- they take part in the contention and can win a seed at the ordinary bar --
+  // but sit after every accepted target, so they lose exact contention ties. ChainRescueSwap
+  // decides what a winning rescue is allowed to do. Serial for the same reason as the aux
+  // append. The evidence bound published to *nEvidenceOut is the accepted-deliverable count
+  // BEFORE the append: scoring uses it to keep rescue pairs out of retirement evidence and the
+  // cross-clean.
+  struct ChainRescueSelect {
+    ALPAKA_FN_ACC void operator()(Acc1D const& acc,
+                                  ChainsConst chains,
+                                  int32_t const* blockedBy,
+                                  int32_t const* blockedOther,
+                                  uint32_t nChains,
+                                  uint32_t* nTargets5,
+                                  uint32_t* targets,
+                                  uint32_t* nEvidenceOut,
+                                  ChainConfig config) const {
+      if (!cms::alpakatools::once_per_grid(acc))
+        return;
+      uint32_t nOut = *nTargets5;
+      *nEvidenceOut = nOut;
+      for (uint32_t chainIdx = 0; chainIdx < nChains; ++chainIdx) {
+        int32_t const blockerIdx = blockedBy[chainIdx];
+        if (blockerIdx < 0)
+          continue;  // never a claim-rejected candidate, or blocked only by pixel rows
+        if (chains.nLayers()[chainIdx] < 5)
+          continue;
+        // Strictly-longer-than-the-blocker is enforced HERE and not only in the swap: a rescue
+        // whose swap is doomed would still take part in the seed contention, and every seed such
+        // a target wins is released to NOBODY at revocation -- measured at ~200 stolen seeds per
+        // event when this filter is left to the swap. The same goes for the other-owner overlap
+        // bar, which is knowable at select time.
+        if (!(chains.nLayers()[chainIdx] > chains.nLayers()[static_cast<uint32_t>(blockerIdx)]))
+          continue;
+        if (blockedOther[chainIdx] > config.rescueOtherItems)
+          continue;
+        if (chains.dcaXY()[chainIdx] >= config.attachDcaMax)
+          continue;
+        targets[nOut++] = chainIdx;
+      }
+      *nTargets5 = nOut;
     }
   };
 
@@ -1838,6 +1893,78 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         plsOwned[static_cast<uint32_t>(seedIdx)] = 1u;
         if (stats != nullptr)
           alpaka::atomicAdd(acc, &stats[4], 1u, alpaka::hierarchy::Blocks{});
+      }
+    }
+  };
+
+  // [RESCUE] The seed-driven claim swap, run once AFTER stage A has fully resolved (contention,
+  // dedup, publish). For each rescue target that won a seed, the rescue REPLACES its blocker in
+  // the accepted list -- taking its emission slot -- iff every condition of the config comment
+  // holds (ChainConfig::attachRescue). A winning rescue that fails any condition is REVOKED and
+  // its seed released, so the downstream stages see a consistent one-pLS-one-owner state either
+  // way. Serial: the accepted-slot scan and the one-swap-per-blocker rule are order-dependent,
+  // and rescue positions are walked ascending so the outcome is deterministic on every backend.
+  // rescueStats: [0] rescues that won a seed  [1] swaps performed  [2] revoked (blocker seeded)
+  //              [3] revoked (not longer)     [4] revoked (other-owner overlap over bar)
+  struct ChainRescueSwap {
+    ALPAKA_FN_ACC void operator()(Acc1D const& acc,
+                                  Chains chains,
+                                  uint32_t const* targets,
+                                  uint32_t nEvidence,
+                                  uint32_t nDeliver,
+                                  int32_t const* blockedBy,
+                                  int32_t const* blockedOther,
+                                  uint32_t* accepted,
+                                  uint8_t* plsOwned,
+                                  uint32_t* rescueStats,
+                                  ChainConfig config) const {
+      if (!cms::alpakatools::once_per_grid(acc))
+        return;
+      uint32_t const nAcc = chains.nAccepted();
+      for (uint32_t position = nEvidence; position < nDeliver; ++position) {
+        uint32_t const rescueIdx = targets[position];
+        int32_t const seedIdx = chains.attachPls()[rescueIdx];
+        if (seedIdx < 0)
+          continue;
+        ++rescueStats[0];
+        int32_t const blockerIdx = blockedBy[rescueIdx];
+        bool ok = (blockerIdx >= 0);
+        int reason = 0;
+        if (ok && !(chains.attachPls()[blockerIdx] < 0)) {
+          ok = false;
+          reason = 2;  // the blocker delivered a seed of its own; its row must stand
+        }
+        if (ok && !(chains.nLayers()[rescueIdx] > chains.nLayers()[blockerIdx])) {
+          ok = false;
+          reason = 3;  // the rescue exists to recover LENGTH; equal-or-shorter swaps are refused
+        }
+        if (ok && blockedOther[rescueIdx] > config.rescueOtherItems) {
+          ok = false;
+          reason = 4;  // too many hits held by owners the swap would NOT release
+        }
+        int32_t slot = -1;
+        if (ok) {
+          for (uint32_t acceptedIdx = 0; acceptedIdx < nAcc; ++acceptedIdx)
+            if (accepted[acceptedIdx] == static_cast<uint32_t>(blockerIdx)) {
+              slot = static_cast<int32_t>(acceptedIdx);
+              break;
+            }
+          // slot < 0 means an earlier rescue already replaced this blocker; one swap per blocker.
+          if (slot < 0) {
+            ok = false;
+            reason = 2;
+          }
+        }
+        if (ok) {
+          accepted[static_cast<uint32_t>(slot)] = rescueIdx;
+          ++rescueStats[1];
+        } else {
+          chains.attachPls()[rescueIdx] = -1;
+          chains.attachLogit()[rescueIdx] = kAttachNoLogit;
+          plsOwned[static_cast<uint32_t>(seedIdx)] = 0u;
+          if (reason >= 2)
+            ++rescueStats[reason];
+        }
       }
     }
   };

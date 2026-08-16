@@ -2045,6 +2045,13 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
   auto order_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, nChainCount_);
   auto accepted_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, nChainCount_);
   auto stats_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, kChainArbStats);
+  // [RESCUE bookkeeping] per-chain max-overlap accepted owner of every claim-rejected candidate,
+  // and the count of its claimed hits held by OTHER owners. Filled by ChainClaimRounds, consumed
+  // by the attach rescue; allocated here because both attach stages run after the claim scope.
+  auto blockedBy_buf = cms::alpakatools::make_device_buffer<int32_t[]>(queue_, nChainCount_);
+  auto blockedOther_buf = cms::alpakatools::make_device_buffer<int32_t[]>(queue_, nChainCount_);
+  alpaka::memset(queue_, blockedBy_buf, 0xFF);  // -1 everywhere: "not a rejected candidate"
+  alpaka::memset(queue_, blockedOther_buf, 0u);
   alpaka::memset(queue_, stats_buf, 0u);
 
   // Split points of the claim block, so its six pieces are attributable separately under
@@ -2128,6 +2135,8 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
                    bandItems_buf.data(),
                    bandFrac_buf.data(),
                    bandBraid_buf.data(),
+                   blockedBy_buf.data(),
+                   blockedOther_buf.data(),
                    stats_buf.data(),
                    chainConfig_);
   }
@@ -2199,6 +2208,8 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
 
   attachPixels(nHits,
                accepted_buf.data(),
+               blockedBy_buf.data(),
+               blockedOther_buf.data(),
                plsPre_buf.data(),
                plsOwned_buf.data(),
                plsBestChain_buf.data(),
@@ -2640,7 +2651,9 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
 }
 
 void LSTEvent::attachPixels(unsigned int nHits,
-                            uint32_t const* accepted,
+                            uint32_t* accepted,
+                            int32_t const* blockedBy,
+                            int32_t const* blockedOther,
                             AttachPlsPre const* plsPre,
                             uint8_t* plsOwned,
                             uint32_t* plsBestChain,
@@ -2713,6 +2726,29 @@ void LSTEvent::attachPixels(unsigned int nHits,
                         nullptr);  // the prefix above already published the count
   }
   auto const tAfterTargetList = stamp();
+  // [RESCUE] the claim-rescue targets, appended after the accepted-deliverable list and BEFORE
+  // the aux 4-layer tail so that position-is-class still holds:
+  //   [0, nEvidence)        accepted deliverable targets
+  //   [nEvidence, nTargets) rescue deliverable targets (no evidence, no cross-clean)
+  //   [nTargets, nTgtAll)   the score-only aux 4-layer tail
+  // The select updates the deliverable count in place, so every delivery kernel below picks the
+  // rescues up without change; nEvidence is drained beside the other two counts. With the rescue
+  // off the kernel is skipped and nEvidence == nTargets, which is bit-identical to before.
+  auto nEvidence_buf_d = cms::alpakatools::make_device_buffer<uint32_t>(queue_);
+  if (chainConfig_.attachRescue)
+    alpaka::exec<Acc1D>(queue_,
+                        serial_workDiv,
+                        ChainRescueSelect{},
+                        chainsDC_->const_view(),
+                        blockedBy,
+                        blockedOther,
+                        nChainCount_,
+                        nTargets_buf_d.data(),
+                        targets_buf.data(),
+                        nEvidence_buf_d.data(),
+                        chainConfig_);
+  else
+    alpaka::memcpy(queue_, nEvidence_buf_d, nTargets_buf_d);
   // The auxiliary 4-layer accepted targets, appended after the stage-A list. They are score-only --
   // never delivered -- but they join the GRID BOUNDS so the radial hull covers them. That does not
   // disturb stage A: a wider hull only adds candidates, and the exact analytic predicate re-filters
@@ -2730,11 +2766,14 @@ void LSTEvent::attachPixels(unsigned int nHits,
   auto const tAfterAuxSelect = stamp();
   auto nTargets_buf_h = cms::alpakatools::make_host_buffer<uint32_t>(queue_);
   auto nTgtAll_buf_h = cms::alpakatools::make_host_buffer<uint32_t>(queue_);
+  auto nEvidence_buf_h = cms::alpakatools::make_host_buffer<uint32_t>(queue_);
   alpaka::memcpy(queue_, nTargets_buf_h, nTargets_buf_d);
   alpaka::memcpy(queue_, nTgtAll_buf_h, nTgtAll_buf_d);
+  alpaka::memcpy(queue_, nEvidence_buf_h, nEvidence_buf_d);
   alpaka::wait(queue_);  // the target counts size every attach buffer below
   uint32_t const nTargets = *nTargets_buf_h.data();
   uint32_t const nTgtAll = *nTgtAll_buf_h.data();
+  uint32_t const nEvidence = *nEvidence_buf_h.data();
   if (nTargets == 0 || pixelSize_ == 0)
     return;
   auto const tAfterCountDrain = stamp();
@@ -2798,6 +2837,7 @@ void LSTEvent::attachPixels(unsigned int nHits,
                       tgtPre_buf.data(),
                       nTargets,
                       nTgtAll,
+                      nEvidence,
                       offsets_buf.data(),
                       items_buf.data(),
                       tgtKey_buf.data(),
@@ -2977,6 +3017,42 @@ void LSTEvent::attachPixels(unsigned int nHits,
                         nTargets,
                         plsOwned,
                         stats_buf.data());
+  }
+  // [RESCUE] the seed-driven claim swap, after everything of stage A has resolved. Runs before
+  // stage B and before the row assignment, which is what lets a swapped-in chain emit through the
+  // ordinary path and a revoked rescue release its seed cleanly.
+  if (chainConfig_.attachRescue && nTargets > nEvidence) {
+    auto rescueStats_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, 5u);
+    alpaka::memset(queue_, rescueStats_buf, 0u);
+    alpaka::exec<Acc1D>(queue_,
+                        serial_workDiv,
+                        ChainRescueSwap{},
+                        chainsDC_->view(),
+                        static_cast<uint32_t const*>(targets_buf.data()),
+                        nEvidence,
+                        nTargets,
+                        blockedBy,
+                        blockedOther,
+                        accepted,
+                        plsOwned,
+                        rescueStats_buf.data(),
+                        chainConfig_);
+    static bool const rescueDebug = [] {
+      char const* dbg = std::getenv("LST_CHAIN_RESCUE_DEBUG");
+      return dbg != nullptr && *dbg != '\0' && *dbg != '0';
+    }();
+    if (rescueDebug) {
+      auto rescueStats_h = cms::alpakatools::make_host_buffer<uint32_t[]>(queue_, 5u);
+      alpaka::memcpy(queue_, rescueStats_h, rescueStats_buf);
+      alpaka::wait(queue_);
+      std::printf("[rescue] targets=%u won=%u swapped=%u revBlockerSeeded=%u revNotLonger=%u revOther=%u\n",
+                  nTargets - nEvidence,
+                  rescueStats_h.data()[0],
+                  rescueStats_h.data()[1],
+                  rescueStats_h.data()[2],
+                  rescueStats_h.data()[3],
+                  rescueStats_h.data()[4]);
+    }
   }
   auto const tAfterPublish = stamp();
 

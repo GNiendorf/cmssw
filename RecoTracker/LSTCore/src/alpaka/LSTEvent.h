@@ -214,8 +214,13 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     // resolves the one-pLS-one-owner contention and the seed-family dedup. The candidate row
     // upgrade itself is applied by ChainEmitTCs; the carried-row retirement is the FINAL pass of
     // arbitrateChains, because it must see every later verdict.
+    // `accepted` is mutable and `blockedBy`/`blockedOther` are consumed here because of the claim
+    // rescue (ChainConfig::attachRescue): a claim-rejected chain that wins a seed may replace its
+    // blocker's slot in the accepted list. With the rescue off both are read-only bookkeeping.
     void attachPixels(unsigned int nHits,
-                      uint32_t const* accepted,
+                      uint32_t* accepted,
+                      int32_t const* blockedBy,
+                      int32_t const* blockedOther,
                       AttachPlsPre const* plsPre,
                       uint8_t* plsOwned,
                       uint32_t* plsBestChain,
