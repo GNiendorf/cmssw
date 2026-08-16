@@ -9,7 +9,7 @@ because it is the part that cannot be reconstructed from the code.
 |---|---|---|---|
 | edge head | 40 -> 32 -> 32 -> 3 | `src/alpaka/EdgeNetworkWeights.h` | which triplet pairs are weld candidates |
 | chain gate | 25 -> 32 -> 32 -> 3 | `src/alpaka/ChainNetworkWeights.h` | whether a welded chain is fake / prompt-true / displaced-true |
-| attach head | 22 -> 24 -> 24 -> 1 | `src/alpaka/AttachNetworkWeights.h` | which pixel seed, if any, belongs to a chain |
+| attach head | 23 -> 24 -> 24 -> 1 | `src/alpaka/AttachNetworkWeights.h` | which pixel seed, if any, belongs to a chain (input 22 = master's tracklet closure dBeta) |
 
 ## Why the order matters
 
@@ -132,7 +132,10 @@ Per network, a trainer, an exporter and a parity check:
 | chain gate | `train_chain.py` (on `train_chain_base.py`) | `export_chain_weights.py` | `chain_parity.py` |
 | attach | `train_attach.py` (rows from `label_attach.py`) | `export_attach_weights.py` | `attach_parity.py` |
 
-`barfit_attach.py` fits the attach delivery bars that live in `interface/ChainConfig.h`.
+`barfit_attach.py` re-derives the attach bars at matched per-cell SIGNAL ACCEPTANCE;
+`barfit_attach_fpr.py` re-derives the four DELIVERY bars at matched per-cell FAKE rate instead --
+the tool that fitted the SHIPPED delivery bars (it spends head improvements on acceptance, the
+axis this project ranks first). Both write values for `interface/ChainConfig.h`.
 `pair_dump_io.py` and `join_dump_io.py` read the two attach sidecars; nothing outside this
 directory is imported.
 
@@ -198,6 +201,11 @@ not, and these are the gaps:
 * `train_edge.py` builds a single-logit head while `export_edge_weights.py` expects the deployed
   3-output form and a working-point table that nothing here produces -- the two are **not currently
   plug-compatible**, and reconciling them is outstanding work.
+* **The WP-TABLE FITTERS for the edge and gate heads are NOT in this directory.** The 2x10 tables
+  deployed in `EdgeNetworkWeights.h` (weld bars) and `ChainNetworkWeights.h` (kWpPrompt/kWpDisp)
+  were fitted by round-era scripts that never moved here. Until they do, retraining either head
+  leaves you without an in-tree way to re-derive its tables -- the same failure class the attach
+  pair dump had before it was restored. Porting them is owed.
 * Row widths come from the dump header (`nFeat`, `nProbe`). Do NOT reuse any splice that hardcodes
   a width: `kAttachFeatures` is 22, and a hardcoded 20-wide splice drops one column and shifts eight
   others **with no error**. `pair_dump_io.py` rejects a format version it does not know rather than
