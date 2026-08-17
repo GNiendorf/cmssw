@@ -801,6 +801,13 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                   float const* bandBraid,
                                   int32_t* blockedBy,
                                   int32_t* blockedOther,
+                                  // [ARM-HDEEP] the third column of the same bookkeeping: how many
+                                  // of the rejected candidate's claim hits the BLOCKER itself holds
+                                  // (maxShared). blockedOther is already ownedTotal - maxShared, so
+                                  // the pair pins the overlap exactly, and the handover needs the
+                                  // shared half to ask "is the blocker a sub-chain of me" rather
+                                  // than only "does anyone else hold my hits". nullptr-safe.
+                                  int32_t* blockedShared,
                                   uint32_t* stats,
                                   ChainConfig config) const {
       ALPAKA_ASSERT_ACC((alpaka::getWorkDiv<alpaka::Grid, alpaka::Blocks>(acc)[0u] == 1));
@@ -999,6 +1006,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
           if (argOwner >= 0) {
             blockedBy[chainIdx] = argOwner;
             blockedOther[chainIdx] = ownedTotal - maxShared;
+            if (blockedShared != nullptr)
+              blockedShared[chainIdx] = maxShared;  // [ARM-HDEEP]
           }
         }
       }

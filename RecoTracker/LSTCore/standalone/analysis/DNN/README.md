@@ -166,6 +166,35 @@ seed's reconstructed ptIn and the chain's reconstructed dcaXY only.
 `pair_dump_io.py` and `join_dump_io.py` read the two attach sidecars; nothing outside this
 directory is imported.
 
+### How the 6 x 3 delivery WP table was derived (exact provenance)
+
+`attachThetaTable` in ChainConfig.h (6 seed-ptIn rows, edges 2/5/10/25/50, x the 3 seed-|eta|
+bands) REPLACED the previous 2-row prompt structure. One-sentence scheme: **every cell's bar is
+the logit at which 99 percent of that cell's true stage-A prompt pairs still deliver** -- fixed
+per-cell signal efficiency, one global target, raw quantiles, no floors and no inheritance from
+the previous constants. The displaced-target row is a separate mechanism and was not refit.
+Exact reproduction:
+
+1. **On-policy dump** from the deployed binary (single stream, provenance-hashed):
+   `bash chain_clean/dumprun.sh pu1000B -i .../event_1000.root -n 1000 -p 0.8 -w 1`
+2. **Extract + truth-join** the stage-A pairs (`extract2.py <dumpdir> <out.npz>`): per pair the
+   deployed logit, seed ptIn/|eta|, target-chain dcaXY (prompt selection), and the truth label
+   through the `label_attach.py` join. `validate.py` re-checks the offline delivery replay
+   against the run's own TC output (must reproduce type-7 vs type-4 at ~1.0000) before any fit
+   is trusted.
+3. **Fit** (`fitbars.py <extract.npz> <outprefix>`): scans the efficiency target over a grid,
+   replays delivery with each candidate table, and reports share vs master, the wrong-seed
+   delivery count (the dilution proxy), and the per-cell order-statistic index k. The chosen
+   point (0.99) is the loosest target at which every cell's bar is still a genuine order
+   statistic (k >= 2) -- beyond it the thin high-pT cells' bars become the single lowest true
+   pair, which is overfitting. 1/2/3-zone targets were scanned; all optimise to the same single
+   value, so ONE global target is shipped. `census_disp.py` is the disposition census
+   ([DISP]/[DISP2] in FINDINGS_GAPS.md) that motivated the table; `report2.py` renders the
+   final tables.
+
+The bars are quantiles of the DEPLOYED head's own logits: retraining the attach head invalidates
+all 18 and this chain must be rerun from step 1.
+
 The **parity checks are the important ones for a reviewer**: each loads the trained model, recomputes
 the logits in Python, and compares against the hand-written C++ inference in `src/alpaka/`. They are
 what makes the committed weight headers verifiable rather than trusted.
@@ -239,3 +268,111 @@ not, and these are the gaps:
   guessing.
 
 Each script's docstring repeats the specific inputs it needs.
+
+## Retraining the attach head ON THE CURRENT (23-input, rescue-aware) STACK -- [ARM-RETRAIN]
+
+Four things in the sections above went stale between rounds. They are corrected here, and every
+correction is a change to a script in this directory, not a note.
+
+**1. The head is 23 inputs wide and the pair dump carries NO probe columns.** `af_dBeta` was
+promoted out of the dump's probe array into `kAttachFeatures`, so a current dump reports
+`nFeat 23 nProbe 0` and its `x` already carries dBeta standardized with the deployed constants,
+exactly like every other verbatim slot. Consequences: `--use-probe` (the flag the shipped DBETA
+head was trained with, from a 22+1 dump) must NOT be used on a current corpus; `train_attach.py`
+now takes the width **from the corpus** and asserts the corpora agree; the norm-json template for
+a 23-wide fit is `attach_norm23_template.json`, IN this directory, so the path has no external
+dependency. Check any dump with `python3 ../../at_ref/nrows.py <pairs.bin>` before trusting a
+width.
+
+**2. Stage tag 3 exists and it is a CHAIN target.** The claim-rescue arm tags its claim-rejected
+chain targets `3` (`ChainAttach.h`: `row.stage = is4L ? 2u : (isRescue ? 3u : 0u)`). Both
+`label_attach.py` and `mk_tdca.py` selected chain targets with `(st == 0) | (st == 2)`, which does
+not raise on a stage-3 row -- it falls through with an empty sim set, i.e. **a silent label of 0 on
+every rescue pair, true ones included**. Both are fixed here and both now assert on an unknown
+tag. On a PU200 dump with `LST_CHAIN_RESCUE=2` the stage-3 rows are 5.5% of the corpus and 2% of
+them are true, so the bug was worth about a hundred thousand mislabelled positives per 1000 events.
+
+**3. Which upstream state a pair dump is on-policy against, measured rather than assumed.** The
+attach DELIVERY BARS do not change the pair rows at all: comparing a dump taken under the 3-row
+bar table against one taken under the 6x3 table on the same 1000 events, the stage-0 and stage-1
+row counts are equal **per event** and the rows are bit-identical -- same (stage, target, pLS)
+keys and the same logits to the last bit, over the events checked. The reason is structural: the
+dump is written pre-verdict, and both attach stages enumerate and score their pairs before any
+seed ownership is resolved. So a bar retune does NOT invalidate a pair corpus; only a change to
+the head (the logit column), to anything upstream of the chains, or to the TARGET SET does. The
+rescue arm is the last of those: it adds stage-3 rows and changes nothing else. A dump for a
+retrain should therefore be taken with the rescue setting the arm will deploy with.
+
+**4. `attach_parity.py` cannot pass and cannot gate anything.** It hardcodes `N_ATTACH_FEAT = 18`
+and reads a ROOT `pairs` tree that nothing writes. `attach_parity2.py` replaces it with three
+checks over artefacts the pipeline actually produces: generated header vs norm json (the
+preprocessing constants), generated header vs checkpoint (the weights, honouring the transposed
+storage), and -- on a dump taken with that header DEPLOYED -- the compiled C++ logit column against
+a numpy forward pass on the dump's own standardized rows. The third check is the one that tests
+the deployed inference rather than Python against itself; the first is what stops it passing
+vacuously, since the dump's `x` is standardized by the C++ before it is written.
+
+### The per-cell k floor on the 6x3 WP fit
+
+`fitbars.py` gained `wp_bars_kfloor` and a `scanK` alongside the global-epsilon `scan1`. The
+shipped rule -- "the loosest global epsilon at which every one of the 18 cells still has order
+statistic index k >= 2" -- is a statement about the THINNEST cell (204 true pairs), and it holds
+back cells with four orders of magnitude more statistics. Since k indexes a cell's OWN sorted
+true-pair logits, the guard belongs per cell: `k[cell] = max(2, floor((1 - eps_max) * n[cell]))`.
+Every bar remains a raw order statistic of its own cell, no cell is set by an extremum, and the
+cells that carry the deficit (low pT, outside the barrel -- the fattest in the table) are free to
+run at the target. `fitbars.py` also takes an optional third argument: a JSON of the 18 bars the
+DUMPING BINARY ACTUALLY HAD, so the "x shipped" dilution ratios are measured against the deployed
+table rather than against the pre-table constants it still reconstructs by default.
+
+### Runners (in `standalone/retrain_ref/`, outside this package)
+
+`lockbuild.sh` / `deploy_rt.sh` build under the round's `BUILD.lock` and stash the binary, and
+`deploy_rt.sh` installs an arm's header and bar table, builds, stashes, then restores the shared
+tree byte for byte inside the same lock, so a shared-tree round cannot inherit one arm's weights.
+`dumprun_rt.sh` dumps from a stashed binary and records the HEAD hash plus the sha1 of the whole
+`git diff` (the round's tree is dirty by design, so a bare hash would be a lie). `settable.py`
+rewrites `attachThetaTable` from the fit's own JSON, transposing eta-major to the header's
+pt-major ONCE in one place -- the mis-transcribed `attachThetaHiE` constant [DISP2] found is
+exactly what hand-transposing 18 numbers costs.
+
+## THE SHIPPED STATE (endcap-share round, 2026-08-16): head CTRL + the pure eps-0.99 table
+
+What is deployed in this commit, and the one-line rule for each piece:
+
+* **Head**: `AttachNetworkWeights.h` = the CTRL retrain (23 inputs, control arm -- the low-pT
+  weighted variant won offline and LOST deployed, the fifth recorded offline-proxy
+  misprediction). Model + norm: `chain_clean/models/CTRL.pt`, `CTRL_norm.json` (models are not
+  committed; the header is, and `attach_parity2.py` ties them together).
+* **Delivery WP table**: `attachThetaTable` = raw per-cell quantiles of THIS head's logits at a
+  single global signal efficiency of 0.99, fitted on the pooled PU+jets corpus at the 0.25 jets
+  loss share. NO cap, NO floor, NO inheritance: every value is an order statistic of its own
+  cell (thinnest cell k = 28). A "2x-background cap" variant was measured and REJECTED as
+  indefensible (it inherits 18 per-cell anchors from the previous operating point); fit rules
+  must be self-contained.
+* **Seed evidence in the claim** (`ChainAfirst.h` + hook): gate-alive >= 5-layer chains are
+  scored against the pixel seeds BEFORE the greedy claim; "own argmax clears own delivery bar"
+  is one term in the claim's order key. Master's pT5-before-exclusivity ordering in our
+  architecture.
+* **Claim rescue + same-seed handover** (`ChainAttach.h`/`ChainArbitrate.h`): a claim-rejected
+  strictly-longer chain whose best seed IS its shorter sibling's granted seed takes the hits and
+  the seed. Share-neutral under the evidence ordering, kept for track length (+~30k 15-hit
+  tracks / 1000 evt).
+
+Exact reproduction of the table (after any head retrain, ALL 18 values must be re-derived):
+
+    # 1. dump on-policy, rescue on, from the deployed binary (single stream):
+    bash chain_clean/dumprun.sh <TAG> -i .../event_1000.root -n 1000 -p 0.8 -w 1     # PU
+    bash chain_clean/dumprun.sh <TAGJ> -i .../trackingNtuple_jets_1000.root -n 500 -p 0.8 -w 1 -J
+    # 2. label + extract (label_attach.py / extract2.py as documented above)
+    # 3. fit: python3 fitbars.py <extract_pooled.npz> <out>   -> pure eps scan; take eps=0.99
+    # 4. bake: python3 ../../retrain_ref/settable.py <fit.json>  (single transposition point)
+    # 5. verify: attach_parity2.py (all three checks) BEFORE any physics run.
+
+Deployed result (event_2000 @0.8 + jets, vs shipped B and master): outside-barrel pT5 share
+.8847 -> .9186 (57% of the B->master gap), barrel closed, eff at/above B and master, cubes 0/0,
+pT5 mean nhits preserved, jet-core dR<.005 share .47 -> .76. Priced costs (headline, accepted at
+ship time): PU vxy[10,30) -33/3000evt and dxy[1,5) -13 (leads over master remain >= +250); jets
+eff -.0066 and jets vxy[10,30) -444 (lead remains large); CPU +4.8% single-stream (evidence-pass
+score reuse is the named, unbuilt optimization). Full round record: standalone/FINDINGS_GAPS.md
+sections [EC-COORD] .. [ARM-RETRAIN2] in the measurement tree.

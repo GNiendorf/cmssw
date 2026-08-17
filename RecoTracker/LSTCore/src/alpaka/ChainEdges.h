@@ -456,7 +456,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                   float thetaEdgeE1,
                                   float thetaEdgeE2,
                                   bool edgeWpTable,
-                                  float* edgeFeatOut) const {
+                                  float* edgeFeatOut,
+                                  float weld5E1Delta,
+                                  float weld5E1RelaxDelta) const {
       static_assert(dnn::edgemlp::kInput == 2 * Params_ChainNode::kFeatures + kChainEdgeFeatures,
                     "EdgeNetworkWeights.h input size does not match the frozen feature layout");
       static_assert(dnn::edgemlp::kOutputs == 3, "arm F's edge head is 3-class: fake / prompt / displaced");
@@ -536,8 +538,28 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
           // (-/+ 1e30) so that the weld keeps its single `logOdds < weldBar` test.
           if (edgeWpTable) {
             uint32_t const wpIndex = static_cast<uint32_t>(batchFamily[lane]) * dnn::edgemlp::kWpBins + batchCell[lane];
-            bool const eligible = (mP >= dnn::edgemlp::kWpPrompt[wpIndex]) || (mD >= dnn::edgemlp::kWpDisp[wpIndex]);
-            edges.weldBar()[batchEdge[lane]] = eligible ? -1e30f : 1e30f;
+            // [ARM-WELD5] LST_W5_E1DELTA relaxes BOTH per-cell bars for the E1 (layer-adding)
+            // family alone; 0 -- the default -- leaves the two comparisons exactly as they were.
+            float const barShift = (batchFamily[lane] == 0u) ? weld5E1Delta : 0.f;
+            bool const eligible = (mP >= dnn::edgemlp::kWpPrompt[wpIndex] - barShift) ||
+                                  (mD >= dnn::edgemlp::kWpDisp[wpIndex] - barShift);
+            // [ARM-WELD5] LST_W5_E1RDELTA: a SECOND, wider bar for the E1 family whose rows are
+            // admitted by the chain-extension sweeps ONLY (ChainWeld.h). It rides on the same
+            // degenerate-bar encoding so the weld keeps its single `logOdds < weldBar` test:
+            //   -1e30  eligible everywhere (unchanged)
+            //   +1e29  eligible only as an extension  -- fails `logOdds < weldBar` like any
+            //          ineligible row, and no logOdds can ever reach 1e29
+            //   +1e30  ineligible
+            // With the delta at its default 0 the relaxed set equals the strict set and the +1e29
+            // state is never written, so the column is byte for byte what it was.
+            float bar = eligible ? -1e30f : 1e30f;
+            if (!eligible && batchFamily[lane] == 0u && weld5E1RelaxDelta > 0.f) {
+              float const relaxShift = barShift + weld5E1RelaxDelta;
+              if ((mP >= dnn::edgemlp::kWpPrompt[wpIndex] - relaxShift) ||
+                  (mD >= dnn::edgemlp::kWpDisp[wpIndex] - relaxShift))
+                bar = 1e29f;
+            }
+            edges.weldBar()[batchEdge[lane]] = bar;
           }
         }
         nBatch = 0;

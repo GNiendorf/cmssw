@@ -157,6 +157,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
       chainConfigRetirementEnv(chainConfig_);
       chainConfigT4Env(chainConfig_);
       chainConfigTrimEnv(chainConfig_);
+      chainConfigGateEnv(chainConfig_);  // [ARM-GATELP] 5+-layer gate bars, inert with nothing set
       if (ptCut < 0.6f) {
         throw std::invalid_argument("Minimum pT cut must be at least 0.6 GeV. Provided value: " +
                                     std::to_string(ptCut));
@@ -221,6 +222,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                       uint32_t* accepted,
                       int32_t const* blockedBy,
                       int32_t const* blockedOther,
+                      int32_t const* blockedShared,  // [ARM-HDEEP]
                       AttachPlsPre const* plsPre,
                       uint8_t* plsOwned,
                       uint32_t* plsBestChain,

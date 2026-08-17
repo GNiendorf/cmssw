@@ -140,6 +140,21 @@ namespace lst {
     // score > -0.5 * gateKill.
     float gateKill = 1e9f;
 
+    // ---- [ARM-GATELP] block: pt-conditioned relaxation of the 5+-layer gate bars -------------
+    // MEASUREMENT ARM, default OFF and bit-identical when off (every delta 0 makes gateLowPtOn()
+    // false and the gate never reads them).
+    //
+    // Why pt: none of the 5+ bars above has a pt term, while the [ARM-GATELP] census of the
+    // master-pT5 deficit found the gate-killed bucket to be a 0.9-2 GeV phenomenon -- 68% of it
+    // below 2 GeV, 118 of its 125 chains the 2-node 5-layer (T5-shaped) chain, and 86 of them
+    // killed by the c25 CELL rule rather than by a branch bar. The conditioner is the chain's own
+    // reconstructed ptEst (feature column 9, the median member-triplet pt), never a sim quantity.
+    // gateLowPtMax <= 0 means "no pt condition", i.e. the deltas apply to every 5+ chain.
+    float gateLowPtMax = 0.f;     // relax only chains with feature 9 < this (0 = unconditional)
+    float gateDeltaRI = 0.f;      // subtracted from m3ThetaRI                 (IP 5+)
+    float gateDeltaR = 0.f;       // subtracted from m3ThetaR / RB / RT alike  (exempt 5+)
+    float gateDeltaC25 = 0.f;     // subtracted from c25Theta                  (2-node 5-layer cell)
+
     // Hit-claim arbitration.
     // Base per-length acceptance threshold. The gate is a KILL rather than a threshold, so this
     // only has to pass every live chain while still rejecting a killed one; any value between the
@@ -223,24 +238,42 @@ namespace lst {
     // carrying one across a retrain silently moves the operating point. The direction that hurts
     // is LOOSENING: a bare chain converted with the wrong seed loses its match outright, so a
     // looser attach costs displaced efficiency.
-    // The bars are a 2 x 3 (pt x |seed eta|) TABLE, the same two-row pt structure (split at
-    // 5 GeV) LST's own working points carry and the same convention as the edge and gate WP
-    // tables. The high-pT row exists because the head's margin slides down with pT while a
-    // single bar stands still: at the low-row bars the >= 5 GeV cells sat at .55-.78 true-pair
-    // acceptance in the barrel and transition (the endcap was already .90+), and our pT5 share
-    // collapsed .75 -> .09 by 50 GeV while master holds ~.88 flat, with our pT5 fake rate 3x
-    // BELOW master's -- a bar mis-set against a population it was never fitted on. The deployed
-    // sweep (recon HP, FINDINGS_GAPS.md) showed share saturating at 3 logits of relaxation, long
-    // before any fake price (nothing breaks until 8), pT5 fake rate still 2-4x below master's,
-    // jets fake -23% relative; the endcap cell is deliberately UNCHANGED because it is already
-    // above master there and the uniform relaxation was the one thing that harmed it.
-    float attachTheta = 5.019017f;     // pt < 5,  |seed eta| < 1.1
-    float attachThetaT = 4.310568f;    // pt < 5,  1.1 <= |seed eta| < 1.7
-    float attachThetaE = 4.334996f;    // pt < 5,  |seed eta| >= 1.7
-    float attachThetaHi = 3.519017f;   // pt >= 5, |seed eta| < 1.1
-    float attachThetaHiT = 2.810568f;  // pt >= 5, 1.1 <= |seed eta| < 1.7
-    float attachThetaHiE = 5.834996f;  // pt >= 5, |seed eta| >= 1.7 (= low row: no relaxation)
-    float attachPtSplit = 5.0f;        // LST's own WP bin boundary
+    // The bars are a 6 x 3 (seed ptIn x |seed eta|) WORKING-POINT TABLE, calibrated at a fixed
+    // per-cell true-pair (signal) efficiency of 0.99 on the deployed head's own logits over the
+    // on-policy prompt stage-A pairs -- the same convention as the edge and gate WP tables, with
+    // pt rows because the head's margin slides steadily down with pT while any single bar stands
+    // still (the [DISP]/[DISP2] censuses: 96%+ of the master-pT5/our-bare-T5 deficit was the
+    // true pair scored, top-ranked, and under the bar, with the shortfall growing from ~0.5
+    // logits at 1 GeV to ~2 above 25). The fit is RAW -- no floors, no inheritance from the
+    // previous constants -- and every cell came out looser than the row it replaces, so no
+    // delivery made before is lost. It also retires a mis-transcription: the previous endcap
+    // high-pT bar carried the DISPLACED endcap value (5.834996, 1.5 logits tighter than its own
+    // documented intent), which is why the endcap >50 GeV pT5 share sat at .68 against master's
+    // .94. Replay-predicted composition at 0.99 (disp_ref/fitbars.py, delivery replay validated
+    // 1.0000 on the fitting dump): barrel share .942 -> .954 (master .957), outside .881 -> .893,
+    // wrong-seed deliveries x1.09. Fit: analysis/DNN (provenance in the README).
+    static constexpr int kAttachPtBins = 6;
+    static constexpr int kAttachEtaBins = 3;
+    float attachPtEdges[kAttachPtBins - 1] = {2.f, 5.f, 10.f, 25.f, 50.f};  // seed ptIn
+    float attachEtaEdges[kAttachEtaBins - 1] = {1.1f, 1.7f};                // |seed eta|
+    // ---- [ARM-RETRAIN] table swap BEGIN (CTRL_HP) -- the block below replaces the commented one
+    //RT     float attachThetaTable[kAttachPtBins][kAttachEtaBins] = {
+    //RT         {3.744915f, 3.214708f, 3.908110f},    // seed ptIn < 2
+    //RT         {3.758496f, 3.426709f, 4.267581f},    // 2-5
+    //RT         {1.952619f, 2.287145f, 3.061409f},    // 5-10
+    //RT         {1.227245f, 0.255272f, 1.174601f},    // 10-25
+    //RT         {-0.150174f, -0.755710f, -0.432729f}, // 25-50
+    //RT         {-0.660332f, -1.478321f, -1.663964f}, // >= 50
+    //RT     };
+    float attachThetaTable[kAttachPtBins][kAttachEtaBins] = {
+        {4.171433f, 3.826579f, 4.284862f},  // seed ptIn < 2
+        {3.490411f, 3.468256f, 4.460664f},  // 2-5
+        {1.504782f, 2.420699f, 3.766463f},  // 5-10
+        {-0.069640f, 1.602644f, 1.749620f},  // 10-25
+        {-0.410102f, 0.627965f, 1.757727f},  // 25-50
+        {-0.273028f, 0.334762f, 0.129922f},  // >= 50
+    };
+    // ---- [ARM-RETRAIN] table swap END
     // The DISPLACED-TARGET row: a pair whose TARGET chain has dcaXY >= dcaSplit is judged by
     // these bars regardless of the seed's pt row. They are frozen at the displaced-validated
     // matched-FPR values: a displaced chain does not point at the beamline, so a beamline seed
@@ -294,8 +327,62 @@ namespace lst {
     // A rescue that wins a seed but fails those conditions is revoked and the seed released.
     // Rescue pairs contribute NO retirement evidence and NO cross-clean arms (the chain may
     // never emit), and lose exact contention ties to accepted targets by position.
-    bool attachRescue = false;
+    //
+    // THE SEED HANDOVER (rescueHandover, LST_CHAIN_RESCUE=2): the [L5] census measured that in
+    // 94% of the claim-killed bucket the 4-layer blocker had ALREADY taken the pixel seed (the
+    // sim's own seed, emitted as pT4) -- so the seedless-blocker rescue above reaches only 4.9%
+    // of the bucket it was built for. With the handover, the strictly-longer rescue replaces a
+    // SEEDED blocker too, inheriting the blocker's granted seed with the hits (both belong to
+    // the same track: 98% of blockers carry the killed chain's own sim). The blocker retires;
+    // its 4-layer pT4 becomes the same track's 5/6-layer pT5.
+    // SHIPPED ON: the rescue + handover are part of the deployed candidate (share-neutral under
+    // the seed-evidence claim ordering, kept for track length: +~30k 15-hit tracks / 1000 evt).
+    // LST_CHAIN_RESCUE=0 is the off-switch for A/B work.
+    bool attachRescue = true;
+    bool rescueHandover = true;
     int rescueOtherItems = 2;
+    // ---- [ARM-HDEEP] block: pre-bar same-seed evidence for the handover ---------------------
+    // PRE-BAR HANDOVER EVIDENCE (rescuePreBar, LST_CHAIN_RESCUE=3). The handover's same-seed
+    // test above reads the rescue's argmax out of tgtKey, which the scorer only writes for pairs
+    // that already cleared the eta/pt-banded DELIVERY margin. For a HANDOVER that is the wrong
+    // gate: the seed has already been delivered on the blocker, so nothing new is being let
+    // through the bar -- the only question is whether the longer sibling's argmax WANTS the same
+    // seed. Half the claim-killed bucket sits at seed ptIn 0.9-2 GeV where the bars are highest,
+    // so a rescue whose true pair is a fraction of a logit under its bar produces tgtKey == 0 and
+    // the handover is refused for a reason that does not apply to it. With this on, rescue
+    // positions also write the PRE-THRESHOLD argmax (tgtKeyPre, no floor at all) and the handover
+    // reads that. It changes NOTHING about which pairs may DELIVER a seed; only which longer
+    // sibling may inherit a seed its own blocker already holds.
+    bool rescuePreBar = false;
+    // How far under its own delivery margin a rescue's argmax pair may sit and still count as
+    // handover evidence, in logit units. The same instrument as dupMutualDelta, and the dial
+    // between the two measured operating points: 0 reproduces the same-seed-gated handover almost
+    // exactly (only pairs at their own bar vouch), 1e9 is the unconditional pre-bar form. A floor
+    // on EVIDENCE, never on delivery.
+    float rescuePreBarDelta = 1e9f;
+    // Blocker-side length floor of the handover (0 = none): refuse a handover whose blocker chain
+    // has fewer than this many OT layers. 4 restricts the handover to the measured bucket (99% of
+    // claim-killed blockers are 4-layer).
+    int rescueMinBlockerLayers = 0;
+    // THE RELATIVE HANDOVER TEST, in logit units (1e9 = off). The handover only fires when the
+    // rescue's evidence logit for the blocker's seed is within this much of the logit the BLOCKER
+    // itself won that seed at. Same head, same seed, so the difference is scale-free -- which an
+    // absolute floor is not, the delivery table running from -1.66 to +4.27 across its 18 cells.
+    // At 0 the longer sibling must match the seed at least as well as the shorter one does.
+    float rescueHandoverGap = 1e9f;
+    // THE CONTAINMENT TEST (0 = off): the handover requires the blocker to hold at least this
+    // fraction of its OWN claim hits inside the rescue's claim set -- "the shorter chain is a
+    // sub-chain of the longer one". Orthogonal to every logit instrument above: it is the claim's
+    // own record of the overlap, not the head's opinion, and it is what the [L5] bucket looks like
+    // (a 4-layer chain and the same track's 5/6-layer self share the 4 layers).
+    float rescueMinContain = 0.f;
+    // Apply rescueHandoverGap / rescueMinContain to the PRE-BAR-ONLY handovers alone (those whose
+    // above-bar key was empty). With this on the arm is strictly additive to the same-seed-gated
+    // handover: every swap mode 2 makes is still made, and the guards only price the increment
+    // pre-bar evidence opens. Without it the guards also cut mode 2's own handovers, which is a
+    // move DOWN the same trade curve rather than a new operating point.
+    bool rescueGuardPreOnly = false;
+    // ---- end [ARM-HDEEP] block ---------------------------------------------------------------
     // Bare-T3 target admission on the production T3 fake score (node feature 12). Written in the
     // NaN-rejecting form !(fakeScore <= t3FakeMax), and applied to the target mask, so a rejected
     // T3 is never scored and never becomes a seed's best T3.
@@ -410,6 +497,12 @@ namespace lst {
 
     // True iff any eta-band delta is live. The gate short-circuits its whole band computation on
     // this, so leaving every delta at 0 costs nothing.
+    // ---- [ARM-GATELP] True iff any 5+ bar relaxation is live. The gate short-circuits on it, so
+    // leaving every delta at 0 costs nothing and changes nothing.
+    constexpr bool gateLowPtOn() const {
+      return gateDeltaRI != 0.f || gateDeltaR != 0.f || gateDeltaC25 != 0.f;
+    }
+
     constexpr bool etaBandActive() const {
       return zEta2 > zEta1 && (zdRI != 0.f || zdR != 0.f || zdR5 != 0.f || zdR6 != 0.f || zdM4 != 0.f || zdM4D != 0.f ||
                                zdCP != 0.f || zdCD != 0.f);
@@ -470,12 +563,43 @@ namespace lst {
       std::printf("[chainenv] attachThetaT3: -%g -> %g\n", dT3, cfg.attachThetaT3);
     }
     char const* rescueEnv = std::getenv("LST_CHAIN_RESCUE");
-    if (rescueEnv != nullptr && *rescueEnv != '\0' && std::atoi(rescueEnv) != 0) {
-      cfg.attachRescue = true;
+    if (rescueEnv != nullptr && *rescueEnv != '\0') {
+      // SHIPPED default is mode 2 (rescue + handover, set above). The env is the override for
+      // A/B work: 0 = fully off, 1 = rescue only, 2 = shipped, 3 = +pre-bar evidence (refused).
+      int const rescueMode = std::atoi(rescueEnv);
+      cfg.attachRescue = (rescueMode >= 1);
+      cfg.rescueHandover = (rescueMode >= 2);
+      cfg.rescuePreBar = (rescueMode >= 3);
+      std::printf("[chainenv] rescue mode override: %d\n", rescueMode);
       char const* rescueOther = std::getenv("LST_CHAIN_RESCUE_OTHER");
       if (rescueOther != nullptr && *rescueOther != '\0')
         cfg.rescueOtherItems = std::atoi(rescueOther);
-      std::printf("[chainenv] attachRescue: OFF -> ON (rescueOtherItems %d)\n", cfg.rescueOtherItems);
+      char const* rescueMinBl = std::getenv("LST_CHAIN_RESCUE_MINBL");
+      if (rescueMinBl != nullptr && *rescueMinBl != '\0')
+        cfg.rescueMinBlockerLayers = std::atoi(rescueMinBl);
+      char const* rescuePreD = std::getenv("LST_CHAIN_RESCUE_PREDELTA");
+      if (rescuePreD != nullptr && *rescuePreD != '\0')
+        cfg.rescuePreBarDelta = static_cast<float>(std::atof(rescuePreD));
+      char const* rescueGap = std::getenv("LST_CHAIN_RESCUE_GAP");
+      if (rescueGap != nullptr && *rescueGap != '\0')
+        cfg.rescueHandoverGap = static_cast<float>(std::atof(rescueGap));
+      char const* rescueCont = std::getenv("LST_CHAIN_RESCUE_CONTAIN");
+      if (rescueCont != nullptr && *rescueCont != '\0')
+        cfg.rescueMinContain = static_cast<float>(std::atof(rescueCont));
+      char const* rescueGP = std::getenv("LST_CHAIN_RESCUE_GUARDPRE");
+      if (rescueGP != nullptr && *rescueGP != '\0')
+        cfg.rescueGuardPreOnly = (std::atoi(rescueGP) != 0);
+      std::printf(
+          "[chainenv] rescue override (handover %d, preBar %d preDelta %g gap %g contain %g, "
+          "guardPreOnly %d, rescueOtherItems %d, minBlockerLayers %d)\n",
+          cfg.rescueHandover ? 1 : 0,
+          cfg.rescuePreBar ? 1 : 0,
+          cfg.rescuePreBarDelta,
+          cfg.rescueHandoverGap,
+          cfg.rescueMinContain,
+          cfg.rescueGuardPreOnly ? 1 : 0,
+          cfg.rescueOtherItems,
+          cfg.rescueMinBlockerLayers);
     }
     char const* dA = std::getenv("LST_D_A_DELTA");
     if (dA != nullptr && *dA != '\0') {
@@ -604,6 +728,36 @@ namespace lst {
           cfg.t4AttachMinLayers);
   }
 
+  // ---- [ARM-GATELP] Environment overrides of the 5+-layer gate bars, so one binary supplies the
+  // whole scan. With nothing set this writes nothing, prints nothing and is bit-identical.
+  //
+  //   LST_G_C25_DELTA  subtract from c25Theta      (the 2-node 5-layer cell rule)
+  //   LST_G_REX_DELTA  subtract from m3ThetaR / m3ThetaRB / m3ThetaRT (exempt 5+ rescue floors)
+  //   LST_G_RI_DELTA   subtract from m3ThetaRI     (IP 5+ rescue floor)
+  //   LST_G_PTMAX      apply the three deltas only to chains whose feature 9 (ptEst) is below
+  //                    this; unset or 0 applies them to every 5+ chain
+  inline void chainConfigGateEnv(ChainConfig& cfg) {
+    auto rdf = [](char const* name, float* dst) {
+      char const* s = std::getenv(name);
+      if (s == nullptr || *s == '\0')
+        return false;
+      *dst = static_cast<float>(std::atof(s));
+      return true;
+    };
+    bool any = false;
+    any |= rdf("LST_G_C25_DELTA", &cfg.gateDeltaC25);
+    any |= rdf("LST_G_REX_DELTA", &cfg.gateDeltaR);
+    any |= rdf("LST_G_RI_DELTA", &cfg.gateDeltaRI);
+    any |= rdf("LST_G_PTMAX", &cfg.gateLowPtMax);
+    if (any)
+      std::printf("[chainenv] gate 5+ relaxation resolved: c25=%g rex=%g ri=%g ptMax=%g (on %d)\n",
+                  cfg.gateDeltaC25,
+                  cfg.gateDeltaR,
+                  cfg.gateDeltaRI,
+                  cfg.gateLowPtMax,
+                  static_cast<int>(cfg.gateLowPtOn()));
+  }
+
   // The value of ChainConfig::degreeCap that means "no cap". It is not a sentinel the code tests
   // for: it is simply larger than any degree a min() can ever see (a degree is bounded by the
   // triplet count, and 2^32 / 21 B = 204 M edge rows is the hard allocation wall long before that),
@@ -689,6 +843,48 @@ namespace lst {
   // Absolute pad added to every grid phi interval. It covers the fast-atan2 approximation used in
   // the grid build (measured max error < 3e-6 rad) plus float rounding, with >4 decades of margin.
   static constexpr float kAttachPhiPad = 1e-3f;
+
+  // ---- [ARM-WELD5] weld layer-adding preference (MEASUREMENT ARM, default OFF) -----------------
+  //
+  // Target: the CHAIN5-NEVER-WELDED bucket of [L5-4] -- 409 sims / 1000 events for which master
+  // builds a pT5 and we never build ANY >= 5-layer chain, although 122/122 probed cases had a true
+  // quintuplet-relation pair of the sim's OWN T3 nodes spanning 5 layers, and half of them had that
+  // layer-adding continuation sitting at an END node of the 4-layer chain we did emit.
+  //
+  // The knobs are environment overrides read in LSTEvent (weld sweeps and edge inference); every
+  // default below is the shipped behaviour and an unset environment is bit-identical to it.
+  //
+  //   LST_W5_E1BONUS  float, default 0. Added to an E1 edge's logOdds INSIDE the weld argmax key
+  //                   only (chainWeldKeyArm). The chain score, the gate, the claim order key and
+  //                   every chain feature keep the untouched logOdds sum.
+  //   LST_W5_E1PRIO   long long, default 0 (off). A hard E1 priority bit above the shipped
+  //                   E2-family bit: < 0 gives it at every junction, > 0 only where the junction's
+  //                   incidence degree product is BELOW the value (the sparse regime the family
+  //                   study calls unambiguous for E1).
+  //   LST_W5_E1SWEEPS int, default 0. Extra weld sweeps after the standard kChainWeldSweeps that
+  //                   consider ONLY E1 edges. Monotone: an already-welded slot is never revisited,
+  //                   so these sweeps can only lengthen chains, never shorten or reroute one.
+  //   LST_W5_E1DELTA  float, default 0. Subtracted from the E1 rows of BOTH per-cell working-point
+  //                   tables in the edge inference, i.e. an eligibility relaxation for the
+  //                   layer-adding family alone. The fitted bars admit 92-97% of E2 rows against
+  //                   23-45% of E1 rows, so a true E1 continuation can be missing from the argmax
+  //                   entirely; this is the only knob that can put it back.
+  //   LST_W5_E1RDELTA float, default 0. A SECOND, wider E1 bar whose rows only the E1-only
+  //                   extension sweeps can see, and only where the edge lengthens a chain that
+  //                   above-bar evidence already built (its tail has an in-weld or its head an
+  //                   out-weld). The surgical form of E1DELTA: the census says 80% of the
+  //                   layer-adding continuations sitting at an open chain END are below the bar,
+  //                   while a flat relaxation admits them everywhere and they lose the argmax as
+  //                   junk. Requires LST_W5_E1SWEEPS >= 1.
+  //   LST_W5_CENSUS   1 enables the ChainWeldCensus print (measurement only, no physics change).
+  static constexpr float kWeld5E1BonusDefault = 0.f;
+  static constexpr long long kWeld5E1PrioDefault = 0;
+  static constexpr int kWeld5E1SweepsDefault = 0;
+  static constexpr float kWeld5E1DeltaDefault = 0.f;
+  // Extra sweeps are bounded for the same reason kChainWeldSweeps is: the marginal weld's purity
+  // collapses with sweep depth.
+  static constexpr int kWeld5E1SweepsMax = 16;
+  static constexpr int kWeld5CensusSlots = 20;
 
 }  // namespace lst
 

@@ -1,0 +1,128 @@
+{
+ "feature_names": [
+  "af_log10PtIn",
+  "af_ptErrRel",
+  "af_etaErr",
+  "af_charge",
+  "af_isQuad",
+  "af_log10CircleRadius",
+  "af_plsDeltaPhi",
+  "af_fitKappaSigned",
+  "af_chainTanLambda",
+  "af_innermostLayer",
+  "af_nLayers",
+  "af_chainGateZFake",
+  "af_chainGateZPrompt",
+  "af_chainGateZDisp",
+  "af_chargeAgree",
+  "af_dKappa",
+  "af_dTanLambda",
+  "af_dPhiAtInnermost",
+  "af_circleCenterDist",
+  "af_zResidAtInnermost",
+  "af_targetType",
+  "af_rphiResidInwards",
+  "af_dBeta"
+ ],
+ "conditioning": [
+  {
+   "feature": "af_ptErrRel",
+   "op": "log10_1p"
+  },
+  {
+   "feature": "af_circleCenterDist",
+   "op": "log10_1p"
+  },
+  {
+   "feature": "af_log10PtIn",
+   "op": "clip",
+   "lo": -1.0,
+   "hi": 4.0
+  },
+  {
+   "feature": "af_log10CircleRadius",
+   "op": "clip",
+   "lo": 1.0,
+   "hi": 5.0
+  },
+  {
+   "feature": "af_fitKappaSigned",
+   "op": "clip",
+   "lo": -1.0,
+   "hi": 1.0
+  },
+  {
+   "feature": "af_dKappa",
+   "op": "clip",
+   "lo": -1.0,
+   "hi": 1.0
+  },
+  {
+   "feature": "af_rphiResidInwards",
+   "op": "clip",
+   "lo": -30.0,
+   "hi": 30.0
+  },
+  {
+   "feature": "af_dBeta",
+   "op": "clip",
+   "lo": -3.7385608097325504,
+   "hi": 3.730731633694836
+  }
+ ],
+ "mean": [
+  0.16700498759746552,
+  0.000722691765986383,
+  0.0012461207807064056,
+  0.023895131424069405,
+  0.4354402422904968,
+  2.1103579998016357,
+  0.0017444809200242162,
+  -0.0006944365450181067,
+  -0.014725103043019772,
+  3.5829918384552,
+  3.348067045211792,
+  -2.046307452955622,
+  1.04490983843288,
+  -1.1098821431335482,
+  0.6391966938972473,
+  0.00044948855065740645,
+  2.245596442662645e-05,
+  -1.3633160961035173e-05,
+  1.893431544303894,
+  -0.01663261651992798,
+  0.8432110548019409,
+  2.0337915420532227,
+  -0.003914588018857209
+ ],
+ "std": [
+  0.2657923400402069,
+  0.004750951658934355,
+  0.000538505264557898,
+  0.9997144937515259,
+  0.4958145320415497,
+  0.26527711749076843,
+  0.0634976401925087,
+  0.009594974108040333,
+  2.537228584289551,
+  2.7091238498687744,
+  0.8603779673576355,
+  1.7456139590112656,
+  1.3803380234738876,
+  1.142654331021646,
+  0.4802335798740387,
+  0.011616709642112255,
+  0.29484492540359497,
+  0.19485768675804138,
+  0.7036167979240417,
+  17.170970916748047,
+  0.3636016547679901,
+  7.158529281616211,
+  0.7469292443427387
+ ],
+ "r1_use_cols": "s3_22input_3gatelogits",
+ "r1_cpp_prefix": true,
+ "seed": 42,
+ "degenerate_columns": [],
+ "per_type": false
+}

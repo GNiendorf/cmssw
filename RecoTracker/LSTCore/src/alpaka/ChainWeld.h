@@ -130,6 +130,80 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     return (static_cast<uint64_t>(orderWord) << 32) | static_cast<uint64_t>(tieWord);
   }
 
+  // ---- [ARM-WELD5] layer-adding (E1) preference at the weld argmax -----------------------------
+  //
+  // The failure mode this addresses ([L5-4]): for 409 sims / 1000 events master builds a pT5 and we
+  // never build ANY >= 5-layer chain, although a true quintuplet-relation pair of the sim's own T3
+  // nodes always existed; in half of those the emitted 4-layer chain had a layer-adding continuation
+  // of the same track sitting at one of its END nodes. The weld took the E2 (segment-sharing,
+  // 4-layer-producing) edge instead, or ran out of sweeps before the E1 could claim the slot.
+  //
+  // Three independent, default-off levers, all of which change only WHICH edge wins a slot. The
+  // chain score still sums the untouched logOdds, so the gate, the claim order key and every chain
+  // feature are unchanged for any weld this does not move.
+  //
+  //   e1Bonus   an additive bonus applied to an E1 edge's logOdds INSIDE THE KEY ONLY: the
+  //             "layer-adding wins within delta" tiebreak. Continuous, so it degrades gracefully.
+  //   e1Prio    a hard priority bit above the shipped E2-family bit: E1 wins the slot outright,
+  //             either everywhere (< 0) or only at junctions BELOW a degree-product knee (> 0),
+  //             which is the sparse regime the family study says E1 is unambiguous in.
+  //   e1Only    marks a sweep as an E1-only sweep. The extra sweeps LSTEvent runs with this set
+  //             can only ADD welds and only layer-adding ones: an already-welded slot is never
+  //             revisited, so no chain the standard sweeps built can be shortened or rerouted.
+  //   e1Relax   in an e1Only sweep, also admit the rows the edge inference marked
+  //             extension-eligible (weldBar == +1e29, LST_W5_E1RDELTA), and then only where the
+  //             edge really does EXTEND an existing chain -- its tail already has an in-weld or
+  //             its head already has an out-weld. This is the surgical form of the bar relaxation
+  //             the census indicts: a below-bar layer-adding edge can lengthen a chain that other,
+  //             above-bar evidence already built, and can never start one.
+  //
+  // A zero-initialised ChainWeldArm is the shipped weld bit for bit (chainWeldKeyArm forwards).
+  struct ChainWeldArm {
+    float e1Bonus;
+    long long e1Prio;
+    uint8_t e1Only;
+    uint8_t e1Relax;
+  };
+
+  // The eligibility test both weld kernels share. `weldBar` carries three states with the WP table
+  // (see ChainEdges.h): -1e30 eligible, +1e29 extension-only, +1e30 ineligible. Without the arm the
+  // middle state is never written and this collapses to the shipped `logOdds < weldBar` test.
+  //
+  // The two slot arrays it consults are the FROZEN pre-sweep snapshot, never the live ones: the
+  // apply kernel writes those, and reading them back would be the read-after-write pair the weld is
+  // written to avoid. Both are dereferenced only on the relaxed path, so the shipped configuration
+  // never touches them.
+  ALPAKA_FN_ACC ALPAKA_FN_INLINE bool chainWeldEligible(float logOdds,
+                                                        float weldBar,
+                                                        ChainWeldArm const& arm,
+                                                        int32_t const* snapIn,
+                                                        int32_t const* snapOut,
+                                                        uint32_t tailNode,
+                                                        uint32_t headNode) {
+    if (logOdds >= weldBar)
+      return true;
+    if (arm.e1Relax == 0u || arm.e1Only == 0u || weldBar > 5e29f)
+      return false;
+    return (snapIn[tailNode] != -1) || (snapOut[headNode] != -1);  // extends an existing chain
+  }
+
+  ALPAKA_FN_ACC ALPAKA_FN_INLINE uint64_t chainWeldKeyArm(
+      float logOdds, uint32_t tieWord, uint8_t edgeType, long long degProd, ChainWeldArm const& arm) {
+    if (arm.e1Bonus == 0.f && arm.e1Prio == 0)
+      return chainWeldKeyDense(logOdds, tieWord, edgeType, degProd);
+    bool const isE1 = (edgeType == 1u);
+    float const keyLogOdds = isE1 ? (logOdds + arm.e1Bonus) : logOdds;
+    bool const familyFirst =
+        (kChainWeldFamilyDegKnee > 0) && (edgeType == 2u) && (degProd >= kChainWeldFamilyDegKnee);
+    bool const e1First = isE1 && ((arm.e1Prio < 0) || (arm.e1Prio > 0 && degProd < arm.e1Prio));
+    // Two priority bits above the float order word. chainOrderFloat() >> 2 is always < 2^30, so the
+    // two top bits are free and the comparison stays one unsigned total order; the 32-bit stable
+    // tie word is untouched.
+    uint32_t const orderWord =
+        (chainOrderFloat(keyLogOdds) >> 2) | (e1First ? 0x80000000u : 0u) | (familyFirst ? 0x40000000u : 0u);
+    return (static_cast<uint64_t>(orderWord) << 32) | static_cast<uint64_t>(tieWord);
+  }
+
   // ChainWeldArgmax. One sweep's argmax, over a frozen snapshot of the weld slots: every eligible edge whose
   // two slots are both still free offers its key to its tail's out-slot and its head's in-slot.
   struct ChainWeldArgmax {
@@ -141,7 +215,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                   int32_t const* outWeld,
                                   int32_t const* inWeld,
                                   uint64_t* bestOut,
-                                  uint64_t* bestIn) const {
+                                  uint64_t* bestIn,
+                                  ChainWeldArm arm,
+                                  int32_t const* snapIn,
+                                  int32_t const* snapOut) const {
       uint32_t const nEdges = static_cast<uint32_t>(edges.metadata().size());
 
       for (uint32_t edgeIdx : cms::alpakatools::uniform_elements(acc, nEdges)) {
@@ -150,18 +227,20 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         uint8_t const edgeType = edges.type()[edgeIdx];
         if (edgeType == 0u)
           continue;
+        if (arm.e1Only != 0u && edgeType != 1u)
+          continue;  // [ARM-WELD5] layer-adding-only extension sweep
         float const logOdds = edges.logOdds()[edgeIdx];
+        uint32_t const tailNode = edges.inner()[edgeIdx];
+        uint32_t const headNode = edges.outer()[edgeIdx];
         // The per-edge eligibility bar, resolved once by ChainEdgeInference and carried on the edge row: the bar
         // is per family and per (pt, |eta|) cell, so it cannot be a kernel-argument scalar. A
         // family whose whole table row holds one value behaves exactly like a single scalar bar.
-        if (logOdds < edges.weldBar()[edgeIdx])
+        if (!chainWeldEligible(logOdds, edges.weldBar()[edgeIdx], arm, snapIn, snapOut, tailNode, headNode))
           continue;
-        uint32_t const tailNode = edges.inner()[edgeIdx];
-        uint32_t const headNode = edges.outer()[edgeIdx];
         if (outWeld[tailNode] != -1 || inWeld[headNode] != -1)
           continue;  // tail's out-slot or head's in-slot already taken
-        uint64_t const weldKey = chainWeldKeyDense(
-            logOdds, edges.tie()[edgeIdx], edgeType, chainWeldDegProd(edges, nodes, mdInc, lsInc, edgeIdx));
+        uint64_t const weldKey = chainWeldKeyArm(
+            logOdds, edges.tie()[edgeIdx], edgeType, chainWeldDegProd(edges, nodes, mdInc, lsInc, edgeIdx), arm);
         alpaka::atomicMax(acc, &bestOut[tailNode], weldKey, alpaka::hierarchy::Threads{});
         alpaka::atomicMax(acc, &bestIn[headNode], weldKey, alpaka::hierarchy::Threads{});
       }
@@ -191,13 +270,18 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                   int32_t* outWeld,
                                   int32_t* inWeld,
                                   uint64_t const* bestOut,
-                                  uint64_t const* bestIn) const {
+                                  uint64_t const* bestIn,
+                                  ChainWeldArm arm,
+                                  int32_t const* snapIn,
+                                  int32_t const* snapOut) const {
       uint32_t const nEdges = static_cast<uint32_t>(edges.metadata().size());
 
       for (uint32_t edgeIdx : cms::alpakatools::uniform_elements(acc, nEdges)) {
         uint8_t const edgeType = edges.type()[edgeIdx];
         if (edgeType == 0u)
           continue;  // enumeration hole
+        if (arm.e1Only != 0u && edgeType != 1u)
+          continue;  // [ARM-WELD5] mirrors ChainWeldArgmax exactly
         uint32_t const tailNode = edges.inner()[edgeIdx];
         uint64_t const bestKey = bestOut[tailNode];
         // The tail either has no eligible edge this sweep or was welded in an earlier one; ChainWeldArgmax
@@ -207,17 +291,105 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         if (bestKey == 0u)
           continue;
         float const logOdds = edges.logOdds()[edgeIdx];
-        if (logOdds < edges.weldBar()[edgeIdx])
+        if (!chainWeldEligible(
+                logOdds, edges.weldBar()[edgeIdx], arm, snapIn, snapOut, tailNode, edges.outer()[edgeIdx]))
           continue;
         if (bestKey !=
-            chainWeldKeyDense(
-                logOdds, edges.tie()[edgeIdx], edgeType, chainWeldDegProd(edges, nodes, mdInc, lsInc, edgeIdx)))
+            chainWeldKeyArm(
+                logOdds, edges.tie()[edgeIdx], edgeType, chainWeldDegProd(edges, nodes, mdInc, lsInc, edgeIdx), arm))
           continue;
         uint32_t const headNode = edges.outer()[edgeIdx];
         if (bestIn[headNode] != bestKey)
           continue;
         outWeld[tailNode] = static_cast<int32_t>(edgeIdx);
         inWeld[headNode] = static_cast<int32_t>(edgeIdx);
+      }
+    }
+  };
+
+  // ---- [ARM-WELD5] instrumentation ------------------------------------------------------------
+  // ChainWeldCensus. Measurement only (LST_W5_CENSUS), run once after the last sweep, off the SAME
+  // bestOut / bestIn snapshot the last sweep left behind. For every E1 (layer-adding) edge that is
+  // still weldable -- both of its slots free -- it names the reason it is not welded:
+  //   * INELIGIBLE            logOdds below the head's per-cell bar, so it never entered an argmax
+  //   * LOST-TAIL-FAMILY      the tail's out-slot went to an edge carrying the E2 family bit
+  //   * LOST-TAIL-PLAIN       the tail's out-slot went to a higher-logit edge with no family bit
+  //   * LOST-HEAD             it WON the tail slot and lost the head's in-slot
+  // and repeats the split over the subset whose tail is a chain END NODE (already welded on its in
+  // side), which is exactly the [L5-4] endpoint-extensible signature.
+  //
+  // Slot 15 counts chain end nodes, slot 7 counts nodes with a free out-slot and slot 16 the E2
+  // edge rows, so the E1-per-end rates are computable from the same line. Counter layout
+  // (kWeld5CensusSlots wide): 0 nE1, 1 live, 2 inelig, 3 lostTailFamily, 4 lostTailPlain,
+  // 5 lostHead, 6 wonBoth, 7 freeOutNodes, 9..14 the same 1..6 restricted to chain-end tails,
+  // 15 chain-end nodes, 16 nE2.
+  struct ChainWeldCensus {
+    ALPAKA_FN_ACC void operator()(Acc1D const& acc,
+                                  ChainEdgesConst edges,
+                                  ChainNodesConst nodes,
+                                  ChainIncidenceConst mdInc,
+                                  ChainIncidenceConst lsInc,
+                                  uint32_t nNodes,
+                                  int32_t const* outWeld,
+                                  int32_t const* inWeld,
+                                  uint64_t const* bestOut,
+                                  uint64_t const* bestIn,
+                                  uint64_t* counters,
+                                  ChainWeldArm arm) const {
+      uint32_t const nEdges = static_cast<uint32_t>(edges.metadata().size());
+      auto bump = [&](int slot) {
+        alpaka::atomicAdd(acc, &counters[slot], uint64_t{1}, alpaka::hierarchy::Threads{});
+      };
+
+      for (uint32_t edgeIdx : cms::alpakatools::uniform_elements(acc, nEdges)) {
+        uint8_t const edgeType = edges.type()[edgeIdx];
+        if (edgeType == 0u)
+          continue;
+        if (edgeType != 1u) {
+          bump(16);
+          continue;
+        }
+        bump(0);
+        uint32_t const tailNode = edges.inner()[edgeIdx];
+        uint32_t const headNode = edges.outer()[edgeIdx];
+        if (outWeld[tailNode] != -1 || inWeld[headNode] != -1)
+          continue;  // not weldable any more: one of its slots is spent
+        bool const atEnd = (inWeld[tailNode] != -1);
+        int const off = atEnd ? 8 : 0;
+        bump(1);
+        if (atEnd)
+          bump(9);
+        float const logOdds = edges.logOdds()[edgeIdx];
+        if (logOdds < edges.weldBar()[edgeIdx]) {
+          bump(2);
+          if (atEnd)
+            bump(10);
+          continue;
+        }
+        uint64_t const key = chainWeldKeyArm(
+            logOdds, edges.tie()[edgeIdx], edgeType, chainWeldDegProd(edges, nodes, mdInc, lsInc, edgeIdx), arm);
+        uint64_t const tailBest = bestOut[tailNode];
+        if (tailBest != key) {
+          // Bit 63 is the shipped E2-family bit (chainWeldKeyDense); with an ARM key it is the E1
+          // priority bit, so this split is only meaningful with the arm off, which is how the
+          // census is meant to be read.
+          bool const winnerFamilyBit = ((tailBest >> 63) & 1u) != 0u;
+          bump(off + (winnerFamilyBit ? 3 : 4));
+          continue;
+        }
+        if (bestIn[headNode] != key) {
+          bump(off + 5);
+          continue;
+        }
+        bump(off + 6);  // won both and still unwelded: must be empty
+      }
+
+      for (uint32_t nodeIdx : cms::alpakatools::uniform_elements(acc, nNodes)) {
+        if (outWeld[nodeIdx] == -1) {
+          bump(7);
+          if (inWeld[nodeIdx] != -1)
+            bump(15);
+        }
       }
     }
   };

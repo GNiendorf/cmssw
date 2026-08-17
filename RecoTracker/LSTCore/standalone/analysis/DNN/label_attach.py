@@ -215,7 +215,7 @@ def main():
     cols = None
     pos = 0
     ent = 0
-    stats = dict(nov_chain=0, nov_t3=0, nov_pls=0, ntrue=0, nrow=0, nmiss_t3=0)
+    stats = dict(nov_chain=0, nov_t3=0, nov_pls=0, ntrue=0, nrow=0, nmiss_t3=0, nrow_stage3=0)
 
     for batch in tree.iterate(BR, library="ak", step_size=20, entry_stop=nent):
         nb = len(batch["sim_pt"])
@@ -382,7 +382,12 @@ def main():
             pl = rows["pls"].astype(np.int64)
             nr = len(rows)
             T = np.full((nr, WPAD), -1, dtype=np.int32)
-            isch = (st == 0) | (st == 2)
+            # STAGE 3 IS A CHAIN TARGET. The claim-rescue arm tags its claim-rejected chain targets
+            # `3` (ChainAttach.h: `row.stage = is4L ? 2u : (isRescue ? 3u : 0u)`), and its `target`
+            # is a CHAIN row exactly like stage 0's. Omitting it here does not raise: the rows fall
+            # through with T = -1, which is a silent label of 0 for every rescue pair, true ones
+            # included. Any future stage tag whose target is a chain must be added to this mask.
+            isch = (st == 0) | (st == 2) | (st == 3)
             if isch.any():
                 T[isch] = chpad[tg[isch]]
             ist3 = st == 1
@@ -390,6 +395,8 @@ def main():
                 nd = t3map[tg[ist3]]
                 stats["nmiss_t3"] += int((nd < 0).sum())
                 T[ist3] = np.where((nd >= 0)[:, None], t3pad[np.maximum(nd, 0)], -1)
+            stats["nrow_stage3"] += int((st == 3).sum())
+            assert (st < 4).all(), "unknown pair-dump stage tag %s" % np.unique(st).tolist()
             P = plpad[pl]
 
             match = (T[:, :, None] == P[:, None, :]) & (T[:, :, None] >= 0)

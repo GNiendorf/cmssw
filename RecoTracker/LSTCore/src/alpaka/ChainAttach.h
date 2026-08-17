@@ -562,13 +562,15 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         // two boundaries; resolving them here keeps eta out of the pair loop entirely.
         record.eta = pixelSeeds.eta()[seedIdx];
         float const absEta = alpaka::math::abs(acc, record.eta);
-        // The 2 x 3 (pt x |eta|) delivery bar table; row by the seed's raw ptIn on LST's own
-        // 5 GeV boundary. See the table's rationale at its definition in ChainConfig.h.
-        bool const hiPt = pixelSeeds.ptIn()[seedIdx] >= config.attachPtSplit;
-        record.attachThr = hiPt ? ((absEta < 1.1f) ? config.attachThetaHi
-                                                   : ((absEta < 1.7f) ? config.attachThetaHiT : config.attachThetaHiE))
-                                : ((absEta < 1.1f) ? config.attachTheta
-                                                   : ((absEta < 1.7f) ? config.attachThetaT : config.attachThetaE));
+        // The 6 x 3 (seed ptIn x |eta|) delivery WP table, calibrated at fixed per-cell signal
+        // efficiency. Row by the seed's raw ptIn, column by |seed eta| on the same two boundaries
+        // every other banded bar here uses. See the table's rationale in ChainConfig.h.
+        float const seedPt = pixelSeeds.ptIn()[seedIdx];
+        int ptBin = 0;
+        while (ptBin < ChainConfig::kAttachPtBins - 1 && seedPt >= config.attachPtEdges[ptBin])
+          ++ptBin;
+        int const etaBin = (absEta < 1.1f) ? 0 : ((absEta < 1.7f) ? 1 : 2);
+        record.attachThr = config.attachThetaTable[ptBin][etaBin];
         // Measurement knobs, inert at 0 (see ChainConfig): a global stage-A delivery delta and a
         // high-pT-binned one on the seed's raw ptIn.
         record.attachThr -= config.attachADelta;
@@ -1177,7 +1179,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                 alpaka::atomicAdd(acc, &stats[11], 1u, alpaka::hierarchy::Threads{});  // overflow census
               }
             }
-            if (!is4L && !isRescue && config.dupMutualDelta >= 0.f &&
+            // [ARM-HDEEP] rescue positions take the same pre-threshold argmax when rescuePreBar is
+            // on, and with NO floor: it is handover evidence ("does the longer sibling's argmax
+            // want the seed its own blocker already holds"), never a delivery.
+            if (!is4L && (isRescue ? config.rescuePreBar : (config.dupMutualDelta >= 0.f)) &&
                 (bestPrePls < 0 || logit > bestPreLogit || (logit == bestPreLogit && seedIdx < bestPrePls))) {
               bestPrePls = seedIdx;
               bestPreLogit = logit;
@@ -1261,8 +1266,11 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         // The same packed-key reduction for the pre-threshold pick, with the FLOOR applied to each
         // slice's own local winner: a slice whose local best is below its floor writes nothing, and
         // the global argmax (at or above every local best) still wins the atomicMax if it passed.
-        if (tgtKeyPre != nullptr && config.dupMutualDelta >= 0.f && bestPrePls >= 0 &&
-            bestPreLogit >= bestPreThr - config.dupMutualDelta)
+        // [ARM-HDEEP] a rescue position writes its pre-threshold argmax under rescuePreBarDelta,
+        // the same per-slice floor construction the mutual-best key uses (1e9 = no floor).
+        if (tgtKeyPre != nullptr && bestPrePls >= 0 &&
+            (isRescue ? (config.rescuePreBar && bestPreLogit >= bestPreThr - config.rescuePreBarDelta)
+                      : (config.dupMutualDelta >= 0.f && bestPreLogit >= bestPreThr - config.dupMutualDelta)))
           alpaka::atomicMax(acc,
                             &tgtKeyPre[targetIdx],
                             attachContendKey(bestPreLogit, static_cast<uint32_t>(bestPrePls)),
@@ -1296,7 +1304,13 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                   uint64_t const* tgtKeyPre = nullptr,
                                   uint32_t const* plsBest = nullptr,
                                   uint8_t* plsMutual = nullptr,
-                                  uint32_t nPls = 0u) const {
+                                  uint32_t nPls = 0u,
+                                  // [ARM-HDEEP] positions at or above this are claim-rescue targets,
+                                  // which may now carry a pre-threshold key of their own (handover
+                                  // evidence). They must stay OUT of the mutual-best retirement, as
+                                  // the rescue design requires. 0xFFFFFFFF (or nEvidence ==
+                                  // nTargets, the rescue-off case) leaves the old behaviour exactly.
+                                  uint32_t nEvidence = 0xFFFFFFFFu) const {
       for (uint32_t targetIdx : cms::alpakatools::uniform_elements(acc, nTargets)) {
         // MUTUAL BEST, decided here because both halves are final: tgtKeyPre[targetIdx] is THIS
         // target's pre-threshold argmax pair, and plsBest[seedIdx] is the highest logit any target
@@ -1304,7 +1318,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         // exact integer comparison. A mutual pair says "each is the other's best", which no
         // threshold can express -- and a threshold is what lets in a seed whose own track lies
         // somewhere else entirely.
-        if (plsMutual != nullptr && tgtKeyPre != nullptr && plsBest != nullptr) {
+        if (plsMutual != nullptr && tgtKeyPre != nullptr && plsBest != nullptr && targetIdx < nEvidence) {
           uint64_t const preKey = tgtKeyPre[targetIdx];
           if (preKey != 0u) {
             uint32_t const seedIdx = 0xFFFFFFFFu - static_cast<uint32_t>(preKey & 0xFFFFFFFFu);
@@ -1346,6 +1360,13 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                   uint32_t* nTargets5,
                                   uint32_t* targets,
                                   uint32_t* nEvidenceOut,
+                                  // [ARM-HDEEP] select-side refusal census, indices 14..18 of the
+                                  // shared rescue stats buffer (nullptr = off): [14] claim-rejected
+                                  // chains with a replaceable blocker  [15] ... of >= 5 layers
+                                  // [16] ... dropped, not strictly longer than the blocker
+                                  // [17] ... dropped, other-owner overlap over bar  [18] ... dropped
+                                  // on dcaXY.
+                                  uint32_t* selStats,
                                   ChainConfig config) const {
       if (!cms::alpakatools::once_per_grid(acc))
         return;
@@ -1353,21 +1374,39 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
       *nEvidenceOut = nOut;
       for (uint32_t chainIdx = 0; chainIdx < nChains; ++chainIdx) {
         int32_t const blockerIdx = blockedBy[chainIdx];
-        if (blockerIdx < 0)
+        // [ARM-HDEEP] index 19 closes the accounting: >= 5-layer chains that are invisible to the
+        // rescue because blockedBy never got set (accepted, or blocked only by pixel rows).
+        if (blockerIdx < 0) {
+          if (selStats != nullptr && chains.nLayers()[chainIdx] >= 5)
+            ++selStats[19];
           continue;  // never a claim-rejected candidate, or blocked only by pixel rows
+        }
+        if (selStats != nullptr)
+          ++selStats[14];
         if (chains.nLayers()[chainIdx] < 5)
           continue;
+        if (selStats != nullptr)
+          ++selStats[15];
         // Strictly-longer-than-the-blocker is enforced HERE and not only in the swap: a rescue
         // whose swap is doomed would still take part in the seed contention, and every seed such
         // a target wins is released to NOBODY at revocation -- measured at ~200 stolen seeds per
         // event when this filter is left to the swap. The same goes for the other-owner overlap
         // bar, which is knowable at select time.
-        if (!(chains.nLayers()[chainIdx] > chains.nLayers()[static_cast<uint32_t>(blockerIdx)]))
+        if (!(chains.nLayers()[chainIdx] > chains.nLayers()[static_cast<uint32_t>(blockerIdx)])) {
+          if (selStats != nullptr)
+            ++selStats[16];
           continue;
-        if (blockedOther[chainIdx] > config.rescueOtherItems)
+        }
+        if (blockedOther[chainIdx] > config.rescueOtherItems) {
+          if (selStats != nullptr)
+            ++selStats[17];
           continue;
-        if (chains.dcaXY()[chainIdx] >= config.attachDcaMax)
+        }
+        if (chains.dcaXY()[chainIdx] >= config.attachDcaMax) {
+          if (selStats != nullptr)
+            ++selStats[18];
           continue;
+        }
         targets[nOut++] = chainIdx;
       }
       *nTargets5 = nOut;
@@ -1904,8 +1943,16 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
   // its seed released, so the downstream stages see a consistent one-pLS-one-owner state either
   // way. Serial: the accepted-slot scan and the one-swap-per-blocker rule are order-dependent,
   // and rescue positions are walked ascending so the outcome is deterministic on every backend.
-  // rescueStats: [0] rescues that won a seed  [1] swaps performed  [2] revoked (blocker seeded)
-  //              [3] revoked (not longer)     [4] revoked (other-owner overlap over bar)
+  // rescueStats: [0] rescues that won a seed  [1] swaps performed  [2] refused (blocker seeded,
+  //              no handover / already swapped)  [3] refused (not longer)  [4] refused (other-
+  //              owner overlap over bar)  [5] handovers (blocker's seed inherited)  [6] both
+  //              seeded (blocker's seed released)
+  // [ARM-HDEEP] refusal-channel census, all of it on the SILENT `!anyEvidence` continue that
+  // carried no counter before: [7] no evidence at all  [8] ... and the blocker itself is unseeded
+  // [9] ... blocker seeded but the rescue has NO argmax seed (the bucket rescuePreBar attacks)
+  // [10] ... blocker seeded and the rescue's argmax wants a DIFFERENT seed  [11] handovers that
+  // fired on the PRE-BAR key alone (tgtKey was 0)  [12] handovers refused by
+  // rescueMinBlockerLayers  [13] rescue positions walked.
   struct ChainRescueSwap {
     ALPAKA_FN_ACC void operator()(Acc1D const& acc,
                                   Chains chains,
@@ -1914,6 +1961,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                   uint32_t nDeliver,
                                   int32_t const* blockedBy,
                                   int32_t const* blockedOther,
+                                  int32_t const* blockedShared,
+                                  uint64_t const* tgtKey,
+                                  uint64_t const* tgtKeyPre,
                                   uint32_t* accepted,
                                   uint8_t* plsOwned,
                                   uint32_t* rescueStats,
@@ -1923,16 +1973,94 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
       uint32_t const nAcc = chains.nAccepted();
       for (uint32_t position = nEvidence; position < nDeliver; ++position) {
         uint32_t const rescueIdx = targets[position];
-        int32_t const seedIdx = chains.attachPls()[rescueIdx];
-        if (seedIdx < 0)
-          continue;
-        ++rescueStats[0];
+        int32_t const rescueGrant = chains.attachPls()[rescueIdx];
         int32_t const blockerIdx = blockedBy[rescueIdx];
+        int32_t const blockerGrant = (blockerIdx >= 0) ? chains.attachPls()[blockerIdx] : -1;
+        // Seed evidence is the trigger: the rescue's own grant, or -- with the handover -- the
+        // blocker's granted seed being ALSO the rescue's own best-scored seed (the same-track
+        // signature: sibling chains of one track both want that track's seed, so a blocker seed
+        // the rescue's argmax does not want vouches for a DIFFERENT track and must not move --
+        // without this check the handover fires ~50x beyond its bucket and pays real efficiency,
+        // the measured -.010 outside-barrel of the unconditional variant). tgtKey holds the
+        // rescue's PRE-contention argmax; low word is the inverted seed index, 0 = no pair
+        // cleared the delivery margin.
+        // [ARM-HDEEP] with rescuePreBar the evidence key is the PRE-THRESHOLD argmax instead: the
+        // delivery bar is a bar on letting a NEW pair through, and a handover lets nothing new
+        // through -- the seed is already delivered on the blocker. The two keys agree bit for bit
+        // whenever the above-bar key exists (a global max that clears some bar IS the above-bar
+        // max), so this only ever ADDS an opinion where tgtKey had none.
+        uint64_t const evKey = (config.rescuePreBar && tgtKeyPre != nullptr && tgtKeyPre[position] != 0u)
+                                   ? tgtKeyPre[position]
+                                   : tgtKey[position];
+        int32_t rescueBestSeed = -1;
+        if (evKey != 0u)
+          rescueBestSeed = static_cast<int32_t>(0xFFFFFFFFu - static_cast<uint32_t>(evKey & 0xFFFFFFFFu));
+        bool handoverEvidence = config.rescueHandover && blockerGrant >= 0 && rescueBestSeed == blockerGrant;
+        // [ARM-HDEEP] the RELATIVE handover test, and the one that is self-calibrating: the seed is
+        // already delivered on the blocker at a known logit, so ask whether the longer sibling is
+        // at least as good a match FOR THAT SEED. An absolute floor cannot express this -- the
+        // delivery bars run from -1.66 to +4.27 across the pt/eta table, so "0.9 logits under the
+        // bar" means something different in every cell -- but the blocker's own logit is the same
+        // head on the same seed, so the difference is scale-free. 1e9 leaves it off.
+        // [ARM-HDEEP] THE CONTAINMENT TEST, and the only same-track evidence in the swap that is
+        // not the head's opinion: the claim recorded how many of the rescue's claim hits the
+        // BLOCKER holds, so "the blocker is a sub-chain of me" is a ratio over the blocker's own
+        // claim-hit count. For the bucket this arm exists for -- a 5/6-layer chain and the same
+        // track's 4-layer self -- the shorter chain's hits are a subset of the longer one's and the
+        // ratio is 1. A blocker that merely brushes the rescue is a different track and its seed
+        // must not move. 0 leaves it off; the test applies to the HANDOVER only, never to a rescue
+        // that won its own seed.
+        // [ARM-HDEEP] with rescueGuardPreOnly the two guards below price ONLY the increment that
+        // pre-bar evidence opens (the handovers whose above-bar key was empty), leaving every swap
+        // the same-seed-gated handover already makes untouched -- so the arm is strictly additive
+        // to it instead of trading along the same curve.
+        bool const guarded = !config.rescueGuardPreOnly || (tgtKey[position] == 0u);
+        if (guarded && handoverEvidence && rescueGrant < 0 && config.rescueMinContain > 0.f &&
+            blockedShared != nullptr) {
+          int const blockerHits = static_cast<int>(chains.nClaimHits()[blockerIdx]);
+          int const shared = blockedShared[rescueIdx];
+          if (!(blockerHits > 0 &&
+                static_cast<float>(shared) >= config.rescueMinContain * static_cast<float>(blockerHits))) {
+            handoverEvidence = false;
+            ++rescueStats[21];
+          }
+        }
+        if (guarded && handoverEvidence && rescueGrant < 0 && config.rescueHandoverGap < 1e8f) {
+          float const evLogit = chainUnorderFloat(static_cast<uint32_t>(evKey >> 32));
+          if (!(evLogit >= chains.attachLogit()[blockerIdx] - config.rescueHandoverGap)) {
+            handoverEvidence = false;
+            ++rescueStats[20];
+          }
+        }
+        // The blocker-side length floor: refuse the HANDOVER only (a rescue that won its own seed
+        // is unaffected), so the arm can be restricted to the measured 4-layer-blocker bucket.
+        bool const blockerTooShort = (config.rescueMinBlockerLayers > 0 && blockerIdx >= 0 &&
+                                      chains.nLayers()[blockerIdx] < config.rescueMinBlockerLayers);
+        if (handoverEvidence && blockerTooShort && rescueGrant < 0) {
+          handoverEvidence = false;
+          ++rescueStats[12];
+        }
+        bool const anyEvidence = (rescueGrant >= 0) || handoverEvidence;
+        ++rescueStats[13];
+        if (!anyEvidence) {
+          ++rescueStats[7];
+          if (blockerGrant < 0)
+            ++rescueStats[8];
+          else if (rescueBestSeed < 0)
+            ++rescueStats[9];
+          else
+            ++rescueStats[10];
+          continue;
+        }
+        if (handoverEvidence && rescueGrant < 0 && tgtKey[position] == 0u)
+          ++rescueStats[11];
+        if (rescueGrant >= 0)
+          ++rescueStats[0];
         bool ok = (blockerIdx >= 0);
         int reason = 0;
-        if (ok && !(chains.attachPls()[blockerIdx] < 0)) {
+        if (ok && blockerGrant >= 0 && rescueGrant < 0 && !handoverEvidence) {
           ok = false;
-          reason = 2;  // the blocker delivered a seed of its own; its row must stand
+          reason = 2;  // seeded blocker without the same-seed signature: its row must stand
         }
         if (ok && !(chains.nLayers()[rescueIdx] > chains.nLayers()[blockerIdx])) {
           ok = false;
@@ -1957,11 +2085,27 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         }
         if (ok) {
           accepted[static_cast<uint32_t>(slot)] = rescueIdx;
+          if (rescueGrant < 0) {
+            // THE HANDOVER: the longer sibling inherits the blocker's granted seed with the
+            // hits. plsOwned stays set -- the seed keeps exactly one owner, it just moved rows.
+            chains.attachPls()[rescueIdx] = blockerGrant;
+            chains.attachLogit()[rescueIdx] = chains.attachLogit()[blockerIdx];
+            ++rescueStats[5];
+          } else if (blockerGrant >= 0) {
+            // Both carried a grant (different seeds): the rescue keeps its own, the retiring
+            // blocker's seed is released so a later stage may still use it.
+            plsOwned[static_cast<uint32_t>(blockerGrant)] = 0u;
+            ++rescueStats[6];
+          }
+          chains.attachPls()[blockerIdx] = -1;
+          chains.attachLogit()[blockerIdx] = kAttachNoLogit;
           ++rescueStats[1];
         } else {
-          chains.attachPls()[rescueIdx] = -1;
-          chains.attachLogit()[rescueIdx] = kAttachNoLogit;
-          plsOwned[static_cast<uint32_t>(seedIdx)] = 0u;
+          if (rescueGrant >= 0) {
+            chains.attachPls()[rescueIdx] = -1;
+            chains.attachLogit()[rescueIdx] = kAttachNoLogit;
+            plsOwned[static_cast<uint32_t>(rescueGrant)] = 0u;
+          }
           if (reason >= 2)
             ++rescueStats[reason];
         }

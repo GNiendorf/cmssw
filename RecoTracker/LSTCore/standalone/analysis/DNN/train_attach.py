@@ -124,13 +124,21 @@ def build_model(n_in, n_hid, n_out):
 # is one dependency fewer than rebuilding it and cannot silently disagree with the header in tree.
 SHIPPED_NORM22 = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                               "nnloop_ref", "s3_work", "models", "A2_cos3e3_norm.json")
+# [ARM-RETRAIN] The 23-slot template lives IN this directory (a copy of the deployed
+# AttachNetworkWeights.h's own norm json), so a 23-wide retrain has no dependency outside it.
+# 23 is the CURRENT deployed width: af_dBeta was promoted out of the pair dump's probe columns
+# into kAttachFeatures, so a current dump has nProbe = 0 and the column arrives already
+# standardized with the deployed constants, exactly like slots 0-10 and 14-21.
+SHIPPED_NORM23 = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                              "attach_norm23_template.json")
+NFEAT = 22        # set from the corpus in main(); see the note there
 NEW_NAMES = ["af_chainGateZFake", "af_chainGateZPrompt", "af_chainGateZDisp"]
 
 
-def write_norm(path, zmu, zsd, use_cols_tag):
-    sh = json.load(open(SHIPPED_NORM22))
+def write_norm(path, zmu, zsd, use_cols_tag, nfeat=22):
+    sh = json.load(open(SHIPPED_NORM23 if nfeat == 23 else SHIPPED_NORM22))
     names = sh["feature_names"]
-    assert len(names) == 22 and names[11:14] == NEW_NAMES, names[11:14]
+    assert len(names) == nfeat and names[11:14] == NEW_NAMES, (len(names), names[11:14])
     mean = list(sh["mean"]); std = list(sh["std"])
     for j in range(3):
         mean[11 + j] = float(zmu[j]); std[11 + j] = float(zsd[j])
@@ -178,6 +186,12 @@ def main():
                    help="exclude stage-2 (auxiliary 4-layer chain) rows from TRAINING; they stay "
                         "in the val and test reports")
     p.add_argument("--frac", type=float, default=1.0, help="row subsample for a quick probe")
+    p.add_argument("--lowpt-w", type=float, default=1.0,
+                   help="[ARM-RETRAIN] multiply the TRAIN loss weight of every row (true and fake "
+                        "alike) whose SEED has ptIn < --lowpt-max and |eta| >= --lowpt-etamin. "
+                        "1.0 = off = the shipped recipe.")
+    p.add_argument("--lowpt-max", type=float, default=2.0, help="seed ptIn ceiling of that cell")
+    p.add_argument("--lowpt-etamin", type=float, default=1.1, help="|seed eta| floor of that cell")
     p.add_argument("--sel-min-rows", type=int, default=200,
                    help="a sample enters the val SELECTOR only with this many rows per side")
     args = p.parse_args()
@@ -195,6 +209,7 @@ def main():
     names = [nm for nm, _ in labs]
     assert len(set(names)) == len(names), "duplicate --lab name"
     Xs, z3s, ys, sts, vxys, rs, sids = [], [], [], [], [], [], []
+    petas = []
     # Each sample gets its OWN event split, drawn from the same seed. Splitting by event and not by
     # row is what keeps the pairs of one event out of two different splits.
     for k, (nm, d) in enumerate(labs):
@@ -212,16 +227,31 @@ def main():
         rolek[permk[ntrk:ntrk + nvak]] = 1
         rolek[permk[ntrk + nvak:]] = 2
         Xs.append(Xk); z3s.append(z3k); ys.append(yk); sts.append(stk); vxys.append(vk)
+        petas.append(np.load(d + "/peta.npy"))
         rs.append(rolek[ek]); sids.append(np.full(len(yk), k, np.int8))
         log("lab %-6s %-60s rows %d true %d (%.4f) events %d split %d/%d/%d"
             % (nm, d, len(yk), yk.sum(), yk.mean(), nevk, ntrk, nvak, nevk - ntrk - nvak))
         if k == 0:
             ntr, nva, nev = ntrk, nvak, nevk
     y = np.concatenate(ys); st = np.concatenate(sts); vxy = np.concatenate(vxys)
+    peta = np.abs(np.concatenate(petas))
     r = np.concatenate(rs); S = np.concatenate(sids)
     off = np.concatenate(([0], np.cumsum([len(v) for v in ys])))
     n = len(y)
+    # [ARM-RETRAIN] The head width comes from the CORPUS, never from a constant: the deployed head
+    # went 22 -> 23 when af_dBeta was promoted out of the probe columns, and a hardcoded 22 would
+    # train a head one column narrower than the one the C++ evaluates, with no error anywhere.
+    global NFEAT
+    NFEAT = int(Xs[0].shape[1])
+    for k in range(1, len(labs)):
+        assert Xs[k].shape[1] == NFEAT, "corpora disagree on head width: %s" % (
+            [int(v.shape[1]) for v in Xs],)
+    log("head input width from corpus: %d" % NFEAT)
     log("rows %d true %d (%.4f) over %d sample(s)" % (n, y.sum(), y.mean(), len(labs)))
+    for s in (0, 1, 2, 3):
+        m = st == s
+        if m.any():
+            log("  stage %d rows %d true %d (%.4f)" % (s, m.sum(), y[m].sum(), y[m].mean()))
 
     def X20_get(idx, block=1 << 23):
         """Gather rows of the concatenated corpus out of the per-sample memmaps.
@@ -298,6 +328,28 @@ def main():
         wtr[tru & (vtr >= 1.0) & (vtr < 5.0)] *= args.disp_mid
     if args.disp_hi != 1.0:
         wtr[tru & (vtr >= 5.0)] *= args.disp_hi
+    # [ARM-RETRAIN] LOW-pT / OUTSIDE-BARREL CELL EMPHASIS, default OFF (--lowpt-w 1).
+    # The deficit this retrain serves is a low-pT, outside-barrel block (748 master-pT5 sims we
+    # deliver bare at 1 <= |eta| < 2, 533 of them below 2 GeV), and those cells are a rounding
+    # error of the corpus, so the unweighted fit spends its capacity elsewhere. The multiplier
+    # is applied to TRUE AND FAKE ROWS ALIKE inside the cell, so the local positive/negative
+    # balance -- and therefore the head's calibration inside the cell -- is untouched; only the
+    # cell's share of the total loss moves. It is applied BEFORE the --share rescale, so the
+    # per-sample loss shares stay exactly where --share puts them.
+    # The conditioner is the SEED's own reconstructed ptIn and |eta| (the same two quantities the
+    # deployed delivery table is binned on), recovered from the standardized feature 0 with the
+    # deployed norm constants. No simulation quantity enters.
+    if args.lowpt_w != 1.0:
+        shnorm = json.load(open(SHIPPED_NORM23 if NFEAT == 23 else SHIPPED_NORM22))
+        mu0, sd0 = float(shnorm["mean"][0]), float(shnorm["std"][0])
+        assert shnorm["feature_names"][0] == "af_log10PtIn", shnorm["feature_names"][0]
+        ptin = np.power(10.0, Xtr[:, 0].astype(np.float64) * sd0 + mu0)
+        cell = (ptin < args.lowpt_max) & (peta[itr] >= args.lowpt_etamin)
+        wtr[cell] *= args.lowpt_w
+        log("lowpt emphasis: ptIn < %g and |seed eta| >= %g -> x%g on %d/%d train rows "
+            "(%.4f), of which true %d"
+            % (args.lowpt_max, args.lowpt_etamin, args.lowpt_w, int(cell.sum()), len(cell),
+               cell.mean(), int((cell & tru).sum())))
     Str = S[itr]
     shares = {}
     for sp in args.share:
@@ -357,7 +409,7 @@ def main():
         log("  val sample %-6s %d rows %d true" % (nm, mk.sum(), int(yva_s[mk].sum())))
 
     n_out = 1 if args.arm == "scalar" else 3
-    model = build_model(22, args.hidden, n_out).to(dev)
+    model = build_model(NFEAT, args.hidden, n_out).to(dev)
     opt = torch.optim.Adam(model.parameters(), lr=args.lr)
     sched = None
     if args.sched == "cos":
@@ -480,10 +532,21 @@ def main():
         res["SAMPLE " + nm] = {"auc": aa, "n_true": int(mt.sum()), "n_fake": int(mf.sum())}
         log("  SAMPLE %-6s n_true=%8d n_fake=%9d AUC=%s"
             % (nm, mt.sum(), mf.sum(), "n/a" if aa is None else "%.5f" % aa))
+    # [ARM-RETRAIN] the three cell reports below are the ones this round is judged on: the deficit
+    # block is stage-A prompt pairs whose SEED sits outside the barrel, and inside that, below 2 GeV.
+    shn = json.load(open(SHIPPED_NORM23 if NFEAT == 23 else SHIPPED_NORM22))
+    pt_te = np.power(10.0, Xte[:, 0].astype(np.float64) * float(shn["std"][0]) + float(shn["mean"][0]))
+    eta_te = peta[ite]
+    out_te = eta_te >= 1.1
     for tag, sel in (("ALL", np.ones(len(ite), bool)),
                      ("chain5+ (stage 0)", stte == 0),
                      ("bareT3 (stage 1)", stte == 1),
-                     ("aux4L (stage 2)", stte == 2)):
+                     ("aux4L (stage 2)", stte == 2),
+                     ("rescue (stage 3)", stte == 3),
+                     ("A out |eta|>=1.1", (stte == 0) & out_te),
+                     ("A out ptIn<2", (stte == 0) & out_te & (pt_te < 2.0)),
+                     ("A out ptIn>=2", (stte == 0) & out_te & (pt_te >= 2.0)),
+                     ("A barrel", (stte == 0) & ~out_te)):
         m = sel & (yte == 1)
         f = sel & (yte == 0)
         a = wauc(ste[m], wte[m], ste[f], wte[f])
@@ -500,9 +563,9 @@ def main():
 
     import torch as _t
     names = write_norm(args.out.replace(".pt", "_norm.json"), zmu, zsd,
-                       "s3_22input_3gatelogits")
+                       "s3_%dinput_3gatelogits" % NFEAT, nfeat=NFEAT)
     _t.save({"state_dict": {k: v.cpu() for k, v in model.state_dict().items()},
-             "arch": [22, args.hidden, args.hidden, n_out], "arm": args.arm,
+             "arch": [NFEAT, args.hidden, args.hidden, n_out], "arm": args.arm,
              "feature_names": names,
              "z3_mean": zmu.tolist(), "z3_std": zsd.tolist(),
              "best_epoch": best_ep, "best_val_auc": float(best),

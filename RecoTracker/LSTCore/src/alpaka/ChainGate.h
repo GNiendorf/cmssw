@@ -721,6 +721,18 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         float const dC25P = bandApplies ? config.zdCP : 0.f;
         float const dC25D = bandApplies ? config.zdCD : 0.f;
 
+        // [ARM-GATELP] pt-conditioned relaxation of the 5+ bars. Zero unless the environment set a
+        // delta, and the whole block is skipped when it did not, so the arm is bit-identical off.
+        // The conditioner is the chain's OWN reconstructed ptEst (feature 9), which the row
+        // already carries; it decides how much of a fixed relaxation applies, never a ranking.
+        float gDeltaRI = 0.f, gDeltaR = 0.f, gDeltaC25 = 0.f;
+        if (config.gateLowPtOn() &&
+            (config.gateLowPtMax <= 0.f || chains.features()[chainIdx][9] < config.gateLowPtMax)) {
+          gDeltaRI = config.gateDeltaRI;
+          gDeltaR = config.gateDeltaR;
+          gDeltaC25 = config.gateDeltaC25;
+        }
+
         uint8_t flags = 0u;
         if (inEtaBand)
           flags |= kChainFlagEtaBand;
@@ -756,13 +768,13 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
           // IP 5+: per-length bar on mP, with an OR-rescue on mX so a chain the head calls
           // displaced is not killed by a prompt bar.
           float const promptBar = nLayers >= 6 ? config.m3Theta6 : config.m3Theta5;
-          if (mP < promptBar && mX < config.m3ThetaRI + dThetaRI) {
+          if (mP < promptBar && mX < config.m3ThetaRI + dThetaRI - gDeltaRI) {
             score -= config.gateKill;
             flags |= kChainFlagKilled;
           }
         } else {
           // Exempt (large-DCA) 5+, with the eta-band-split OR-rescue on mX.
-          if (mD < config.m3ThetaD && mX < rescueBar + dThetaR) {
+          if (mD < config.m3ThetaD && mX < rescueBar + dThetaR - gDeltaR) {
             score -= config.gateKill;
             flags |= kChainFlagKilled;
           }
@@ -775,7 +787,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         // chain, so the score can never be reduced twice.
         if (config.c25Theta > -1e9f && nLayers == 5 && chains.nNodes()[chainIdx] == 2) {
           if (score > -0.5f * config.gateKill) {
-            if (mP < config.c25Theta + dC25P && mD < config.c25ThetaD + dC25D) {
+            if (mP < config.c25Theta + dC25P - gDeltaC25 && mD < config.c25ThetaD + dC25D) {
               score -= config.gateKill;
               flags |= kChainFlagKilled;
               flags |= kChainFlagCellKill;

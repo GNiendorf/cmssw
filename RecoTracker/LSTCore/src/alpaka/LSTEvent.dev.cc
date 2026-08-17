@@ -5,6 +5,7 @@
 
 #include "LSTEvent.h"
 
+#include "ChainAfirst.h"
 #include "ChainArbitrate.h"
 #include "ChainAttach.h"
 #include "ChainAttachT3.h"
@@ -229,6 +230,125 @@ namespace {
   // hard error again for anyone who wants that instead.
   bool chainOverflowThrows() {
     static bool const enabled = (std::getenv("LST_CHAIN_OVERFLOW_THROW") != nullptr);
+    return enabled;
+  }
+
+  // ---- [ARM-WELD5] weld layer-adding preference (default OFF, bit-identical unset) ------------
+  // The knobs and their justification live in the [ARM-WELD5] block of ChainConfig.h. Each is read
+  // once per process; an unset or empty variable leaves the shipped constant in place.
+  float weld5E1Bonus() {
+    static float const value = []() {
+      char const* envText = std::getenv("LST_W5_E1BONUS");
+      return (envText == nullptr || *envText == '\0') ? kWeld5E1BonusDefault
+                                                      : static_cast<float>(std::atof(envText));
+    }();
+    return value;
+  }
+
+  long long weld5E1Prio() {
+    static long long const value = []() {
+      char const* envText = std::getenv("LST_W5_E1PRIO");
+      return (envText == nullptr || *envText == '\0') ? kWeld5E1PrioDefault
+                                                      : static_cast<long long>(std::atoll(envText));
+    }();
+    return value;
+  }
+
+  int weld5E1Sweeps() {
+    static int const value = []() {
+      char const* envText = std::getenv("LST_W5_E1SWEEPS");
+      if (envText == nullptr || *envText == '\0')
+        return kWeld5E1SweepsDefault;
+      int const parsed = std::atoi(envText);
+      return (parsed < 0) ? 0 : ((parsed > kWeld5E1SweepsMax) ? kWeld5E1SweepsMax : parsed);
+    }();
+    return value;
+  }
+
+  float weld5E1Delta() {
+    static float const value = []() {
+      char const* envText = std::getenv("LST_W5_E1DELTA");
+      return (envText == nullptr || *envText == '\0') ? kWeld5E1DeltaDefault
+                                                      : static_cast<float>(std::atof(envText));
+    }();
+    return value;
+  }
+
+  // The EXTENSION-ONLY relaxation. Needs LST_W5_E1SWEEPS >= 1 to have any effect: the rows it
+  // admits are visible only to the E1-only sweeps, and only where they lengthen an existing chain.
+  float weld5E1RelaxDelta() {
+    static float const value = []() {
+      char const* envText = std::getenv("LST_W5_E1RDELTA");
+      float const parsed = (envText == nullptr || *envText == '\0') ? 0.f : static_cast<float>(std::atof(envText));
+      return (parsed > 0.f) ? parsed : 0.f;
+    }();
+    return value;
+  }
+
+  bool weld5Census() {
+    static bool const enabled = (std::getenv("LST_W5_CENSUS") != nullptr);
+    return enabled;
+  }
+
+  // ---- [ARM-AFIRST] the pre-claim seed-evidence pass ------------------------------------------
+  // Design on record in standalone/FINDINGS_GAPS.md, section [ARM-AFIRST] DESIGN. All four knobs
+  // are read once per process; with the mode unset or 0 no kernel of the arm is launched, no buffer
+  // is allocated and the order key is written only by ChainClaimPrep, so the binary is bit-identical
+  // to the shipped one.
+  int afirstMode() {
+    static int const value = []() {
+      char const* envText = std::getenv("LST_CHAIN_AFIRST");
+      // SHIPPED ON (mode 1, the bar-evidence term): part of the deployed candidate, no longer a
+      // measurement arm. The env stays as the off-switch (LST_CHAIN_AFIRST=0) and mode override
+      // for A/B work; the pure-reorder controls (modes 2-4) remain measurement-only.
+      if (envText == nullptr || *envText == '\0')
+        return chainafirst::kModeBar;
+      int const parsed = std::atoi(envText);
+      return (parsed < chainafirst::kModeOff || parsed > chainafirst::kModeLenOnly) ? chainafirst::kModeOff : parsed;
+    }();
+    return value;
+  }
+
+  // The order-key term, in chain-score logits. The default is a hard priority: an evidenced chain
+  // of at least afirstMinLayers() layers precedes every chain without evidence, which is the
+  // "master runs pT5 first" form. Smaller values make it a finite bonus that only flips comparisons
+  // already within it.
+  float afirstBonus() {
+    static float const value = []() {
+      char const* envText = std::getenv("LST_CHAIN_AFIRST_BONUS");
+      // 1000, not 1e6: identical physics (the term is effectively lexicographic either way), but
+      // 1e6 pushes the key into float spacing that loses intra-class ordering (ties 62 -> 743/evt).
+      return (envText == nullptr || *envText == '\0') ? 1000.f : static_cast<float>(std::atof(envText));
+    }();
+    return value;
+  }
+
+  int afirstMinLayers() {
+    static int const value = []() {
+      char const* envText = std::getenv("LST_CHAIN_AFIRST_MINLAYERS");
+      if (envText == nullptr || *envText == '\0')
+        return 5;
+      int const parsed = std::atoi(envText);
+      return (parsed < 1) ? 1 : parsed;
+    }();
+    return value;
+  }
+
+  // The displaced guard: grant the same order-key term to long displaced-branch candidates without
+  // asking for seed evidence, which is a prompt instrument. Default off.
+  bool afirstDispFree() {
+    static bool const enabled = []() {
+      char const* envText = std::getenv("LST_CHAIN_AFIRST_DISPFREE");
+      return envText != nullptr && *envText != '\0' && *envText != '0';
+    }();
+    return enabled;
+  }
+
+  bool afirstDebug() {
+    static bool const enabled = []() {
+      char const* envText = std::getenv("LST_CHAIN_AFIRST_DEBUG");
+      return envText != nullptr && *envText != '\0' && *envText != '0';
+    }();
     return enabled;
   }
 
@@ -1394,7 +1514,9 @@ void LSTEvent::buildChainEdges() {
                       weldThetaE1,
                       weldThetaE2,
                       chainConfig_.edgeWpTable,
-                      wantFeat ? featBuf.data() : nullptr);
+                      wantFeat ? featBuf.data() : nullptr,
+                      weld5E1Delta(),  // [ARM-WELD5]
+                      weld5E1RelaxDelta());
 
   auto const tAfterEdgeInference = stamp();
   if (timing) {
@@ -1647,9 +1769,35 @@ void LSTEvent::buildChains() {
   // edge into ChainEdgesSoA::weldBar (from the head's per-family, per-cell table, or from the two
   // per-family scalars when chainConfig_.edgeWpTable is false), so both weld kernels read it off
   // the edge row.
-  for (int sweep = 0; sweep < kChainWeldSweeps; ++sweep) {
+  // [ARM-WELD5] The layer-adding preference. A zero-initialised arm is the shipped weld bit for
+  // bit; the extra E1-only sweeps run AFTER the standard ones and never revisit a spent slot.
+  ChainWeldArm weldArm{};
+  weldArm.e1Bonus = weld5E1Bonus();
+  weldArm.e1Prio = weld5E1Prio();
+  weldArm.e1Only = 0u;
+  weldArm.e1Relax = (weld5E1RelaxDelta() > 0.f) ? 1u : 0u;
+  int const weld5ExtraSweeps = weld5E1Sweeps();
+
+  // The extension test consults the weld slots as they stood BEFORE the sweep, which is the same
+  // frozen snapshot the argmax works against; the apply kernel writes the live ones. Allocated only
+  // when the relaxation is on, and aliased to the live arrays otherwise (never dereferenced then).
+  bool const wantSnap = (weldArm.e1Relax != 0u) && (weld5ExtraSweeps > 0);
+  auto snapOut_buf = cms::alpakatools::make_device_buffer<int32_t[]>(queue_, wantSnap ? nChainNodes_ : 1u);
+  auto snapIn_buf = cms::alpakatools::make_device_buffer<int32_t[]>(queue_, wantSnap ? nChainNodes_ : 1u);
+
+  for (int sweep = 0; sweep < kChainWeldSweeps + weld5ExtraSweeps; ++sweep) {
     // A fixed sweep count, deliberately without a host sync: a sweep that welds nothing is
     // idempotent, so an early exit would only buy the cost of the sync that detects it.
+    ChainWeldArm sweepArm = weldArm;
+    sweepArm.e1Only = (sweep >= kChainWeldSweeps) ? 1u : 0u;
+    int32_t const* snapIn = inWeld_buf.data();
+    int32_t const* snapOut = outWeld_buf.data();
+    if (wantSnap && sweepArm.e1Only != 0u) {
+      alpaka::memcpy(queue_, snapOut_buf, outWeld_buf);
+      alpaka::memcpy(queue_, snapIn_buf, inWeld_buf);
+      snapIn = snapIn_buf.data();
+      snapOut = snapOut_buf.data();
+    }
     alpaka::memset(queue_, bestOut_buf, 0);
     alpaka::memset(queue_, bestIn_buf, 0);
     alpaka::exec<Acc1D>(queue_,
@@ -1662,7 +1810,10 @@ void LSTEvent::buildChains() {
                         outWeld_buf.data(),
                         inWeld_buf.data(),
                         bestOut_buf.data(),
-                        bestIn_buf.data());
+                        bestIn_buf.data(),
+                        sweepArm,
+                        snapIn,
+                        snapOut);
     alpaka::exec<Acc1D>(queue_,
                         chainFlat_workDiv,
                         ChainWeldMutual{},
@@ -1673,7 +1824,40 @@ void LSTEvent::buildChains() {
                         outWeld_buf.data(),
                         inWeld_buf.data(),
                         bestOut_buf.data(),
-                        bestIn_buf.data());
+                        bestIn_buf.data(),
+                        sweepArm,
+                        snapIn,
+                        snapOut);
+  }
+
+  // [ARM-WELD5] Census of the still-weldable layer-adding edges, off the last sweep's snapshot.
+  if (weld5Census()) {
+    auto censusD = cms::alpakatools::make_device_buffer<uint64_t[]>(queue_, kWeld5CensusSlots);
+    auto censusH = cms::alpakatools::make_host_buffer<uint64_t[]>(queue_, kWeld5CensusSlots);
+    alpaka::memset(queue_, censusD, 0);
+    ChainWeldArm censusArm = weldArm;
+    censusArm.e1Only = 0u;
+    censusArm.e1Relax = 0u;
+    alpaka::exec<Acc1D>(queue_,
+                        chainFlat_workDiv,
+                        ChainWeldCensus{},
+                        chainEdgesDC_->const_view(),
+                        chainNodesDC_->const_view(),
+                        chainMdIncidenceDC_->const_view(),
+                        chainLsIncidenceDC_->const_view(),
+                        nChainNodes_,
+                        outWeld_buf.data(),
+                        inWeld_buf.data(),
+                        bestOut_buf.data(),
+                        bestIn_buf.data(),
+                        censusD.data(),
+                        censusArm);
+    alpaka::memcpy(queue_, censusH, censusD);
+    alpaka::wait(queue_);
+    std::string censusLine = "[W5CENSUS]";
+    for (int slot = 0; slot < kWeld5CensusSlots; ++slot)
+      censusLine += std::format(" {}", censusH.data()[slot]);
+    lstWarning(censusLine);
   }
 
   auto const tAfterWeld = stamp();
@@ -2039,6 +2223,184 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
                       orderCfg);
   auto const tAfterClaimPrep = stamp();
 
+  // ---- [ARM-AFIRST] the pre-claim seed-evidence pass, and the evidence term of the order key ---
+  // Design on record in standalone/FINDINGS_GAPS.md, [ARM-AFIRST] DESIGN. The claim picks one
+  // representative of every shared-hit family with a seed-blind key and the attach only ever sees
+  // the survivor; master's pT5 matching runs BEFORE any hit exclusivity. This block scores the
+  // gate-alive CANDIDATES through the ordinary stage-A scorer, keeps one bit per chain ("a pixel
+  // seed says this chain is deliverable") and adds one term to the order key for the chains that
+  // carry it. It writes nothing else: no ownership, no grant, no retirement evidence, no
+  // cross-clean arm. Skipped entirely when the arm is off, so the shipped path is untouched.
+  if (afirstMode() != chainafirst::kModeOff && pixelSize_ > 0) {
+    int const afMode = afirstMode();
+    uint32_t const nPlsAf = std::max(1u, pixelSize_);
+    auto afStats_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, chainafirst::kStats);
+    auto afEv_buf = cms::alpakatools::make_device_buffer<uint8_t[]>(queue_, nChainCount_);
+    auto afKeep_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, nChainCount_);
+    auto afOffs_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, nChainCount_ + 1u);
+    auto afTargets_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, nChainCount_);
+    auto afN_buf_d = cms::alpakatools::make_device_buffer<uint32_t>(queue_);
+    auto afPlsPre_buf = cms::alpakatools::make_device_buffer<AttachPlsPre[]>(queue_, nPlsAf);
+    alpaka::memset(queue_, afStats_buf, 0u);
+    alpaka::memset(queue_, afEv_buf, 0u);
+    alpaka::exec<Acc1D>(queue_,
+                        chainFlat_workDiv,
+                        ChainAttachPlsPre{},
+                        lstInputDC_->const_view().pixelSeeds(),
+                        pixelSegmentsDC_->const_view(),
+                        miniDoubletsDC_->const_view().miniDoublets(),
+                        segmentsDC_->const_view().segments(),
+                        rangesDC_->const_view(),
+                        pixelModuleIndex_,
+                        afPlsPre_buf.data(),
+                        pixelSize_,
+                        chainConfig_);
+    alpaka::exec<Acc1D>(queue_,
+                        chainFlat_workDiv,
+                        ChainAfirstTargetFlags{},
+                        chainsDC_->const_view(),
+                        candKeep_buf.data(),
+                        afKeep_buf.data(),
+                        afirstMinLayers(),
+                        chainConfig_);
+    chainScanTimed(timing,
+                   __LINE__,
+                   queue_,
+                   chainScan_workDiv,
+                   ChainSegPrefix{},
+                   afKeep_buf.data(),
+                   afOffs_buf.data(),
+                   afN_buf_d.data(),
+                   nChainCount_);
+    alpaka::exec<Acc1D>(queue_,
+                        chainFlat_workDiv,
+                        ChainCompactSelect{},
+                        afKeep_buf.data(),
+                        afOffs_buf.data(),
+                        nChainCount_,
+                        static_cast<uint32_t const*>(nullptr),  // identity: the chain index itself
+                        afTargets_buf.data(),
+                        nullptr);
+    auto afN_buf_h = cms::alpakatools::make_host_buffer<uint32_t>(queue_);
+    alpaka::memcpy(queue_, afN_buf_h, afN_buf_d);
+    alpaka::wait(queue_);  // the target count sizes the buffers below
+    uint32_t const nAfTargets = *afN_buf_h.data();
+    if (nAfTargets > 0) {
+      auto afTgtPre_buf = cms::alpakatools::make_device_buffer<AttachTargetPre[]>(queue_, nAfTargets);
+      alpaka::exec<Acc1D>(queue_,
+                          chainFlat_workDiv,
+                          ChainAttachTargetPre{},
+                          miniDoubletsDC_->const_view().miniDoublets(),
+                          chainItemsDC_->const_view(),
+                          chainsDC_->const_view(),
+                          afTargets_buf.data(),
+                          nAfTargets,
+                          afTgtPre_buf.data(),
+                          chainConfig_);
+      // The evidence pass's OWN grid, over its own target hull. Released again below so the
+      // deployed attach rebuilds the grid it needs from the accepted hull, unchanged.
+      buildAttachGrid(afPlsPre_buf.data(), afTgtPre_buf.data(), nAfTargets, nullptr, 0u);
+      if (attachGridOffs_.has_value()) {
+        auto afTgtKey_buf = cms::alpakatools::make_device_buffer<uint64_t[]>(queue_, nAfTargets);
+        auto afPlsBest_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, nPlsAf);
+        auto afPlsBid_buf = cms::alpakatools::make_device_buffer<uint64_t[]>(queue_, nPlsAf);
+        auto afXcCursor_buf = cms::alpakatools::make_device_buffer<uint32_t>(queue_);
+        auto afScoreStats_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, chainattach::kStats);
+        alpaka::memset(queue_, afTgtKey_buf, 0);  // key 0 = no pair reached the delivery margin
+        alpaka::memset(queue_, afPlsBest_buf, 0);
+        alpaka::memset(queue_, afPlsBid_buf, 0);
+        alpaka::memset(queue_, afXcCursor_buf, 0u);
+        alpaka::memset(queue_, afScoreStats_buf, 0u);
+        uint32_t const afSlices =
+            cms::alpakatools::requires_single_thread_per_block_v<Acc1D> ? 1u : chainAttachScoreSlices();
+        auto const afScore_workDiv = cms::alpakatools::make_workdiv<Acc1D>(
+            std::max<uint32_t>(max_blocks, (nAfTargets * afSlices + 255u) / 256u), 256);
+        alpaka::exec<Acc1D>(queue_,
+                            afScore_workDiv,
+                            ChainAttachScore{},
+                            afPlsPre_buf.data(),
+                            afTgtPre_buf.data(),
+                            nAfTargets,
+                            nAfTargets,
+                            nAfTargets,  // every position is an ordinary deliverable target here
+                            (*attachGridOffs_).data(),
+                            (*attachGridItems_).data(),
+                            afTgtKey_buf.data(),
+                            static_cast<uint64_t*>(nullptr),  // no mutual-best key: advisory pass
+                            afPlsBest_buf.data(),             // scratch: never read as retirement evidence
+                            static_cast<ChainXcPair*>(nullptr),  // no cross-clean arms
+                            afXcCursor_buf.data(),
+                            0u,
+                            afScoreStats_buf.data(),
+                            static_cast<ChainAttachPairRow*>(nullptr),
+                            static_cast<uint32_t*>(nullptr),
+                            0u,
+                            1u,
+                            afSlices,
+                            chainConfig_);
+        alpaka::exec<Acc1D>(queue_,
+                            chainFlat_workDiv,
+                            ChainAfirstSeedReduce{},
+                            chainsDC_->const_view(),
+                            afTargets_buf.data(),
+                            afTgtKey_buf.data(),
+                            nAfTargets,
+                            nPlsAf,
+                            afPlsBid_buf.data(),
+                            afMode,
+                            afStats_buf.data());
+        alpaka::exec<Acc1D>(queue_,
+                            chainFlat_workDiv,
+                            ChainAfirstEvidence{},
+                            chainsDC_->const_view(),
+                            afTargets_buf.data(),
+                            afTgtKey_buf.data(),
+                            nAfTargets,
+                            nPlsAf,
+                            afPlsBid_buf.data(),
+                            afEv_buf.data(),
+                            afMode,
+                            afStats_buf.data());
+        if (afirstDispFree())
+          alpaka::exec<Acc1D>(queue_,
+                              chainFlat_workDiv,
+                              ChainAfirstDispGrant{},
+                              chainsDC_->const_view(),
+                              candKeep_buf.data(),
+                              afEv_buf.data(),
+                              afirstMinLayers(),
+                              chainConfig_.dcaSplit,
+                              afStats_buf.data());
+        alpaka::exec<Acc1D>(queue_,
+                            chainFlat_workDiv,
+                            ChainAfirstKey{},
+                            chainsDC_->view(),
+                            afEv_buf.data(),
+                            afirstBonus(),
+                            afStats_buf.data());
+      }
+      attachGridOffs_.reset();
+      attachGridItems_.reset();
+      attachGridEntries_ = 0;
+      attachGridSummary_.clear();
+    }
+    if (afirstDebug()) {
+      auto afStats_h = cms::alpakatools::make_host_buffer<uint32_t[]>(queue_, chainafirst::kStats);
+      alpaka::memcpy(queue_, afStats_h, afStats_buf);
+      alpaka::wait(queue_);
+      uint32_t const* af = afStats_h.data();
+      std::printf("[afirst] mode=%d minL=%d bonus=%g targets=%u aboveBar=%u evidenced=%u dispGrant=%u keysMoved=%u\n",
+                  afMode,
+                  afirstMinLayers(),
+                  afirstBonus(),
+                  nAfTargets,
+                  af[1],
+                  af[2],
+                  af[4],
+                  af[3]);
+    }
+  }
+
   // Step 3: pre-claim, then the greedy claim and its braid test, as conflict-free rounds. The
   // exactness and termination argument is in ChainArbitrate.h.
   auto owner_buf = cms::alpakatools::make_device_buffer<int32_t[]>(queue_, nHits);
@@ -2050,8 +2412,11 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
   // by the attach rescue; allocated here because both attach stages run after the claim scope.
   auto blockedBy_buf = cms::alpakatools::make_device_buffer<int32_t[]>(queue_, nChainCount_);
   auto blockedOther_buf = cms::alpakatools::make_device_buffer<int32_t[]>(queue_, nChainCount_);
+  // [ARM-HDEEP] the shared half of the same overlap (maxShared), see ChainClaimRounds.
+  auto blockedShared_buf = cms::alpakatools::make_device_buffer<int32_t[]>(queue_, nChainCount_);
   alpaka::memset(queue_, blockedBy_buf, 0xFF);  // -1 everywhere: "not a rejected candidate"
   alpaka::memset(queue_, blockedOther_buf, 0u);
+  alpaka::memset(queue_, blockedShared_buf, 0u);
   alpaka::memset(queue_, stats_buf, 0u);
 
   // Split points of the claim block, so its six pieces are attributable separately under
@@ -2137,6 +2502,7 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
                    bandBraid_buf.data(),
                    blockedBy_buf.data(),
                    blockedOther_buf.data(),
+                   blockedShared_buf.data(),
                    stats_buf.data(),
                    chainConfig_);
   }
@@ -2210,6 +2576,7 @@ void LSTEvent::arbitrateChains(unsigned int nAllocatedTCs) {
                accepted_buf.data(),
                blockedBy_buf.data(),
                blockedOther_buf.data(),
+               blockedShared_buf.data(),
                plsPre_buf.data(),
                plsOwned_buf.data(),
                plsBestChain_buf.data(),
@@ -2654,6 +3021,7 @@ void LSTEvent::attachPixels(unsigned int nHits,
                             uint32_t* accepted,
                             int32_t const* blockedBy,
                             int32_t const* blockedOther,
+                            int32_t const* blockedShared,  // [ARM-HDEEP]
                             AttachPlsPre const* plsPre,
                             uint8_t* plsOwned,
                             uint32_t* plsBestChain,
@@ -2735,6 +3103,12 @@ void LSTEvent::attachPixels(unsigned int nHits,
   // rescues up without change; nEvidence is drained beside the other two counts. With the rescue
   // off the kernel is skipped and nEvidence == nTargets, which is bit-identical to before.
   auto nEvidence_buf_d = cms::alpakatools::make_device_buffer<uint32_t>(queue_);
+  // [ARM-HDEEP] one stats buffer shared by the select and the swap (the select's refusal channels
+  // sit at 14..18), allocated here so the select can write into it. 20 words; the debug print at
+  // the swap drains it. Nothing in the algorithm reads it back.
+  static constexpr uint32_t kRescueStatsWords = 24u;
+  auto rescueStats_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, kRescueStatsWords);
+  alpaka::memset(queue_, rescueStats_buf, 0u);
   if (chainConfig_.attachRescue)
     alpaka::exec<Acc1D>(queue_,
                         serial_workDiv,
@@ -2746,6 +3120,7 @@ void LSTEvent::attachPixels(unsigned int nHits,
                         nTargets_buf_d.data(),
                         targets_buf.data(),
                         nEvidence_buf_d.data(),
+                        rescueStats_buf.data(),
                         chainConfig_);
   else
     alpaka::memcpy(queue_, nEvidence_buf_d, nTargets_buf_d);
@@ -2867,7 +3242,8 @@ void LSTEvent::attachPixels(unsigned int nHits,
                       tgtKeyPre_buf.data(),
                       static_cast<uint32_t const*>(plsBestChain),
                       (chainConfig_.dupMutualDelta >= 0.f) ? plsMutual : nullptr,
-                      pixelSize_);
+                      pixelSize_,
+                      nEvidence);  // [ARM-HDEEP] rescue keys stay out of the mutual-best retirement
   auto const tAfterScore = stamp();
 
   // Contention, then the seed-family dedup (two pLS are the same seed when they share enough pixel
@@ -3022,8 +3398,6 @@ void LSTEvent::attachPixels(unsigned int nHits,
   // stage B and before the row assignment, which is what lets a swapped-in chain emit through the
   // ordinary path and a revoked rescue release its seed cleanly.
   if (chainConfig_.attachRescue && nTargets > nEvidence) {
-    auto rescueStats_buf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, 5u);
-    alpaka::memset(queue_, rescueStats_buf, 0u);
     alpaka::exec<Acc1D>(queue_,
                         serial_workDiv,
                         ChainRescueSwap{},
@@ -3033,6 +3407,9 @@ void LSTEvent::attachPixels(unsigned int nHits,
                         nTargets,
                         blockedBy,
                         blockedOther,
+                        blockedShared,
+                        static_cast<uint64_t const*>(tgtKey_buf.data()),
+                        static_cast<uint64_t const*>(tgtKeyPre_buf.data()),
                         accepted,
                         plsOwned,
                         rescueStats_buf.data(),
@@ -3042,16 +3419,38 @@ void LSTEvent::attachPixels(unsigned int nHits,
       return dbg != nullptr && *dbg != '\0' && *dbg != '0';
     }();
     if (rescueDebug) {
-      auto rescueStats_h = cms::alpakatools::make_host_buffer<uint32_t[]>(queue_, 5u);
+      auto rescueStats_h = cms::alpakatools::make_host_buffer<uint32_t[]>(queue_, kRescueStatsWords);
       alpaka::memcpy(queue_, rescueStats_h, rescueStats_buf);
       alpaka::wait(queue_);
-      std::printf("[rescue] targets=%u won=%u swapped=%u revBlockerSeeded=%u revNotLonger=%u revOther=%u\n",
-                  nTargets - nEvidence,
-                  rescueStats_h.data()[0],
-                  rescueStats_h.data()[1],
-                  rescueStats_h.data()[2],
-                  rescueStats_h.data()[3],
-                  rescueStats_h.data()[4]);
+      uint32_t const* rs = rescueStats_h.data();
+      std::printf(
+          "[rescue] targets=%u won=%u swapped=%u refBlockerSeeded=%u refNotLonger=%u refOther=%u handover=%u "
+          "bothSeeded=%u | noEv=%u noEvBlockerFree=%u noEvNoArgmax=%u noEvOtherSeed=%u preBarOnly=%u "
+          "refMinBl=%u walked=%u | selRejected=%u sel5L=%u selNotLonger=%u selOther=%u selDca=%u "
+          "selNoBlocker5L=%u refGap=%u refContain=%u\n",
+          nTargets - nEvidence,
+          rs[0],
+          rs[1],
+          rs[2],
+          rs[3],
+          rs[4],
+          rs[5],
+          rs[6],
+          rs[7],
+          rs[8],
+          rs[9],
+          rs[10],
+          rs[11],
+          rs[12],
+          rs[13],
+          rs[14],
+          rs[15],
+          rs[16],
+          rs[17],
+          rs[18],
+          rs[19],
+          rs[20],
+          rs[21]);
     }
   }
   auto const tAfterPublish = stamp();
