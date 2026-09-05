@@ -519,6 +519,17 @@ void LSTEvent::createTriplets() {
   else
     execCreateTriplets(CreateTriplets{});
 
+  alpaka::exec<Acc1D>(queue_,
+                      cms::alpakatools::make_workdiv<Acc1D>(1, 1024),
+                      MarkRescuedTriplets{},
+                      modules_.const_view().modules(),
+                      miniDoubletsDC_->const_view().miniDoublets(),
+                      segmentsDC_->const_view().segments(),
+                      tripletsDC_->view().triplets(),
+                      tripletsDC_->const_view().tripletsOccupancy(),
+                      rangesDC_->const_view(),
+                      ptCut_);
+
   auto const addTripletRangesToEventExplicit_workDiv = cms::alpakatools::make_workdiv<Acc1D>(1, 1024);
 
   alpaka::exec<Acc1D>(queue_,
@@ -1025,7 +1036,10 @@ void LSTEvent::createQuintuplets() {
                       modules_.const_view().modules(),
                       quintupletsDC_->view().quintuplets(),
                       quintupletsDC_->const_view().quintupletsOccupancy(),
-                      rangesDC_->const_view());
+                      rangesDC_->const_view(),
+                      miniDoubletsDC_->const_view().miniDoublets(),
+                      segmentsDC_->const_view().segments(),
+                      tripletsDC_->const_view().triplets());
 
   auto const addQuintupletRangesToEventExplicit_workDiv = cms::alpakatools::make_workdiv<Acc1D>(1, 1024);
 
@@ -1175,7 +1189,11 @@ void LSTEvent::createPixelQuintuplets() {
   alpaka::exec<Acc2D>(queue_,
                       removeDupPixelQuintupletsFromMap_workDiv,
                       RemoveDupPixelQuintupletsFromMap{},
-                      pixelQuintupletsDC_->view());
+                      pixelQuintupletsDC_->view(),
+                      miniDoubletsDC_->const_view().miniDoublets(),
+                      segmentsDC_->const_view().segments(),
+                      tripletsDC_->const_view().triplets(),
+                      quintupletsDC_->const_view().quintuplets());
 
 #ifdef WARNINGS
   auto nPixelQuintuplets_buf = cms::alpakatools::make_host_buffer<unsigned int>(queue_);

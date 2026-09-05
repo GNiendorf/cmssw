@@ -1517,6 +1517,31 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     unsigned int fourthMDIndex = segments.mdIndices()[thirdSegmentIndex][1];
     unsigned int fifthMDIndex = segments.mdIndices()[fourthSegmentIndex][1];
 
+    // A track losing momentum turns coherently and ever more sharply outward: over five
+    // mini-doublets that is four turning steps plus three segment ones, all same-sign and growing.
+    if (segments.wideAdmit()[firstSegmentIndex] || segments.wideAdmit()[secondSegmentIndex] ||
+        segments.wideAdmit()[thirdSegmentIndex] || segments.wideAdmit()[fourthSegmentIndex] ||
+        mds.widenedAdmit()[firstMDIndex] || mds.widenedAdmit()[secondMDIndex] ||
+        mds.widenedAdmit()[thirdMDIndex] || mds.widenedAdmit()[fourthMDIndex] ||
+        mds.widenedAdmit()[fifthMDIndex]) {
+      const float a[5] = {mds.dphichanges()[firstMDIndex],
+                          mds.dphichanges()[secondMDIndex],
+                          mds.dphichanges()[thirdMDIndex],
+                          mds.dphichanges()[fourthMDIndex],
+                          mds.dphichanges()[fifthMDIndex]};
+      const float d[4] = {__H2F(segments.dPhiChanges()[firstSegmentIndex]),
+                          __H2F(segments.dPhiChanges()[secondSegmentIndex]),
+                          __H2F(segments.dPhiChanges()[thirdSegmentIndex]),
+                          __H2F(segments.dPhiChanges()[fourthSegmentIndex])};
+      int nMD = 0, nSG = 0;
+      for (int i = 0; i < 4; ++i)
+        nMD += (a[i] * a[i + 1] > 0.f && alpaka::math::abs(acc, a[i + 1]) > alpaka::math::abs(acc, a[i])) ? 1 : 0;
+      for (int i = 0; i < 3; ++i)
+        nSG += (d[i] * d[i + 1] > 0.f && alpaka::math::abs(acc, d[i + 1]) > alpaka::math::abs(acc, d[i])) ? 1 : 0;
+      if (nMD < 3 || nSG < 3)
+        return false;
+    }
+
     float x1 = mds.anchorX()[firstMDIndex];
     float x2 = mds.anchorX()[secondMDIndex];
     float x3 = mds.anchorX()[thirdMDIndex];

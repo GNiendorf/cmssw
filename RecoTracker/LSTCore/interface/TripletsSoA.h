@@ -31,7 +31,9 @@ namespace lst {
 #endif
                       SOA_COLUMN(bool, partOfPT5),   // is it used in a pT5
                       SOA_COLUMN(bool, partOfT5),    // is it used in a T5
-                      SOA_COLUMN(bool, partOfPT3));  // is it used in a pT3
+                      SOA_COLUMN(bool, partOfPT3),   // is it used in a pT3
+                      // The stock pointing constraint would have rejected this segment pair.
+                      SOA_COLUMN(bool, rescuedAdmit));
 
   using TripletsSoA = TripletsSoALayout<>;
   using Triplets = TripletsSoA::View;

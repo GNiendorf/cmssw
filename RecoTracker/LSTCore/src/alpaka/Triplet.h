@@ -31,6 +31,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     float sin_alphaRHmax, cos_alphaRHmax;  // for endcap EEE path
     short innerSubdet;                     // subdet of inner-inner module
     short middleSubdet;                    // subdet of middle module
+    // Multiple-scattering allowance for the pointing cut; exactly 0 on barrel-barrel inner segments.
+    float msTermEc;
   };
 
   // Pre-loaded hit coordinates for passRZConstraint.
@@ -48,7 +50,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                                                    ModulesConst modules,
                                                                    unsigned int innerSegmentIndex,
                                                                    uint16_t innerInnerLowerModuleIndex,
-                                                                   uint16_t middleLowerModuleIndex) {
+                                                                   uint16_t middleLowerModuleIndex,
+                                                                   const float ptCut) {
     unsigned int firstMDIndex = segments.mdIndices()[innerSegmentIndex][0];
     unsigned int secondMDIndex = segments.mdIndices()[innerSegmentIndex][1];
     T3InnerSegData d;
@@ -72,6 +75,15 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
       d.cos_alphaRHmin = alpaka::math::cos(acc, d.sdIn_alphaRHmin);
       d.sin_alphaRHmax = alpaka::math::sin(acc, d.sdIn_alphaRHmax);
       d.cos_alphaRHmax = alpaka::math::cos(acc, d.sdIn_alphaRHmax);
+    }
+
+    // Endcap-form inner segments are the ones Segment.h sends to runSegmentDefaultAlgoEndcap;
+    // the allowance is the one the segment stage already carries for the inner module.
+    d.msTermEc = 0.f;
+    if (not(d.innerSubdet == Barrel and d.middleSubdet == Barrel)) {
+      const unsigned int lay = modules.layers()[innerInnerLowerModuleIndex] - 1;
+      const float mulsScale = (d.innerSubdet == Barrel) ? kMiniMulsPtScaleBarrel[lay] : kMiniMulsPtScaleEndcap[lay];
+      d.msTermEc = mulsScale * 3.f / ptCut;
     }
     return d;
   }
@@ -394,10 +406,15 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     const float dy = y3 - innerSegData.y1;
     const float drt_tl_axis = alpaka::math::sqrt(acc, dx * dx + dy * dy);
 
+    // On endcap-form inner segments the bare position slop is taken in quadrature with the
+    // multiple-scattering allowance; msTermEc is exactly 0 elsewhere and that path is stock.
+    const float slop = 0.02f / innerSegData.drt_InSeg;
     const float betaInCut =
         alpaka::math::asin(
             acc, alpaka::math::min(acc, (-innerSegData.rt_InSeg + drt_tl_axis) * k2Rinv1GeVf / ptCut, kSinAlphaMax)) +
-        (0.02f / innerSegData.drt_InSeg);
+        (innerSegData.msTermEc == 0.f
+             ? slop
+             : alpaka::math::sqrt(acc, slop * slop + innerSegData.msTermEc * innerSegData.msTermEc));
 
     // Algebraic betaIn check, avoiding per-candidate atan2.
     // betaIn = sdIn_alpha - (phi(dx,dy) - anchorPhi1)
@@ -417,6 +434,60 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
 
     if (innerSegData.innerSubdet == Endcap and innerSegData.middleSubdet == Endcap and outerSubdet == Endcap) {
       // EEE: check both alpha variants, pass if the one with smaller |betaIn| is within cut
+      const float sinBetaInMin = innerSegData.sin_alphaRHmin * dotBetaIn - innerSegData.cos_alphaRHmin * crossBetaIn;
+      const float sinBetaInMax = innerSegData.sin_alphaRHmax * dotBetaIn - innerSegData.cos_alphaRHmax * crossBetaIn;
+      const float sqMin = sinBetaInMin * sinBetaInMin;
+      const float sqMax = sinBetaInMax * sinBetaInMax;
+
+      if (sqMin <= sqMax) {
+        return sqMin < sinBetaInCutSq * r2 and
+               (innerSegData.cos_alphaRHmin * dotBetaIn + innerSegData.sin_alphaRHmin * crossBetaIn > 0.f);
+      } else {
+        return sqMax < sinBetaInCutSq * r2 and
+               (innerSegData.cos_alphaRHmax * dotBetaIn + innerSegData.sin_alphaRHmax * crossBetaIn > 0.f);
+      }
+    }
+
+    const float sinBetaIn = innerSegData.sin_alpha * dotBetaIn - innerSegData.cos_alpha * crossBetaIn;
+    return sinBetaIn * sinBetaIn < sinBetaInCutSq * r2 and
+           (innerSegData.cos_alpha * dotBetaIn + innerSegData.sin_alpha * crossBetaIn > 0.f);
+  }
+
+  // Extra betaInCut budget granted on the second-chance path, on the energy-loss side.
+  HOST_DEVICE_CONSTANT float kT3RescueK = 0.7f;
+
+  template <alpaka::concepts::Acc TAcc>
+  ALPAKA_FN_ACC ALPAKA_FN_INLINE bool t3AsymPointingRescue(TAcc const& acc,
+                                                           T3InnerSegData const& innerSegData,
+                                                           float x3,
+                                                           float y3,
+                                                           short outerSubdet,
+                                                           const float ptCut,
+                                                           const float alphaOut) {
+    const float alphaIn = innerSegData.sdIn_alpha;
+    if (!(alphaOut * alphaIn > 0.f) || !(alpaka::math::abs(acc, alphaOut) > alpaka::math::abs(acc, alphaIn)))
+      return false;
+    const float k = kT3RescueK;
+
+    const float dx = x3 - innerSegData.x1;
+    const float dy = y3 - innerSegData.y1;
+    const float drt_tl_axis = alpaka::math::sqrt(acc, dx * dx + dy * dy);
+    const float slop = 0.02f / innerSegData.drt_InSeg;
+    const float betaInCut =
+        (alpaka::math::asin(
+             acc, alpaka::math::min(acc, (-innerSegData.rt_InSeg + drt_tl_axis) * k2Rinv1GeVf / ptCut, kSinAlphaMax)) +
+         (innerSegData.msTermEc == 0.f
+              ? slop
+              : alpaka::math::sqrt(acc, slop * slop + innerSegData.msTermEc * innerSegData.msTermEc))) *
+        (1.f + k);
+
+    const float crossBetaIn = innerSegData.x1 * y3 - innerSegData.y1 * x3;
+    const float dotBetaIn = x3 * innerSegData.x1 + y3 * innerSegData.y1 - innerSegData.rt1 * innerSegData.rt1;
+    const float r2 = crossBetaIn * crossBetaIn + dotBetaIn * dotBetaIn;
+    const float sinBetaInCut = alpaka::math::sin(acc, betaInCut);
+    const float sinBetaInCutSq = sinBetaInCut * sinBetaInCut;
+
+    if (innerSegData.innerSubdet == Endcap and innerSegData.middleSubdet == Endcap and outerSubdet == Endcap) {
       const float sinBetaInMin = innerSegData.sin_alphaRHmin * dotBetaIn - innerSegData.cos_alphaRHmin * crossBetaIn;
       const float sinBetaInMax = innerSegData.sin_alphaRHmax * dotBetaIn - innerSegData.cos_alphaRHmax * crossBetaIn;
       const float sqMin = sinBetaInMin * sinBetaInMin;
@@ -636,7 +707,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
           int middleMDIndiceInner = segments.mdIndices()[innerSegmentIndex][1];
 
           T3InnerSegData innerSegData = loadT3InnerSegData(
-              acc, mds, segments, modules, innerSegmentIndex, innerInnerLowerModuleIndex, middleLowerModuleIndex);
+              acc, mds, segments, modules, innerSegmentIndex, innerInnerLowerModuleIndex, middleLowerModuleIndex, ptCut);
 
           unsigned int nOuterSegments = segmentsOccupancy.nSegments()[middleLowerModuleIndex];
           for (unsigned int outerSegmentArrayIndex : cms::alpakatools::uniform_elements_x(acc, nOuterSegments)) {
@@ -652,7 +723,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
             float y3 = mds.anchorY()[thirdMDIndex];
             short outerSubdet = modules.subdets()[outerOuterLowerModuleIndex];
 
-            if (not passPointingConstraint(acc, innerSegData, x3, y3, outerSubdet, ptCut))
+            // A second chance, consulted only after the stock pointing constraint has rejected the pair.
+            if (not passPointingConstraint(acc, innerSegData, x3, y3, outerSubdet, ptCut) and
+                not t3AsymPointingRescue(
+                    acc, innerSegData, x3, y3, outerSubdet, ptCut, __H2F(segments.dPhiChanges()[outerSegmentIndex])))
               continue;
 
             if constexpr (ReduceMem) {
@@ -748,7 +822,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
             continue;
 
           T3InnerSegData innerSegData = loadT3InnerSegData(
-              acc, mds, segments, modules, innerSegmentIndex, innerLowerModuleArrayIdx, middleLowerModuleIndex);
+              acc, mds, segments, modules, innerSegmentIndex, innerLowerModuleArrayIdx, middleLowerModuleIndex, ptCut);
 
           for (unsigned int outerSegmentArrayIndex : cms::alpakatools::uniform_elements_x(acc, nOuterSegments)) {
             const unsigned int outerSegmentIndex = segmentRanges[middleLowerModuleIndex][0] + outerSegmentArrayIndex;
@@ -762,7 +836,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
             float y3 = mds.anchorY()[thirdMDIndex];
             short outerSubdet = modules.subdets()[outerOuterLowerModuleIndex];
 
-            if (not passPointingConstraint(acc, innerSegData, x3, y3, outerSubdet, ptCut))
+            // A second chance, consulted only after the stock pointing constraint has rejected the pair.
+            if (not passPointingConstraint(acc, innerSegData, x3, y3, outerSubdet, ptCut) and
+                not t3AsymPointingRescue(
+                    acc, innerSegData, x3, y3, outerSubdet, ptCut, __H2F(segments.dPhiChanges()[outerSegmentIndex])))
               continue;
 
             bool counts = true;
@@ -838,6 +915,45 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
       alpaka::syncBlockThreads(acc);
       if (cms::alpakatools::once_per_block(acc))
         ranges.nTotalTrips() = nTotalTriplets;
+    }
+  };
+
+  // Recomputed here, not stored in the builder: perturbing CreateTripletsT moves downstream floats.
+  // Must run after CreateTriplets and before the T4, T5 and pT3 stages, which read the column.
+  struct MarkRescuedTriplets {
+    ALPAKA_FN_ACC void operator()(Acc1D const& acc,
+                                  ModulesConst modules,
+                                  MiniDoubletsConst mds,
+                                  SegmentsConst segments,
+                                  Triplets triplets,
+                                  TripletsOccupancyConst tripletsOccupancy,
+                                  ObjectRangesConst ranges,
+                                  const float ptCut) const {
+      for (uint16_t i : cms::alpakatools::uniform_elements(acc, modules.nLowerModules())) {
+        unsigned int const nTrips = tripletsOccupancy.nTriplets()[i];
+        unsigned int const base = ranges.tripletModuleIndices()[i];
+        for (unsigned int j = 0; j < nTrips; ++j) {
+          unsigned int const tripletIndex = base + j;
+          unsigned int const innerSegmentIndex = triplets.segmentIndices()[tripletIndex][0];
+          unsigned int const outerSegmentIndex = triplets.segmentIndices()[tripletIndex][1];
+          T3InnerSegData const innerSegData = loadT3InnerSegData(acc,
+                                                                mds,
+                                                                segments,
+                                                                modules,
+                                                                innerSegmentIndex,
+                                                                triplets.lowerModuleIndices()[tripletIndex][0],
+                                                                triplets.lowerModuleIndices()[tripletIndex][1],
+                                                                ptCut);
+          unsigned int const thirdMDIndex = segments.mdIndices()[outerSegmentIndex][1];
+          triplets.rescuedAdmit()[tripletIndex] =
+              not passPointingConstraint(acc,
+                                         innerSegData,
+                                         mds.anchorX()[thirdMDIndex],
+                                         mds.anchorY()[thirdMDIndex],
+                                         modules.subdets()[triplets.lowerModuleIndices()[tripletIndex][2]],
+                                         ptCut);
+        }
+      }
     }
   };
 

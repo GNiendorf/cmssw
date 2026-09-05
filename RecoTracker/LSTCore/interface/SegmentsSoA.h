@@ -30,7 +30,9 @@ namespace lst {
                       SOA_COLUMN(Params_LS::ArrayUxLayers, mdIndices),
                       SOA_COLUMN(unsigned int, innerMiniDoubletAnchorHitIndices),
                       SOA_COLUMN(unsigned int, outerMiniDoubletAnchorHitIndices),
-                      SOA_COLUMN(unsigned int, connectedMax))
+                      SOA_COLUMN(unsigned int, connectedMax),
+                      // The unwidened |dPhiChange| window would have rejected this segment.
+                      SOA_COLUMN(bool, wideAdmit))
 
   GENERATE_SOA_LAYOUT(SegmentsOccupancySoALayout,
                       SOA_COLUMN(unsigned int, nSegments),  //number of segments per inner lower module

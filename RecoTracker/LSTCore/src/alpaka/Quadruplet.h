@@ -334,6 +334,11 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     unsigned int thirdMDIndex = segments.mdIndices()[secondSegmentIndex][1];
     unsigned int fourthMDIndex = segments.mdIndices()[thirdSegmentIndex][1];
 
+    // The widened mini-doublet supply is for the >= 5-layer route only.
+    if (mds.widenedAdmit()[firstMDIndex] || mds.widenedAdmit()[secondMDIndex] ||
+        mds.widenedAdmit()[thirdMDIndex] || mds.widenedAdmit()[fourthMDIndex])
+      return false;
+
     float x1 = mds.anchorX()[firstMDIndex];
     float x2 = mds.anchorX()[secondMDIndex];
     float x3 = mds.anchorX()[thirdMDIndex];
@@ -585,6 +590,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
             continue;  //don't create T4s for T3s accounted in T5s
           if (triplets.partOfPT3()[innerTripletIndex])
             continue;  //don't create T4s for T3s accounted in pT3s
+          // A rescued triplet is for the >= 5-layer route only, for the same reason.
+          if (triplets.rescuedAdmit()[innerTripletIndex])
+            continue;
           const uint16_t lowerModule2 = lmIdx[innerTripletIndex][1];
           const unsigned int nOuterTriplets = tripletsOccupancy.nTriplets()[lowerModule2];
           for (unsigned int outerTripletArrayIndex : cms::alpakatools::uniform_elements_x(acc, nOuterTriplets)) {
@@ -595,6 +603,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
               continue;  //don't create T4s for T3s accounted in T5s
             if (triplets.partOfPT3()[outerTripletIndex])
               continue;  //don't create T4s for T3s accounted in pT3s
+            if (triplets.rescuedAdmit()[outerTripletIndex])
+              continue;
 
             const unsigned int innerT3LS2Index = segIdx[innerTripletIndex][1];
             const unsigned int outerT3LS1Index = segIdx[outerTripletIndex][0];
@@ -862,6 +872,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
 
         for (unsigned int innerTripletArrayIndex : cms::alpakatools::uniform_elements_y(acc, nInnerTriplets)) {
           const unsigned int innerTripletIndex = tripIdx[lowerModule1] + innerTripletArrayIndex;
+          if (triplets.rescuedAdmit()[innerTripletIndex])
+            continue;
 
           const uint16_t lowerModule2 = lmIdx[innerTripletIndex][1];
           const unsigned int nOuterTriplets = tripletsOcc.nTriplets()[lowerModule2];
@@ -874,6 +886,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
 
           for (unsigned int outerTripletArrayIndex : cms::alpakatools::uniform_elements_x(acc, nOuterTriplets)) {
             const unsigned int outerTripletIndex = tripIdx[lowerModule2] + outerTripletArrayIndex;
+            if (triplets.rescuedAdmit()[outerTripletIndex])
+              continue;
             const unsigned int thirdSegIdx = segIdx[outerTripletIndex][0];
             const unsigned int thirdMDInner = mdIndices[thirdSegIdx][0];
             const unsigned int thirdMDOuter = mdIndices[thirdSegIdx][1];

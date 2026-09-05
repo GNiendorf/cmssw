@@ -25,6 +25,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     float miniTilt2;             // 0 for non-tilted and endcap
     float miniMulsAndPVoff;      // miniMuls^2 + miniPVoff^2
     float sqrtMiniMulsAndPVoff;  // sqrt(miniMulsAndPVoff), valid for barrel flat
+    // The same two before the occupancy conditioning below, for the stock-window comparison.
+    float miniMulsAndPVoffStock;
+    float sqrtMiniMulsAndPVoffStock;
+    float dPhiChangeScale;
 
     unsigned int iL;  // layer - 1
 
@@ -55,9 +59,12 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                                     float shiftedZ,
                                                     float noShiftedDphi,
                                                     float noShiftedDPhiChange,
-                                                    unsigned int idx) {
+                                                    unsigned int idx,
+                                                    bool widenedAdmit = false) {
     //the index into which this MD needs to be written will be computed in the kernel
     //nMDs variable will be incremented in the kernel, no need to worry about that here
+
+    mds.widenedAdmit()[idx] = widenedAdmit;
 
     mds.moduleIndices()[idx] = mod.lowerModuleIndex;
     unsigned int anchorHitIndex, outerHitIndex;
@@ -348,6 +355,21 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     shiftedCoords[2] = zn;
   }
 
+  // dPhiThreshold rebuilt on the unconditioned module constants: the window stock LST would use.
+  template <alpaka::concepts::Acc TAcc>
+  ALPAKA_FN_ACC ALPAKA_FN_INLINE float dPhiThresholdStock(
+      TAcc const& acc, float rt, ModuleMDData const& mod, const float ptCut, float dPhi, float dz) {
+    const float miniSlope = alpaka::math::asin(acc, alpaka::math::min(acc, rt * k2Rinv1GeVf / ptCut, kSinAlphaMax));
+    if (mod.subdet == Barrel and mod.side == Center) {
+      return miniSlope + mod.sqrtMiniMulsAndPVoffStock;
+    } else if (mod.subdet == Barrel) {
+      return miniSlope + alpaka::math::sqrt(acc, mod.miniMulsAndPVoffStock + mod.miniTilt2 * miniSlope * miniSlope);
+    } else {
+      const float miniLum = alpaka::math::abs(acc, dPhi * kDeltaZLum / dz);
+      return miniSlope + alpaka::math::sqrt(acc, mod.miniMulsAndPVoffStock + miniLum * miniLum);
+    }
+  }
+
   template <alpaka::concepts::Acc TAcc>
   ALPAKA_FN_ACC ALPAKA_FN_INLINE bool runMiniDoubletDefaultAlgoBarrel(TAcc const& acc,
                                                                       ModuleMDData const& mod,
@@ -367,7 +389,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                                                       float yUpper,
                                                                       float zUpper,
                                                                       float rtUpper,
-                                                                      const float ptCut) {
+                                                                      const float ptCut,
+                                                                      bool& widenedAdmit) {
     dz = zLower - zUpper;
     const float dzCut = mod.moduleType == PS ? 2.f : 10.f;
     const float sign = ((dz > 0) - (dz < 0)) * ((zLower > 0) - (zLower < 0));
@@ -434,8 +457,6 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
 
     const float rInnerSq = alpaka::math::min(acc, r1sq, r2sq);
     const float dotDPhiChange = dotDPhi - rInnerSq;
-    if (dotDPhiChange <= 0.f || absCrossDPhi >= tanMiniCut * dotDPhiChange)
-      return false;
 
     // Cut #2: dphi difference
     // Ref to original code: https://github.com/slava77/cms-tkph2-ntuple/blob/184d2325147e6930030d3d1f780136bc2dd29ce6/doubletAnalysis.C#L3085
@@ -457,7 +478,11 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
       noShiftedDphiChange = dPhiChange;
     }
 
-    return alpaka::math::abs(acc, dPhiChange) < miniCut;
+    const float rtStock = mod.moduleLayerType == Pixel ? rtLower : rtUpper;
+    const float stockCut = dPhiThresholdStock(acc, rtStock, mod, ptCut, 0.f, 0.f);
+    widenedAdmit = (alpaka::math::abs(acc, dPhi) >= stockCut) || (alpaka::math::abs(acc, dPhiChange) >= stockCut);
+
+    return alpaka::math::abs(acc, dPhiChange) < miniCut * mod.dPhiChangeScale;
   }
 
   template <alpaka::concepts::Acc TAcc>
@@ -479,7 +504,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                                                       float yUpper,
                                                                       float zUpper,
                                                                       float rtUpper,
-                                                                      const float ptCut) {
+                                                                      const float ptCut,
+                                                                      bool& widenedAdmit) {
     // Cut #1: dz cut. The dz difference can't be larger than 1cm. (max separation is 4mm for modules in the endcap)
     // Ref to original code: https://github.com/slava77/cms-tkph2-ntuple/blob/184d2325147e6930030d3d1f780136bc2dd29ce6/doubletAnalysis.C#L3093
     // For PS module in case when it is tilted a different dz (after the strip hit shift) is calculated later.
@@ -574,11 +600,6 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     // So |dPhiChange| >= cut implies |dPhi| >= cut * dzFrac/(1+dzFrac).
     // Padding looseCutDPhi with 0.5*s^3 gives an upper bound on the exact angle.
     const float dzFrac = absDz / alpaka::math::abs(acc, zLower);
-    const float looseCutDPhiChange =
-        (looseCutDPhi + 0.5f * sdSlopeSin * sdSlopeSin * sdSlopeSin) * dzFrac / (1.f + dzFrac);
-
-    if (crossSq >= looseCutDPhiChange * looseCutDPhiChange * r1r2sq)
-      return false;
 
     // Cut #3: dphi
     dPhi = alpaka::math::atan2(acc, crossDPhi, dotDPhi);
@@ -598,7 +619,11 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     noShiftedDphi = cms::alpakatools::deltaPhi(acc, xLower, yLower, xUpper, yUpper);
     noShiftedDphichange = noShiftedDphi / dzFrac * (1.f + dzFrac);
 
-    return alpaka::math::abs(acc, dPhiChange) < miniCut;
+    const float rtStock = mod.moduleLayerType == Pixel ? rtLower : rtUpper;
+    const float stockCut = dPhiThresholdStock(acc, rtStock, mod, ptCut, dPhi, dz);
+    widenedAdmit = (alpaka::math::abs(acc, dPhi) >= stockCut) || (alpaka::math::abs(acc, dPhiChange) >= stockCut);
+
+    return alpaka::math::abs(acc, dPhiChange) < miniCut * mod.dPhiChangeScale;
   }
 
   template <alpaka::concepts::Acc TAcc>
@@ -623,7 +648,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                                                 const float ptCut,
                                                                 uint16_t clustSizeLower,
                                                                 uint16_t clustSizeUpper,
-                                                                const uint16_t clustSizeCut) {
+                                                                const uint16_t clustSizeCut,
+                                                                bool& widenedAdmit) {
     if (clustSizeLower > clustSizeCut or clustSizeUpper > clustSizeCut) {
       return false;
     }
@@ -646,7 +672,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                              yUpper,
                                              zUpper,
                                              rtUpper,
-                                             ptCut);
+                                             ptCut,
+                                             widenedAdmit);
     } else {
       return runMiniDoubletDefaultAlgoEndcap(acc,
                                              mod,
@@ -666,14 +693,25 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                              yUpper,
                                              zUpper,
                                              rtUpper,
-                                             ptCut);
+                                             ptCut,
+                                             widenedAdmit);
     }
   }
 
+  // Occupancy-conditioned widening of the module-constant (scattering + luminous-region) part of
+  // the dPhiChange window: sparse modules get a wider window, dense ones stay at the stock value.
+  HOST_DEVICE_CONSTANT float kMiniOccScaleMax = 8.f;
+  HOST_DEVICE_CONSTANT float kMiniOccScaleK = 1024.f;
+
+  // Uniform opening of the mini-doublet dPhiChange window, and the pT it is opened to.
+  HOST_DEVICE_CONSTANT float kMdWidenScale = 2.f;
+  HOST_DEVICE_CONSTANT float kMdWidenPtFloor = 0.4f;
+
   // Hoist module-constant data once per module to avoid redundant SoA loads per hit pair.
+  // nPairs is the module's candidate-pair count (nLowerHits * nUpperHits), the caller's loop bound.
   template <alpaka::concepts::Acc TAcc>
   ALPAKA_FN_ACC ALPAKA_FN_INLINE ModuleMDData
-  loadModuleMDData(TAcc const& acc, ModulesConst modules, uint16_t lowerModuleIndex, const float ptCut) {
+  loadModuleMDData(TAcc const& acc, ModulesConst modules, uint16_t lowerModuleIndex, const float ptCut, int nPairs) {
     ModuleMDData mod;
     mod.lowerModuleIndex = lowerModuleIndex;
     mod.subdet = modules.subdets()[lowerModuleIndex];
@@ -708,6 +746,21 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     } else {
       mod.miniTilt2 = 0.f;
     }
+
+    mod.miniMulsAndPVoffStock = mod.miniMulsAndPVoff;
+    mod.sqrtMiniMulsAndPVoffStock = mod.sqrtMiniMulsAndPVoff;
+    // The window is opened to a fixed pT equivalent and never below it, so one constant is correct
+    // at every ptCut: exactly kMdWidenScale down to ptCut = kMdWidenScale * kMdWidenPtFloor.
+    mod.dPhiChangeScale = (ptCut >= kMdWidenScale * kMdWidenPtFloor) ? kMdWidenScale : (ptCut / kMdWidenPtFloor);
+
+    // Barrel-only occupancy conditioning.  Scaling the two cached members widens every consumer
+    // of the module-constant bracket together, pre-checks included, so no cut can become binding.
+    if (nPairs > 0 && mod.subdet == Barrel) {
+      const float m = alpaka::math::max(
+          acc, 1.f, alpaka::math::min(acc, kMiniOccScaleMax, kMiniOccScaleK / static_cast<float>(nPairs)));
+      mod.miniMulsAndPVoff *= m * m;
+      mod.sqrtMiniMulsAndPVoff *= m;
+    }
     return mod;
   }
 
@@ -731,7 +784,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         unsigned int loHitArrayIndex = hitsRanges.hitRangesLower()[lowerModuleIndex];
         int limit = nUpperHits * nLowerHits;
 
-        ModuleMDData mod = loadModuleMDData(acc, modules, lowerModuleIndex, ptCut);
+        ModuleMDData mod = loadModuleMDData(acc, modules, lowerModuleIndex, ptCut, limit);
 
         for (int hitIndex : cms::alpakatools::uniform_elements_x(acc, limit)) {
           int lowerHitIndex = hitIndex / nUpperHits;
@@ -754,6 +807,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
           uint16_t clustSizeUpper = hitsBase.clustsize()[upperHitArrayIndex];
 
           float dz, dphi, dphichange, shiftedX, shiftedY, shiftedZ, noShiftedDphi, noShiftedDphiChange;
+          bool widenedAdmit = false;
           bool success = runMiniDoubletDefaultAlgo(acc,
                                                    mod,
                                                    dz,
@@ -775,7 +829,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                                    ptCut,
                                                    clustSizeLower,
                                                    clustSizeUpper,
-                                                   clustSizeCut);
+                                                   clustSizeCut,
+                                                   widenedAdmit);
           if (success) {
             int totOccupancyMDs = alpaka::atomicAdd(
                 acc, &mdsOccupancy.totOccupancyMDs()[lowerModuleIndex], 1u, alpaka::hierarchy::Threads{});
@@ -804,7 +859,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                             shiftedZ,
                             noShiftedDphi,
                             noShiftedDphiChange,
-                            mdIndex);
+                            mdIndex,
+                            widenedAdmit);
             }
           }
         }
@@ -830,7 +886,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         unsigned int loHitArrayIndex = hitsRanges.hitRangesLower()[lowerModuleIndex];
         int limit = nUpperHits * nLowerHits;
 
-        ModuleMDData mod = loadModuleMDData(acc, modules, lowerModuleIndex, ptCut);
+        ModuleMDData mod = loadModuleMDData(acc, modules, lowerModuleIndex, ptCut, limit);
 
         for (int hitIndex : cms::alpakatools::uniform_elements_x(acc, limit)) {
           int lowerHitIndex = hitIndex / nUpperHits;
@@ -853,6 +909,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
           uint16_t clustSizeUpper = hitsBase.clustsize()[upperHitArrayIndex];
 
           float dz, dphi, dphichange, shiftedX, shiftedY, shiftedZ, noShiftedDphi, noShiftedDphiChange;
+          bool widenedAdmit = false;
           bool success = runMiniDoubletDefaultAlgo(acc,
                                                    mod,
                                                    dz,
@@ -874,7 +931,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                                    ptCut,
                                                    clustSizeLower,
                                                    clustSizeUpper,
-                                                   clustSizeCut);
+                                                   clustSizeCut,
+                                                   widenedAdmit);
           if (success) {
             alpaka::atomicAdd(
                 acc, &ranges.miniDoubletModuleOccupancy()[lowerModuleIndex], 1, alpaka::hierarchy::Threads{});

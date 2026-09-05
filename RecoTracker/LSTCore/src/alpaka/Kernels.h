@@ -186,12 +186,48 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     return nMatched;
   };
 
+  // A quintuplet is NON-STOCK if any of its mini-doublets was widened-admitted or either of its
+  // triplets was pointing-rescued.  Returns -1 when the pair carries no stock/non-stock difference.
+  ALPAKA_FN_ACC ALPAKA_FN_INLINE bool t5IsNonStock(MiniDoubletsConst mds,
+                                                   SegmentsConst segments,
+                                                   TripletsConst triplets,
+                                                   QuintupletsConst quintuplets,
+                                                   unsigned int t5) {
+    for (int leg = 0; leg < 2; ++leg) {
+      unsigned int const t3 = quintuplets.tripletIndices()[t5][leg];
+      if (triplets.rescuedAdmit()[t3])
+        return true;
+      unsigned int const segIn = triplets.segmentIndices()[t3][0];
+      unsigned int const segOut = triplets.segmentIndices()[t3][1];
+      if (mds.widenedAdmit()[segments.mdIndices()[segIn][0]] || mds.widenedAdmit()[segments.mdIndices()[segIn][1]] ||
+          mds.widenedAdmit()[segments.mdIndices()[segOut][1]])
+        return true;
+    }
+    return false;
+  }
+
+  ALPAKA_FN_ACC ALPAKA_FN_INLINE int seedGuardT5Pair(MiniDoubletsConst mds,
+                                                     SegmentsConst segments,
+                                                     TripletsConst triplets,
+                                                     QuintupletsConst quintuplets,
+                                                     unsigned int t5Ix,
+                                                     unsigned int t5Jx) {
+    bool const nsI = t5IsNonStock(mds, segments, triplets, quintuplets, t5Ix);
+    bool const nsJ = t5IsNonStock(mds, segments, triplets, quintuplets, t5Jx);
+    if (nsI == nsJ)
+      return -1;
+    return nsI ? 1 : 0;
+  }
+
   struct RemoveDupQuintupletsAfterBuild {
     ALPAKA_FN_ACC void operator()(Acc3D const& acc,
                                   ModulesConst modules,
                                   Quintuplets quintuplets,
                                   QuintupletsOccupancyConst quintupletsOccupancy,
-                                  ObjectRangesConst ranges) const {
+                                  ObjectRangesConst ranges,
+                                  MiniDoubletsConst mds,
+                                  SegmentsConst segments,
+                                  TripletsConst triplets) const {
       for (unsigned int lowmod : cms::alpakatools::uniform_elements_z(acc, modules.nLowerModules())) {
         unsigned int nQuintuplets_lowmod = quintupletsOccupancy.nQuintuplets()[lowmod];
         int quintupletModuleIndices_lowmod = ranges.quintupletModuleIndices()[lowmod];
@@ -228,6 +264,15 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
             unsigned int nHitsJx = 2 * nLayersJx;
             int minNHitsForDup = static_cast<int>(0.6f * (nHitsIx < nHitsJx ? nHitsIx : nHitsJx));
             if (nMatched >= minNHitsForDup) {
+              // Stock-ness is the first key here and in the pT5 arbitration below, so that a
+              // widened-supply object cannot take a stock object's pixel seed.
+              int const sgDec = seedGuardT5Pair(mds, segments, triplets, quintuplets, ix, jx);
+              if (sgDec >= 0) {
+                if (sgDec == 1)
+                  rmQuintupletFromMemory(quintuplets, ix);
+                else
+                  rmQuintupletFromMemory(quintuplets, jx);
+              } else
               // Tiebreak: longer track wins; otherwise rphisum at high pT, DNN score at low pT.
               if (nLayersIx > nLayersJx) {
                 rmQuintupletFromMemory(quintuplets, jx);
@@ -560,9 +605,11 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
               if (alpaka::math::abs(acc, dPhi) > 0.1f)
                 continue;
 
-              const float dR2 = dEta * dEta + dPhi * dPhi;
               const int nMatched = checkHitsT5(ix, jx, quintuplets);
-              constexpr int minNHitsForDup_T5 = 5;
+              constexpr int minNHitsForDup_T5 = 2;
+              // Shared hits alone decide once the two quintuplets are built on nearly all the same
+              // hits; d2 is a prompt-trained distance and must not veto that evidence.
+              constexpr int nHitsForHardDup_T5 = 10;
 
               float d2 = 0.f;
               CMS_UNROLL_LOOP
@@ -573,16 +620,12 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
 
               // 99th percentile of true-dup d2 distribution measured on 100 PU200 events.
               constexpr float d2Thresh = 0.25f;
-              if (((dR2 < 0.001f || nMatched >= minNHitsForDup_T5) && d2 < d2Thresh) || (dR2 < 0.02f && d2 < 0.1f)) {
+              if ((nMatched >= minNHitsForDup_T5 && d2 < d2Thresh) || nMatched >= nHitsForHardDup_T5) {
                 float ptIx = __H2F(quintuplets.innerRadius()[ix]) * lst::k2Rinv1GeVf * 2;
                 float ptJx = __H2F(quintuplets.innerRadius()[jx]) * lst::k2Rinv1GeVf * 2;
                 bool highPt = (ptIx > 5.0f || ptJx > 5.0f);
                 bool ixLoses;
-                if (isPT5_jx) {
-                  ixLoses = true;
-                } else if (isPT5_ix) {
-                  ixLoses = false;
-                } else if (highPt) {
+                if (highPt) {
                   float rphisum1 = __H2F(quintuplets.score_rphisum()[ix]);
                   float rphisum2 = __H2F(quintuplets.score_rphisum()[jx]);
                   ixLoses = (rphisum1 > rphisum2) || (rphisum1 == rphisum2 && ix < jx);
@@ -751,7 +794,12 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
   };
 
   struct RemoveDupPixelQuintupletsFromMap {
-    ALPAKA_FN_ACC void operator()(Acc2D const& acc, PixelQuintuplets pixelQuintuplets) const {
+    ALPAKA_FN_ACC void operator()(Acc2D const& acc,
+                                  PixelQuintuplets pixelQuintuplets,
+                                  MiniDoubletsConst mds,
+                                  SegmentsConst segments,
+                                  TripletsConst triplets,
+                                  QuintupletsConst quintuplets) const {
       unsigned int nPixelQuintuplets = pixelQuintuplets.nPixelQuintuplets();
       for (unsigned int ix : cms::alpakatools::uniform_elements_y(acc, nPixelQuintuplets)) {
         float eta1 = __H2F(pixelQuintuplets.eta()[ix]);
@@ -773,7 +821,18 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
           float score2 = __H2F(pixelQuintuplets.score()[jx]);
           const int minNHitsForDup_pT5 = 7;
           if (nMatched >= minNHitsForDup_pT5) {
-            if (score1 > score2 or ((score1 == score2) and (ix > jx))) {
+            int const sgDec = seedGuardT5Pair(mds,
+                                              segments,
+                                              triplets,
+                                              quintuplets,
+                                              pixelQuintuplets.quintupletIndices()[ix],
+                                              pixelQuintuplets.quintupletIndices()[jx]);
+            if (sgDec >= 0) {
+              if (sgDec == 1) {
+                rmPixelQuintupletFromMemory(pixelQuintuplets, ix);
+                break;
+              }
+            } else if (score1 > score2 or ((score1 == score2) and (ix > jx))) {
               rmPixelQuintupletFromMemory(pixelQuintuplets, ix);
               break;
             }

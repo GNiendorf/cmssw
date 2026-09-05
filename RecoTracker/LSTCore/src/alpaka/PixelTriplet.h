@@ -770,6 +770,15 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
             if (triplets.partOfPT5()[outerTripletIndex])
               continue;  //don't create pT3s for T3s accounted in pT5s
 
+            // As in Quadruplet.h: neither new supply reaches a track candidate on a short route.
+            unsigned int const pt3SegIn = triplets.segmentIndices()[outerTripletIndex][0];
+            unsigned int const pt3SegOut = triplets.segmentIndices()[outerTripletIndex][1];
+            if (triplets.rescuedAdmit()[outerTripletIndex] ||
+                mds.widenedAdmit()[segments.mdIndices()[pt3SegIn][0]] ||
+                mds.widenedAdmit()[segments.mdIndices()[pt3SegIn][1]] ||
+                mds.widenedAdmit()[segments.mdIndices()[pt3SegOut][1]])
+              continue;
+
             float pixelRadius, tripletRadius, rPhiChiSquared, rzChiSquared, rPhiChiSquaredInwards, centerX, centerY,
                 pixelRadiusError;
             bool success = runPixelTripletDefaultAlgo(acc,

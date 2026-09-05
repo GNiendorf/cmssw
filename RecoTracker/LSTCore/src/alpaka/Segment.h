@@ -139,7 +139,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                                       float rtOut,
                                                       unsigned int innerMDIndex,
                                                       unsigned int outerMDIndex,
-                                                      const float ptCut) {
+                                                      const float ptCut,
+                                                      float& dAlphaBfieldOut,
+                                                      float& dAlphaResMulsOut) {
     const float sdMuls = innerMod.sdMuls;
 
     //more accurate then outer rt - inner rt
@@ -190,6 +192,28 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
 
     //Inner to outer
     dAlphaThresholdValues[2] = dAlpha_Bfield + alpaka::math::sqrt(acc, dAlpha_res * dAlpha_res + sdMuls * sdMuls);
+
+    // Handed back for the circle-residual cut below: the curvature part of the thresholds, and the
+    // origin-free half-tolerance (taken straight from the sqrt, never as thr[2] - dAlpha_Bfield).
+    dAlphaBfieldOut = dAlpha_Bfield;
+    dAlphaResMulsOut = alpaka::math::sqrt(acc, dAlpha_res * dAlpha_res + sdMuls * sdMuls);
+  }
+
+  // Origin-free circle residual: the chord makes equal angles with the tangents at its two ends,
+  // so alphaIn + alphaOut + dPhi - 2*(chord turn - inner turn) vanishes for any radius and any d0.
+  template <alpaka::concepts::Acc TAcc>
+  ALPAKA_FN_ACC ALPAKA_FN_INLINE bool passTResidual(TAcc const& acc,
+                                                    const float T,
+                                                    const float dAlphaInnerThr,
+                                                    const float dAlphaOuterThr,
+                                                    const float dAlphaBfield,
+                                                    const float dAlphaResMuls,
+                                                    const bool isEndcapBranch) {
+    // The barrel tolerance is the non-curvature part of the two MD-segment thresholds; in the
+    // endcap that inherits sdLum, which is not origin-free, so the symmetric form is used there.
+    const float sigmaT =
+        isEndcapBranch ? 2.f * dAlphaResMuls : (dAlphaInnerThr - dAlphaBfield) + (dAlphaOuterThr - dAlphaBfield);
+    return alpaka::math::abs(acc, T) < sigmaT;
   }
 
   ALPAKA_FN_ACC ALPAKA_FN_INLINE void addSegmentToMemory(Segments segments,
@@ -214,7 +238,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                                          float dAlphaOuter,
                                                          float dAlphaInnerOuter,
 #endif
-                                                         unsigned int idx) {
+                                                         unsigned int idx,
+                                                         bool wideAdmit = false) {
+    segments.wideAdmit()[idx] = wideAdmit;
     segments.mdIndices()[idx][0] = lowerMDIndex;
     segments.mdIndices()[idx][1] = upperMDIndex;
     segments.innerLowerModuleIndices()[idx] = innerLowerModuleIndex;
@@ -258,6 +284,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                                               unsigned int idx,
                                                               unsigned int pixelSegmentArrayIndex,
                                                               float score) {
+    segments.wideAdmit()[idx] = false;
     segments.mdIndices()[idx][0] = innerMDIndex;
     segments.mdIndices()[idx][1] = outerMDIndex;
     segments.innerLowerModuleIndices()[idx] = pixelModuleIndex;
@@ -321,6 +348,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     }
   }
 
+  // Multiplier of the segment |dPhiChange| window, and the endcap PS-PS local-pT floor in GeV.
+  HOST_DEVICE_CONSTANT float kLsDPhiChangeScale = 3.f;
+  HOST_DEVICE_CONSTANT float kLsEndcapPtFloorPS = 0.60f;
+
   // When LooseOnly=true, returns after the pre-check (used by counting kernel).
   template <bool LooseOnly = false, alpaka::concepts::Acc TAcc>
   ALPAKA_FN_ACC ALPAKA_FN_INLINE bool passDeltaPhiCutsBarrel(TAcc const& acc,
@@ -355,9 +386,12 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     const float looseCutDPhi = sdSlopeSin + sdMulsAndPVoff;
     if (alpaka::math::abs(acc, crossDPhi) >= looseCutDPhi * rtIn * rtOut)
       return false;
+    // This bound is also the counting kernel's, so it widens with the exact cut to stay a superset.
+    const float looseCutDPhiCh = looseCutDPhi * kLsDPhiChangeScale;
     const float dotDPhiChange = dotDPhi - (rtIn * rtIn);
     if (dotDPhiChange <= 0.f ||
-        crossDPhi * crossDPhi >= looseCutDPhi * looseCutDPhi * (crossDPhi * crossDPhi + dotDPhiChange * dotDPhiChange))
+        crossDPhi * crossDPhi >=
+            looseCutDPhiCh * looseCutDPhiCh * (crossDPhi * crossDPhi + dotDPhiChange * dotDPhiChange))
       return false;
 
     if constexpr (LooseOnly)
@@ -371,7 +405,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     dPhiChange = cms::alpakatools::reducePhiRange(
         acc, cms::alpakatools::phi(acc, xOut - xIn, yOut - yIn) - mds.anchorPhi()[innerMD]);
 
-    return alpaka::math::abs(acc, dPhiChange) < sdCut;
+    return alpaka::math::abs(acc, dPhiChange) < sdCut * kLsDPhiChangeScale;
   }
 
   // When LooseOnly=true, returns after the pre-check (used by counting kernel).
@@ -412,7 +446,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     const float dzFrac = dz / zIn;
     const float dPhiChange = dPhi / dzFrac * (1.f + dzFrac);
 
-    return alpaka::math::abs(acc, dPhiChange) < sdSlope;
+    return alpaka::math::abs(acc, dPhiChange) < sdSlope * kLsDPhiChangeScale;
   }
 
   template <alpaka::concepts::Acc TAcc>
@@ -435,7 +469,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                                                   float& zLo,
                                                                   float& zHi,
 #endif
-                                                                  const float ptCut) {
+                                                                  const float ptCut,
+                                                                  bool& wideAdmit) {
 #ifndef CUT_VALUE_DEBUG
     float dAlphaInnerMDSegment, dAlphaOuterMDSegment, dAlphaInnerMDOuterMD;
     float zLo, zHi;
@@ -487,6 +522,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                 dPhiChange))
       return false;
 
+    wideAdmit = !(alpaka::math::abs(acc, dPhiChange) < sdCut);
+
+    float dAlphaBfield = 0.f;
+    float dAlphaResMuls = 0.f;
     float dAlphaThresholdValues[3];
     dAlphaThreshold(acc,
                     dAlphaThresholdValues,
@@ -503,7 +542,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                     rtOut,
                     innerMDIndex,
                     outerMDIndex,
-                    ptCut);
+                    ptCut,
+                    dAlphaBfield,
+                    dAlphaResMuls);
 
     float innerMDAlpha = mds.dphichanges()[innerMDIndex];
     float outerMDAlpha = mds.dphichanges()[outerMDIndex];
@@ -514,6 +555,17 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     float dAlphaInnerMDSegmentThreshold = dAlphaThresholdValues[0];
     float dAlphaOuterMDSegmentThreshold = dAlphaThresholdValues[1];
     float dAlphaInnerMDOuterMDThreshold = dAlphaThresholdValues[2];
+
+    // Barrel form: dPhiChange is the chord turn, so T = dAlphaIn + dAlphaOut + dPhi.
+    const float tResidual = dAlphaInnerMDSegment + dAlphaOuterMDSegment + dPhi;
+    if (!passTResidual(acc,
+                       tResidual,
+                       dAlphaInnerMDSegmentThreshold,
+                       dAlphaOuterMDSegmentThreshold,
+                       dAlphaBfield,
+                       dAlphaResMuls,
+                       false))
+      return false;
 
     if (alpaka::math::abs(acc, dAlphaInnerMDSegment) >= dAlphaInnerMDSegmentThreshold)
       return false;
@@ -542,7 +594,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                                                   float& rtLo,
                                                                   float& rtHi,
 #endif
-                                                                  const float ptCut) {
+                                                                  const float ptCut,
+                                                                  bool& wideAdmit) {
 #ifndef CUT_VALUE_DEBUG
     float dAlphaInnerMDSegment, dAlphaOuterMDSegment, dAlphaInnerMDOuterMD;
     float rtLo, rtHi;
@@ -586,8 +639,16 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     if ((rtOut < rtLo) || (rtOut > rtHi))
       return false;
 
+    // Only the endcap dPhi family takes the floor; rtLo/rtHi and dAlphaThreshold keep the stock ptCut.
+    float sdSlopeSinEc = sdSlopeSin;
+    float sdSlopeEc = sdSlope;
+    if (innerMod.moduleType == PS && outerMod.moduleType == PS) {
+      sdSlopeSinEc = alpaka::math::min(acc, rtOut * k2Rinv1GeVf / kLsEndcapPtFloorPS, kSinAlphaMax);
+      sdSlopeEc = alpaka::math::asin(acc, sdSlopeSinEc);
+    }
+
     if (!passDeltaPhiCutsEndcap(
-            acc, mds, innerMDIndex, outerMDIndex, xIn, yIn, xOut, yOut, rtIn, rtOut, sdSlopeSin, dPhi, sdSlope))
+            acc, mds, innerMDIndex, outerMDIndex, xIn, yIn, xOut, yOut, rtIn, rtOut, sdSlopeSinEc, dPhi, sdSlopeEc))
       return false;
 
     if (outerLayerEndcapTwoS) {
@@ -608,6 +669,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     dPhiChangeMin = dPhiMin / dzFrac * (1.f + dzFrac);
     dPhiChangeMax = dPhiMax / dzFrac * (1.f + dzFrac);
 
+    wideAdmit = !(alpaka::math::abs(acc, dPhiChange) < sdSlopeEc);
+
+    float dAlphaBfield = 0.f;
+    float dAlphaResMuls = 0.f;
     float dAlphaThresholdValues[3];
     dAlphaThreshold(acc,
                     dAlphaThresholdValues,
@@ -624,7 +689,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                     rtOut,
                     innerMDIndex,
                     outerMDIndex,
-                    ptCut);
+                    ptCut,
+                    dAlphaBfield,
+                    dAlphaResMuls);
 
     float innerMDAlpha = mds.dphichanges()[innerMDIndex];
     float outerMDAlpha = mds.dphichanges()[outerMDIndex];
@@ -635,6 +702,20 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     float dAlphaInnerMDSegmentThreshold = dAlphaThresholdValues[0];
     float dAlphaOuterMDSegmentThreshold = dAlphaThresholdValues[1];
     float dAlphaInnerMDOuterMDThreshold = dAlphaThresholdValues[2];
+
+    // Endcap form: dPhiChange is the z-extrapolation, not the chord turn, so the chord is rebuilt
+    // and the difference enters the residual twice.
+    const float chord =
+        alpaka::math::atan2(acc, rtOut * alpaka::math::sin(acc, dPhi), rtOut * alpaka::math::cos(acc, dPhi) - rtIn);
+    const float tResidual = dAlphaInnerMDSegment + dAlphaOuterMDSegment + dPhi + 2.f * (dPhiChange - chord);
+    if (!passTResidual(acc,
+                       tResidual,
+                       dAlphaInnerMDSegmentThreshold,
+                       dAlphaOuterMDSegmentThreshold,
+                       dAlphaBfield,
+                       dAlphaResMuls,
+                       true))
+      return false;
 
     if (alpaka::math::abs(acc, dAlphaInnerMDSegment) >= dAlphaInnerMDSegmentThreshold)
       return false;
@@ -665,7 +746,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                                             float& rtLo,
                                                             float& rtHi,
 #endif
-                                                            const float ptCut) {
+                                                            const float ptCut,
+                                                            bool& wideAdmit) {
     if (innerMod.subdet == Barrel and outerMod.subdet == Barrel) {
 #ifdef CUT_VALUE_DEBUG
       rtLo = -999.f;
@@ -690,7 +772,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                          zLo,
                                          zHi,
 #endif
-                                         ptCut);
+                                         ptCut,
+                                         wideAdmit);
     } else {
 #ifdef CUT_VALUE_DEBUG
       zLo = -999.f;
@@ -715,7 +798,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                          rtLo,
                                          rtHi,
 #endif
-                                         ptCut);
+                                         ptCut,
+                                         wideAdmit);
     }
   }
 
@@ -770,6 +854,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
             dPhiMax = 0;
             dPhiChangeMin = 0;
             dPhiChangeMax = 0;
+            bool wideAdmit = false;
             bool pass = runSegmentDefaultAlgo(acc,
                                               innerMod,
                                               outerMod,
@@ -791,7 +876,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                               rtLo,
                                               rtHi,
 #endif
-                                              ptCut);
+                                              ptCut,
+                                              wideAdmit);
 
             if (pass) {
               unsigned int totOccupancySegments =
@@ -832,7 +918,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                    dAlphaOuterMDSegment,
                                    dAlphaInnerMDOuterMD,
 #endif
-                                   segmentIdx);
+                                   segmentIdx,
+                                   wideAdmit);
               }
             }
           }
@@ -916,8 +1003,11 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
       const float xOut = mds.anchorX()[outerMD];
       const float yOut = mds.anchorY()[outerMD];
       float dPhi;  // unused with LooseOnly=true
+      const float sdSlopeSinEc = (innerMod.moduleType == PS && outerMod.moduleType == PS)
+                                     ? alpaka::math::min(acc, rtOut * k2Rinv1GeVf / kLsEndcapPtFloorPS, kSinAlphaMax)
+                                     : sdSlopeSin;
       return passDeltaPhiCutsEndcap<true>(
-          acc, mds, innerMD, outerMD, xIn, yIn, xOut, yOut, rtIn, rtOut, sdSlopeSin, dPhi, 0.f /*sdSlope unused*/);
+          acc, mds, innerMD, outerMD, xIn, yIn, xOut, yOut, rtIn, rtOut, sdSlopeSinEc, dPhi, 0.f /*sdSlope unused*/);
     }
   }
 
@@ -969,6 +1059,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
 #ifdef CUT_VALUE_DEBUG
               float dAlphaInner, dAlphaOuter, dAlphaIO, zLo, zHi, rtLo, rtHi;
 #endif
+              bool wideAdmit = false;
               pass = runSegmentDefaultAlgo(acc,
                                            innerMod,
                                            outerMod,
@@ -990,7 +1081,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                            rtLo,
                                            rtHi,
 #endif
-                                           ptCut);
+                                           ptCut,
+                                           wideAdmit);
             } else {
               pass = passLooseSegmentCuts(acc, innerMod, outerMod, mds, innerMDIndex, outerMDIndex, ptCut);
             }
