@@ -92,7 +92,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                                          float circleCenterY,
                                                          unsigned int tripletIndex,
                                                          float (&t3Scores)[dnn::t3dnn::kOutputFeatures],
-                                                         short charge) {
+                                                         short charge,
+                                                         uint8_t flags) {
     triplets.segmentIndices()[tripletIndex][0] = innerSegmentIndex;
     triplets.segmentIndices()[tripletIndex][1] = outerSegmentIndex;
     triplets.lowerModuleIndices()[tripletIndex][0] = innerInnerLowerModuleIndex;
@@ -122,6 +123,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     triplets.hitIndices()[tripletIndex][5] = mds.outerHitIndices()[thirdMDIndex];
 
     triplets.charge()[tripletIndex] = charge;
+    triplets.flags()[tripletIndex] = flags;
 #ifdef CUT_VALUE_DEBUG
     triplets.betaInCut()[tripletIndex] = betaInCut;
 #endif
@@ -436,6 +438,55 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
            (innerSegData.cos_alpha * dotBetaIn + innerSegData.sin_alpha * crossBetaIn > 0.f);
   }
 
+  // Extra pointing-angle budget when the outer segment bends more than the inner one (energy loss).
+  HOST_DEVICE_CONSTANT float kT3RescueK = 0.7f;
+
+  template <alpaka::concepts::Acc TAcc>
+  ALPAKA_FN_ACC ALPAKA_FN_INLINE bool t3EnergyLossRescue(TAcc const& acc,
+                                                         T3InnerSegData const& innerSegData,
+                                                         float x3,
+                                                         float y3,
+                                                         short outerSubdet,
+                                                         const float ptCut,
+                                                         const float alphaOut) {
+    const float alphaIn = innerSegData.sdIn_alpha;
+    if (!(alphaOut * alphaIn > 0.f) || !(alpaka::math::abs(acc, alphaOut) > alpaka::math::abs(acc, alphaIn)))
+      return false;
+    const float dx = x3 - innerSegData.x1;
+    const float dy = y3 - innerSegData.y1;
+    const float drt_tl_axis = alpaka::math::sqrt(acc, dx * dx + dy * dy);
+    const float betaInCut =
+        (alpaka::math::asin(
+             acc, alpaka::math::min(acc, (-innerSegData.rt_InSeg + drt_tl_axis) * k2Rinv1GeVf / ptCut, kSinAlphaMax)) +
+         (0.02f / innerSegData.drt_InSeg)) *
+        (1.f + kT3RescueK);
+
+    const float crossBetaIn = innerSegData.x1 * y3 - innerSegData.y1 * x3;
+    const float dotBetaIn = x3 * innerSegData.x1 + y3 * innerSegData.y1 - innerSegData.rt1 * innerSegData.rt1;
+    const float r2 = crossBetaIn * crossBetaIn + dotBetaIn * dotBetaIn;
+    const float sinBetaInCut = alpaka::math::sin(acc, betaInCut);
+    const float sinBetaInCutSq = sinBetaInCut * sinBetaInCut;
+
+    if (innerSegData.innerSubdet == Endcap and innerSegData.middleSubdet == Endcap and outerSubdet == Endcap) {
+      const float sinBetaInMin = innerSegData.sin_alphaRHmin * dotBetaIn - innerSegData.cos_alphaRHmin * crossBetaIn;
+      const float sinBetaInMax = innerSegData.sin_alphaRHmax * dotBetaIn - innerSegData.cos_alphaRHmax * crossBetaIn;
+      const float sqMin = sinBetaInMin * sinBetaInMin;
+      const float sqMax = sinBetaInMax * sinBetaInMax;
+
+      if (sqMin <= sqMax) {
+        return sqMin < sinBetaInCutSq * r2 and
+               (innerSegData.cos_alphaRHmin * dotBetaIn + innerSegData.sin_alphaRHmin * crossBetaIn > 0.f);
+      } else {
+        return sqMax < sinBetaInCutSq * r2 and
+               (innerSegData.cos_alphaRHmax * dotBetaIn + innerSegData.sin_alphaRHmax * crossBetaIn > 0.f);
+      }
+    }
+
+    const float sinBetaIn = innerSegData.sin_alpha * dotBetaIn - innerSegData.cos_alpha * crossBetaIn;
+    return sinBetaIn * sinBetaIn < sinBetaInCutSq * r2 and
+           (innerSegData.cos_alpha * dotBetaIn + innerSegData.sin_alpha * crossBetaIn > 0.f);
+  }
+
   template <alpaka::concepts::Acc TAcc>
   ALPAKA_FN_ACC ALPAKA_FN_INLINE bool runTripletConstraintsAndAlgo(TAcc const& acc,
                                                                    ModulesConst modules,
@@ -548,7 +599,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                unsigned int outerSegmentIndex,
                                uint16_t innerInnerLowerModuleIndex,
                                uint16_t middleLowerModuleIndex,
-                               uint16_t outerOuterLowerModuleIndex) {
+                               uint16_t outerOuterLowerModuleIndex,
+                               bool elossRescued) {
         float betaIn, betaInCut, circleRadius, circleCenterX, circleCenterY;
         short charge;
         float t3Scores[dnn::t3dnn::kOutputFeatures] = {0.f};
@@ -588,6 +640,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         unsigned int tripletModuleIndex = alpaka::atomicAdd(
             acc, &tripletsOccupancy.nTriplets()[innerInnerLowerModuleIndex], 1u, alpaka::hierarchy::Threads{});
         unsigned int tripletIndex = ranges.tripletModuleIndices()[innerInnerLowerModuleIndex] + tripletModuleIndex;
+
+        const uint8_t flags = elossRescued ? kT3ElossRescued : 0;
         addTripletToMemory(modules,
                            mds,
                            segments,
@@ -604,7 +658,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                            circleCenterY,
                            tripletIndex,
                            t3Scores,
-                           charge);
+                           charge,
+                           flags);
       };
 
       for (uint16_t innerLowerModuleArrayIdx : cms::alpakatools::uniform_groups_z(acc, nonZeroModules)) {
@@ -653,7 +708,11 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
             float y3 = mds.anchorY()[thirdMDIndex];
             short outerSubdet = modules.subdets()[outerOuterLowerModuleIndex];
 
-            if (not passPointingConstraint(acc, innerSegData, x3, y3, outerSubdet, ptCut))
+            // Second chance on the energy-loss side.
+            const bool elossRescued = not passPointingConstraint(acc, innerSegData, x3, y3, outerSubdet, ptCut);
+            if (elossRescued and
+                not t3EnergyLossRescue(
+                    acc, innerSegData, x3, y3, outerSubdet, ptCut, __H2F(segments.dPhiChanges()[outerSegmentIndex])))
               continue;
 
             if constexpr (ReduceMem) {
@@ -661,7 +720,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                             outerSegmentIndex,
                             innerInnerLowerModuleIndex,
                             middleLowerModuleIndex,
-                            outerOuterLowerModuleIndex);
+                            outerOuterLowerModuleIndex,
+                            elossRescued);
               continue;
             }
 
@@ -685,6 +745,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
 
             triplets.preAllocatedSegmentIndices()[tripletIndex][0] = innerSegmentIndex;
             triplets.preAllocatedSegmentIndices()[tripletIndex][1] = outerSegmentIndex;
+            triplets.flags()[tripletIndex] = elossRescued ? kT3ElossRescued : 0;
           }
         }
 
@@ -704,12 +765,14 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
 
           uint16_t middleLowerModuleIndex = segments.outerLowerModuleIndices()[innerSegmentIndex];
           uint16_t outerOuterLowerModuleIndex = segments.outerLowerModuleIndices()[outerSegmentIndex];
+          const bool elossRescued = triplets.flags()[tripletIndex] & kT3ElossRescued;
 
           tryAddTriplet(innerSegmentIndex,
                         outerSegmentIndex,
                         innerInnerLowerModuleIndex,
                         middleLowerModuleIndex,
-                        outerOuterLowerModuleIndex);
+                        outerOuterLowerModuleIndex,
+                        elossRescued);
         }
       }
     }
@@ -763,7 +826,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
             float y3 = mds.anchorY()[thirdMDIndex];
             short outerSubdet = modules.subdets()[outerOuterLowerModuleIndex];
 
-            if (not passPointingConstraint(acc, innerSegData, x3, y3, outerSubdet, ptCut))
+            // Second chance on the energy-loss side.
+            if (not passPointingConstraint(acc, innerSegData, x3, y3, outerSubdet, ptCut) and
+                not t3EnergyLossRescue(
+                    acc, innerSegData, x3, y3, outerSubdet, ptCut, __H2F(segments.dPhiChanges()[outerSegmentIndex])))
               continue;
 
             bool counts = true;

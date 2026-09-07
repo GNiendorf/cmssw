@@ -770,6 +770,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
             if (triplets.partOfPT5()[outerTripletIndex])
               continue;  //don't create pT3s for T3s accounted in pT5s
 
+            // Rescued triplets are used only in quintuplets.
+            if (triplets.flags()[outerTripletIndex] & kT3ElossRescued)
+              continue;
+
             float pixelRadius, tripletRadius, rPhiChiSquared, rzChiSquared, rPhiChiSquaredInwards, centerX, centerY,
                 pixelRadiusError;
             bool success = runPixelTripletDefaultAlgo(acc,
