@@ -64,7 +64,11 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     quintuplets.score_rphisum()[quintupletIndex] = __F2H(scores);
     quintuplets.isDup()[quintupletIndex] = 0;
     quintuplets.nLayers()[quintupletIndex] = Params_T5::kBaseLayers;
-    quintuplets.tightCutFlag()[quintupletIndex] = tightCutFlag;
+    // Promoted on the tight r-z flag or on the score above the 93% working point.
+    const float absEta = eta < 0.f ? -eta : eta;
+    const uint8_t ptIndex = (innerRadius * k2Rinv1GeVf * 2 > 5.0f);  // the build-stage lookup's momentum
+    const uint8_t etaBin = (absEta > 2.5f) ? (dnn::kEtaBins - 1) : static_cast<unsigned int>(absEta / dnn::kEtaSize);
+    quintuplets.tightCutFlag()[quintupletIndex] = tightCutFlag || dnnScore >= dnn::t5dnn::kWp93[ptIndex][etaBin];
     quintuplets.regressionRadius()[quintupletIndex] = regressionRadius;
     quintuplets.regressionCenterX()[quintupletIndex] = regressionCenterX;
     quintuplets.regressionCenterY()[quintupletIndex] = regressionCenterY;
@@ -1545,8 +1549,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                               outerRadius,
                                               bridgeRadius,
                                               dnnScore);
-    tightCutFlag = tightCutFlag and inference;  // T5-in-TC cut
-    if (!inference)                             // T5-building cut
+    if (!inference)  // T5-building cut
       return false;
 
     if (not runQuintupletdBetaAlgoSelector(acc,
