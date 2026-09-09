@@ -22,8 +22,8 @@ namespace lst {
   // Named types for LST objects
   enum LSTObjType : int8_t { T5 = 4, pT3 = 5, pT5 = 7, pLS = 8, T4 = 9 };
 
-  // Per-triplet flags, packed.
-  enum T3Flag : uint8_t { kT3LoosePointing = 1 };
+  // Packed per-triplet flags.
+  enum T3Flag : uint8_t { kT3LoosePointing = 1, kT3MdDirectionFail = 2 };
 
   enum class HitType : int { Pixel = 0, Invalid = 3, Phase2OT = 4 };  // as in TrackingNtuple.cc
 
