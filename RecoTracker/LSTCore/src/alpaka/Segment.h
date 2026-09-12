@@ -886,20 +886,35 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
       const float sdPVoff = 0.1f / rtOut;
       const float sdMulsAndPVoff = alpaka::math::sqrt(acc, innerMod.sdMuls * innerMod.sdMuls + sdPVoff * sdPVoff);
       float dPhi;  // unused with LooseOnly=true
-      return passDeltaPhiCutsBarrel<true>(acc,
-                                          mds,
-                                          innerMD,
-                                          outerMD,
-                                          xIn,
-                                          yIn,
-                                          xOut,
-                                          yOut,
-                                          rtIn,
-                                          rtOut,
-                                          sdSlopeSin,
-                                          sdMulsAndPVoff,
-                                          0.f /*sdCut unused*/,
-                                          dPhi);
+      if (!passDeltaPhiCutsBarrel<true>(acc,
+                                        mds,
+                                        innerMD,
+                                        outerMD,
+                                        xIn,
+                                        yIn,
+                                        xOut,
+                                        yOut,
+                                        rtIn,
+                                        rtOut,
+                                        sdSlopeSin,
+                                        sdMulsAndPVoff,
+                                        0.f /*sdCut unused*/,
+                                        dPhi))
+        return false;
+
+      // Creation's dAlphaInnerMDSegment cut with its threshold bounded from above, so the
+      // counting kernel stays a superset of creation. Both modules are barrel here.
+      const float dx = xOut - xIn;
+      const float dy = yOut - yIn;
+      const float segmentDr = alpaka::math::sqrt(acc, dx * dx + dy * dy);
+      const float dAlphaBfield =
+          alpaka::math::asin(acc, alpaka::math::min(acc, segmentDr * k2Rinv1GeVf / ptCut, kSinAlphaMax));
+      const float dAlphaRes = 2.f * 0.02f / innerMod.moduleGapSize;
+      const float thresholdMax = dAlphaBfield * (1.f + alpaka::math::sqrt(acc, innerMod.segMiniTilt2)) +
+                                 alpaka::math::sqrt(acc, dAlphaRes * dAlphaRes + innerMod.sdMuls * innerMod.sdMuls);
+      const float dPhiChange =
+          cms::alpakatools::reducePhiRange(acc, cms::alpakatools::phi(acc, dx, dy) - mds.anchorPhi()[innerMD]);
+      return alpaka::math::abs(acc, mds.dphichanges()[innerMD] - dPhiChange) < thresholdMax;
     } else {
       const float zIn = mds.anchorZ()[innerMD];
       const float zOut = mds.anchorZ()[outerMD];
