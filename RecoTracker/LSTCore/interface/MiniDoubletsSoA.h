@@ -46,7 +46,8 @@ namespace lst {
                       SOA_COLUMN(unsigned int, connectedMax),
                       SOA_COLUMN(unsigned int, connectedT3sMax),
                       SOA_COLUMN(unsigned int, connectedT5s0Max),
-                      SOA_COLUMN(unsigned int, connectedT5s1Max))
+                      SOA_COLUMN(unsigned int, connectedT5s1Max),
+                      SOA_COLUMN(uint8_t, mdLoose))
 
   GENERATE_SOA_LAYOUT(MiniDoubletsOccupancySoALayout,
                       SOA_COLUMN(unsigned int, nMDs),
