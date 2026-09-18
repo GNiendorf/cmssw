@@ -208,10 +208,14 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
 
   // Origin-free admission allowance added to the pointing threshold [rad].
   constexpr float kMdDispAllow = 0.200f;
+  // Impact parameter the pointing threshold admits [cm]: a circle crosses radius rt at sin(alpha) = rt/2R - d0/rt.
+  constexpr float kMdDispD0 = 16.f;
 
-  // Scope of the origin-free allowance: l3 only.
-  ALPAKA_FN_ACC ALPAKA_FN_INLINE float mdDispAllowScoped(ModuleMDData const& mod) {
-    return (mod.subdet == Barrel and mod.iL >= 2) ? kMdDispAllow : 0.f;
+  // The larger of the fixed allowance (barrel layers 3-6) and the impact-parameter term d0/rt (every module).
+  ALPAKA_FN_ACC ALPAKA_FN_INLINE float mdDispAllowScoped(ModuleMDData const& mod, float rt) {
+    const float fixedAllow = (mod.subdet == Barrel and mod.iL >= 2) ? kMdDispAllow : 0.f;
+    const float d0Allow = kMdDispD0 / rt;
+    return d0Allow > fixedAllow ? d0Allow : fixedAllow;
   }
 
 
@@ -222,16 +226,16 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
 
     // Barrel flat: no tilt or luminous region correction
     if (mod.subdet == Barrel and mod.side == Center) {
-      return mdDispAllowScoped(mod) + miniSlope + mod.sqrtMiniMulsAndPVoff;
+      return mdDispAllowScoped(mod, rt) + miniSlope + mod.sqrtMiniMulsAndPVoff;
     }
     // Barrel tilted
     else if (mod.subdet == Barrel) {
-      return mdDispAllowScoped(mod) + miniSlope + alpaka::math::sqrt(acc, mod.miniMulsAndPVoff + mod.miniTilt2 * miniSlope * miniSlope);
+      return mdDispAllowScoped(mod, rt) + miniSlope + alpaka::math::sqrt(acc, mod.miniMulsAndPVoff + mod.miniTilt2 * miniSlope * miniSlope);
     }
     // Endcap: luminous region correction
     else {
       const float miniLum = alpaka::math::abs(acc, dPhi * kDeltaZLum / dz);
-      return mdDispAllowScoped(mod) + miniSlope + alpaka::math::sqrt(acc, mod.miniMulsAndPVoff + miniLum * miniLum);
+      return mdDispAllowScoped(mod, rt) + miniSlope + alpaka::math::sqrt(acc, mod.miniMulsAndPVoff + miniLum * miniLum);
     }
   }
 
@@ -510,7 +514,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
       if (probe->fail)
         return 0;
     }
-    const float tightCut = miniCut - mdDispAllowScoped(mod);
+    const float tightCut = miniCut - mdDispAllowScoped(mod, mod.moduleLayerType == Pixel ? rtLower : rtUpper);
     return (tightCut < miniCut && (alpaka::math::abs(acc, dPhiChange) >= tightCut ||
                                    alpaka::math::abs(acc, dPhi) >= tightCut))
                ? 2
@@ -617,7 +621,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     const float rt = mod.moduleLayerType == Pixel ? rtLower : rtUpper;
     const float sdSlopeSin = alpaka::math::min(acc, rt * k2Rinv1GeVf / ptCut, kSinAlphaMax);
     const float looseCutDPhi =
-        mdDispAllowScoped(mod) + sdSlopeSin + alpaka::math::sqrt(acc, mod.miniMulsAndPVoff + miniLum * miniLum);
+        mdDispAllowScoped(mod, rt) + sdSlopeSin + alpaka::math::sqrt(acc, mod.miniMulsAndPVoff + miniLum * miniLum);
 
     // Algebraic dPhi pre-check: |sin(dPhi)| < looseCutDPhi.
     // looseCutDPhi = sdSlopeSin + sqrt(mulsAndPVoff + miniLum^2) >= sin(exact_cut)
@@ -668,7 +672,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
       if (probe->fail)
         return 0;
     }
-    const float tightCut = miniCut - mdDispAllowScoped(mod);
+    const float tightCut = miniCut - mdDispAllowScoped(mod, rt);
     return (tightCut < miniCut && (alpaka::math::abs(acc, dPhiChange) >= tightCut ||
                                    alpaka::math::abs(acc, dPhi) >= tightCut))
                ? 2
