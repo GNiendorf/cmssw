@@ -699,7 +699,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
               const float score2 = quadruplets.displacedScore()[jx] - quadruplets.fakeScore()[jx];
 
               int nMatched = checkHitsT4(ix, jx, quadruplets);
-              const int minNHitsForDup_T4 = 4;
+              const int minNHitsForDup_T4 = 5;
               if (nMatched >= minNHitsForDup_T4) {
                 if (score1 > score2) {
                   rmQuadrupletFromMemory(quadruplets, jx, true);

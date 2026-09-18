@@ -1506,6 +1506,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                                                bool& tightCutFlag,
                                                                float (&t5Embed)[Params_T5::kEmbed],
                                                                const float ptCut) {
+    // Reject only if BOTH parent circles disagree with one of their own mini-doublet directions.
+    if ((triplets.flags()[innerTripletIndex] & triplets.flags()[outerTripletIndex]) & kT3MdDirectionFail)
+      return false;
+
     unsigned int firstSegmentIndex = triplets.segmentIndices()[innerTripletIndex][0];
     unsigned int secondSegmentIndex = triplets.segmentIndices()[innerTripletIndex][1];
     unsigned int thirdSegmentIndex = triplets.segmentIndices()[outerTripletIndex][0];

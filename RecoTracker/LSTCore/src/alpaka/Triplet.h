@@ -14,6 +14,11 @@
 
 namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
 
+  // The difference of two uniform strip errors is triangular on [-width, width], so a pull cannot
+  // exceed sqrt(6); barrel layer 1 and 2 starts, which carry the fakes, are held tighter still.
+  constexpr float kMdDirectionMaxMeanChi2 = 6.f;
+  constexpr float kMdDirectionMaxMeanChi2L12 = 3.f;
+
   // Pre-loaded inner-segment-constant data for passPointingConstraint.
   // Populated once per inner segment, reused across all outer segments in the inner loop.
   struct T3InnerSegData {
@@ -76,21 +81,45 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     return d;
   }
 
-  // True if a flat-barrel mini-doublet's two-hit direction is off the triplet circle's tangent by 6 sigma or more.
+  // True if a mini-doublet's own two-hit direction disagrees with the tangent of the circle through
+  // its parent triplet's three anchors, by 6 sigma on one mini-doublet or in mean chi2 over the
+  // triplet's tested ones.
+  //
+  // A strip measures one in-plane coordinate u and leaves the coordinate s along the strip
+  // unmeasured.  Writing the module plane as (u, s) with normal n, the combination
+  //     residual = delta.u - (v.u / v.n) * delta.n
+  // has no dependence on s, since s is perpendicular to both u and n, and v is the triplet's own
+  // direction -- the circle tangent in the transverse plane, and the triplet's z slope along it --
+  // so no production point is assumed.  In the flat barrel n = r-hat, u = phi-hat and delta.n / v.n
+  // is the module separation at normal incidence.
   template <alpaka::concepts::Acc TAcc>
   ALPAKA_FN_ACC ALPAKA_FN_INLINE bool t3MdDirectionFail(TAcc const& acc,
                                                         ModulesConst modules,
                                                         MiniDoubletsConst mds,
                                                         const uint16_t* lowerModuleIndices,
-                                                        const unsigned int* mdIndices) {
-    float ax[Params_T3::kLayers], ay[Params_T3::kLayers];
+                                                        const unsigned int* mdIndices,
+                                                        const float circleRadius,
+                                                        const float circleCenterX,
+                                                        const float circleCenterY) {
+    float sumChi2 = 0.f;
+    int nTested = 0;
+    float ax[Params_T3::kLayers], ay[Params_T3::kLayers], az[Params_T3::kLayers];
     for (int i = 0; i < Params_T3::kLayers; ++i) {
       ax[i] = mds.anchorX()[mdIndices[i]];
       ay[i] = mds.anchorY()[mdIndices[i]];
+      az[i] = mds.anchorZ()[mdIndices[i]];
     }
+    // The triplet's z slope per unit transverse path, from its outer and inner anchors; the
+    // transverse path is the arc of the fitted circle, to second order in chord / radius.
+    const float cx = ax[2] - ax[0], cy = ay[2] - ay[0];
+    const float chord = alpaka::math::sqrt(acc, cx * cx + cy * cy);
+    const float arc =
+        (circleRadius > 0.f) ? chord * (1.f + chord * chord / (24.f * circleRadius * circleRadius)) : chord;
+    const float tanLambda = (arc > 0.f) ? (az[2] - az[0]) / arc : 0.f;
     for (int i = 0; i < Params_T3::kLayers; ++i) {
       const uint16_t lowerModuleIndex = lowerModuleIndices[i];
-      if (modules.subdets()[lowerModuleIndex] != Barrel || modules.sides()[lowerModuleIndex] != Center)
+      const bool isBarrel = modules.subdets()[lowerModuleIndex] == Barrel;
+      if (!isBarrel)
         continue;
       // Tangent at anchor i of the circle through the three anchors, by inversion about anchor i.
       const int j = (i + 1) % Params_T3::kLayers, k = (i + 2) % Params_T3::kLayers;
@@ -99,14 +128,60 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
       const float tx = ajx * invj - akx * invk, ty = ajy * invj - aky * invk;
       const float dx = mds.outerX()[mdIndices[i]] - ax[i];
       const float dy = mds.outerY()[mdIndices[i]] - ay[i];
-      // Distance of the outer hit from the tangent line.
-      const float offset = alpaka::math::abs(acc, dx * ty - dy * tx) / alpaka::math::sqrt(acc, tx * tx + ty * ty);
+      const float dz = mds.outerZ()[mdIndices[i]] - az[i];
+      // The module plane: measured in-plane direction u, normal n.  Their overall signs cancel.
+      float ux, uy, nx, ny, nz;
+      if (isBarrel) {
+        // Barrel strips lie in the r-z plane, so the measured direction is phi-hat whatever the tilt,
+        // and the normal tilts with the module: dr/d|z| = -drdz in the convention of shiftStripHits.
+        // The module frame, not the hit's: u and n are constant across a sensor, and phi-hat taken at
+        // the hit is rotated from it by up to half a module width over r, which rotates the unmeasured
+        // strip direction back into u.
+        const float mphi = modules.phi()[lowerModuleIndex];
+        const float cphi = alpaka::math::cos(acc, mphi), sphi = alpaka::math::sin(acc, mphi);
+        ux = -sphi;
+        uy = cphi;
+        nx = cphi;
+        ny = sphi;
+        nz = ((az[i] > 0.f) - (az[i] < 0.f)) * modules.drdzs()[lowerModuleIndex];
+      } else {
+        // Endcap: the plane normal is z-hat and the strip direction is (dx/dy, 1) in x-y.
+        const float slope = modules.dxdys()[lowerModuleIndex];
+        if (edm::isFinite(slope)) {
+          // Strip direction with the quadrant convention shiftStripHits uses for dxdys.
+          const float invS = 1.f / alpaka::math::sqrt(acc, 1.f + slope * slope);
+          const float sx = ((ax[i] > 0.f) - (ax[i] < 0.f)) * alpaka::math::abs(acc, slope) * invS;
+          const float sy = ((ay[i] > 0.f) - (ay[i] < 0.f)) * invS;
+          ux = -sy;
+          uy = sx;
+        } else {
+          ux = 0.f;
+          uy = 1.f;
+        }
+        nx = 0.f;
+        ny = 0.f;
+        nz = 1.f;
+      }
+      const float invT = 1.f / alpaka::math::sqrt(acc, tx * tx + ty * ty);
+      const float vu = (tx * ux + ty * uy) * invT;
+      const float vn = (tx * nx + ty * ny) * invT + tanLambda * nz;
+      if (vn == 0.f)
+        continue;
+      const float deltaU = dx * ux + dy * uy;
+      const float deltaN = dx * nx + dy * ny + dz * nz;
+      const float residual = deltaU - vu * deltaN / vn;
       const float width = (modules.moduleType()[lowerModuleIndex] == PS) ? kWidthPS : kWidth2S;
       // Two-hit resolution: width * sqrt(2 / 12).
-      if (offset >= 6.f * width * 0.40824829f)
+      const float pull = residual / (width * 0.40824829f);
+      if (pull * pull >= 36.f)
         return true;
+      sumChi2 += pull * pull;
+      ++nTested;
     }
-    return false;
+    const bool barrelL12 =
+        modules.subdets()[lowerModuleIndices[0]] == Barrel && modules.layers()[lowerModuleIndices[0]] <= 2;
+    const float maxMeanChi2 = barrelL12 ? kMdDirectionMaxMeanChi2L12 : kMdDirectionMaxMeanChi2;
+    return nTested > 0 && sumChi2 > maxMeanChi2 * nTested;
   }
 
   ALPAKA_FN_ACC ALPAKA_FN_INLINE void addTripletToMemory(ModulesConst modules,
@@ -519,6 +594,20 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     std::tie(circleRadius, circleCenterX, circleCenterY) = computeRadiusFromThreeAnchorHits(
         acc, hitCoords.x1, hitCoords.y1, hitCoords.x2, hitCoords.y2, hitCoords.x3, hitCoords.y3);
 
+    // The widening's own extra triplets pay for themselves: a triplet that uses a mini-doublet
+    // admitted only by the widened pointing window AND whose circle disagrees with one of its own
+    // mini-doublet directions is rejected outright.  A triplet built entirely from mini-doublets
+    // the PR head would also have made keeps the shipped behaviour: it is flagged, and the T4 and
+    // T5 gates decide.
+    {
+      const bool t3AnyLooseMd =
+          mds.mdLoose()[firstMDIndex] || mds.mdLoose()[secondMDIndex] || mds.mdLoose()[thirdMDIndex];
+      const uint16_t t3ModIdx[] = {innerInnerLowerModuleIndex, middleLowerModuleIndex, outerOuterLowerModuleIndex};
+      const unsigned int t3MdIdx[] = {firstMDIndex, secondMDIndex, thirdMDIndex};
+      if (t3AnyLooseMd && t3MdDirectionFail(acc, modules, mds, t3ModIdx, t3MdIdx, circleRadius, circleCenterX, circleCenterY))
+        return false;
+    }
+
     if (not passRZConstraint(acc,
                              modules,
                              innerInnerLowerModuleIndex,
@@ -640,7 +729,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                           segments.mdIndices()[innerSegmentIndex][1],
                                           segments.mdIndices()[outerSegmentIndex][1]};
         uint8_t flags = loosePointing ? kT3LoosePointing : 0;
-        if (t3MdDirectionFail(acc, modules, mds, lowerModuleIndices, mdIndices))
+        if (t3MdDirectionFail(
+                acc, modules, mds, lowerModuleIndices, mdIndices, circleRadius, circleCenterX, circleCenterY))
           flags |= kT3MdDirectionFail;
         addTripletToMemory(modules,
                            mds,

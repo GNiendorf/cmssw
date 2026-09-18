@@ -413,12 +413,25 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
 
           unsigned int const* t4Hits = quadruplets.hitIndices()[iT4].data();
 
+          // A quadruplet the network calls prompt is deleted at the tight shared-hit bar even when
+          // the quintuplet does not wholly contain it.  The t4dnn output is a three-class softmax,
+          // so its prompt score is one minus the two stored scores and needs no extra column.
+          const float t4PromptScore = 1.f - quadruplets.displacedScore()[iT4] - quadruplets.fakeScore()[iT4];
+          const int t5MinShared = (t4PromptScore > 0.10f) ? 3 : 8;
+
           unsigned int nTrackCandidates = candsBase.nTrackCandidates();
           for (unsigned int trackCandidateIndex : cms::alpakatools::uniform_elements_x(acc, nTrackCandidates)) {
             short type = candsBase.trackCandidateType()[trackCandidateIndex];
             unsigned int outerTrackletIdx = candsExtended.objectIndices()[trackCandidateIndex][1];
             // Deleted when a promoted candidate owns three of its hits, or two for a pixel quintuplet.
-            const int minShared = (type == LSTObjType::pT5) ? 2 : 3;
+            // The shipped displaced bar of 8 stays in force.  It drops to 6 only behind a
+            // quintuplet the quintuplet network scores above 0.95: per 1000 events such a pair is
+            // a duplicate or a fake 9500 times and the only real track 18 times.
+            const int t5Bar = (type == LSTObjType::T5 && t4PromptScore <= 0.10f &&
+                               quintuplets.dnnScore()[outerTrackletIdx] > 0.95f)
+                                  ? 6
+                                  : t5MinShared;
+            const int minShared = (type == LSTObjType::pT5) ? 2 : ((type == LSTObjType::T5) ? t5Bar : 3);
             if (type == LSTObjType::T5 || type == LSTObjType::pT5) {
               unsigned int const* t5Hits = quintuplets.hitIndices()[outerTrackletIdx].data();
               if (nSharedHitsT4(t4Hits, t5Hits, Params_T5::kHits) >= minShared)

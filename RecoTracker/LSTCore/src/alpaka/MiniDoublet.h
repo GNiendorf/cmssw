@@ -75,6 +75,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
       outerHitIndex = upperHitIdx;
     }
 
+    mds.mdLoose()[idx] = 0;
     mds.dphichanges()[idx] = dPhiChange;
     mds.dphis()[idx] = dPhi;
     mds.dzs()[idx] = dz;
@@ -205,6 +206,15 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     return moduleSeparation;
   }
 
+  // Origin-free admission allowance added to the pointing threshold [rad].
+  constexpr float kMdDispAllow = 0.200f;
+
+  // Scope of the origin-free allowance: l3 only.
+  ALPAKA_FN_ACC ALPAKA_FN_INLINE float mdDispAllowScoped(ModuleMDData const& mod) {
+    return (mod.subdet == Barrel and mod.iL >= 2) ? kMdDispAllow : 0.f;
+  }
+
+
   template <alpaka::concepts::Acc TAcc>
   ALPAKA_FN_ACC ALPAKA_FN_INLINE float dPhiThreshold(
       TAcc const& acc, float rt, ModuleMDData const& mod, const float ptCut, float dPhi = 0, float dz = 0) {
@@ -212,16 +222,16 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
 
     // Barrel flat: no tilt or luminous region correction
     if (mod.subdet == Barrel and mod.side == Center) {
-      return miniSlope + mod.sqrtMiniMulsAndPVoff;
+      return mdDispAllowScoped(mod) + miniSlope + mod.sqrtMiniMulsAndPVoff;
     }
     // Barrel tilted
     else if (mod.subdet == Barrel) {
-      return miniSlope + alpaka::math::sqrt(acc, mod.miniMulsAndPVoff + mod.miniTilt2 * miniSlope * miniSlope);
+      return mdDispAllowScoped(mod) + miniSlope + alpaka::math::sqrt(acc, mod.miniMulsAndPVoff + mod.miniTilt2 * miniSlope * miniSlope);
     }
     // Endcap: luminous region correction
     else {
       const float miniLum = alpaka::math::abs(acc, dPhi * kDeltaZLum / dz);
-      return miniSlope + alpaka::math::sqrt(acc, mod.miniMulsAndPVoff + miniLum * miniLum);
+      return mdDispAllowScoped(mod) + miniSlope + alpaka::math::sqrt(acc, mod.miniMulsAndPVoff + miniLum * miniLum);
     }
   }
 
@@ -349,7 +359,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
   }
 
   template <alpaka::concepts::Acc TAcc>
-  ALPAKA_FN_ACC ALPAKA_FN_INLINE bool runMiniDoubletDefaultAlgoBarrel(TAcc const& acc,
+  ALPAKA_FN_ACC ALPAKA_FN_INLINE int runMiniDoubletDefaultAlgoBarrel(TAcc const& acc,
                                                                       ModuleMDData const& mod,
                                                                       float& dz,
                                                                       float& dPhi,
@@ -374,7 +384,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     const float invertedcrossercut = (alpaka::math::abs(acc, dz) > 2) * sign;
 
     if ((alpaka::math::abs(acc, dz) >= dzCut) || (invertedcrossercut > 0)) {
-      return false;
+      return 0;
     }
 
     float miniCut = mod.moduleLayerType == Pixel ? dPhiThreshold(acc, rtLower, mod, ptCut)
@@ -427,15 +437,16 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     const float crossDPhi = x1 * y2 - x2 * y1;
     const float dotDPhi = x1 * x2 + y1 * y2;
     const float miniCutSq = miniCut * miniCut;
-    const float tanMiniCut = alpaka::math::sqrt(acc, miniCutSq / (1.f - (2.f / 3.f) * miniCutSq));
+    const float tanMiniCut =
+        miniCutSq < 0.9f ? alpaka::math::sqrt(acc, miniCutSq / (1.f - (2.f / 3.f) * miniCutSq)) : 1.e6f;
     const float absCrossDPhi = alpaka::math::abs(acc, crossDPhi);
     if (dotDPhi <= 0.f || absCrossDPhi >= tanMiniCut * dotDPhi)
-      return false;
+      return 0;
 
     const float rInnerSq = alpaka::math::min(acc, r1sq, r2sq);
     const float dotDPhiChange = dotDPhi - rInnerSq;
     if (dotDPhiChange <= 0.f || absCrossDPhi >= tanMiniCut * dotDPhiChange)
-      return false;
+      return 0;
 
     // Cut #2: dphi difference
     // Ref to original code: https://github.com/slava77/cms-tkph2-ntuple/blob/184d2325147e6930030d3d1f780136bc2dd29ce6/doubletAnalysis.C#L3085
@@ -443,7 +454,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     noShiftedDphi = mod.isTilted ? cms::alpakatools::deltaPhi(acc, xLower, yLower, xUpper, yUpper) : dPhi;
 
     if (alpaka::math::abs(acc, dPhi) >= miniCut)
-      return false;
+      return 0;
 
     // Cut #3: The dphi change going from lower Hit to upper Hit
     // Ref to original code: https://github.com/slava77/cms-tkph2-ntuple/blob/184d2325147e6930030d3d1f780136bc2dd29ce6/doubletAnalysis.C#L3076
@@ -457,11 +468,17 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
       noShiftedDphiChange = dPhiChange;
     }
 
-    return alpaka::math::abs(acc, dPhiChange) < miniCut;
+    if (alpaka::math::abs(acc, dPhiChange) >= miniCut)
+      return 0;
+    const float tightCut = miniCut - mdDispAllowScoped(mod);
+    return (tightCut < miniCut && (alpaka::math::abs(acc, dPhiChange) >= tightCut ||
+                                   alpaka::math::abs(acc, dPhi) >= tightCut))
+               ? 2
+               : 1;
   }
 
   template <alpaka::concepts::Acc TAcc>
-  ALPAKA_FN_ACC ALPAKA_FN_INLINE bool runMiniDoubletDefaultAlgoEndcap(TAcc const& acc,
+  ALPAKA_FN_ACC ALPAKA_FN_INLINE int runMiniDoubletDefaultAlgoEndcap(TAcc const& acc,
                                                                       ModuleMDData const& mod,
                                                                       float& drt,
                                                                       float& dPhi,
@@ -488,14 +505,14 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     const float dzCut = 1.f;
 
     if (alpaka::math::abs(acc, dz) >= dzCut) {
-      return false;
+      return 0;
     }
     // Cut #2: drt cut. The drt difference can't be larger than 1cm. (max separation is 4mm for modules in the endcap)
     // Ref to original code: https://github.com/slava77/cms-tkph2-ntuple/blob/184d2325147e6930030d3d1f780136bc2dd29ce6/doubletAnalysis.C#L3100
     const float drtCut = mod.moduleType == PS ? 2.f : 10.f;
     drt = rtLower - rtUpper;
     if (alpaka::math::abs(acc, drt) >= drtCut) {
-      return false;
+      return 0;
     }
     float xn = 0, yn = 0, zn = 0;
 
@@ -540,11 +557,11 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
 
     // |dPhi| < pi/2
     if (dotDPhi <= 0.f)
-      return false;
+      return 0;
 
     // |dPhi| < pi/4 (since dotDPhi > 0, equivalent to |tan(dPhi)| < 1)
     if (alpaka::math::abs(acc, crossDPhi) >= dotDPhi)
-      return false;
+      return 0;
 
     // dz needs to change if it is a PS module where the strip hits are shifted in order to properly account for the case when a tilted module falls under "endcap logic"
     // if it was an endcap it will have zero effect
@@ -558,7 +575,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
 
     const float rt = mod.moduleLayerType == Pixel ? rtLower : rtUpper;
     const float sdSlopeSin = alpaka::math::min(acc, rt * k2Rinv1GeVf / ptCut, kSinAlphaMax);
-    const float looseCutDPhi = sdSlopeSin + alpaka::math::sqrt(acc, mod.miniMulsAndPVoff + miniLum * miniLum);
+    const float looseCutDPhi =
+        mdDispAllowScoped(mod) + sdSlopeSin + alpaka::math::sqrt(acc, mod.miniMulsAndPVoff + miniLum * miniLum);
 
     // Algebraic dPhi pre-check: |sin(dPhi)| < looseCutDPhi.
     // looseCutDPhi = sdSlopeSin + sqrt(mulsAndPVoff + miniLum^2) >= sin(exact_cut)
@@ -568,7 +586,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     const float r1r2sq = crossSq + dotDPhi * dotDPhi;
 
     if (crossSq >= looseCutDPhi * looseCutDPhi * r1r2sq)
-      return false;
+      return 0;
 
     // dPhiChange pre-check: in endcap, dPhiChange = dPhi * (1+dzFrac)/dzFrac.
     // So |dPhiChange| >= cut implies |dPhi| >= cut * dzFrac/(1+dzFrac).
@@ -578,7 +596,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         (looseCutDPhi + 0.5f * sdSlopeSin * sdSlopeSin * sdSlopeSin) * dzFrac / (1.f + dzFrac);
 
     if (crossSq >= looseCutDPhiChange * looseCutDPhiChange * r1r2sq)
-      return false;
+      return 0;
 
     // Cut #3: dphi
     dPhi = alpaka::math::atan2(acc, crossDPhi, dotDPhi);
@@ -587,7 +605,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                                  : dPhiThreshold(acc, rtUpper, mod, ptCut, dPhi, dz);
 
     if (alpaka::math::abs(acc, dPhi) >= miniCut) {
-      return false;
+      return 0;
     }
 
     // Cut #4: dPhiChange
@@ -598,11 +616,17 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     noShiftedDphi = cms::alpakatools::deltaPhi(acc, xLower, yLower, xUpper, yUpper);
     noShiftedDphichange = noShiftedDphi / dzFrac * (1.f + dzFrac);
 
-    return alpaka::math::abs(acc, dPhiChange) < miniCut;
+    if (alpaka::math::abs(acc, dPhiChange) >= miniCut)
+      return 0;
+    const float tightCut = miniCut - mdDispAllowScoped(mod);
+    return (tightCut < miniCut && (alpaka::math::abs(acc, dPhiChange) >= tightCut ||
+                                   alpaka::math::abs(acc, dPhi) >= tightCut))
+               ? 2
+               : 1;
   }
 
   template <alpaka::concepts::Acc TAcc>
-  ALPAKA_FN_ACC ALPAKA_FN_INLINE bool runMiniDoubletDefaultAlgo(TAcc const& acc,
+  ALPAKA_FN_ACC ALPAKA_FN_INLINE int runMiniDoubletDefaultAlgo(TAcc const& acc,
                                                                 ModuleMDData const& mod,
                                                                 float& dz,
                                                                 float& dPhi,
@@ -625,7 +649,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                                                 uint16_t clustSizeUpper,
                                                                 const uint16_t clustSizeCut) {
     if (clustSizeLower > clustSizeCut or clustSizeUpper > clustSizeCut) {
-      return false;
+      return 0;
     }
     if (mod.subdet == Barrel) {
       return runMiniDoubletDefaultAlgoBarrel(acc,
@@ -754,7 +778,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
           uint16_t clustSizeUpper = hitsBase.clustsize()[upperHitArrayIndex];
 
           float dz, dphi, dphichange, shiftedX, shiftedY, shiftedZ, noShiftedDphi, noShiftedDphiChange;
-          bool success = runMiniDoubletDefaultAlgo(acc,
+          int success = runMiniDoubletDefaultAlgo(acc,
                                                    mod,
                                                    dz,
                                                    dphi,
@@ -805,6 +829,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                             noShiftedDphi,
                             noShiftedDphiChange,
                             mdIndex);
+              mds.mdLoose()[mdIndex] = (success == 2) ? 1 : 0;
             }
           }
         }
@@ -853,7 +878,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
           uint16_t clustSizeUpper = hitsBase.clustsize()[upperHitArrayIndex];
 
           float dz, dphi, dphichange, shiftedX, shiftedY, shiftedZ, noShiftedDphi, noShiftedDphiChange;
-          bool success = runMiniDoubletDefaultAlgo(acc,
+          int success = runMiniDoubletDefaultAlgo(acc,
                                                    mod,
                                                    dz,
                                                    dphi,

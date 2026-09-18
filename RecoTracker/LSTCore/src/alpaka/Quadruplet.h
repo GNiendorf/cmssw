@@ -349,7 +349,6 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     float innerRadius = triplets.radius()[innerTripletIndex];
     float outerRadius = triplets.radius()[outerTripletIndex];
     float inner_pt = 2 * k2Rinv1GeVf * innerRadius;
-    float pt = (innerRadius + outerRadius) * k2Rinv1GeVf;
 
     // 4 categories for sigmas
     float sigmas2[4], delta1[4], delta2[4], slopes[4];
@@ -441,28 +440,25 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     if (!inference) {
       return false;
     }
-    // only run dBeta selector for low/high pT to avoid removing displaced efficiency
-    if (pt > 10 || pt < 1) {
-      if (not runQuintupletdBetaAlgoSelector(acc,
-                                             modules,
-                                             mds,
-                                             segments,
-                                             lowerModuleIndex1,
-                                             lowerModuleIndex2,
-                                             lowerModuleIndex3,
-                                             lowerModuleIndex4,
-                                             firstSegmentIndex,
-                                             thirdSegmentIndex,
-                                             firstMDIndex,
-                                             secondMDIndex,
-                                             thirdMDIndex,
-                                             fourthMDIndex,
-                                             dBeta,
-                                             ptCut))
-        return false;
-    } else {
-      dBeta = 0;
-    }
+    // The end-to-end curvature consistency test is origin-free in the barrel, so it is run for every
+    // candidate pT, at the selector's own ceiling.
+    if (not runQuintupletdBetaAlgoSelector(acc,
+                                           modules,
+                                           mds,
+                                           segments,
+                                           lowerModuleIndex1,
+                                           lowerModuleIndex2,
+                                           lowerModuleIndex3,
+                                           lowerModuleIndex4,
+                                           firstSegmentIndex,
+                                           thirdSegmentIndex,
+                                           firstMDIndex,
+                                           secondMDIndex,
+                                           thirdMDIndex,
+                                           fourthMDIndex,
+                                           dBeta,
+                                           ptCut))
+      return false;
 
     if (not passT4RZConstraint(acc,
                                modules,
@@ -552,14 +548,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         short layer2_adjustment, md_adjustment;
         int layer = modules.layers()[lowerModule1];
         if (layer == 1) {
-          if (modules.subdets()[lowerModule1] != Endcap)
-            continue;
           layer2_adjustment = 1;
           md_adjustment = 1;
         }  // get upper segment to be in third layer
         else if (layer == 2) {
-          if (modules.subdets()[lowerModule1] != Endcap)
-            continue;
           layer2_adjustment = 1;
           md_adjustment = 0;
         }  // get lower segment to be in third layer
@@ -581,7 +573,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
             continue;
           // partOf{PT5, T5, PT3} is implicit, see CountTripletLSConnectionsT
           // Triplets admitted only by the widened pointing bound are used only in quintuplets.
-          if (triplets.flags()[innerTripletIndex] & kT3LoosePointing)
+          if (false && triplets.flags()[innerTripletIndex] & kT3LoosePointing)
             continue;
 
           const auto innerT3LS2Index = segIdx[innerTripletIndex][1];
@@ -602,14 +594,14 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
             if (innerT3LS2Index != outerT3LS1Index)
               continue;
 
-            if (triplets.partOfPT5()[outerTripletIndex])
+            if (false && triplets.partOfPT5()[outerTripletIndex])
               continue;  //don't create T4s for T3s accounted in pT5s
-            if (triplets.partOfT5()[outerTripletIndex])
+            if (false && triplets.partOfT5()[outerTripletIndex])
               continue;  //don't create T4s for T3s accounted in T5s
-            if (triplets.partOfPT3()[outerTripletIndex])
+            if (false && triplets.partOfPT3()[outerTripletIndex])
               continue;  //don't create T4s for T3s accounted in pT3s
             // Triplets admitted only by the widened pointing bound are used only in quintuplets.
-            if (triplets.flags()[outerTripletIndex] & kT3LoosePointing)
+            if (false && triplets.flags()[outerTripletIndex] & kT3LoosePointing)
               continue;
 
             // If densely connected, do not attempt parallel processing to avoid truncation
@@ -825,7 +817,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     const short layer = modules.layers()[lowerModule];
     const short subdet = modules.subdets()[lowerModule];
     // Quadruplets starting outside these regions are not built.
-    return (subdet == Barrel && layer > 2) || (subdet == Endcap);
+    return (subdet == Barrel && layer > 0) || (subdet == Endcap);
   }
 
   template <bool ReduceMem>
@@ -859,14 +851,14 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         const auto innerTripletOffset = tripIdx[lowerModule1];
         for (unsigned int innerTripletArrayIndex : cms::alpakatools::uniform_elements_y(acc, nInnerTriplets)) {
           const unsigned int innerTripletIndex = innerTripletOffset + innerTripletArrayIndex;
-          if (partOfPT5[innerTripletIndex])
+          if (false && partOfPT5[innerTripletIndex])
             continue;  //don't create T4s for T3s accounted in pT5s
-          if (partOfT5[innerTripletIndex])
+          if (false && partOfT5[innerTripletIndex])
             continue;  //don't create T4s for T3s accounted in T5s
-          if (partOfPT3[innerTripletIndex])
+          if (false && partOfPT3[innerTripletIndex])
             continue;  //don't create T4s for T3s accounted in pT3s
           // Triplets admitted only by the widened pointing bound are used only in quintuplets.
-          if (triplets.flags()[innerTripletIndex] & kT3LoosePointing)
+          if (false && triplets.flags()[innerTripletIndex] & kT3LoosePointing)
             continue;
 
           const uint16_t lowerModule2 = lmIdx[innerTripletIndex][1];
@@ -880,18 +872,18 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
           for (unsigned int outerTripletArrayIndex : cms::alpakatools::uniform_elements_x(acc, nOuterTriplets)) {
             const unsigned int outerTripletIndex = outerTripletOffset + outerTripletArrayIndex;
             // Triplets admitted only by the widened pointing bound are used only in quintuplets.
-            if (triplets.flags()[outerTripletIndex] & kT3LoosePointing)
+            if (false && triplets.flags()[outerTripletIndex] & kT3LoosePointing)
               continue;
             const unsigned int thirdSegIdx = segIdx[outerTripletIndex][0];
             //check if the 2 T3s have a common LS
             if (secondSegIdx != thirdSegIdx)
               continue;
 
-            if (partOfPT5[outerTripletIndex])
+            if (false && partOfPT5[outerTripletIndex])
               continue;  //don't create T4s for T3s accounted in pT5s
-            if (partOfT5[outerTripletIndex])
+            if (false && partOfT5[outerTripletIndex])
               continue;  //don't create T4s for T3s accounted in T5s
-            if (partOfPT3[outerTripletIndex])
+            if (false && partOfPT3[outerTripletIndex])
               continue;  //don't create T4s for T3s accounted in pT3s
 
             // Will only perform runQuadrupletDefaultAlgorithm() checks if densely connected
