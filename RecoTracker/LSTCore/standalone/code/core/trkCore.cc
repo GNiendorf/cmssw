@@ -375,6 +375,11 @@ std::tuple<std::vector<int>, std::vector<float>> matchedSimTrkIdxsAndFracs(
 
   int nhits_input = to_check_duplicate.size();
 
+  static const bool rungDedup = [] {
+    const char* e = std::getenv("LST_RUNG_FILTER");
+    return e != nullptr and std::atoi(e) > 0;
+  }();
+
   std::vector<std::vector<int>> simtrk_idxs;
   std::vector<int> unique_idxs;  // to aggregate which ones to count and test
 
@@ -421,7 +426,11 @@ std::tuple<std::vector<int>, std::vector<float>> matchedSimTrkIdxsAndFracs(
         std::cout << " hitidx: " << hitidx << " simhit_idx: " << simhit_idx << " simtrk_idx: " << simtrk_idx
                   << std::endl;
       }
-      simtrk_idxs_per_hit.push_back(simtrk_idx);
+      // Rung modes: one entry per sim track per hit. The permutation count is the product of these list lengths, and
+      // a hit whose sim hits repeat one track multiplies it without changing any result (identical permutations).
+      if (not rungDedup or
+          std::find(simtrk_idxs_per_hit.begin(), simtrk_idxs_per_hit.end(), simtrk_idx) == simtrk_idxs_per_hit.end())
+        simtrk_idxs_per_hit.push_back(simtrk_idx);
       if (std::find(unique_idxs.begin(), unique_idxs.end(), simtrk_idx) == unique_idxs.end())
         unique_idxs.push_back(simtrk_idx);
     }

@@ -330,8 +330,38 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     }
   }
 
+  // Rung probe (env-gated, see RungProbe.h).  With Probe=true a failed cut is recorded and evaluation continues.
+#ifndef LST_PROBE_REJECT
+#define LST_PROBE_REJECT(bit) \
+  do {                        \
+    if constexpr (Probe)      \
+      probe->fail |= (bit);   \
+    else                      \
+      return {};              \
+  } while (false)
+#endif
+
+  enum LSProbeBit : unsigned int {
+    kLSProbeZSign = 1u << 0,
+    kLSProbeZRt = 1u << 1,
+    kLSProbeDPhiPre = 1u << 2,
+    kLSProbeDPhi = 1u << 3,
+    kLSProbeLineResid = 1u << 4,
+    kLSProbeDAlphaInner = 1u << 5,
+    kLSProbeDAlphaOuter = 1u << 6,
+    kLSProbeDAlphaInnerOuter = 1u << 7
+  };
+  struct LSProbe {
+    unsigned int fail = 0;
+    // pos/lo/hi: zOut and its window (barrel-barrel) or rtOut and its window (otherwise)
+    float pos = 0.f, lo = 0.f, hi = 0.f, dPhi = 0.f, dPhiCut = 0.f, dPhiChange = 0.f;
+    float dAlpha[3] = {0.f, 0.f, 0.f};
+    float dAlphaCut[3] = {0.f, 0.f, 0.f};
+    float lineResid = 0.f, lineResidCut = 0.f;
+  };
+
   // When LooseOnly=true, returns after the pre-check (used by counting kernel).
-  template <bool LooseOnly = false, alpaka::concepts::Acc TAcc>
+  template <bool LooseOnly = false, bool Probe = false, alpaka::concepts::Acc TAcc>
   ALPAKA_FN_ACC ALPAKA_FN_INLINE bool passDeltaPhiCutsBarrel(TAcc const& acc,
                                                              MiniDoubletsConst mds,
                                                              unsigned int innerMD,
@@ -345,7 +375,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                                              const float sdSlopeSin,
                                                              const float sdMulsAndPVoff,
                                                              const float sdCut,
-                                                             float& dPhi) {
+                                                             float& dPhi,
+                                                             LSProbe* probe = nullptr) {
     // Loose sin^2-based pre-check for dPhi using x/y coordinates directly,
     // avoiding anchorPhi SoA reads + reducePhiRange for pairs that clearly fail.
     //
@@ -356,11 +387,11 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     const float crossDPhi = xIn * yOut - xOut * yIn;
     const float dotDPhi = xIn * xOut + yIn * yOut;
     if (dotDPhi <= 0.f)
-      return false;
+      LST_PROBE_REJECT(kLSProbeDPhiPre);
     // Lagrange identity: crossDPhi^2 + dotDPhi^2 = rtIn^2 * rtOut^2
     const float looseCutDPhi = sdSlopeSin + sdMulsAndPVoff;
     if (alpaka::math::abs(acc, crossDPhi) >= looseCutDPhi * rtIn * rtOut)
-      return false;
+      LST_PROBE_REJECT(kLSProbeDPhiPre);
 
     if constexpr (LooseOnly)
       return true;
@@ -371,7 +402,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
   }
 
   // When LooseOnly=true, returns after the pre-check (used by counting kernel).
-  template <bool LooseOnly = false, alpaka::concepts::Acc TAcc>
+  template <bool LooseOnly = false, bool Probe = false, alpaka::concepts::Acc TAcc>
   ALPAKA_FN_ACC ALPAKA_FN_INLINE bool passDeltaPhiCutsEndcap(TAcc const& acc,
                                                              MiniDoubletsConst mds,
                                                              unsigned int innerMD,
@@ -384,14 +415,15 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                                              const float rtOut,
                                                              const float sdSlopeSin,
                                                              float& dPhi,
-                                                             const float sdSlope) {
+                                                             const float sdSlope,
+                                                             LSProbe* probe = nullptr) {
     // Phi pre-check: tan^2(dPhi) > tan^2(sdSlope) implies |dPhi| > sdSlope.
     // Using Lagrange identity: cross^2 + dot^2 = rtIn^2 * rtOut^2, so
     // |cross|/sqrt(cross^2+dot^2) > sdSlopeSin simplifies to |cross| > sdSlopeSin * rtIn * rtOut.
     const float crossDPhi = xIn * yOut - xOut * yIn;
     const float dotDPhi = xIn * xOut + yIn * yOut;
     if (dotDPhi <= 0.f || alpaka::math::abs(acc, crossDPhi) > sdSlopeSin * rtIn * rtOut)
-      return false;
+      LST_PROBE_REJECT(kLSProbeDPhiPre);
 
     if constexpr (LooseOnly)
       return true;
@@ -401,7 +433,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     return alpaka::math::abs(acc, dPhi) <= sdSlope;
   }
 
-  template <alpaka::concepts::Acc TAcc>
+  template <bool Probe = false, alpaka::concepts::Acc TAcc>
   ALPAKA_FN_ACC ALPAKA_FN_INLINE bool runSegmentDefaultAlgoBarrel(TAcc const& acc,
                                                                   ModuleSegData const& innerMod,
                                                                   ModuleSegData const& outerMod,
@@ -421,7 +453,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                                                   float& zLo,
                                                                   float& zHi,
 #endif
-                                                                  const float ptCut) {
+                                                                  const float ptCut,
+                                                                  LSProbe* probe = nullptr) {
 #ifndef CUT_VALUE_DEBUG
     float dAlphaInnerMDSegment, dAlphaOuterMDSegment, dAlphaInnerMDOuterMD;
     float zLo, zHi;
@@ -450,13 +483,13 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     zHi = zIn + (zIn + kDeltaZLum) * (rtOut / rtIn - 1.f) * (zIn < 0.f ? 1.f : dzDrtScale) + zGeom;
 
     if ((zOut < zLo) || (zOut > zHi))
-      return false;
+      LST_PROBE_REJECT(kLSProbeZRt);
 
     const float sdPVoff = 0.1f / rtOut;
     const float sdMulsAndPVoff = alpaka::math::sqrt(acc, innerMod.sdMuls * innerMod.sdMuls + sdPVoff * sdPVoff);
     const float sdCut = sdSlope + sdMulsAndPVoff;
 
-    if (!passDeltaPhiCutsBarrel(acc,
+    if (!passDeltaPhiCutsBarrel<false, Probe>(acc,
                                 mds,
                                 innerMDIndex,
                                 outerMDIndex,
@@ -469,8 +502,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                 sdSlopeSin,
                                 sdMulsAndPVoff,
                                 sdCut,
-                                dPhi))
-      return false;
+                                dPhi,
+                                probe))
+      LST_PROBE_REJECT(kLSProbeDPhi);
 
     dPhiChange = cms::alpakatools::reducePhiRange(
         acc, cms::alpakatools::phi(acc, xOut - xIn, yOut - yIn) - mds.anchorPhi()[innerMDIndex]);
@@ -512,16 +546,35 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     const float lineResidualSigma =
         (dAlphaInnerMDSegmentThreshold - dAlphaBfield) + (dAlphaOuterMDSegmentThreshold - dAlphaBfield);
     if (alpaka::math::abs(acc, lineResidual) >= kLsLineResidCut * lineResidualSigma)
-      return false;
+      LST_PROBE_REJECT(kLSProbeLineResid);
 
     if (alpaka::math::abs(acc, dAlphaInnerMDSegment) >= dAlphaInnerMDSegmentThreshold)
-      return false;
+      LST_PROBE_REJECT(kLSProbeDAlphaInner);
     if (alpaka::math::abs(acc, dAlphaOuterMDSegment) >= dAlphaOuterMDSegmentThreshold)
-      return false;
+      LST_PROBE_REJECT(kLSProbeDAlphaOuter);
+    if constexpr (Probe) {
+      probe->pos = zOut;
+      probe->lo = zLo;
+      probe->hi = zHi;
+      probe->dPhi = dPhi;
+      probe->dPhiCut = sdCut;
+      probe->dPhiChange = dPhiChange;
+      probe->dAlpha[0] = dAlphaInnerMDSegment;
+      probe->dAlpha[1] = dAlphaOuterMDSegment;
+      probe->dAlpha[2] = dAlphaInnerMDOuterMD;
+      probe->dAlphaCut[0] = dAlphaInnerMDSegmentThreshold;
+      probe->dAlphaCut[1] = dAlphaOuterMDSegmentThreshold;
+      probe->dAlphaCut[2] = dAlphaInnerMDOuterMDThreshold;
+      probe->lineResid = lineResidual;
+      probe->lineResidCut = kLsLineResidCut * lineResidualSigma;
+      if (!(alpaka::math::abs(acc, dAlphaInnerMDOuterMD) < dAlphaInnerMDOuterMDThreshold))
+        probe->fail |= kLSProbeDAlphaInnerOuter;
+      return probe->fail == 0;
+    }
     return alpaka::math::abs(acc, dAlphaInnerMDOuterMD) < dAlphaInnerMDOuterMDThreshold;
   }
 
-  template <alpaka::concepts::Acc TAcc>
+  template <bool Probe = false, alpaka::concepts::Acc TAcc>
   ALPAKA_FN_ACC ALPAKA_FN_INLINE bool runSegmentDefaultAlgoEndcap(TAcc const& acc,
                                                                   ModuleSegData const& innerMod,
                                                                   ModuleSegData const& outerMod,
@@ -541,7 +594,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                                                   float& rtLo,
                                                                   float& rtHi,
 #endif
-                                                                  const float ptCut) {
+                                                                  const float ptCut,
+                                                                  LSProbe* probe = nullptr) {
 #ifndef CUT_VALUE_DEBUG
     float dAlphaInnerMDSegment, dAlphaOuterMDSegment, dAlphaInnerMDOuterMD;
     float rtLo, rtHi;
@@ -568,7 +622,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
 
     //cut 0 - z compatibility
     if (zIn * zOut < 0)
-      return false;
+      LST_PROBE_REJECT(kLSProbeZSign);
 
     float dz = zOut - zIn;
     float dLum = alpaka::math::copysign(acc, kDeltaZLum, zIn);
@@ -583,11 +637,11 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
 
     // Completeness
     if ((rtOut < rtLo) || (rtOut > rtHi))
-      return false;
+      LST_PROBE_REJECT(kLSProbeZRt);
 
-    if (!passDeltaPhiCutsEndcap(
-            acc, mds, innerMDIndex, outerMDIndex, xIn, yIn, xOut, yOut, rtIn, rtOut, sdSlopeSin, dPhi, sdSlope))
-      return false;
+    if (!passDeltaPhiCutsEndcap<false, Probe>(
+            acc, mds, innerMDIndex, outerMDIndex, xIn, yIn, xOut, yOut, rtIn, rtOut, sdSlopeSin, dPhi, sdSlope, probe))
+      LST_PROBE_REJECT(kLSProbeDPhi);
 
     if (outerLayerEndcapTwoS) {
       float dPhiPosHigh =
@@ -644,16 +698,35 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         alpaka::math::atan2(acc, rtOut * alpaka::math::sin(acc, dPhi), rtOut * alpaka::math::cos(acc, dPhi) - rtIn);
     const float lineResidual = innerMDAlpha + outerMDAlpha + dPhi - 2.f * chord;
     if (alpaka::math::abs(acc, lineResidual) >= kLsLineResidCut * 2.f * dAlphaResMuls)
-      return false;
+      LST_PROBE_REJECT(kLSProbeLineResid);
 
     if (alpaka::math::abs(acc, dAlphaInnerMDSegment) >= dAlphaInnerMDSegmentThreshold)
-      return false;
+      LST_PROBE_REJECT(kLSProbeDAlphaInner);
     if (alpaka::math::abs(acc, dAlphaOuterMDSegment) >= dAlphaOuterMDSegmentThreshold)
-      return false;
+      LST_PROBE_REJECT(kLSProbeDAlphaOuter);
+    if constexpr (Probe) {
+      probe->pos = rtOut;
+      probe->lo = rtLo;
+      probe->hi = rtHi;
+      probe->dPhi = dPhi;
+      probe->dPhiCut = sdSlope;
+      probe->dPhiChange = dPhiChange;
+      probe->dAlpha[0] = dAlphaInnerMDSegment;
+      probe->dAlpha[1] = dAlphaOuterMDSegment;
+      probe->dAlpha[2] = dAlphaInnerMDOuterMD;
+      probe->dAlphaCut[0] = dAlphaInnerMDSegmentThreshold;
+      probe->dAlphaCut[1] = dAlphaOuterMDSegmentThreshold;
+      probe->dAlphaCut[2] = dAlphaInnerMDOuterMDThreshold;
+      probe->lineResid = lineResidual;
+      probe->lineResidCut = kLsLineResidCut * 2.f * dAlphaResMuls;
+      if (!(alpaka::math::abs(acc, dAlphaInnerMDOuterMD) < dAlphaInnerMDOuterMDThreshold))
+        probe->fail |= kLSProbeDAlphaInnerOuter;
+      return probe->fail == 0;
+    }
     return alpaka::math::abs(acc, dAlphaInnerMDOuterMD) < dAlphaInnerMDOuterMDThreshold;
   }
 
-  template <alpaka::concepts::Acc TAcc>
+  template <bool Probe = false, alpaka::concepts::Acc TAcc>
   ALPAKA_FN_ACC ALPAKA_FN_INLINE bool runSegmentDefaultAlgo(TAcc const& acc,
                                                             ModuleSegData const& innerMod,
                                                             ModuleSegData const& outerMod,
@@ -675,13 +748,14 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                                             float& rtLo,
                                                             float& rtHi,
 #endif
-                                                            const float ptCut) {
+                                                            const float ptCut,
+                                                            LSProbe* probe = nullptr) {
     if (innerMod.subdet == Barrel and outerMod.subdet == Barrel) {
 #ifdef CUT_VALUE_DEBUG
       rtLo = -999.f;
       rtHi = -999.f;
 #endif
-      return runSegmentDefaultAlgoBarrel(acc,
+      return runSegmentDefaultAlgoBarrel<Probe>(acc,
                                          innerMod,
                                          outerMod,
                                          mds,
@@ -700,13 +774,14 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                          zLo,
                                          zHi,
 #endif
-                                         ptCut);
+                                         ptCut,
+                                         probe);
     } else {
 #ifdef CUT_VALUE_DEBUG
       zLo = -999.f;
       zHi = -999.f;
 #endif
-      return runSegmentDefaultAlgoEndcap(acc,
+      return runSegmentDefaultAlgoEndcap<Probe>(acc,
                                          innerMod,
                                          outerMod,
                                          mds,
@@ -725,7 +800,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                          rtLo,
                                          rtHi,
 #endif
-                                         ptCut);
+                                         ptCut,
+                                         probe);
     }
   }
 

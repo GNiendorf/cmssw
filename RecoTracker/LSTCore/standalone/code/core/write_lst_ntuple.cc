@@ -7,6 +7,225 @@
 using namespace ALPAKA_ACCELERATOR_NAMESPACE::lst;
 
 //________________________________________________________________________________________________________________________________
+// Rung ntuple (ladder campaign).  LST_RUNG_FILTER unset or 0: off, the writer is unchanged.
+//   1: MD/LS/T3/T4/T5/pLS/pT3/pT5 entries are written only if the object holds >= 1 reco hit of a kept sim track.
+//   2: nothing is filtered, but the same extra branches are written (reference for validating mode 1).
+// Kept sim track: bunchCrossing == 0, event == 0, q != 0, |eta| < 2.4, |vz| < 30, pt > LST_RUNG_PT_MIN (0.8),
+// vxy > LST_RUNG_VXY_MIN (0.1).  Track candidates are never filtered.
+namespace {
+  int rungMode() {
+    static const int mode = [] {
+      const char* e = std::getenv("LST_RUNG_FILTER");
+      return e ? std::atoi(e) : 0;
+    }();
+    return mode;
+  }
+  float rungEnvF(const char* name, float dflt) {
+    const char* e = std::getenv(name);
+    return e ? static_cast<float>(std::atof(e)) : dflt;
+  }
+  int rung_input_entry = -1;
+  std::vector<char> rung_keep_ph2;
+  std::vector<char> rung_keep_pix;
+
+  // flags the reco hits of the kept sim tracks; fillBranches also writes the per-event rung branches
+  void rungFlagHits(bool fillBranches) {
+    static const float ptMin = rungEnvF("LST_RUNG_PT_MIN", 0.8f);
+    static const float vxyMin = rungEnvF("LST_RUNG_VXY_MIN", 0.1f);
+    auto const& sim_pt = trk.getVF("sim_pt");
+    auto const& sim_eta = trk.getVF("sim_eta");
+    auto const& sim_q = trk.getVI("sim_q");
+    auto const& sim_bx = trk.getVI("sim_bunchCrossing");
+    auto const& sim_event = trk.getVI("sim_event");
+    auto const& sim_vtx = trk.getVI("sim_parentVtxIdx");
+    auto const& vx = trk.getVF("simvtx_x");
+    auto const& vy = trk.getVF("simvtx_y");
+    auto const& vz = trk.getVF("simvtx_z");
+    auto const& simhit_simTrkIdx = trk.getVI("simhit_simTrkIdx");
+    auto const& ph2_simHitIdx = trk.getVVI("ph2_simHitIdx");
+    auto const& pix_simHitIdx = trk.getVVI("pix_simHitIdx");
+
+    std::vector<char> keepSim(sim_pt.size(), 0);
+    for (size_t i = 0; i < sim_pt.size(); ++i) {
+      if (sim_bx[i] != 0 or sim_event[i] != 0)
+        continue;
+      int iv = sim_vtx[i];
+      float vxy = std::sqrt(vx[iv] * vx[iv] + vy[iv] * vy[iv]);
+      bool keep = sim_q[i] != 0 and std::abs(sim_eta[i]) < 2.4f and std::abs(vz[iv]) < 30.f and sim_pt[i] > ptMin and
+                  vxy > vxyMin;
+      keepSim[i] = keep;
+      // same order and length as sim_pt in the output
+      if (fillBranches)
+        ana.tx->pushbackToBranch<int>("sim_rungKeep", keep);
+    }
+    auto flag = [&](std::vector<std::vector<int>> const& hitSimHits, std::vector<char>& out) {
+      out.assign(hitSimHits.size(), 0);
+      for (size_t h = 0; h < hitSimHits.size(); ++h)
+        for (int sh : hitSimHits[h]) {
+          int st = simhit_simTrkIdx[sh];
+          if (st >= 0 and keepSim[st]) {
+            out[h] = 1;
+            break;
+          }
+        }
+    };
+    flag(ph2_simHitIdx, rung_keep_ph2);
+    flag(pix_simHitIdx, rung_keep_pix);
+    if (fillBranches) {
+      ana.tx->setBranch<int>("rung_entry", rung_input_entry);
+      ana.tx->setBranch<int>("rung_mode", rungMode());
+    }
+  }
+
+  bool rungKeep(std::vector<unsigned int> const& hit_idx, std::vector<HitType> const& hit_type) {
+    for (size_t i = 0; i < hit_idx.size(); ++i) {
+      auto const& k = hit_type[i] == HitType::Pixel ? rung_keep_pix : rung_keep_ph2;
+      if (hit_idx[i] < k.size() and k[hit_idx[i]])
+        return true;
+    }
+    return false;
+  }
+
+  void rungPushHits(const char* obj, std::vector<unsigned int> const& hit_idx, std::vector<HitType> const& hit_type) {
+    std::vector<int> idx(hit_idx.begin(), hit_idx.end());
+    std::vector<int> typ;
+    typ.reserve(hit_type.size());
+    for (auto t : hit_type)
+      typ.push_back(static_cast<int>(t));
+    ana.tx->pushbackToBranch<std::vector<int>>(TString::Format("%s_hitIdxs", obj), idx);
+    ana.tx->pushbackToBranch<std::vector<int>>(TString::Format("%s_hitTypes", obj), typ);
+  }
+
+  // link to a child object: its ntuple index, or -1 when the child was filtered out (mode 1 only)
+  int rungIdx(std::map<unsigned int, unsigned int> const& m, unsigned int key) {
+    if (rungMode() != 1)
+      return m.at(key);
+    auto it = m.find(key);
+    return it == m.end() ? -1 : static_cast<int>(it->second);
+  }
+  int rungIdxTC(std::map<unsigned int, unsigned int>& m, unsigned int key) {
+    if (rungMode() != 1)
+      return m[key];
+    auto it = m.find(key);
+    return it == m.end() ? -1 : static_cast<int>(it->second);
+  }
+
+  void createRungBranches() {
+    ana.tx->createBranch<int>("rung_entry");
+    ana.tx->createBranch<int>("rung_mode");
+    ana.tx->createBranch<std::vector<int>>("sim_rungKeep");
+    struct Obj {
+      const char* name;
+      bool on;
+    };
+    const Obj objs[] = {{"md", ana.md_branches},
+                        {"ls", ana.ls_branches},
+                        {"t3", ana.t3_branches},
+                        {"t4", ana.t4_branches},
+                        {"t5", ana.t5_branches},
+                        {"pLS", ana.pls_branches},
+                        {"pT3", ana.pt3_branches},
+                        {"pT5", ana.pt5_branches},
+                        {"tc", true}};
+    for (auto const& o : objs) {
+      if (not o.on)
+        continue;
+      ana.tx->createBranch<int>(TString::Format("n_%s_total", o.name));
+      ana.tx->createBranch<std::vector<std::vector<int>>>(TString::Format("%s_hitIdxs", o.name));
+      ana.tx->createBranch<std::vector<std::vector<int>>>(TString::Format("%s_hitTypes", o.name));
+    }
+  }
+}  // namespace
+
+void setRungInputEntry(int entry) { rung_input_entry = entry; }
+
+//________________________________________________________________________________________________________________________________
+// Rung probe hit mask: 1 for every outer-tracker hit of a kept sim track (the filter rule above), indexed by ph2 index.
+// Must be called while the event's input entry is loaded.
+std::vector<uint8_t> rungProbeHitMask() {
+  rungFlagHits(false);
+  return std::vector<uint8_t>(rung_keep_ph2.begin(), rung_keep_ph2.end());
+}
+
+//________________________________________________________________________________________________________________________________
+// Truncation census (env LST_CAPS_CENSUS): one line per event.  For the per-module stages every candidate that passed
+// the selection incremented totOccupancy, stored or not, so dropped = sum over modules of (tot - stored).
+void printCapsCensus(LSTEvent* event, int entry) {
+  auto const& modules = event->getModules<ModulesSoA>();
+  auto const& ranges = event->getRanges();
+  auto const& mdOcc = event->getMiniDoublets<MiniDoubletsOccupancySoA>();
+  auto const& lsOcc = event->getSegments<SegmentsOccupancySoA>();
+  auto const& t3Occ = event->getTriplets<TripletsOccupancySoA>();
+  auto const& t5Occ = event->getQuintuplets<QuintupletsOccupancySoA>();
+  auto const& t4Occ = event->getQuadruplets<QuadrupletsOccupancySoA>();
+  auto const& pT3 = event->getPixelTriplets();
+  auto const& pT5 = event->getPixelQuintuplets();
+  auto const& tcB = event->getTrackCandidatesBase();
+  auto const& tcE = event->getTrackCandidatesExtended();
+  const unsigned int nLower = modules.nLowerModules();
+
+  struct Stage {
+    long alloc = 0, tot = 0, stored = 0, dropped = 0;
+    int satModules = 0, noMemModules = 0, maxTot = 0;
+  };
+  auto scan = [&](auto const& allocArr, auto const& idxArr, auto const& totArr, auto const& nArr) {
+    Stage s;
+    for (unsigned int i = 0; i < nLower; ++i) {
+      const long a = allocArr[i], t = totArr[i], n = nArr[i];
+      if (idxArr[i] != -1)  // a module without a range carries no meaningful occupancy
+        s.alloc += a;
+      s.tot += t;
+      s.stored += n;
+      s.maxTot = std::max<long>(s.maxTot, t);
+      if (t > n) {
+        s.dropped += t - n;
+        ++s.satModules;
+      }
+      if (idxArr[i] == -1)
+        ++s.noMemModules;
+    }
+    return s;
+  };
+  const Stage md = scan(ranges.miniDoubletModuleOccupancy(), ranges.miniDoubletModuleIndices(), mdOcc.totOccupancyMDs(), mdOcc.nMDs());
+  const Stage ls = scan(ranges.segmentModuleOccupancy(), ranges.segmentModuleIndices(), lsOcc.totOccupancySegments(), lsOcc.nSegments());
+  const Stage t3 = scan(ranges.tripletModuleOccupancy(), ranges.tripletModuleIndices(), t3Occ.totOccupancyTriplets(), t3Occ.nTriplets());
+  const Stage t5 = scan(ranges.quintupletModuleOccupancy(), ranges.quintupletModuleIndices(), t5Occ.totOccupancyQuintuplets(), t5Occ.nQuintuplets());
+  const Stage t4 = scan(ranges.quadrupletModuleOccupancy(), ranges.quadrupletModuleIndices(), t4Occ.totOccupancyQuadruplets(), t4Occ.nQuadruplets());
+
+  int mapAtCap = 0, mapMax = 0;
+  for (unsigned int i = 0; i < nLower; ++i) {
+    const int nc = modules.nConnectedModules()[i];
+    mapMax = std::max(mapMax, nc);
+    if (nc >= static_cast<int>(max_connected_modules))
+      ++mapAtCap;
+  }
+  const unsigned int nPLS = lsOcc.nSegments()[nLower];
+  const unsigned int nTC = tcB.nTrackCandidates();
+  const unsigned int nTCpix = tcE.nTrackCandidatespT3() + tcE.nTrackCandidatespT5() + tcE.nTrackCandidatespLS();
+  const unsigned int nTCnon = tcE.nTrackCandidatesT5() + tcE.nTrackCandidatesT4();
+
+  char buf[2048];
+  int k = std::snprintf(buf, sizeof(buf), "[CAPS] entry=%d", entry);
+  auto add = [&](const char* name, Stage const& s) {
+    k += std::snprintf(buf + k, sizeof(buf) - k, " | %s alloc=%ld tot=%ld stored=%ld dropped=%ld satmod=%d nomem=%d maxtot=%d",
+                       name, s.alloc, s.tot, s.stored, s.dropped, s.satModules, s.noMemModules, s.maxTot);
+  };
+  add("MD", md);
+  add("LS", ls);
+  add("T3", t3);
+  add("T5", t5);
+  add("T4", t4);
+  k += std::snprintf(buf + k, sizeof(buf) - k,
+                     " | pLS n=%u cap=%u | pT3 tot=%u stored=%u cap=%u | pT5 tot=%u stored=%u cap=%u"
+                     " | TC n=%u pix=%u capPix=%u nonpix=%u capNonPix=%u | MAP atcap=%d max=%d cap=%u\n",
+                     nPLS, n_max_pixel_segments_per_module, pT3.totOccupancyPixelTriplets(), pT3.nPixelTriplets(),
+                     n_max_pixel_triplets, pT5.totOccupancyPixelQuintuplets(), pT5.nPixelQuintuplets(),
+                     n_max_pixel_quintuplets, nTC, nTCpix, n_max_pixel_track_candidates, nTCnon,
+                     n_max_nonpixel_track_candidates, mapAtCap, mapMax, max_connected_modules);
+  std::fputs(buf, stdout);
+}
+
+//________________________________________________________________________________________________________________________________
 void createOutputBranches() {
   createSimTrackContainerBranches();
   createTrackCandidateBranches();
@@ -41,11 +260,17 @@ void createOutputBranches() {
     createT3DNNBranches();
   if (ana.t4dnn_branches)
     createT4DNNBranches();
+
+  if (rungMode() > 0)
+    createRungBranches();
 }
 
 //________________________________________________________________________________________________________________________________
 void fillOutputBranches(LSTEvent* event) {
   float matchfrac = 0.75;
+
+  if (rungMode() > 0)
+    rungFlagHits(true);
 
   unsigned int n_accepted_simtrk = setSimTrackContainerBranches(event);
 
@@ -956,6 +1181,7 @@ std::map<unsigned int, unsigned int> setMiniDoubletBranches(LSTEvent* event,
   // global md index that will be used to keep track of md being outputted to the ntuple
   // each time a md is written out the following will be counted up
   unsigned int md_idx = 0;
+  int rung_n_total = 0;
 
   // map to keep track of (GPU mdIdx) -> (md_idx in ntuple output)
   // There is a specific mdIdx used to navigate the GPU array of mini-doublets
@@ -969,6 +1195,13 @@ std::map<unsigned int, unsigned int> setMiniDoubletBranches(LSTEvent* event,
     for (unsigned int iMD = 0; iMD < miniDoubletsOccupancy.nMDs()[idx]; iMD++) {
       // Compute the specific MD index to access specific spot in the array of GPU memory
       unsigned int mdIdx = ranges.miniDoubletModuleIndices()[idx] + iMD;
+      if (rungMode() > 0) {
+        ++rung_n_total;
+        auto [rung_hit_idx, rung_hit_type] = getHitIdxsAndHitTypesFromMD(event, mdIdx);
+        if (rungMode() == 1 and not rungKeep(rung_hit_idx, rung_hit_type))
+          continue;
+        rungPushHits("md", rung_hit_idx, rung_hit_type);
+      }
 
       // From that gpu memory index "mdIdx" -> output ntuple's md index is mapped
       // This is useful later when connecting higher level objects to point to specific one in the ntuple
@@ -1085,6 +1318,8 @@ std::map<unsigned int, unsigned int> setMiniDoubletBranches(LSTEvent* event,
     }
   }
 
+  if (rungMode() > 0)
+    ana.tx->setBranch<int>("n_md_total", rung_n_total);
   // Now save the (obj -> simidx) mapping
   ana.tx->setBranch<std::vector<std::vector<int>>>("md_simIdxAll", md_simIdxAll);
   ana.tx->setBranch<std::vector<std::vector<float>>>("md_simIdxAllFrac", md_simIdxAllFrac);
@@ -1141,6 +1376,7 @@ std::map<unsigned int, unsigned int> setLineSegmentBranches(LSTEvent* event,
   // global index that will be used to keep track of obj being outputted to the ntuple
   // each time a obj is written out the following will be counted up
   unsigned int ls_idx = 0;
+  int rung_n_total = 0;
 
   // map to keep track of (GPU objIdx) -> (obj_idx in ntuple output)
   // There is a specific objIdx used to navigate the GPU array of mini-doublets
@@ -1154,6 +1390,13 @@ std::map<unsigned int, unsigned int> setLineSegmentBranches(LSTEvent* event,
     for (unsigned int iLS = 0; iLS < segmentsOccupancy.nSegments()[idx]; iLS++) {
       // Compute the specific obj index to access specific spot in the array of GPU memory
       unsigned int lsIdx = ranges.segmentModuleIndices()[idx] + iLS;
+      if (rungMode() > 0) {
+        ++rung_n_total;
+        auto [rung_hit_idx, rung_hit_type] = getHitIdxsAndHitTypesFromLS(event, lsIdx);
+        if (rungMode() == 1 and not rungKeep(rung_hit_idx, rung_hit_type))
+          continue;
+        rungPushHits("ls", rung_hit_idx, rung_hit_type);
+      }
 
       // From that gpu memory index "objIdx" -> output ntuple's obj index is mapped
       // This is useful later when connecting higher level objects to point to specific one in the ntuple
@@ -1217,8 +1460,8 @@ std::map<unsigned int, unsigned int> setLineSegmentBranches(LSTEvent* event,
 
 #endif
       if (ana.md_branches) {
-        ana.tx->pushbackToBranch<int>("ls_mdIdx0", md_idx_map.at(mdIdxs[0]));
-        ana.tx->pushbackToBranch<int>("ls_mdIdx1", md_idx_map.at(mdIdxs[1]));
+        ana.tx->pushbackToBranch<int>("ls_mdIdx0", rungIdx(md_idx_map, mdIdxs[0]));
+        ana.tx->pushbackToBranch<int>("ls_mdIdx1", rungIdx(md_idx_map, mdIdxs[1]));
       }
 
       // Compute whether this is a fake
@@ -1270,6 +1513,8 @@ std::map<unsigned int, unsigned int> setLineSegmentBranches(LSTEvent* event,
   }
 
   // Now save the (obj -> simidx) mapping
+  if (rungMode() > 0)
+    ana.tx->setBranch<int>("n_ls_total", rung_n_total);
   ana.tx->setBranch<std::vector<std::vector<int>>>("ls_simIdxAll", ls_simIdxAll);
   ana.tx->setBranch<std::vector<std::vector<float>>>("ls_simIdxAllFrac", ls_simIdxAllFrac);
 
@@ -1318,6 +1563,7 @@ std::map<unsigned int, unsigned int> setTripletBranches(LSTEvent* event,
   std::vector<std::vector<int>> t3_simIdxAll;
   std::vector<std::vector<float>> t3_simIdxAllFrac;
   // Then obtain the lower module index
+  int rung_n_total = 0;
   unsigned int t3_idx = 0;  // global t3 index that will be used to keep track of t3 being outputted to the ntuple
   // map to keep track of (GPU t3Idx) -> (t3_idx in ntuple output)
   std::map<unsigned int, unsigned int> t3_idx_map;
@@ -1326,6 +1572,13 @@ std::map<unsigned int, unsigned int> setTripletBranches(LSTEvent* event,
   for (unsigned int idx = 0; idx < nRanges; ++idx) {
     for (unsigned int iT3 = 0; iT3 < tripletOccupancies.nTriplets()[idx]; iT3++) {
       unsigned int t3Idx = ranges.tripletModuleIndices()[idx] + iT3;
+      if (rungMode() > 0) {
+        ++rung_n_total;
+        auto [rung_hit_idx, rung_hit_type] = getHitIdxsAndHitTypesFromT3(event, t3Idx);
+        if (rungMode() == 1 and not rungKeep(rung_hit_idx, rung_hit_type))
+          continue;
+        rungPushHits("t3", rung_hit_idx, rung_hit_type);
+      }
 #ifdef CUT_VALUE_DEBUG
       ana.tx->pushbackToBranch<int>("t3_rawIdx", t3Idx);
 #endif
@@ -1335,8 +1588,8 @@ std::map<unsigned int, unsigned int> setTripletBranches(LSTEvent* event,
           matchedSimTrkIdxsAndFracs(hit_idx, hit_type, trk_simhit_simTrkIdx, trk_ph2_simHitIdx, trk_pix_simHitIdx);
       std::vector<unsigned int> lsIdxs = getLSsFromT3(event, t3Idx);
       if (ana.ls_branches) {
-        ana.tx->pushbackToBranch<int>("t3_lsIdx0", ls_idx_map.at(lsIdxs[0]));
-        ana.tx->pushbackToBranch<int>("t3_lsIdx1", ls_idx_map.at(lsIdxs[1]));
+        ana.tx->pushbackToBranch<int>("t3_lsIdx0", rungIdx(ls_idx_map, lsIdxs[0]));
+        ana.tx->pushbackToBranch<int>("t3_lsIdx1", rungIdx(ls_idx_map, lsIdxs[1]));
       }
       // Computing line segment pt estimate (assuming beam spot is at zero)
       lst_math::Hit hitA(hitsBase.xs()[hit_idx[0]], hitsBase.ys()[hit_idx[0]], hitsBase.zs()[hit_idx[0]]);
@@ -1383,6 +1636,8 @@ std::map<unsigned int, unsigned int> setTripletBranches(LSTEvent* event,
       t3_idx++;
     }
   }
+  if (rungMode() > 0)
+    ana.tx->setBranch<int>("n_t3_total", rung_n_total);
   ana.tx->setBranch<std::vector<std::vector<int>>>("t3_simIdxAll", t3_simIdxAll);
   ana.tx->setBranch<std::vector<std::vector<float>>>("t3_simIdxAllFrac", t3_simIdxAllFrac);
   std::vector<std::vector<int>> sim_t3IdxAll_to_write;
@@ -1448,6 +1703,7 @@ std::map<unsigned int, unsigned int> setQuadrupletBranches(LSTEvent* event,
   std::vector<std::vector<int>> t4_simIdxAll;
   std::vector<std::vector<float>> t4_simIdxAllFrac;
   // Then obtain the lower module index
+  int rung_n_total = 0;
   unsigned int t4_idx = 0;  // global t4 index that will be used to keep track of t4 being outputted to the ntuple
   // map to keep track of (GPU t4Idx) -> (t4_idx in ntuple output)
   std::map<unsigned int, unsigned int> t4_idx_map;
@@ -1456,6 +1712,13 @@ std::map<unsigned int, unsigned int> setQuadrupletBranches(LSTEvent* event,
     unsigned int nmods = modules.nLowerModules();
     for (unsigned int iT4 = 0; iT4 < quadrupletOccupancies.nQuadruplets()[idx]; iT4++) {
       unsigned int t4Idx = ranges.quadrupletModuleIndices()[idx] + iT4;
+      if (rungMode() > 0) {
+        ++rung_n_total;
+        auto [rung_hit_idx, rung_hit_type] = getHitIdxsAndHitTypesFromT4(event, t4Idx);
+        if (rungMode() == 1 and not rungKeep(rung_hit_idx, rung_hit_type))
+          continue;
+        rungPushHits("t4", rung_hit_idx, rung_hit_type);
+      }
       t4_idx_map[t4Idx] = t4_idx;
       auto [hit_idx, hit_type] = getHitIdxsAndHitTypesFromT4(event, t4Idx);
       float percent_matched;
@@ -1550,6 +1813,8 @@ std::map<unsigned int, unsigned int> setQuadrupletBranches(LSTEvent* event,
       }
     }
   }
+  if (rungMode() > 0)
+    ana.tx->setBranch<int>("n_t4_total", rung_n_total);
   ana.tx->setBranch<std::vector<std::vector<int>>>("t4_simIdxAll", t4_simIdxAll);
   ana.tx->setBranch<std::vector<std::vector<float>>>("t4_simIdxAllFrac", t4_simIdxAllFrac);
   std::vector<std::vector<int>> sim_t4IdxAll_to_write;
@@ -1613,6 +1878,7 @@ std::map<unsigned int, unsigned int> setQuintupletBranches(LSTEvent* event,
   std::vector<std::vector<int>> t5_simIdxAll;
   std::vector<std::vector<float>> t5_simIdxAllFrac;
   // Then obtain the lower module index
+  int rung_n_total = 0;
   unsigned int t5_idx = 0;  // global t5 index that will be used to keep track of t5 being outputted to the ntuple
   // map to keep track of (GPU t5Idx) -> (t5_idx in ntuple output)
   std::map<unsigned int, unsigned int> t5_idx_map;
@@ -1621,6 +1887,13 @@ std::map<unsigned int, unsigned int> setQuintupletBranches(LSTEvent* event,
   for (unsigned int idx = 0; idx < nRanges; ++idx) {
     for (unsigned int iT5 = 0; iT5 < quintupletOccupancies.nQuintuplets()[idx]; iT5++) {
       unsigned int t5Idx = ranges.quintupletModuleIndices()[idx] + iT5;
+      if (rungMode() > 0) {
+        ++rung_n_total;
+        auto [rung_hit_idx, rung_hit_type] = getHitIdxsAndHitTypesFromT5(event, t5Idx);
+        if (rungMode() == 1 and not rungKeep(rung_hit_idx, rung_hit_type))
+          continue;
+        rungPushHits("t5", rung_hit_idx, rung_hit_type);
+      }
 #ifdef CUT_VALUE_DEBUG
       ana.tx->pushbackToBranch<int>("t5_rawIdx", t5Idx);
 #endif
@@ -1637,8 +1910,8 @@ std::map<unsigned int, unsigned int> setQuintupletBranches(LSTEvent* event,
                                                             &percent_matched);
       std::vector<unsigned int> t3Idxs = getT3sFromT5(event, t5Idx);
       if (ana.t3_branches) {
-        ana.tx->pushbackToBranch<int>("t5_t3Idx0", t3_idx_map.at(t3Idxs[0]));
-        ana.tx->pushbackToBranch<int>("t5_t3Idx1", t3_idx_map.at(t3Idxs[1]));
+        ana.tx->pushbackToBranch<int>("t5_t3Idx0", rungIdx(t3_idx_map, t3Idxs[0]));
+        ana.tx->pushbackToBranch<int>("t5_t3Idx1", rungIdx(t3_idx_map, t3Idxs[1]));
       }
       float pt = __H2F(quintuplets.innerRadius()[t5Idx]) * k2Rinv1GeVf * 2;
       float eta = __H2F(quintuplets.eta()[t5Idx]);
@@ -1727,6 +2000,8 @@ std::map<unsigned int, unsigned int> setQuintupletBranches(LSTEvent* event,
       }
     }
   }
+  if (rungMode() > 0)
+    ana.tx->setBranch<int>("n_t5_total", rung_n_total);
   ana.tx->setBranch<std::vector<std::vector<int>>>("t5_simIdxAll", t5_simIdxAll);
   ana.tx->setBranch<std::vector<std::vector<float>>>("t5_simIdxAllFrac", t5_simIdxAllFrac);
   std::vector<std::vector<int>> sim_t5IdxAll_to_write;
@@ -1798,6 +2073,7 @@ std::map<unsigned int, unsigned int> setPixelLineSegmentBranches(
   std::vector<std::vector<int>> pls_simIdxAll;
   std::vector<std::vector<float>> pls_simIdxAllFrac;
   // Then obtain the lower module index
+  int rung_n_total = 0;
   unsigned int pls_idx = 0;  // global pls index that will be used to keep track of pls being outputted to the ntuple
   // map to keep track of (GPU plsIdx) -> (pls_idx in ntuple output)
   std::map<unsigned int, unsigned int> pls_idx_map;
@@ -1805,6 +2081,13 @@ std::map<unsigned int, unsigned int> setPixelLineSegmentBranches(
   unsigned int n_pls = segmentsOccupancy.nSegments()[pixelModule];
   unsigned int pls_range_start = ranges.segmentModuleIndices()[pixelModule];
   for (unsigned int ipLS = 0; ipLS < n_pls; ipLS++) {
+    if (rungMode() > 0) {
+      ++rung_n_total;
+      auto [rung_hit_idx, rung_hit_type] = getHitIdxsAndHitTypesFrompLS(event, ipLS);
+      if (rungMode() == 1 and not rungKeep(rung_hit_idx, rung_hit_type))
+        continue;
+      rungPushHits("pLS", rung_hit_idx, rung_hit_type);
+    }
 #ifdef CUT_VALUE_DEBUG
     ana.tx->pushbackToBranch<int>("pLS_rawIdx", ipLS);
 #endif
@@ -1814,7 +2097,7 @@ std::map<unsigned int, unsigned int> setPixelLineSegmentBranches(
     auto [simidx, simidxfrac] =
         matchedSimTrkIdxsAndFracs(hit_idx, hit_type, trk_simhit_simTrkIdx, trk_ph2_simHitIdx, trk_pix_simHitIdx);
     if (ana.ls_branches)
-      ana.tx->pushbackToBranch<int>("pLS_lsIdx", ls_idx_map.at(plsIdx));
+      ana.tx->pushbackToBranch<int>("pLS_lsIdx", rungIdx(ls_idx_map, plsIdx));
     ana.tx->pushbackToBranch<float>("pLS_pt", pixelSeeds.ptIn()[ipLS]);
     ana.tx->pushbackToBranch<float>("pLS_ptErr", pixelSeeds.ptErr()[ipLS]);
     ana.tx->pushbackToBranch<float>("pLS_eta", pixelSeeds.eta()[ipLS]);
@@ -1881,6 +2164,8 @@ std::map<unsigned int, unsigned int> setPixelLineSegmentBranches(
     // count global
     pls_idx++;
   }
+  if (rungMode() > 0)
+    ana.tx->setBranch<int>("n_pLS_total", rung_n_total);
   ana.tx->setBranch<std::vector<std::vector<int>>>("pLS_simIdxAll", pls_simIdxAll);
   ana.tx->setBranch<std::vector<std::vector<float>>>("pLS_simIdxAllFrac", pls_simIdxAllFrac);
   std::vector<std::vector<int>> sim_plsIdxAll_to_write;
@@ -1939,6 +2224,7 @@ std::map<unsigned int, unsigned int> setPixelTripletBranches(LSTEvent* event,
   std::vector<std::vector<int>> pt3_simIdxAll;
   std::vector<std::vector<float>> pt3_simIdxAllFrac;
   // Then obtain the lower module index
+  int rung_n_total = 0;
   unsigned int pt3_idx = 0;  // global pt3 index that will be used to keep track of pt3 being outputted to the ntuple
   // map to keep track of (GPU pt3Idx) -> (pt3_idx in ntuple output)
   std::map<unsigned int, unsigned int> pt3_idx_map;
@@ -1946,6 +2232,13 @@ std::map<unsigned int, unsigned int> setPixelTripletBranches(LSTEvent* event,
   unsigned int nPixelTriplets = pixelTriplets.nPixelTriplets();
   for (unsigned int ipT3 = 0; ipT3 < nPixelTriplets; ipT3++) {
     unsigned int pt3Idx = ipT3;
+    if (rungMode() > 0) {
+      ++rung_n_total;
+      auto [rung_hit_idx, rung_hit_type] = getHitIdxsAndHitTypesFrompT3(event, ipT3);
+      if (rungMode() == 1 and not rungKeep(rung_hit_idx, rung_hit_type))
+        continue;
+      rungPushHits("pT3", rung_hit_idx, rung_hit_type);
+    }
 #ifdef CUT_VALUE_DEBUG
     ana.tx->pushbackToBranch<int>("pT3_rawIdx", ipT3);
 #endif
@@ -1964,12 +2257,12 @@ std::map<unsigned int, unsigned int> setPixelTripletBranches(LSTEvent* event,
     ana.tx->pushbackToBranch<float>("pT3_score", pixelTriplets.score()[ipT3]);
     if (ana.pls_branches) {
       unsigned int plsIdx = ranges.segmentModuleIndices()[modules.nLowerModules()] + ipLS;
-      unsigned int pls_idx = pls_idx_map.at(plsIdx);
+      int pls_idx = rungIdx(pls_idx_map, plsIdx);
       ana.tx->pushbackToBranch<int>("pT3_plsIdx", pls_idx);
     }
     if (ana.t3_branches) {
       unsigned int t3Idx = getT3FrompT3(event, ipT3);
-      unsigned int t3_idx = t3_idx_map.at(t3Idx);
+      int t3_idx = rungIdx(t3_idx_map, t3Idx);
       ana.tx->pushbackToBranch<int>("pT3_t3Idx", t3_idx);
     }
     std::vector<int> otHits;
@@ -2089,6 +2382,8 @@ std::map<unsigned int, unsigned int> setPixelTripletBranches(LSTEvent* event,
     // count global
     pt3_idx++;
   }
+  if (rungMode() > 0)
+    ana.tx->setBranch<int>("n_pT3_total", rung_n_total);
   ana.tx->setBranch<std::vector<std::vector<int>>>("pT3_simIdxAll", pt3_simIdxAll);
   ana.tx->setBranch<std::vector<std::vector<float>>>("pT3_simIdxAllFrac", pt3_simIdxAllFrac);
   std::vector<std::vector<int>> sim_pt3IdxAll_to_write;
@@ -2152,6 +2447,7 @@ std::map<unsigned int, unsigned int> setPixelQuintupletBranches(LSTEvent* event,
   std::vector<std::vector<int>> pt5_simIdxAll;
   std::vector<std::vector<float>> pt5_simIdxAllFrac;
   // Then obtain the lower module index
+  int rung_n_total = 0;
   unsigned int pt5_idx = 0;  // global pt5 index that will be used to keep track of pt5 being outputted to the ntuple
   // map to keep track of (GPU pt5Idx) -> (pt5_idx in ntuple output)
   std::map<unsigned int, unsigned int> pt5_idx_map;
@@ -2159,6 +2455,13 @@ std::map<unsigned int, unsigned int> setPixelQuintupletBranches(LSTEvent* event,
   unsigned int nPixelQuintuplets = pixelQuintuplets.nPixelQuintuplets();
   for (unsigned int ipT5 = 0; ipT5 < nPixelQuintuplets; ipT5++) {
     unsigned int pt5Idx = ipT5;
+    if (rungMode() > 0) {
+      ++rung_n_total;
+      auto [rung_hit_idx, rung_hit_type] = getHitIdxsAndHitTypesFrompT5(event, ipT5);
+      if (rungMode() == 1 and not rungKeep(rung_hit_idx, rung_hit_type))
+        continue;
+      rungPushHits("pT5", rung_hit_idx, rung_hit_type);
+    }
 #ifdef CUT_VALUE_DEBUG
     ana.tx->pushbackToBranch<int>("pT5_rawIdx", ipT5);
 #endif
@@ -2177,12 +2480,12 @@ std::map<unsigned int, unsigned int> setPixelQuintupletBranches(LSTEvent* event,
     ana.tx->pushbackToBranch<float>("pT5_phi", phi);
     if (ana.pls_branches) {
       unsigned int plsIdx = ranges.segmentModuleIndices()[modules.nLowerModules()] + ipLS;
-      unsigned int pls_idx = pls_idx_map.at(plsIdx);
+      int pls_idx = rungIdx(pls_idx_map, plsIdx);
       ana.tx->pushbackToBranch<int>("pT5_plsIdx", pls_idx);
     }
     if (ana.t5_branches) {
       unsigned int t5Idx = getT5FrompT5(event, ipT5);
-      unsigned int t5_idx = t5_idx_map.at(t5Idx);
+      int t5_idx = rungIdx(t5_idx_map, t5Idx);
       ana.tx->pushbackToBranch<int>("pT5_t5Idx", t5_idx);
     }
     bool isfake = true;
@@ -2220,6 +2523,8 @@ std::map<unsigned int, unsigned int> setPixelQuintupletBranches(LSTEvent* event,
     // count global
     pt5_idx++;
   }
+  if (rungMode() > 0)
+    ana.tx->setBranch<int>("n_pT5_total", rung_n_total);
   ana.tx->setBranch<std::vector<std::vector<int>>>("pT5_simIdxAll", pt5_simIdxAll);
   ana.tx->setBranch<std::vector<std::vector<float>>>("pT5_simIdxAllFrac", pt5_simIdxAllFrac);
   std::vector<std::vector<int>> sim_pt5IdxAll_to_write;
@@ -2346,7 +2651,7 @@ void setTrackCandidateBranches(LSTEvent* event,
       if (ana.pt5_branches)
         ana.tx->pushbackToBranch<int>(
             "tc_pt5Idx",
-            (ana.pt5_branches ? pt5_idx_map[trackCandidatesExtended.directObjectIndices()[tc_idx]] : -999));
+            (ana.pt5_branches ? rungIdxTC(pt5_idx_map, trackCandidatesExtended.directObjectIndices()[tc_idx]) : -999));
       if (ana.pt3_branches)
         ana.tx->pushbackToBranch<int>("tc_pt3Idx", -999);
       if (ana.t5_branches)
@@ -2361,7 +2666,7 @@ void setTrackCandidateBranches(LSTEvent* event,
       if (ana.pt3_branches)
         ana.tx->pushbackToBranch<int>(
             "tc_pt3Idx",
-            (ana.pt3_branches ? pt3_idx_map[trackCandidatesExtended.directObjectIndices()[tc_idx]] : -999));
+            (ana.pt3_branches ? rungIdxTC(pt3_idx_map, trackCandidatesExtended.directObjectIndices()[tc_idx]) : -999));
       if (ana.t5_branches)
         ana.tx->pushbackToBranch<int>("tc_t5Idx", -999);
       if (ana.pls_branches)
@@ -2375,7 +2680,7 @@ void setTrackCandidateBranches(LSTEvent* event,
         ana.tx->pushbackToBranch<int>("tc_pt3Idx", -999);
       if (ana.t5_branches)
         ana.tx->pushbackToBranch<int>(
-            "tc_t5Idx", (ana.t5_branches ? t5_idx_map[trackCandidatesExtended.directObjectIndices()[tc_idx]] : -999));
+            "tc_t5Idx", (ana.t5_branches ? rungIdxTC(t5_idx_map, trackCandidatesExtended.directObjectIndices()[tc_idx]) : -999));
       if (ana.pls_branches)
         ana.tx->pushbackToBranch<int>("tc_plsIdx", -999);
       if (ana.t4_branches)
@@ -2390,8 +2695,9 @@ void setTrackCandidateBranches(LSTEvent* event,
       if (ana.pls_branches)
         ana.tx->pushbackToBranch<int>(
             "tc_plsIdx",
-            (ana.pls_branches ? pls_idx_map[ranges.segmentModuleIndices()[modules.nLowerModules()] +
-                                            trackCandidatesExtended.directObjectIndices()[tc_idx]]
+            (ana.pls_branches ? rungIdxTC(pls_idx_map,
+                                          ranges.segmentModuleIndices()[modules.nLowerModules()] +
+                                              trackCandidatesExtended.directObjectIndices()[tc_idx])
                               : -999));
       if (ana.t4_branches)
         ana.tx->pushbackToBranch<int>("tc_t4Idx", -999);
@@ -2406,9 +2712,13 @@ void setTrackCandidateBranches(LSTEvent* event,
         ana.tx->pushbackToBranch<int>("tc_plsIdx", -999);
       if (ana.t4_branches)
         ana.tx->pushbackToBranch<int>(
-            "tc_t4Idx", (ana.t4_branches ? t4_idx_map[trackCandidatesExtended.directObjectIndices()[tc_idx]] : -999));
+            "tc_t4Idx", (ana.t4_branches ? rungIdxTC(t4_idx_map, trackCandidatesExtended.directObjectIndices()[tc_idx]) : -999));
     }
 
+    if (rungMode() > 0) {
+      auto rung_tc_hits = getHitIdxsAndHitTypesFromTC(event, tc_idx);
+      rungPushHits("tc", rung_tc_hits.first, rung_tc_hits.second);
+    }
     ana.tx->pushbackToBranch<int>("tc_isFake", isFake);
     ana.tx->pushbackToBranch<float>("tc_pMatched", percent_matched);
 
@@ -2445,6 +2755,8 @@ void setTrackCandidateBranches(LSTEvent* event,
     ana.tx->pushbackToBranch<int>("tc_simIdx", tc_simIdx);
   }
 
+  if (rungMode() > 0)
+    ana.tx->setBranch<int>("n_tc_total", static_cast<int>(nTrackCandidates));
   // Now save the (tc -> simidx) mapping
   ana.tx->setBranch<std::vector<std::vector<int>>>("tc_simIdxAll", tc_simIdxAll);
   ana.tx->setBranch<std::vector<std::vector<float>>>("tc_simIdxAllFrac", tc_simIdxAllFrac);

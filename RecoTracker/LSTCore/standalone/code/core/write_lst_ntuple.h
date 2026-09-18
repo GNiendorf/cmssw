@@ -32,6 +32,9 @@ void createPixelQuintupletBranches();
 void createOccupancyBranches();
 
 void fillOutputBranches(LSTEvent* event);
+void setRungInputEntry(int entry);
+std::vector<uint8_t> rungProbeHitMask();
+void printCapsCensus(LSTEvent* event, int entry);
 void setOccupancyBranches(LSTEvent* event);
 void setGenJetBranches(LSTEvent* event);
 unsigned int setSimTrackContainerBranches(LSTEvent* event);

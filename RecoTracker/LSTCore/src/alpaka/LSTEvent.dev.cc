@@ -14,6 +14,12 @@
 #include "TrackCandidate.h"
 #include "Triplet.h"
 #include "Quadruplet.h"
+#include "RungProbe.h"
+
+#include <cstdio>
+#include <cstdlib>
+#include <mutex>
+#include <string>
 
 #include <format>
 
@@ -295,6 +301,8 @@ void LSTEvent::createMiniDoublets() {
   if (objectsStatistics_) {
     addMiniDoubletsToEventExplicit();
   }
+  if (probeMask_ != nullptr)
+    probeMiniDoublets();
 }
 
 void LSTEvent::createSegmentsWithModuleMap() {
@@ -388,6 +396,130 @@ void LSTEvent::createSegmentsWithModuleMap() {
   if (objectsStatistics_) {
     addSegmentsToEventExplicit();
   }
+  if (probeMask_ != nullptr)
+    probeSegments();
+}
+
+namespace {
+  std::mutex rungProbeMutex;
+
+  template <typename Rec>
+  void rungProbeWrite(const char* name, int entry, Rec const* rec, unsigned int nSeen, unsigned int cap) {
+    const char* dir = std::getenv("LST_PROBE_DIR");
+    if (dir == nullptr)
+      return;
+    std::lock_guard<std::mutex> lock(rungProbeMutex);
+    const std::string path = std::string(dir) + "/" + name;
+    std::FILE* f = std::fopen(path.c_str(), "ab");
+    if (f == nullptr) {
+      lstWarning("rung probe: cannot open " + path);
+      return;
+    }
+    const unsigned int n = std::min(nSeen, cap);
+    // block header: magic, input entry, records, record size, records lost to the buffer cap
+    const unsigned int head[5] = {
+        0x52504231u, static_cast<unsigned int>(entry), n, static_cast<unsigned int>(sizeof(Rec)), nSeen - n};
+    std::fwrite(head, sizeof(unsigned int), 5, f);
+    std::fwrite(rec, sizeof(Rec), n, f);
+    std::fclose(f);
+  }
+}  // namespace
+
+void LSTEvent::probeMiniDoublets() {
+  alpaka::wait(queue_);
+  constexpr unsigned int cap = 1u << 20;
+  const unsigned int maskSize = probeMask_->size();
+  auto mask_h = cms::alpakatools::make_host_buffer<uint8_t[]>(queue_, maskSize + 1u);
+  std::copy(probeMask_->begin(), probeMask_->end(), mask_h.data());
+  auto mask_d = cms::alpakatools::make_device_buffer<uint8_t[]>(queue_, maskSize + 1u);
+  alpaka::memcpy(queue_, mask_d, mask_h);
+  auto rec_d = cms::alpakatools::make_device_buffer<MDProbeRecord[]>(queue_, cap);
+  auto n_d = cms::alpakatools::make_device_buffer<unsigned int>(queue_);
+  alpaka::memset(queue_, n_d, 0u);
+
+  alpaka::exec<Acc1D>(queue_,
+                      cms::alpakatools::make_workdiv<Acc1D>(1, 1024),
+                      ProbeMiniDoublets{},
+                      modules_.const_view().modules(),
+                      lstInputDC_->const_view().hits(),
+                      hitsDC_->const_view().extended(),
+                      hitsDC_->const_view().ranges(),
+                      miniDoubletsDC_->const_view().miniDoublets(),
+                      miniDoubletsDC_->const_view().miniDoubletsOccupancy(),
+                      rangesDC_->const_view(),
+                      ptCut_,
+                      clustSizeCut_,
+                      mask_d.data(),
+                      maskSize,
+                      rec_d.data(),
+                      cap,
+                      n_d.data());
+
+  auto n_h = cms::alpakatools::make_host_buffer<unsigned int>(queue_);
+  alpaka::memcpy(queue_, n_h, n_d);
+  auto rec_h = cms::alpakatools::make_host_buffer<MDProbeRecord[]>(queue_, cap);
+  alpaka::memcpy(queue_, rec_h, rec_d);
+  alpaka::wait(queue_);
+  rungProbeWrite("md_probe.bin", probeEntry_, rec_h.data(), *n_h.data(), cap);
+}
+
+void LSTEvent::probeSegments() {
+  alpaka::wait(queue_);
+  // the module map as LST holds it, once per job (host backends only)
+  if constexpr (std::is_same_v<Device, alpaka_common::DevHost>) {
+    static bool mapWritten = false;
+    std::lock_guard<std::mutex> lock(rungProbeMutex);
+    const char* dir = std::getenv("LST_PROBE_DIR");
+    if (not mapWritten and dir != nullptr) {
+      mapWritten = true;
+      auto modules = modules_.const_view().modules();
+      std::FILE* f = std::fopen((std::string(dir) + "/modmap.txt").c_str(), "w");
+      if (f != nullptr) {
+        std::fprintf(f, "# lowerModuleIdx detId subdet layer nConnected connectedLowerModuleIdx...\n");
+        for (unsigned int i = 0; i < nLowerModules_; ++i) {
+          std::fprintf(f, "%u %u %d %d %u", i, modules.detIds()[i], modules.subdets()[i], modules.layers()[i],
+                       static_cast<unsigned int>(modules.nConnectedModules()[i]));
+          for (unsigned int c = 0; c < modules.nConnectedModules()[i]; ++c)
+            std::fprintf(f, " %u", static_cast<unsigned int>(modules.moduleMap()[i][c]));
+          std::fprintf(f, "\n");
+        }
+        std::fclose(f);
+      }
+    }
+  }
+  constexpr unsigned int cap = 1u << 20;
+  const unsigned int maskSize = probeMask_->size();
+  auto mask_h = cms::alpakatools::make_host_buffer<uint8_t[]>(queue_, maskSize + 1u);
+  std::copy(probeMask_->begin(), probeMask_->end(), mask_h.data());
+  auto mask_d = cms::alpakatools::make_device_buffer<uint8_t[]>(queue_, maskSize + 1u);
+  alpaka::memcpy(queue_, mask_d, mask_h);
+  auto rec_d = cms::alpakatools::make_device_buffer<LSProbeRecord[]>(queue_, cap);
+  auto n_d = cms::alpakatools::make_device_buffer<unsigned int>(queue_);
+  alpaka::memset(queue_, n_d, 0u);
+
+  alpaka::exec<Acc1D>(queue_,
+                      cms::alpakatools::make_workdiv<Acc1D>(1, 1024),
+                      ProbeSegments{},
+                      modules_.const_view().modules(),
+                      lstInputDC_->const_view().hits(),
+                      miniDoubletsDC_->const_view().miniDoublets(),
+                      miniDoubletsDC_->const_view().miniDoubletsOccupancy(),
+                      segmentsDC_->const_view().segments(),
+                      segmentsDC_->const_view().segmentsOccupancy(),
+                      rangesDC_->const_view(),
+                      ptCut_,
+                      mask_d.data(),
+                      maskSize,
+                      rec_d.data(),
+                      cap,
+                      n_d.data());
+
+  auto n_h = cms::alpakatools::make_host_buffer<unsigned int>(queue_);
+  alpaka::memcpy(queue_, n_h, n_d);
+  auto rec_h = cms::alpakatools::make_host_buffer<LSProbeRecord[]>(queue_, cap);
+  alpaka::memcpy(queue_, rec_h, rec_d);
+  alpaka::wait(queue_);
+  rungProbeWrite("ls_probe.bin", probeEntry_, rec_h.data(), *n_h.data(), cap);
 }
 
 void LSTEvent::createTriplets() {

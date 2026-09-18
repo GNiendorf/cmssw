@@ -388,6 +388,10 @@ void run_lst() {
   std::vector<LSTInputHostCollection> out_lstInputHC;
   std::vector<int> evt_num;
   std::vector<TString> file_name;
+  // ladder instrumentation, both default off
+  const bool rungProbeOn = std::getenv("LST_PROBE_DIR") != nullptr;
+  const bool capsCensusOn = std::getenv("LST_CAPS_CENSUS") != nullptr;
+  std::vector<std::vector<uint8_t>> rungProbeMasks;
 
   // Backwards compatibility
   const auto hasClustSize = trk.contains("ph2_clustSize");
@@ -437,6 +441,8 @@ void run_lst() {
     out_lstInputHC.push_back(std::move(lstInputHC));
 
     evt_num.push_back(ana.looper.getCurrentEventIndex());
+    if (rungProbeOn)
+      rungProbeMasks.push_back(rungProbeHitMask());
     file_name.push_back(ana.looper.getCurrentFileName());
   }
   float timeForInputLoading = full_timer.RealTime() * 1000;
@@ -485,6 +491,8 @@ void run_lst() {
       timing_input_loading =
           addInputsToEventPreLoad(events.at(omp_get_thread_num()), &out_lstInputHC.at(evt), &lstInputDC, queue);
 
+      if (rungProbeOn)
+        events.at(omp_get_thread_num())->setRungProbe(&rungProbeMasks.at(evt), evt_num.at(evt));
       timing_MD = runMiniDoublet(events.at(omp_get_thread_num()), evt);
       timing_LS = runSegment(events.at(omp_get_thread_num()));
       timing_T3 = runT3(events.at(omp_get_thread_num()));
@@ -495,6 +503,9 @@ void run_lst() {
       timing_pT5 = runPixelQuintuplet(events.at(omp_get_thread_num()));
       timing_pT3 = runpT3(events.at(omp_get_thread_num()));
       timing_TC = runTrackCandidate(events.at(omp_get_thread_num()), ana.no_pls_dupclean, ana.tc_pls_triplets);
+
+      if (capsCensusOn)
+        printCapsCensus(events.at(omp_get_thread_num()), evt_num.at(evt));
 
       if (ana.verbose == 4) {
 #pragma omp critical
@@ -520,6 +531,7 @@ void run_lst() {
           TTree *t = (TTree *)f->Get(ana.input_tree_name.Data());
           trk.Init(t);
           trk.GetEntry(trkev);
+          setRungInputEntry(trkev);
           fillOutputBranches(events.at(omp_get_thread_num()));
           f->Close();
         }

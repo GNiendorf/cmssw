@@ -358,7 +358,33 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     shiftedCoords[2] = zn;
   }
 
-  template <alpaka::concepts::Acc TAcc>
+  // Rung probe (env-gated, see RungProbe.h).  With Probe=true a failed cut is recorded and evaluation continues.
+#ifndef LST_PROBE_REJECT
+#define LST_PROBE_REJECT(bit) \
+  do {                        \
+    if constexpr (Probe)      \
+      probe->fail |= (bit);   \
+    else                      \
+      return {};              \
+  } while (false)
+#endif
+
+  enum MDProbeBit : unsigned int {
+    kMDProbeClust = 1u << 0,
+    kMDProbeDz = 1u << 1,
+    kMDProbeCrosser = 1u << 2,
+    kMDProbeDrt = 1u << 3,
+    kMDProbeDPhiPre = 1u << 4,
+    kMDProbeDPhiChangePre = 1u << 5,
+    kMDProbeDPhi = 1u << 6,
+    kMDProbeDPhiChange = 1u << 7
+  };
+  struct MDProbe {
+    unsigned int fail = 0;
+    float dz = 0.f, drt = 0.f, dPhi = 0.f, dPhiChange = 0.f, miniCut = 0.f;
+  };
+
+  template <bool Probe = false, alpaka::concepts::Acc TAcc>
   ALPAKA_FN_ACC ALPAKA_FN_INLINE int runMiniDoubletDefaultAlgoBarrel(TAcc const& acc,
                                                                       ModuleMDData const& mod,
                                                                       float& dz,
@@ -377,13 +403,19 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                                                       float yUpper,
                                                                       float zUpper,
                                                                       float rtUpper,
-                                                                      const float ptCut) {
+                                                                      const float ptCut,
+                                                                      MDProbe* probe = nullptr) {
     dz = zLower - zUpper;
     const float dzCut = mod.moduleType == PS ? 2.f : 10.f;
     const float sign = ((dz > 0) - (dz < 0)) * ((zLower > 0) - (zLower < 0));
     const float invertedcrossercut = (alpaka::math::abs(acc, dz) > 2) * sign;
 
-    if ((alpaka::math::abs(acc, dz) >= dzCut) || (invertedcrossercut > 0)) {
+    if constexpr (Probe) {
+      if (alpaka::math::abs(acc, dz) >= dzCut)
+        probe->fail |= kMDProbeDz;
+      if (invertedcrossercut > 0)
+        probe->fail |= kMDProbeCrosser;
+    } else if ((alpaka::math::abs(acc, dz) >= dzCut) || (invertedcrossercut > 0)) {
       return 0;
     }
 
@@ -441,12 +473,12 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         miniCutSq < 0.9f ? alpaka::math::sqrt(acc, miniCutSq / (1.f - (2.f / 3.f) * miniCutSq)) : 1.e6f;
     const float absCrossDPhi = alpaka::math::abs(acc, crossDPhi);
     if (dotDPhi <= 0.f || absCrossDPhi >= tanMiniCut * dotDPhi)
-      return 0;
+      LST_PROBE_REJECT(kMDProbeDPhiPre);
 
     const float rInnerSq = alpaka::math::min(acc, r1sq, r2sq);
     const float dotDPhiChange = dotDPhi - rInnerSq;
     if (dotDPhiChange <= 0.f || absCrossDPhi >= tanMiniCut * dotDPhiChange)
-      return 0;
+      LST_PROBE_REJECT(kMDProbeDPhiChangePre);
 
     // Cut #2: dphi difference
     // Ref to original code: https://github.com/slava77/cms-tkph2-ntuple/blob/184d2325147e6930030d3d1f780136bc2dd29ce6/doubletAnalysis.C#L3085
@@ -454,7 +486,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     noShiftedDphi = mod.isTilted ? cms::alpakatools::deltaPhi(acc, xLower, yLower, xUpper, yUpper) : dPhi;
 
     if (alpaka::math::abs(acc, dPhi) >= miniCut)
-      return 0;
+      LST_PROBE_REJECT(kMDProbeDPhi);
 
     // Cut #3: The dphi change going from lower Hit to upper Hit
     // Ref to original code: https://github.com/slava77/cms-tkph2-ntuple/blob/184d2325147e6930030d3d1f780136bc2dd29ce6/doubletAnalysis.C#L3076
@@ -469,7 +501,15 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     }
 
     if (alpaka::math::abs(acc, dPhiChange) >= miniCut)
-      return 0;
+      LST_PROBE_REJECT(kMDProbeDPhiChange);
+    if constexpr (Probe) {
+      probe->dz = dz;
+      probe->dPhi = dPhi;
+      probe->dPhiChange = dPhiChange;
+      probe->miniCut = miniCut;
+      if (probe->fail)
+        return 0;
+    }
     const float tightCut = miniCut - mdDispAllowScoped(mod);
     return (tightCut < miniCut && (alpaka::math::abs(acc, dPhiChange) >= tightCut ||
                                    alpaka::math::abs(acc, dPhi) >= tightCut))
@@ -477,7 +517,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                : 1;
   }
 
-  template <alpaka::concepts::Acc TAcc>
+  template <bool Probe = false, alpaka::concepts::Acc TAcc>
   ALPAKA_FN_ACC ALPAKA_FN_INLINE int runMiniDoubletDefaultAlgoEndcap(TAcc const& acc,
                                                                       ModuleMDData const& mod,
                                                                       float& drt,
@@ -496,7 +536,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                                                       float yUpper,
                                                                       float zUpper,
                                                                       float rtUpper,
-                                                                      const float ptCut) {
+                                                                      const float ptCut,
+                                                                      MDProbe* probe = nullptr) {
     // Cut #1: dz cut. The dz difference can't be larger than 1cm. (max separation is 4mm for modules in the endcap)
     // Ref to original code: https://github.com/slava77/cms-tkph2-ntuple/blob/184d2325147e6930030d3d1f780136bc2dd29ce6/doubletAnalysis.C#L3093
     // For PS module in case when it is tilted a different dz (after the strip hit shift) is calculated later.
@@ -505,14 +546,14 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     const float dzCut = 1.f;
 
     if (alpaka::math::abs(acc, dz) >= dzCut) {
-      return 0;
+      LST_PROBE_REJECT(kMDProbeDz);
     }
     // Cut #2: drt cut. The drt difference can't be larger than 1cm. (max separation is 4mm for modules in the endcap)
     // Ref to original code: https://github.com/slava77/cms-tkph2-ntuple/blob/184d2325147e6930030d3d1f780136bc2dd29ce6/doubletAnalysis.C#L3100
     const float drtCut = mod.moduleType == PS ? 2.f : 10.f;
     drt = rtLower - rtUpper;
     if (alpaka::math::abs(acc, drt) >= drtCut) {
-      return 0;
+      LST_PROBE_REJECT(kMDProbeDrt);
     }
     float xn = 0, yn = 0, zn = 0;
 
@@ -557,11 +598,11 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
 
     // |dPhi| < pi/2
     if (dotDPhi <= 0.f)
-      return 0;
+      LST_PROBE_REJECT(kMDProbeDPhiPre);
 
     // |dPhi| < pi/4 (since dotDPhi > 0, equivalent to |tan(dPhi)| < 1)
     if (alpaka::math::abs(acc, crossDPhi) >= dotDPhi)
-      return 0;
+      LST_PROBE_REJECT(kMDProbeDPhiPre);
 
     // dz needs to change if it is a PS module where the strip hits are shifted in order to properly account for the case when a tilted module falls under "endcap logic"
     // if it was an endcap it will have zero effect
@@ -586,7 +627,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     const float r1r2sq = crossSq + dotDPhi * dotDPhi;
 
     if (crossSq >= looseCutDPhi * looseCutDPhi * r1r2sq)
-      return 0;
+      LST_PROBE_REJECT(kMDProbeDPhiPre);
 
     // dPhiChange pre-check: in endcap, dPhiChange = dPhi * (1+dzFrac)/dzFrac.
     // So |dPhiChange| >= cut implies |dPhi| >= cut * dzFrac/(1+dzFrac).
@@ -596,7 +637,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         (looseCutDPhi + 0.5f * sdSlopeSin * sdSlopeSin * sdSlopeSin) * dzFrac / (1.f + dzFrac);
 
     if (crossSq >= looseCutDPhiChange * looseCutDPhiChange * r1r2sq)
-      return 0;
+      LST_PROBE_REJECT(kMDProbeDPhiChangePre);
 
     // Cut #3: dphi
     dPhi = alpaka::math::atan2(acc, crossDPhi, dotDPhi);
@@ -605,7 +646,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                                  : dPhiThreshold(acc, rtUpper, mod, ptCut, dPhi, dz);
 
     if (alpaka::math::abs(acc, dPhi) >= miniCut) {
-      return 0;
+      LST_PROBE_REJECT(kMDProbeDPhi);
     }
 
     // Cut #4: dPhiChange
@@ -617,7 +658,16 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     noShiftedDphichange = noShiftedDphi / dzFrac * (1.f + dzFrac);
 
     if (alpaka::math::abs(acc, dPhiChange) >= miniCut)
-      return 0;
+      LST_PROBE_REJECT(kMDProbeDPhiChange);
+    if constexpr (Probe) {
+      probe->dz = dz;
+      probe->drt = drt;
+      probe->dPhi = dPhi;
+      probe->dPhiChange = dPhiChange;
+      probe->miniCut = miniCut;
+      if (probe->fail)
+        return 0;
+    }
     const float tightCut = miniCut - mdDispAllowScoped(mod);
     return (tightCut < miniCut && (alpaka::math::abs(acc, dPhiChange) >= tightCut ||
                                    alpaka::math::abs(acc, dPhi) >= tightCut))
@@ -625,7 +675,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                : 1;
   }
 
-  template <alpaka::concepts::Acc TAcc>
+  template <bool Probe = false, alpaka::concepts::Acc TAcc>
   ALPAKA_FN_ACC ALPAKA_FN_INLINE int runMiniDoubletDefaultAlgo(TAcc const& acc,
                                                                 ModuleMDData const& mod,
                                                                 float& dz,
@@ -647,12 +697,13 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                                                 const float ptCut,
                                                                 uint16_t clustSizeLower,
                                                                 uint16_t clustSizeUpper,
-                                                                const uint16_t clustSizeCut) {
+                                                                const uint16_t clustSizeCut,
+                                                                MDProbe* probe = nullptr) {
     if (clustSizeLower > clustSizeCut or clustSizeUpper > clustSizeCut) {
-      return 0;
+      LST_PROBE_REJECT(kMDProbeClust);
     }
     if (mod.subdet == Barrel) {
-      return runMiniDoubletDefaultAlgoBarrel(acc,
+      return runMiniDoubletDefaultAlgoBarrel<Probe>(acc,
                                              mod,
                                              dz,
                                              dPhi,
@@ -670,9 +721,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                              yUpper,
                                              zUpper,
                                              rtUpper,
-                                             ptCut);
+                                             ptCut,
+                                             probe);
     } else {
-      return runMiniDoubletDefaultAlgoEndcap(acc,
+      return runMiniDoubletDefaultAlgoEndcap<Probe>(acc,
                                              mod,
                                              dz,
                                              dPhi,
@@ -690,7 +742,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                              yUpper,
                                              zUpper,
                                              rtUpper,
-                                             ptCut);
+                                             ptCut,
+                                             probe);
     }
   }
 

@@ -100,6 +100,12 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     bool objectsStatistics_ = false;
     double memoryAllocatedMB_ = 0;
 
+    // Rung probe (env LST_PROBE_DIR): hit mask indexed by the input ph2 index, and the input entry.
+    std::vector<uint8_t> const* probeMask_ = nullptr;
+    int probeEntry_ = -1;
+    void probeMiniDoublets();
+    void probeSegments();
+
   public:
     // Constructor used for CMSSW integration. Uses an external queue.
     LSTEvent(bool verbose,
@@ -124,6 +130,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         throw std::invalid_argument("Minimum pT cut must be at least 0.6 GeV. Provided value: " +
                                     std::to_string(ptCut));
       }
+    }
+    void setRungProbe(std::vector<uint8_t> const* mask, int entry) {
+      probeMask_ = mask;
+      probeEntry_ = entry;
     }
     void initSync();        // synchronizes, for standalone usage
     void resetEventSync();  // synchronizes, for standalone usage
