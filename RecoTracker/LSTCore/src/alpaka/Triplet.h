@@ -294,7 +294,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
       }
     } else if (layer1 == 4) {
       if (layer2 == 12 && layer3 == 13) {
-        return residual < 0.063831687f;  // Region 22
+        return residual < 0.068f;  // Region 22
       } else if (layer2 == 5) {
         if (layer3 == 6) {
           return residual < 0.04362525f;  // Region 23
@@ -440,7 +440,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
           return rzChiSquared < 3.3200853f;  // Region 1
         }
       } else if (layer2 == 13 && layer3 == 14) {
-        return rzChiSquared < 17.194584f;  // Region 2
+        return rzChiSquared < 28.f;  // Region 2
       }
     } else if (layer1 == 8) {
       if (layer2 == 9) {
@@ -450,7 +450,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
           return rzChiSquared < 3.4359624f;  // Region 4
         }
       } else if (layer2 == 14 && layer3 == 15) {
-        return rzChiSquared < 4.6487956f;  // Region 5
+        return rzChiSquared < 5.5f;  // Region 5
       }
     } else if (layer1 == 9) {
       if (layer2 == 10) {
@@ -460,11 +460,11 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
           return rzChiSquared < 3.095819f;  // Region 7
         }
       } else if (layer2 == 15 && layer3 == 16) {
-        return rzChiSquared < 11.477617f;  // Region 8
+        return rzChiSquared < 27.5f;  // Region 8
       }
     } else if (layer1 == 1 && layer2 == 2) {
       if (layer3 == 7) {
-        return rzChiSquared < 96.949936f;  // Region 10
+        return rzChiSquared < 129.f;  // Region 10
       } else if (layer3 == 3) {
         return rzChiSquared < 458.43982f;  // Region 11
       }
@@ -492,7 +492,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
           return rzChiSquared < 3.853796f;  // Region 18
         }
       } else if (layer2 == 12 && layer3 == 13) {
-        return rzChiSquared < 6.2774787f;  // Region 19
+        return rzChiSquared < 10.8f;  // Region 19
       }
     }
     return false;
@@ -594,20 +594,6 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
 
     std::tie(circleRadius, circleCenterX, circleCenterY) = computeRadiusFromThreeAnchorHits(
         acc, hitCoords.x1, hitCoords.y1, hitCoords.x2, hitCoords.y2, hitCoords.x3, hitCoords.y3);
-
-    // The widening's own extra triplets pay for themselves: a triplet that uses a mini-doublet
-    // admitted only by the widened pointing window AND whose circle disagrees with one of its own
-    // mini-doublet directions is rejected outright.  A triplet built entirely from mini-doublets
-    // the PR head would also have made keeps the shipped behaviour: it is flagged, and the T4 and
-    // T5 gates decide.
-    {
-      const bool t3AnyLooseMd =
-          mds.mdLoose()[firstMDIndex] || mds.mdLoose()[secondMDIndex] || mds.mdLoose()[thirdMDIndex];
-      const uint16_t t3ModIdx[] = {innerInnerLowerModuleIndex, middleLowerModuleIndex, outerOuterLowerModuleIndex};
-      const unsigned int t3MdIdx[] = {firstMDIndex, secondMDIndex, thirdMDIndex};
-      if (t3AnyLooseMd && t3MdDirectionFail(acc, modules, mds, t3ModIdx, t3MdIdx, circleRadius, circleCenterX, circleCenterY))
-        return false;
-    }
 
     if (not passRZConstraint(acc,
                              modules,

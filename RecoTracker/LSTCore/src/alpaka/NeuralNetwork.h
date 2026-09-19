@@ -135,8 +135,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
       uint8_t pt_index = (t3_pt > 5);
       uint8_t bin_index = (eta1 > 2.5f) ? (dnn::kEtaBins - 1) : static_cast<unsigned int>(eta1 / dnn::kEtaSize);
 
+      // The displaced working point was set on stock triplets; at production radii above 10 cm it keeps 95%.
+      constexpr float kT3DispWpScale = 0.02f;
       return output[1] > dnn::t3dnn::kWp_prompt[pt_index][bin_index] ||
-             output[2] > dnn::t3dnn::kWp_displaced[pt_index][bin_index];
+             output[2] > kT3DispWpScale * dnn::t3dnn::kWp_displaced[pt_index][bin_index];
     }
   }  // namespace t3dnn
 

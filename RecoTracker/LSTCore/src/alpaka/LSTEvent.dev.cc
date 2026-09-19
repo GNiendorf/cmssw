@@ -22,6 +22,8 @@
 #include <string>
 
 #include <format>
+#include <limits>
+#include <stdexcept>
 
 using Device = ALPAKA_ACCELERATOR_NAMESPACE::Device;
 using Queue = ALPAKA_ACCELERATOR_NAMESPACE::Queue;
@@ -29,6 +31,32 @@ using Acc1D = ALPAKA_ACCELERATOR_NAMESPACE::Acc1D;
 using Acc3D = ALPAKA_ACCELERATOR_NAMESPACE::Acc3D;
 
 using namespace ALPAKA_ACCELERATOR_NAMESPACE::lst;
+
+namespace {
+  // A collection is one byte buffer whose extent is an alpaka Idx (uint32_t): a larger request wraps silently.
+  template <typename TLayout, typename... TSizes>
+  void checkBufferSize(const char* name, TSizes... sizes) {
+    constexpr uint64_t kMaxBytes = std::numeric_limits<alpaka_common::Idx>::max();
+    constexpr uint64_t kMaxSlots = std::numeric_limits<int32_t>::max();
+    const uint64_t slots[] = {static_cast<uint64_t>(sizes)...};
+    bool fits = true;
+    for (uint64_t n : slots)
+      fits = fits and n <= kMaxSlots;
+    uint64_t bytes = 0;
+    if (fits) {
+      if constexpr (sizeof...(TSizes) == 1)
+        bytes = TLayout::computeDataSize(static_cast<int32_t>(slots[0]));
+      else
+        bytes = TLayout::computeDataSize({{static_cast<int32_t>(sizes)...}});
+    }
+    if (not fits or bytes > kMaxBytes)
+      throw std::runtime_error(std::format("LST: the {} buffer needs {} slots = {} bytes, above the {} byte limit of one buffer",
+                                           name,
+                                           slots[0],
+                                           bytes,
+                                           kMaxBytes));
+  }
+}  // namespace
 
 void LSTEvent::initSync() {
   alpaka::wait(queue_);  // other calls can be asynchronous
@@ -108,6 +136,7 @@ void LSTEvent::addInputToEvent(LSTInputDeviceCollection const* lstInputDC) {
 void LSTEvent::addHitToEvent() {
   if (!hitsDC_) {
     const int32_t nHits = lstInputDC_->size()[0];
+    checkBufferSize<HitsSoA>("hits", nHits, nModules_);
     hitsDC_.emplace(queue_, nHits, nModules_);
     auto buf = hitsDC_->buffer();
     alpaka::memset(queue_, buf, 0xff);
@@ -119,6 +148,7 @@ void LSTEvent::addHitToEvent() {
   }
 
   if (!rangesDC_) {
+    checkBufferSize<ObjectRangesSoA>("object ranges", nLowerModules_ + 1);
     rangesDC_.emplace(queue_, nLowerModules_ + 1);
     auto buf = rangesDC_->buffer();
     alpaka::memset(queue_, buf, 0xff);
@@ -165,6 +195,7 @@ void LSTEvent::addPixelSegmentToEventStart() {
   }
 
   if (!pixelSegmentsDC_) {
+    checkBufferSize<PixelSegmentsSoA>("pixel segment", pixelSize_);
     pixelSegmentsDC_.emplace(queue_, pixelSize_);
     if (objectsStatistics_) {
       double mb = alpaka::getExtentProduct(pixelSegmentsDC_->buffer()) / 1e6;
@@ -240,6 +271,7 @@ void LSTEvent::createMiniDoublets() {
     *nTotalMDs_buf_h.data() += 2 * pixelSize_;
     unsigned int nTotalMDs = *nTotalMDs_buf_h.data();
 
+    checkBufferSize<MiniDoubletsSoABlocks>("mini-doublet", nTotalMDs, nLowerModules_ + 1);
     miniDoubletsDC_.emplace(queue_, nTotalMDs, nLowerModules_ + 1);
     if (objectsStatistics_) {
       double mb = alpaka::getExtentProduct(miniDoubletsDC_->buffer()) / 1e6;
@@ -342,6 +374,7 @@ void LSTEvent::createSegmentsWithModuleMap() {
 
     nTotalSegments_ += pixelSize_;
 
+    checkBufferSize<SegmentsSoABlocks>("segment", nTotalSegments_, nLowerModules_ + 1);
     segmentsDC_.emplace(queue_, nTotalSegments_, nLowerModules_ + 1);
     if (objectsStatistics_) {
       double mb = alpaka::getExtentProduct(segmentsDC_->buffer()) / 1e6;
@@ -560,6 +593,7 @@ void LSTEvent::createTriplets() {
     alpaka::wait(queue_);  // wait to get the value before using it
 
     unsigned int nTotalTriplets = *maxTriplets_buf_h.data();
+    checkBufferSize<TripletsSoABlocks>("triplet", nTotalTriplets, nLowerModules_);
     tripletsDC_.emplace(queue_, nTotalTriplets, nLowerModules_);
     if (objectsStatistics_) {
       double mb = alpaka::getExtentProduct(tripletsDC_->buffer()) / 1e6;
@@ -775,8 +809,10 @@ void LSTEvent::createTrackCandidates(bool no_pls_dupclean, bool tc_pls_triplets)
     nTotal = 1;  // avoid zero-size allocation
 
   // TC allocation
+  checkBufferSize<TrackCandidatesBaseSoA>("track candidate", nTotal);
   trackCandidatesBaseDC_.emplace(queue_, nTotal);
   trackCandidatesBaseDC_->zeroInitialise(queue_);
+  checkBufferSize<TrackCandidatesExtendedSoA>("track candidate (extended)", nTotal);
   trackCandidatesExtendedDC_.emplace(queue_, nTotal);
   trackCandidatesExtendedDC_->zeroInitialise(queue_);
   if (objectsStatistics_) {
@@ -918,6 +954,7 @@ void LSTEvent::createTrackCandidates(bool no_pls_dupclean, bool tc_pls_triplets)
 
 void LSTEvent::createPixelTriplets() {
   if (!pixelTripletsDC_) {
+    checkBufferSize<PixelTripletsSoA>("pixel triplet", n_max_pixel_triplets);
     pixelTripletsDC_.emplace(queue_, n_max_pixel_triplets);
     auto nPixelTriplets_view = cms::alpakatools::make_device_view(queue_, (*pixelTripletsDC_)->nPixelTriplets());
     alpaka::memset(queue_, nPixelTriplets_view, 0u);
@@ -1087,6 +1124,7 @@ void LSTEvent::createQuintuplets() {
   auto nTotalQuintuplets = *nTotalQuintuplets_buf.data();
 
   if (!quintupletsDC_) {
+    checkBufferSize<QuintupletsSoABlocks>("quintuplet", nTotalQuintuplets, nLowerModules_);
     quintupletsDC_.emplace(queue_, nTotalQuintuplets, nLowerModules_);
     if (objectsStatistics_) {
       double mb = alpaka::getExtentProduct(quintupletsDC_->buffer()) / 1e6;
@@ -1187,6 +1225,7 @@ void LSTEvent::pixelLineSegmentCleaning(bool no_pls_dupclean) {
 
 void LSTEvent::createPixelQuintuplets() {
   if (!pixelQuintupletsDC_) {
+    checkBufferSize<PixelQuintupletsSoA>("pixel quintuplet", n_max_pixel_quintuplets);
     pixelQuintupletsDC_.emplace(queue_, n_max_pixel_quintuplets);
     auto nPixelQuintuplets_view =
         cms::alpakatools::make_device_view(queue_, (*pixelQuintupletsDC_)->nPixelQuintuplets());
@@ -1361,6 +1400,7 @@ void LSTEvent::createQuadruplets() {
   auto nTotalQuadruplets = *nTotalQuadruplets_buf.data();
 
   if (!quadrupletsDC_) {
+    checkBufferSize<QuadrupletsSoABlocks>("quadruplet", nTotalQuadruplets, nLowerModules_);
     quadrupletsDC_.emplace(queue_, nTotalQuadruplets, nLowerModules_);
     if (objectsStatistics_) {
       double mb = alpaka::getExtentProduct(quadrupletsDC_->buffer()) / 1e6;
