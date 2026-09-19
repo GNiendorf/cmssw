@@ -33,7 +33,8 @@ namespace lst {
   constexpr unsigned int kMaxPLSHitBitsInHitsSoA = 8;
 
   constexpr unsigned int max_blocks = 80;
-  constexpr unsigned int max_connected_modules = 40;
+  // Longest list of the rung-2 displaced module map is 615; a longer list is a load-time error, never a truncation.
+  constexpr unsigned int max_connected_modules = 1024;
 
   constexpr unsigned int n_max_pixel_segments_per_module = 500000;
 

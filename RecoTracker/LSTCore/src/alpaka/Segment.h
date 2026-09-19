@@ -16,6 +16,7 @@
 #include "RecoTracker/LSTCore/interface/EndcapGeometry.h"
 #include "RecoTracker/LSTCore/interface/ObjectRangesSoA.h"
 
+#include "MiniDoublet.h"
 #include "NeuralNetwork.h"
 
 namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
@@ -200,6 +201,20 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
 
   // Line residual cut in units of its resolution (99.4% of true above-cut segments pass).
   HOST_DEVICE_CONSTANT float kLsLineResidCut = 0.75f;
+
+  // Displacement allowance of the r-z window, for a production radius up to kMdDispD0 (the mini-doublet constant).
+  // Barrel: the slope is (zIn -+ kDeltaZLum) / (rtIn - rV), first order in rV.
+  template <alpaka::concepts::Acc TAcc>
+  ALPAKA_FN_ACC ALPAKA_FN_INLINE float segDispZ(TAcc const& acc, float zIn, float rtIn, float rtOut) {
+    return kMdDispD0 * (alpaka::math::abs(acc, zIn) + kDeltaZLum) * alpaka::math::abs(acc, rtOut - rtIn) /
+           (rtIn * rtIn);
+  }
+
+  // Endcap: rt is read at fixed z, so the same virtual origin moves it by rV * dz / (zIn - dLum), exactly.
+  template <alpaka::concepts::Acc TAcc>
+  ALPAKA_FN_ACC ALPAKA_FN_INLINE float segDispRt(TAcc const& acc, float zIn, float zOut, float dLum) {
+    return kMdDispD0 * alpaka::math::abs(acc, zOut - zIn) / alpaka::math::abs(acc, zIn - dLum);
+  }
 
   ALPAKA_FN_ACC ALPAKA_FN_INLINE void addSegmentToMemory(Segments segments,
                                                          unsigned int lowerMDIndex,
@@ -481,6 +496,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     //slope-correction only on outer end
     zLo = zIn + (zIn - kDeltaZLum) * (rtOut / rtIn - 1.f) * (zIn > 0.f ? 1.f : dzDrtScale) - zGeom;
     zHi = zIn + (zIn + kDeltaZLum) * (rtOut / rtIn - 1.f) * (zIn < 0.f ? 1.f : dzDrtScale) + zGeom;
+    // The window puts the r-z origin on the beam line. A track born at radius rV has slope
+    // (zIn -+ kDeltaZLum) / (rtIn - rV), so to first order in rV the allowance is linear in rV / rtIn.
+    zLo -= segDispZ(acc, zIn, rtIn, rtOut);
+    zHi += segDispZ(acc, zIn, rtIn, rtOut);
 
     if ((zOut < zLo) || (zOut > zHi))
       LST_PROBE_REJECT(kLSProbeZRt);
@@ -634,6 +653,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     rtLo = alpaka::math::max(acc, rtIn * (1.f + dz / (zIn + dLum) * drtDzScale) - rtGeom, rtIn - 0.5f * rtGeom);
     //dLum for luminous; rGeom for measurement size; no tanTheta_loc(pt) correction
     rtHi = rtIn * (zOut - dLum) / (zIn - dLum) + rtGeom;
+    rtLo -= segDispRt(acc, zIn, zOut, dLum);
+    rtHi += segDispRt(acc, zIn, zOut, dLum);
 
     // Completeness
     if ((rtOut < rtLo) || (rtOut > rtHi))
@@ -950,8 +971,11 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
       // z-window pre-filter: 1/cosSlope >= tan(sdSlope)/sdSlope, so looser than creation kernel.
       const float dzDrtScale = 1.f / cosSlope;
       const float zGeom = innerMod.layer <= 2 ? 2.f * kPixelPSZpitch : 2.f * kStrip2SZpitch;
-      const float zLo = zIn + (zIn - kDeltaZLum) * (rtOut / rtIn - 1.f) * (zIn > 0.f ? 1.f : dzDrtScale) - zGeom;
-      const float zHi = zIn + (zIn + kDeltaZLum) * (rtOut / rtIn - 1.f) * (zIn < 0.f ? 1.f : dzDrtScale) + zGeom;
+      const float zDisp = segDispZ(acc, zIn, rtIn, rtOut);
+      const float zLo =
+          zIn + (zIn - kDeltaZLum) * (rtOut / rtIn - 1.f) * (zIn > 0.f ? 1.f : dzDrtScale) - zGeom - zDisp;
+      const float zHi =
+          zIn + (zIn + kDeltaZLum) * (rtOut / rtIn - 1.f) * (zIn < 0.f ? 1.f : dzDrtScale) + zGeom + zDisp;
       if (zOut < zLo || zOut > zHi)
         return false;
 
@@ -1007,9 +1031,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                ? (2.f * kPixelPSZpitch)
                : ((rtIn < kDisks2SMinRadius || rtOut < kDisks2SMinRadius) ? (kPixelPSZpitch + kStrip2SZpitch)
                                                                           : (2.f * kStrip2SZpitch)));
+      const float rtDisp = segDispRt(acc, zIn, zOut, dLum);
       const float rtLo =
-          alpaka::math::max(acc, rtIn * (1.f + dz / (zIn + dLum) * drtDzScale) - rtGeom, rtIn - 0.5f * rtGeom);
-      const float rtHi = rtIn * (zOut - dLum) / (zIn - dLum) + rtGeom;
+          alpaka::math::max(acc, rtIn * (1.f + dz / (zIn + dLum) * drtDzScale) - rtGeom, rtIn - 0.5f * rtGeom) - rtDisp;
+      const float rtHi = rtIn * (zOut - dLum) / (zIn - dLum) + rtGeom + rtDisp;
       if (rtOut < rtLo || rtOut > rtHi)
         return false;
 

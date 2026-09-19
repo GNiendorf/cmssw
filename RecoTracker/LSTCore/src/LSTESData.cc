@@ -1,3 +1,5 @@
+#include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 
 #include "RecoTracker/LSTCore/interface/LSTESData.h"
@@ -53,6 +55,11 @@ namespace {
     // Module connection map (for line segment building)
     auto mappath = get_absolute_path_after_check_file_exists(geometryDataDir() + "/data/OT800_IT615_pt" + ptCutLabel +
                                                              "/module_connection_tracing_merged.bin");
+    // Ladder campaign: an alternative module map is selected by path; unset means the released file.
+    if (const char* altMap = std::getenv("LST_MODULE_MAP")) {
+      mappath = get_absolute_path_after_check_file_exists(altMap);
+      printf("[MAP] LST_MODULE_MAP = %s\n", mappath.c_str());
+    }
 
     endcapGeometry.load(endcap_geom);
     tiltedGeometry.load(tilted_geom);

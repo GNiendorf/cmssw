@@ -283,7 +283,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     charge = -1 * ((int)copysignf(1.0f, cross));
 
     //region definitions: https://github.com/user-attachments/assets/2b3c1425-66eb-4524-83de-deb6f3b31f71
-    if (layer1 == 1 && layer2 == 7) {
+    // Every region names all three layers: a triplet with a layer-skipping segment has no region yet.
+    if (layer1 == 1 && layer2 == 7 && (layer3 == 8 || layer3 == 13)) {
       return residual < 0.01f;  // Region 9
     } else if (layer1 == 3 && layer2 == 4) {
       if (layer3 == 5) {
@@ -292,7 +293,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         return residual < 0.05f;  // Region 21
       }
     } else if (layer1 == 4) {
-      if (layer2 == 12) {
+      if (layer2 == 12 && layer3 == 13) {
         return residual < 0.063831687f;  // Region 22
       } else if (layer2 == 5) {
         if (layer3 == 6) {
@@ -438,7 +439,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         } else if (layer3 == 14) {
           return rzChiSquared < 3.3200853f;  // Region 1
         }
-      } else if (layer2 == 13) {
+      } else if (layer2 == 13 && layer3 == 14) {
         return rzChiSquared < 17.194584f;  // Region 2
       }
     } else if (layer1 == 8) {
@@ -448,7 +449,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         } else if (layer3 == 15) {
           return rzChiSquared < 3.4359624f;  // Region 4
         }
-      } else if (layer2 == 14) {
+      } else if (layer2 == 14 && layer3 == 15) {
         return rzChiSquared < 4.6487956f;  // Region 5
       }
     } else if (layer1 == 9) {
@@ -458,10 +459,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         } else if (layer3 == 16) {
           return rzChiSquared < 3.095819f;  // Region 7
         }
-      } else if (layer2 == 15) {
+      } else if (layer2 == 15 && layer3 == 16) {
         return rzChiSquared < 11.477617f;  // Region 8
       }
-    } else if (layer1 == 1) {
+    } else if (layer1 == 1 && layer2 == 2) {
       if (layer3 == 7) {
         return rzChiSquared < 96.949936f;  // Region 10
       } else if (layer3 == 3) {
@@ -490,7 +491,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         } else if (layer3 == 13) {
           return rzChiSquared < 3.853796f;  // Region 18
         }
-      } else if (layer2 == 12) {
+      } else if (layer2 == 12 && layer3 == 13) {
         return rzChiSquared < 6.2774787f;  // Region 19
       }
     }

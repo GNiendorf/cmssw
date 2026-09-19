@@ -2,6 +2,7 @@
 #define RecoTracker_LSTCore_src_ModuleMethods_h
 
 #include <map>
+#include <stdexcept>
 #include <iostream>
 
 #include "RecoTracker/LSTCore/interface/Common.h"
@@ -141,15 +142,10 @@ namespace lst {
       uint16_t index = it->second;
       auto& connectedModules = moduleConnectionMap.getConnectedModuleDetIds(detId);
       nConnectedModules[index] = connectedModules.size();
-      if (nConnectedModules[index] > max_connected_modules) {
-#ifdef WARNINGS
-        printf("Warning: module %u has %u connections, exceeding max_connected_modules=%u. Truncating.\n",
-               detId,
-               nConnectedModules[index],
-               max_connected_modules);
-#endif
-        nConnectedModules[index] = max_connected_modules;
-      }
+      if (connectedModules.size() > max_connected_modules)
+        throw std::runtime_error("Module " + std::to_string(detId) + " has " + std::to_string(connectedModules.size()) +
+                                 " connections, more than max_connected_modules = " +
+                                 std::to_string(max_connected_modules));
       for (uint16_t i = 0; i < nConnectedModules[index]; i++) {
         moduleMap[index][i] = mmd.detIdToIndex.at(connectedModules[i]);
       }
