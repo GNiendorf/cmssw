@@ -47,6 +47,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                                             unsigned int quintupletIndex,
                                                             const float (&t5Embed)[Params_T5::kEmbed],
                                                             bool tightCutFlag,
+                                                            bool heldBack,
                                                             float dnnScore) {
     quintuplets.tripletIndices()[quintupletIndex][0] = innerTripletIndex;
     quintuplets.tripletIndices()[quintupletIndex][1] = outerTripletIndex;
@@ -65,6 +66,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     quintuplets.isDup()[quintupletIndex] = 0;
     quintuplets.nLayers()[quintupletIndex] = Params_T5::kBaseLayers;
     quintuplets.tightCutFlag()[quintupletIndex] = tightCutFlag;
+    quintuplets.heldBack()[quintupletIndex] = heldBack;
     quintuplets.regressionRadius()[quintupletIndex] = regressionRadius;
     quintuplets.regressionCenterX()[quintupletIndex] = regressionCenterX;
     quintuplets.regressionCenterY()[quintupletIndex] = regressionCenterY;
@@ -1478,6 +1480,23 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     return false;
   }
 
+  // r-z chi2 bound of a quintuplet built on an endcap 2S triplet region: the 99.5% point of true quintuplets (rung 4).
+  // Zero: no bound for the combination.
+  ALPAKA_FN_ACC ALPAKA_FN_INLINE float t5RzHeldBackCut(short layer1, short layer2, short layer3, short layer4, short layer5) {
+    if (layer3 == 12 and layer4 == 13 and layer5 == 14 and ((layer1 == 2 and layer2 == 3) or (layer1 == 1 and layer2 == 2)))
+      return 10.1f;
+    if (layer1 == 2 and layer2 == 7 and layer3 == 13 and layer4 == 14 and layer5 == 15)
+      return 27.4f;
+    if (layer1 == 7 and layer2 == 8 and layer3 == 14 and layer4 == 15 and layer5 == 16)
+      return 20.9f;
+    if (layer1 == 1 and layer2 == 7 and layer3 == 8 and layer4 == 14 and layer5 == 15)
+      return 33.0f;
+    if (layer3 == layer2 + 1 and layer4 == layer2 + 2 and layer5 == layer2 + 3 and
+        ((layer1 == 7 and layer2 == 13) or (layer1 == 2 and layer2 == 12)))
+      return 118.6f;
+    return 0.f;
+  }
+
   template <alpaka::concepts::Acc TAcc>
   ALPAKA_FN_ACC ALPAKA_FN_INLINE bool runQuintupletDefaultAlgo(TAcc const& acc,
                                                                ModulesConst modules,
@@ -1504,6 +1523,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                                                float& dBeta2,
                                                                float& dnnScore,
                                                                bool& tightCutFlag,
+                                                               bool& heldBack,
                                                                float (&t5Embed)[Params_T5::kEmbed],
                                                                const float ptCut) {
     // Reject only if BOTH parent circles disagree with one of their own mini-doublet directions.
@@ -1548,9 +1568,11 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                               innerRadius,
                                               outerRadius,
                                               bridgeRadius,
-                                              dnnScore);
+                                              dnnScore,
+                                              heldBack);
     if (!inference)  // T5-building cut
       return false;
+    heldBack = heldBack || ((triplets.flags()[innerTripletIndex] | triplets.flags()[outerTripletIndex]) & kT3HeldBack);
 
     if (not runQuintupletdBetaAlgoSelector(acc,
                                            modules,
@@ -1613,6 +1635,17 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                f,
                                tightCutFlag))
       return false;
+
+    // The endcap 2S combinations fall through the stock r-z table: a held-back quintuplet takes its own bound.
+    if ((triplets.flags()[innerTripletIndex] | triplets.flags()[outerTripletIndex]) & kT3HeldBack) {
+      const float heldBackCut = t5RzHeldBackCut(modules.lstLayers()[lowerModuleIndex1],
+                                                modules.lstLayers()[lowerModuleIndex2],
+                                                modules.lstLayers()[lowerModuleIndex3],
+                                                modules.lstLayers()[lowerModuleIndex4],
+                                                modules.lstLayers()[lowerModuleIndex5]);
+      if (heldBackCut > 0.f && rzChiSquared >= heldBackCut)
+        return false;
+    }
 
     // Promoted on the tight r-z flag or on the score above the 93% working point, binned on the layer-2 anchor eta.
     const unsigned int layer2MDIndex = (modules.layers()[lowerModuleIndex1] == 1) ? secondMDIndex : firstMDIndex;
@@ -1804,6 +1837,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
               float t5Embed[Params_T5::kEmbed] = {0.f};
 
               bool tightCutFlag = false;
+              bool heldBack = false;
 
               bool success = runQuintupletDefaultAlgo(acc,
                                                       modules,
@@ -1830,6 +1864,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                                       dBeta2,
                                                       dnnScore,
                                                       tightCutFlag,
+                                                      heldBack,
                                                       t5Embed,
                                                       ptCut);
               if (success) {
@@ -1880,6 +1915,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                         quintupletIndex,
                                         t5Embed,
                                         tightCutFlag,
+                                        heldBack,
                                         dnnScore);
 
                   triplets.partOfT5()[quintuplets.tripletIndices()[quintupletIndex][0]] = true;
@@ -1942,6 +1978,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
           float t5Embed[Params_T5::kEmbed] = {0.f};
 
           bool tightCutFlag = false;
+          bool heldBack = false;
 
           bool success = runQuintupletDefaultAlgo(acc,
                                                   modules,
@@ -1968,6 +2005,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                                   dBeta2,
                                                   dnnScore,
                                                   tightCutFlag,
+                                                  heldBack,
                                                   t5Embed,
                                                   ptCut);
           if (success) {
@@ -2015,6 +2053,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                     quintupletIndex,
                                     t5Embed,
                                     tightCutFlag,
+                                    heldBack,
                                     dnnScore);
 
               triplets.partOfT5()[quintuplets.tripletIndices()[quintupletIndex][0]] = true;
@@ -2092,6 +2131,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                 float rzChi2, chi2, nonAnchorChi2, dBeta1, dBeta2, dnnScore;
                 float t5Embed[Params_T5::kEmbed] = {0.f};
                 bool tightFlag = false;
+                bool heldBack = false;
 
                 const bool ok = runQuintupletDefaultAlgo(acc,
                                                          modules,
@@ -2118,6 +2158,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                                          dBeta2,
                                                          dnnScore,
                                                          tightFlag,
+                                                         heldBack,
                                                          t5Embed,
                                                          ptCut);
                 if (ok) {

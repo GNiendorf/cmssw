@@ -770,8 +770,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
             if (triplets.partOfPT5()[outerTripletIndex])
               continue;  //don't create pT3s for T3s accounted in pT5s
 
-            // Triplets admitted only by the widened pointing bound are used only in quintuplets.
-            if (triplets.flags()[outerTripletIndex] & kT3LoosePointing)
+            // Triplets admitted only by the widened pointing bound or a held-back region are used only in quintuplets.
+            if (triplets.flags()[outerTripletIndex] & (kT3LoosePointing | kT3HeldBack))
               continue;
 
             float pixelRadius, tripletRadius, rPhiChiSquared, rzChiSquared, rPhiChiSquaredInwards, centerX, centerY,

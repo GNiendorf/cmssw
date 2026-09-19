@@ -745,23 +745,6 @@ void LSTEvent::createTrackCandidates(bool no_pls_dupclean, bool tc_pls_triplets)
                       pixelTripletsDC_->const_view(),
                       rangesDC_->const_view());
 
-  auto nEligibleModulesT4_buf_h = cms::alpakatools::make_host_buffer<uint16_t>(queue_);
-  auto nEligibleModulesT4_buf_d = cms::alpakatools::make_device_view(queue_, rangesOccupancy.nEligibleT4Modules());
-  alpaka::memcpy(queue_, nEligibleModulesT4_buf_h, nEligibleModulesT4_buf_d);
-  alpaka::wait(queue_);  // wait to get the value before using
-  auto const nEligibleModulesT4 = *nEligibleModulesT4_buf_h.data();
-
-  auto const removeDupQuadrupletsBeforeTC_workDiv = cms::alpakatools::make_workdiv<Acc2D>(
-      {std::max(nEligibleModulesT4 / threadsPerBlockY, 1), std::max(nEligibleModulesT4 / threadsPerBlockX, 1)},
-      {16, 32});
-
-  alpaka::exec<Acc2D>(queue_,
-                      removeDupQuadrupletsBeforeTC_workDiv,
-                      RemoveDupQuadrupletsBeforeTC{},
-                      quadrupletsDC_->view().quadruplets(),
-                      quadrupletsDC_->view().quadrupletsOccupancy(),
-                      rangesDC_->const_view());
-
   if (!no_pls_dupclean) {
     auto const checkHitspLS_workDiv = cms::alpakatools::make_workdiv<Acc2D>({max_blocks * 4, max_blocks / 4}, {16, 16});
 
@@ -804,6 +787,11 @@ void LSTEvent::createTrackCandidates(bool no_pls_dupclean, bool tc_pls_triplets)
 
   auto const* counts = nSurvivingTCs_host.data();
   constexpr unsigned int nMaxTC = n_max_nonpixel_track_candidates + n_max_pixel_track_candidates;
+  // The add kernels stop silently at the end of the buffer.
+  if (counts[0] + counts[1] + counts[2] + counts[3] + counts[4] > nMaxTC)
+    throw std::runtime_error(std::format("LST: {} track candidates survive, above the buffer cap of {}",
+                                         counts[0] + counts[1] + counts[2] + counts[3] + counts[4],
+                                         nMaxTC));
   unsigned int nTotal = std::min(counts[0] + counts[1] + counts[2] + counts[3] + counts[4], nMaxTC);
   if (nTotal == 0)
     nTotal = 1;  // avoid zero-size allocation
@@ -869,22 +857,6 @@ void LSTEvent::createTrackCandidates(bool no_pls_dupclean, bool tc_pls_triplets)
                       trackCandidatesExtendedDC_->view(),
                       rangesDC_->const_view(),
                       nTotal);
-
-  auto const crossCleanT4_workDiv = cms::alpakatools::make_workdiv<Acc3D>(
-      {(nLowerModules_ / threadsPerBlock) + 1, 1, max_blocks}, {threadsPerBlock, 1, threadsPerBlock});
-
-  alpaka::exec<Acc3D>(queue_,
-                      crossCleanT4_workDiv,
-                      CrossCleanT4{},
-                      modules_.const_view().modules(),
-                      quadrupletsDC_->view().quadruplets(),
-                      quadrupletsDC_->const_view().quadrupletsOccupancy(),
-                      pixelTripletsDC_->const_view(),
-                      quintupletsDC_->const_view().quintuplets(),
-                      trackCandidatesBaseDC_->view(),
-                      trackCandidatesExtendedDC_->view(),
-                      tripletsDC_->view().triplets(),
-                      rangesDC_->const_view());
 
   auto const addT4asTrackCandidate_workDiv = cms::alpakatools::make_workdiv<Acc2D>({8, 10}, {8, 128});
 
@@ -1442,12 +1414,11 @@ void LSTEvent::createQuadruplets() {
   else
     execCreateQuadruplets(CreateQuadruplets{});
 
-  auto const removeDupQuadrupletsAfterBuild_workDiv =
-      cms::alpakatools::make_workdiv<Acc3D>({max_blocks, 1, 1}, {1, 16, 16});
+  auto const removeDupQuadruplets_workDiv = cms::alpakatools::make_workdiv<Acc1D>(max_blocks, 1);
 
-  alpaka::exec<Acc3D>(queue_,
-                      removeDupQuadrupletsAfterBuild_workDiv,
-                      RemoveDupQuadrupletsAfterBuild{},
+  alpaka::exec<Acc1D>(queue_,
+                      removeDupQuadruplets_workDiv,
+                      RemoveDupQuadruplets{},
                       modules_.const_view().modules(),
                       quadrupletsDC_->view().quadruplets(),
                       quadrupletsDC_->const_view().quadrupletsOccupancy(),

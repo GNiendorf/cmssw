@@ -23,6 +23,7 @@ namespace lst {
                       SOA_COLUMN(char, isDup),            // duplicate flag
                       SOA_COLUMN(unsigned int, nLayers),  // number of active layers (5 base)
                       SOA_COLUMN(bool, tightCutFlag),     // tight pass to be a TC
+                      SOA_COLUMN(bool, heldBack),         // admitted only by a loosened gate
                       SOA_COLUMN(bool, partOfPT5),
                       SOA_COLUMN(float, regressionRadius),
                       SOA_COLUMN(float, regressionCenterX),

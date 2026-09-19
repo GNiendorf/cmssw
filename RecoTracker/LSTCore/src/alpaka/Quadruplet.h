@@ -110,6 +110,15 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
       return 35.8f;
     if (layer1 == 7 and layer2 == 8 and layer3 == 9 and layer4 == 10)
       return 33.9f;
+    // Combinations that exist only with the endcap 2S triplet regions.
+    if (layer2 == 12 and layer3 == 13 and layer4 == 14)
+      return layer1 == 3 ? 58.5f : layer1 == 4 ? 166.6f : layer1 == 2 ? 28.8f : 0.f;
+    if (layer1 == 7 and layer2 == 13 and layer3 == 14 and layer4 == 15)
+      return 71.9f;
+    if (layer1 == 8 and layer2 == 14 and layer3 == 15 and layer4 == 16)
+      return 75.7f;
+    if (layer1 >= 12 and layer2 == layer1 + 1 and layer3 == layer1 + 2 and layer4 == layer1 + 3)
+      return 92.8f;
     return 0.f;
   }
 

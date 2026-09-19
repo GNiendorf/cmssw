@@ -2604,7 +2604,14 @@ void setTrackCandidateBranches(LSTEvent* event,
   unsigned int nTrackCandidates = trackCandidatesBase.nTrackCandidates();
 
   // Looping over each track candidate
+  static const bool rungTcFilter = rungMode() == 1 and std::getenv("LST_RUNG_TCFILTER") != nullptr;
+  unsigned int tc_row = 0;
   for (unsigned int tc_idx = 0; tc_idx < nTrackCandidates; tc_idx++) {
+    if (rungTcFilter and trackCandidatesBase.trackCandidateType()[tc_idx] == LSTObjType::T4) {
+      auto rung_tc_hits = getHitIdxsAndHitTypesFromTC(event, tc_idx);
+      if (not rungKeep(rung_tc_hits.first, rung_tc_hits.second))
+        continue;
+    }
     // Compute reco quantities of track candidate based on final object
     // The following function reads off and computes the matched sim track indices
     float percent_matched;
@@ -2733,7 +2740,7 @@ void setTrackCandidateBranches(LSTEvent* event,
       // For this matched sim index keep track (sim -> tc) mapping
       int sim_idx = simidx.at(is);
       float sim_idx_frac = simidxfrac.at(is);
-      sim_tcIdxAll.at(sim_idx).push_back(tc_idx);
+      sim_tcIdxAll.at(sim_idx).push_back(tc_row);
       sim_tcIdxAllFrac.at(sim_idx).push_back(sim_idx_frac);
     }
 
@@ -2753,6 +2760,7 @@ void setTrackCandidateBranches(LSTEvent* event,
 
     // the best match index will then be saved here
     ana.tx->pushbackToBranch<int>("tc_simIdx", tc_simIdx);
+    ++tc_row;
   }
 
   if (rungMode() > 0)

@@ -19,6 +19,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
   constexpr float kMdDirectionMaxMeanChi2 = 6.f;
   constexpr float kMdDirectionMaxMeanChi2L12 = 3.f;
 
+  // Three 5 cm strips at equal disk spacing: the r residual cannot exceed four half-strips, chi2 = 3 * 4^2.
+  constexpr float kT3RzChi2Max2S = 48.f;
+
   // Pre-loaded inner-segment-constant data for passPointingConstraint.
   // Populated once per inner segment, reused across all outer segments in the inner loop.
   struct T3InnerSegData {
@@ -251,7 +254,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                                        float circleRadius,
                                                        float circleCenterX,
                                                        float circleCenterY,
-                                                       short& charge) {
+                                                       short& charge,
+                                                       bool& heldBackRegion) {
     // Using lst_layer numbering convention defined in ModuleMethods.h
     const short layer1 = modules.lstLayers()[innerInnerLowerModuleIndex];
     const short layer2 = modules.lstLayers()[middleLowerModuleIndex];
@@ -467,6 +471,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         return rzChiSquared < 129.f;  // Region 10
       } else if (layer3 == 3) {
         return rzChiSquared < 458.43982f;  // Region 11
+      } else if (layer3 == 12) {
+        heldBackRegion = true;
+        return rzChiSquared < 3.8522234f;  // Region 25
       }
     } else if (layer1 == 2) {
       if (layer2 == 7) {
@@ -483,6 +490,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         } else if (layer3 == 4) {
           return rzChiSquared < 3.5852437f;  // Region 16
         }
+      } else if (layer2 == 12 && layer3 == 13) {
+        heldBackRegion = true;
+        return rzChiSquared < kT3RzChi2Max2S;  // Region 26
       }
     } else if (layer1 == 3) {
       if (layer2 == 7) {
@@ -494,6 +504,12 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
       } else if (layer2 == 12 && layer3 == 13) {
         return rzChiSquared < 10.8f;  // Region 19
       }
+    } else if (layer1 == 5 && layer2 == 12 && layer3 == 13) {
+      heldBackRegion = true;
+      return rzChiSquared < kT3RzChi2Max2S;  // Region 27
+    } else if (layer1 >= 12 && layer2 == layer1 + 1 && layer3 == layer1 + 2) {
+      heldBackRegion = true;
+      return rzChiSquared < kT3RzChi2Max2S;  // Region 28
     }
     return false;
   }
@@ -573,7 +589,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                                                    float& circleCenterY,
                                                                    const float ptCut,
                                                                    float (&t3Scores)[dnn::t3dnn::kOutputFeatures],
-                                                                   short& charge) {
+                                                                   short& charge,
+                                                                   bool& heldBackRegion) {
     const unsigned int firstMDIndex = segments.mdIndices()[innerSegmentIndex][0];
     const unsigned int secondMDIndex = segments.mdIndices()[outerSegmentIndex][0];
     const unsigned int thirdMDIndex = segments.mdIndices()[outerSegmentIndex][1];
@@ -604,7 +621,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                              circleRadius,
                              circleCenterX,
                              circleCenterY,
-                             charge))
+                             charge,
+                             heldBackRegion))
       return false;
 
     const float sdIn_alpha = __H2F(segments.dPhiChanges()[innerSegmentIndex]);
@@ -672,6 +690,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                bool loosePointing) {
         float betaIn, betaInCut, circleRadius, circleCenterX, circleCenterY;
         short charge;
+        bool heldBackRegion = false;
         float t3Scores[dnn::t3dnn::kOutputFeatures] = {0.f};
 
         bool success = runTripletConstraintsAndAlgo(acc,
@@ -690,7 +709,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                                     circleCenterY,
                                                     ptCut,
                                                     t3Scores,
-                                                    charge);
+                                                    charge,
+                                                    heldBackRegion);
         if (!success)
           return;
         unsigned int totOccupancyTriplets =
@@ -716,6 +736,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                           segments.mdIndices()[innerSegmentIndex][1],
                                           segments.mdIndices()[outerSegmentIndex][1]};
         uint8_t flags = loosePointing ? kT3LoosePointing : 0;
+        // Admitted by an endcap 2S r-z region: held back from the pixel match and from quintuplet precedence.
+        if (heldBackRegion)
+          flags |= kT3HeldBack;
         if (t3MdDirectionFail(
                 acc, modules, mds, lowerModuleIndices, mdIndices, circleRadius, circleCenterX, circleCenterY))
           flags |= kT3MdDirectionFail;
@@ -908,6 +931,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
             if constexpr (ReduceMem) {
               float betaIn, betaInCut, circleRadius, circleCenterX, circleCenterY;
               short charge;
+              bool heldBackRegion = false;
               float t3Scores[dnn::t3dnn::kOutputFeatures] = {0.f};
               counts = runTripletConstraintsAndAlgo(acc,
                                                     modules,
@@ -925,7 +949,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                                     circleCenterY,
                                                     ptCut,
                                                     t3Scores,
-                                                    charge);
+                                                    charge,
+                                                    heldBackRegion);
             }
             if (counts) {
               alpaka::atomicAdd(acc, &segments.connectedMax()[innerSegmentIndex], 1u, alpaka::hierarchy::Threads{});

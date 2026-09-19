@@ -672,7 +672,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
             unsigned int quintupletIndex =
                 ranges.quintupletModuleIndices()[quintupletLowerModuleIndex] + outerQuintupletArrayIndex;
 
-            if (quintuplets.isDup()[quintupletIndex])
+            if (quintuplets.isDup()[quintupletIndex] || quintuplets.heldBack()[quintupletIndex])
               continue;
 
             float rzChiSquared, rPhiChiSquared, rPhiChiSquaredInwards, pixelRadius, quintupletRadius, centerX, centerY;

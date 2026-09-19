@@ -205,7 +205,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                                      const float innerRadius,
                                                      const float outerRadius,
                                                      const float bridgeRadius,
-                                                     float& dnnScore) {
+                                                     float& dnnScore,
+                                                     bool& belowWp) {
       // Constants
       constexpr unsigned int kInputFeatures = 23;
       constexpr unsigned int kHiddenFeatures = 32;
@@ -293,7 +294,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
       uint8_t bin_index = (eta1 > 2.5f) ? (dnn::kEtaBins - 1) : static_cast<unsigned int>(eta1 / dnn::kEtaSize);
 
       // Compare output to the cut value for the relevant bin
-      return dnnScore > dnn::t5dnn::kWp98[pt_index][bin_index];
+      // Working point lowered for displaced tracks, owed to the retrain.
+      constexpr float kT5WpScale = 0.01f;
+      belowWp = !(dnnScore > dnn::t5dnn::kWp98[pt_index][bin_index]);
+      return dnnScore > kT5WpScale * dnn::t5dnn::kWp98[pt_index][bin_index];
     }
   }  // namespace t5dnn
 
