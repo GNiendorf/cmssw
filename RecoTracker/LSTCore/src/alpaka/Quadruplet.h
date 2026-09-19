@@ -91,6 +91,28 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     quadruplets.regressionCenterY()[quadrupletIndex] = regressionCenterY;
   };
 
+  // r-z chi2 bound of a quadruplet per layer combination (lst layers: 1-6 barrel, 7-11 endcap PS, 12-16 endcap 2S):
+  // the 99.5% point of true quadruplets. Applied where it exceeds the eta-binned cut.
+  ALPAKA_FN_ACC ALPAKA_FN_INLINE float t4RzRegionCut(short layer1, short layer2, short layer3, short layer4) {
+    if (layer1 == 1 and layer2 == 2 and layer3 == 3)
+      return layer4 == 4 ? 36.3f : layer4 == 7 ? 39.4f : layer4 == 12 ? 27.9f : 0.f;
+    if (layer1 == 1 and layer2 == 2 and layer3 == 7)
+      return layer4 == 8 ? 40.9f : layer4 == 13 ? 13.7f : 0.f;
+    if (layer1 == 1 and layer2 == 7 and layer3 == 8)
+      return layer4 == 9 ? 31.1f : layer4 == 14 ? 34.3f : 0.f;
+    if (layer1 == 2 and layer2 == 3 and layer3 == 7 and layer4 == 13)
+      return 15.9f;
+    if (layer1 == 2 and layer2 == 7 and layer3 == 8)
+      return layer4 == 9 ? 39.6f : layer4 == 14 ? 12.2f : 0.f;
+    if (layer1 == 3 and layer2 == 4 and layer3 == 5)
+      return layer4 == 6 ? 84.6f : layer4 == 12 ? 63.7f : 0.f;
+    if (layer1 == 3 and layer2 == 4 and layer3 == 12 and layer4 == 13)
+      return 35.8f;
+    if (layer1 == 7 and layer2 == 8 and layer3 == 9 and layer4 == 10)
+      return 33.9f;
+    return 0.f;
+  }
+
   template <alpaka::concepts::Acc TAcc>
   ALPAKA_FN_ACC ALPAKA_FN_INLINE bool passT4RZConstraint(TAcc const& acc,
                                                          ModulesConst modules,
@@ -122,6 +144,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     const float z4 = mds.anchorZ()[fourthMDIndex] / 100;
 
     // Using lst_layer numbering convention defined in ModuleMethods.h
+    const short layer1 = modules.lstLayers()[lowerModuleIndex1];
     const short layer2 = modules.lstLayers()[lowerModuleIndex2];
     const short layer3 = modules.lstLayers()[lowerModuleIndex3];
     const short layer4 = modules.lstLayers()[lowerModuleIndex4];
@@ -292,7 +315,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     float chi2_cuts[] = {63.0164, 49.1308, 57.8446, 71.1812, 64.1492, 45.2832, 78.2952, 82.1582, 60.5490,
                          80.5764, 62.4270, 35.7822, 18.0594, 15.3724, 5.5182,  10.1174, 12.8028, 7.4696,
                          8.9536,  10.6174, 30.9070, 28.2214, 46.5556, 36.7286, 52.6552};
-    return rzChiSquared < chi2_cuts[bin_index];
+    return rzChiSquared < alpaka::math::max(acc, chi2_cuts[bin_index], t4RzRegionCut(layer1, layer2, layer3, layer4));
   };
 
   template <alpaka::concepts::Acc TAcc>
@@ -477,10 +500,6 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                inner_circleCenterX,
                                inner_circleCenterY,
                                innerT3charge))
-      return false;
-
-    // Reject if a mini-doublet direction disagrees with its triplet circle (flag set in Triplet.h).
-    if ((triplets.flags()[innerTripletIndex] | triplets.flags()[outerTripletIndex]) & kT3MdDirectionFail)
       return false;
 
     nonAnchorChiSquared = computeChiSquared(acc,

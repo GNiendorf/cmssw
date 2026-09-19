@@ -545,18 +545,13 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
           x_2, x_3, dnn::t4dnn::wgtT_output_layer, dnn::t4dnn::bias_output_layer);
       softmax_activation<koutputFeatures>(acc, x_3);
 
-      // Get the bin index based on abs(eta) of first hit and t4_pt
-      float t4_pt = (innerRadius + outerRadius) * lst::k2Rinv1GeVf;  //t4 pt is average
-
-      uint8_t pt_index = (t4_pt > 5.f);
-      uint8_t bin_index = (eta1 > 2.5f) ? (dnn::t4dnn::kEtaBins - 1) : static_cast<unsigned int>(eta1 / 0.1f);
-
       promptScore = x_3[1];
       displacedScore = x_3[2];
       fakeScore = x_3[0];
 
-      return (x_3[2] > dnn::t4dnn::kWp_displaced[pt_index][bin_index]) &&
-             (x_3[0] < dnn::t4dnn::kWp_fake[pt_index][bin_index]);
+      // Loosened working point, owed to the retrain: no displaced-score requirement, one fake-score bound.
+      constexpr float kT4FakeWpLoose = 0.99f;
+      return x_3[0] < kT4FakeWpLoose;
     }
 
   }  //namespace t4dnn
