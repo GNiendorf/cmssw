@@ -502,18 +502,45 @@ namespace mkfit {
       remove_duplicates(tracks);
     }
 
-    void clean_duplicates_sharedhits_pixelseed(TrackVec &tracks, const IterationConfig &itconf) {
+    static void clean_duplicates_sharedhits_pixelseed_impl(TrackVec &tracks,
+                                                           const IterationConfig &itconf,
+                                                           bool pixelPriority) {
       const float fraction = itconf.dc_fracSharedHits;
       const float drth_central = itconf.dc_drth_central;
       const float drth_obarrel = itconf.dc_drth_obarrel;
       const float drth_forward = itconf.dc_drth_forward;
       const auto ntracks = tracks.size();
 
+      // Phase-2 pixel layers: PXB 0-3, PXF 16-27 (+z) and 38-49 (-z).
+      auto isPixelLayer = [](int l) { return l < 4 || (l >= 16 && l < 28) || (l >= 38 && l < 50); };
       std::vector<float> ctheta(ntracks);
+      std::vector<bool> hasPixel(ntracks, false);
       for (auto itrack = 0U; itrack < ntracks; itrack++) {
         auto &trk = tracks[itrack];
         ctheta[itrack] = 1.f / std::tan(trk.theta());
+        if (pixelPriority) {
+          int npix = 0;
+          for (int i = 0; i < trk.nTotalHits(); ++i)
+            if (trk.getHitIdx(i) >= 0 && isPixelLayer(trk.getHitLyr(i)))
+              ++npix;
+          hasPixel[itrack] = npix >= 2;
+        }
       }
+      // Two tracks with pixel hits but no shared pixel hit come from different pixel seeds: not duplicates.
+      auto sharePixelHit = [&](const Track &t1, const Track &t2) {
+        for (int i = 0; i < t1.nTotalHits(); ++i) {
+          if (t1.getHitIdx(i) < 0 || !isPixelLayer(t1.getHitLyr(i)))
+            continue;
+          for (int j = 0; j < t2.nTotalHits(); ++j)
+            if (t2.getHitIdx(j) == t1.getHitIdx(i) && t2.getHitLyr(j) == t1.getHitLyr(i))
+              return true;
+        }
+        return false;
+      };
+      // A track with pixel hits beats a pixel-less one; otherwise the higher score wins.
+      auto firstWins = [&](unsigned i, unsigned j) {
+        return hasPixel[i] != hasPixel[j] ? hasPixel[i] : tracks[i].score() > tracks[j].score();
+      };
 
       float phi1, invpt1, dctheta, ctheta1, dphi, dr2;
       for (auto itrack = 0U; itrack < ntracks; itrack++) {
@@ -536,6 +563,9 @@ namespace mkfit {
           if (dphi > Config::maxdphi)
             continue;
 
+          if (hasPixel[itrack] && hasPixel[jtrack] && !sharePixelHit(trk, track2))
+            continue;
+
           float maxdRSquared = drth_central * drth_central;
           if (std::abs(ctheta1) > Config::maxcth_fw)
             maxdRSquared = drth_forward * drth_forward;
@@ -544,7 +574,7 @@ namespace mkfit {
           dr2 = dphi * dphi + dctheta * dctheta;
           if (dr2 < maxdRSquared) {
             //Keep track with best score
-            if (trk.score() > track2.score())
+            if (firstWins(itrack, jtrack))
               track2.setDuplicateValue(true);
             else
               trk.setDuplicateValue(true);
@@ -584,7 +614,7 @@ namespace mkfit {
 
           //selection here - 11percent fraction of shared hits to label a duplicate
           if ((sharedCount - sharedFirst) >= ((minFoundHits - sharedFirst) * fraction)) {
-            if (trk.score() > track2.score())
+            if (firstWins(itrack, jtrack))
               track2.setDuplicateValue(true);
             else
               trk.setDuplicateValue(true);
@@ -595,6 +625,14 @@ namespace mkfit {
       remove_duplicates(tracks);
     }
 
+    void clean_duplicates_sharedhits_pixelseed(TrackVec &tracks, const IterationConfig &itconf) {
+      clean_duplicates_sharedhits_pixelseed_impl(tracks, itconf, false);
+    }
+
+    void clean_duplicates_sharedhits_pixelpriority(TrackVec &tracks, const IterationConfig &itconf) {
+      clean_duplicates_sharedhits_pixelseed_impl(tracks, itconf, true);
+    }
+
     namespace {
       CMS_SA_ALLOW struct register_duplicate_cleaners {
         register_duplicate_cleaners() {
@@ -603,6 +641,8 @@ namespace mkfit {
                                                       clean_duplicates_sharedhits);
           IterationConfig::register_duplicate_cleaner("phase1:clean_duplicates_sharedhits_pixelseed",
                                                       clean_duplicates_sharedhits_pixelseed);
+          IterationConfig::register_duplicate_cleaner("phase2:clean_duplicates_sharedhits_pixelpriority",
+                                                      clean_duplicates_sharedhits_pixelpriority);
         }
       } rdc_instance;
     }  // namespace

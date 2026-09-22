@@ -34,6 +34,7 @@ namespace mkfit {
     void clean_duplicates(TrackVec &tracks, const IterationConfig &itconf);
     void clean_duplicates_sharedhits(TrackVec &tracks, const IterationConfig &itconf);
     void clean_duplicates_sharedhits_pixelseed(TrackVec &tracks, const IterationConfig &itconf);
+    void clean_duplicates_sharedhits_pixelpriority(TrackVec &tracks, const IterationConfig &itconf);
 
     // Quality filters used directly (not through IterationConfig)
 
