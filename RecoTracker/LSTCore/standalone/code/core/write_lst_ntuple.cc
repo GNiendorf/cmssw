@@ -474,7 +474,6 @@ void createQuadrupletBranches() {
   ana.tx->createBranch<std::vector<float>>("t4_sim_vz");
   ana.tx->createBranch<std::vector<std::vector<int>>>("t4_matched_simIdx");
 #ifdef CUT_VALUE_DEBUG
-  ana.tx->createBranch<std::vector<float>>("t4_score_rphisum");
   ana.tx->createBranch<std::vector<float>>("t4_promptScore");
 #endif
   ana.tx->createBranch<std::vector<float>>("t4_displacedScore");
@@ -520,8 +519,6 @@ void createQuintupletBranches() {
   ana.tx->createBranch<std::vector<int>>("t5_nLayers");       // 5 base
   ana.tx->createBranch<std::vector<int>>("t5_isDupBitmask");  // dup-cleaning bitmask
   ana.tx->createBranch<std::vector<int>>("t5_partOfPT5");
-  ana.tx->createBranch<std::vector<int>>("t5_tightCutFlag");
-  ana.tx->createBranch<std::vector<float>>("t5_score_rphisum");
   ana.tx->createBranch<std::vector<std::vector<int>>>("t5_hitIndices");     // SoA hit indices, length 2*nLayers
   ana.tx->createBranch<std::vector<std::vector<int>>>("t5_logicalLayers");  // logical layer ids, length nLayers
   ana.tx->createBranch<std::vector<int>>("t5_moduleIdx");                   // T5's lower module index
@@ -1479,7 +1476,6 @@ std::map<unsigned int, unsigned int> setQuadrupletBranches(LSTEvent* event,
       ana.tx->pushbackToBranch<float>("t4_outerRadius", __H2F(quadruplets.outerRadius()[t4Idx]));
       ana.tx->pushbackToBranch<float>("t4_pMatched", percent_matched);
 #ifdef CUT_VALUE_DEBUG
-      ana.tx->pushbackToBranch<float>("t4_score_rphisum", __H2F(quadruplets.score_rphisum()[t4Idx]));
       ana.tx->pushbackToBranch<float>("t4_rzChiSquared", quadruplets.rzChiSquared()[t4Idx]);
       ana.tx->pushbackToBranch<float>("t4_promptScore", quadruplets.promptScore()[t4Idx]);
 #endif
@@ -1674,8 +1670,6 @@ std::map<unsigned int, unsigned int> setQuintupletBranches(LSTEvent* event,
       ana.tx->pushbackToBranch<std::vector<int>>("t5_logicalLayers", logLayerVec);
       ana.tx->pushbackToBranch<int>("t5_isDupBitmask", static_cast<int>(quintuplets.isDup()[t5Idx]));
       ana.tx->pushbackToBranch<int>("t5_partOfPT5", quintuplets.partOfPT5()[t5Idx] ? 1 : 0);
-      ana.tx->pushbackToBranch<int>("t5_tightCutFlag", quintuplets.tightCutFlag()[t5Idx] ? 1 : 0);
-      ana.tx->pushbackToBranch<float>("t5_score_rphisum", __H2F(quintuplets.score_rphisum()[t5Idx]));
 
       bool isfake = true;
       for (size_t isim = 0; isim < simidx.size(); ++isim) {
