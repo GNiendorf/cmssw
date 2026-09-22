@@ -1720,6 +1720,81 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     return true;
   }
 
+  // Reject a T5 when the mean saturating log-likelihood of its 5 MD directions exceeds this; pull^2 <= 6 for true MDs.
+  constexpr float kT5MdDirMaxMeanW = 1.8f;
+
+  // Module-frame pull of each MD direction against the circle through anchors 0, 2, 4 (u across strips, n normal).
+  template <alpaka::concepts::Acc TAcc>
+  ALPAKA_FN_ACC ALPAKA_FN_INLINE bool t5MdDirectionFail(TAcc const& acc,
+                                                        ModulesConst modules,
+                                                        MiniDoubletsConst mds,
+                                                        const uint16_t (&lowerModuleIndices)[Params_T5::kBaseLayers],
+                                                        const unsigned int (&mdIndices)[Params_T5::kBaseLayers]) {
+    float ax[Params_T5::kBaseLayers], ay[Params_T5::kBaseLayers], az[Params_T5::kBaseLayers];
+    for (int i = 0; i < Params_T5::kBaseLayers; ++i) {
+      ax[i] = mds.anchorX()[mdIndices[i]];
+      ay[i] = mds.anchorY()[mdIndices[i]];
+      az[i] = mds.anchorZ()[mdIndices[i]];
+    }
+    const auto circle = computeRadiusFromThreeAnchorHits(acc, ax[0], ay[0], ax[2], ay[2], ax[4], ay[4]);
+    const float cx = std::get<1>(circle), cy = std::get<2>(circle);
+    const float chx = ax[4] - ax[0], chy = ay[4] - ay[0];
+    const float chord = alpaka::math::sqrt(acc, chx * chx + chy * chy);
+    const float r = alpaka::math::sqrt(acc, (ax[0] - cx) * (ax[0] - cx) + (ay[0] - cy) * (ay[0] - cy));
+    float arc = chord;
+    if (edm::isFinite(r) && r > 0.f)
+      arc = 2.f * r * alpaka::math::asin(acc, alpaka::math::min(acc, chord / (2.f * r), 1.f));
+    const float cotTheta = (az[4] - az[0]) / arc;
+    float sumW = 0.f;
+    for (int i = 0; i < Params_T5::kBaseLayers; ++i) {
+      const uint16_t lowerModuleIndex = lowerModuleIndices[i];
+      float tx = cy - ay[i], ty = ax[i] - cx;
+      const float tn = alpaka::math::sqrt(acc, tx * tx + ty * ty);
+      tx /= tn;
+      ty /= tn;
+      if (!edm::isFinite(tx) || !edm::isFinite(ty)) {
+        tx = chx / chord;
+        ty = chy / chord;
+      }
+      if (tx * chx + ty * chy < 0.f) {
+        tx = -tx;
+        ty = -ty;
+      }
+      float ux, uy, nx, ny, nz;
+      if (modules.subdets()[lowerModuleIndex] == Barrel) {
+        const float cphi = alpaka::math::cos(acc, modules.phi()[lowerModuleIndex]);
+        const float sphi = alpaka::math::sin(acc, modules.phi()[lowerModuleIndex]);
+        ux = -sphi;
+        uy = cphi;
+        nx = cphi;
+        ny = sphi;
+        nz = ((az[i] > 0.f) - (az[i] < 0.f)) * modules.drdzs()[lowerModuleIndex];
+      } else {
+        const float slope = modules.dxdys()[lowerModuleIndex];
+        // Signed dxdy = -dx/dy of the sensor's strip edge, so (1, dxdy) is across the strips.
+        ux = 0.f;
+        uy = 1.f;
+        if (edm::isFinite(slope)) {
+          ux = 1.f / alpaka::math::sqrt(acc, 1.f + slope * slope);
+          uy = slope * ux;
+        }
+        nx = 0.f;
+        ny = 0.f;
+        nz = 1.f;
+      }
+      const float dx = mds.outerX()[mdIndices[i]] - ax[i];
+      const float dy = mds.outerY()[mdIndices[i]] - ay[i];
+      const float dz = mds.outerZ()[mdIndices[i]] - az[i];
+      const float vu = tx * ux + ty * uy;
+      const float vn = tx * nx + ty * ny + cotTheta * nz;
+      const float residual = (dx * ux + dy * uy) - vu * (dx * nx + dy * ny + dz * nz) / vn;
+      const float width = (modules.moduleType()[lowerModuleIndex] == PS) ? kWidthPS : kWidth2S;
+      const float pull = alpaka::math::abs(acc, residual) / (width * 0.40824829f);
+      sumW -= alpaka::math::log(acc, alpaka::math::max(acc, 1.f - pull * 0.40824829f, 0.05f));
+    }
+    return sumW > kT5MdDirMaxMeanW * Params_T5::kBaseLayers;
+  }
+
   ALPAKA_FN_ACC ALPAKA_FN_INLINE void tryAddQuintuplet(Acc3D const& acc,
                                                        ModulesConst modules,
                                                        MiniDoubletsConst mds,
@@ -1779,6 +1854,15 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                             tightCutFlag,
                                             t5Embed,
                                             ptCut);
+    if (success) {
+      const uint16_t t5ModIdx[] = {lowerModule1, lowerModule2, lowerModule3, lowerModule4, lowerModule5};
+      const unsigned int t5MdIdx[] = {mdIndices[segIdx[innerTripletIndex][0]][0],
+                                      mdIndices[segIdx[innerTripletIndex][0]][1],
+                                      mdIndices[segIdx[innerTripletIndex][1]][1],
+                                      mdIndices[segIdx[outerTripletIndex][0]][1],
+                                      mdIndices[segIdx[outerTripletIndex][1]][1]};
+      success = !t5MdDirectionFail(acc, modules, mds, t5ModIdx, t5MdIdx);
+    }
     if (success) {
       int totOccupancyQuintuplets = alpaka::atomicAdd(
           acc, &quintupletsOccupancy.totOccupancyQuintuplets()[lowerModule1], 1u, alpaka::hierarchy::Threads{});
