@@ -1,0 +1,65 @@
+--- a/RecoTracker/MkFitCMS/src/MkStdSeqs.cc	2026-09-21 20:14:46.035217787 -0400
++++ b/RecoTracker/MkFitCMS/src/MkStdSeqs.cc	2026-09-21 20:34:56.804016411 -0400
+@@ -509,11 +509,34 @@
+       const float drth_forward = itconf.dc_drth_forward;
+       const auto ntracks = tracks.size();
+ 
++      // Phase-2 pixel layers: PXB 0-3, PXF 16-27 (+z) and 38-49 (-z).
++      auto isPixelLayer = [](int l) { return l < 4 || (l >= 16 && l < 28) || (l >= 38 && l < 50); };
+       std::vector<float> ctheta(ntracks);
++      std::vector<bool> hasPixel(ntracks);
++      // Two tracks that both have pixel hits but share none come from different pixel seeds: not duplicates.
++      auto sharePixelHit = [&](const Track &t1, const Track &t2) {
++        for (int i = 0; i < t1.nTotalHits(); ++i) {
++          if (t1.getHitIdx(i) < 0 || !isPixelLayer(t1.getHitLyr(i)))
++            continue;
++          for (int j = 0; j < t2.nTotalHits(); ++j)
++            if (t2.getHitIdx(j) == t1.getHitIdx(i) && t2.getHitLyr(j) == t1.getHitLyr(i))
++              return true;
++        }
++        return false;
++      };
+       for (auto itrack = 0U; itrack < ntracks; itrack++) {
+         auto &trk = tracks[itrack];
+         ctheta[itrack] = 1.f / std::tan(trk.theta());
++        int npix = 0;
++        for (int i = 0; i < trk.nTotalHits(); ++i)
++          if (trk.getHitIdx(i) >= 0 && isPixelLayer(trk.getHitLyr(i)))
++            ++npix;
++        hasPixel[itrack] = npix >= 2;
+       }
++      // A track with pixel hits beats a pixel-less one; otherwise the higher score wins.
++      auto firstWins = [&](unsigned i, unsigned j) {
++        return hasPixel[i] != hasPixel[j] ? hasPixel[i] : tracks[i].score() > tracks[j].score();
++      };
+ 
+       float phi1, invpt1, dctheta, ctheta1, dphi, dr2;
+       for (auto itrack = 0U; itrack < ntracks; itrack++) {
+@@ -536,6 +559,9 @@
+           if (dphi > Config::maxdphi)
+             continue;
+ 
++          if (hasPixel[itrack] && hasPixel[jtrack] && !sharePixelHit(trk, track2))
++            continue;
++
+           float maxdRSquared = drth_central * drth_central;
+           if (std::abs(ctheta1) > Config::maxcth_fw)
+             maxdRSquared = drth_forward * drth_forward;
+@@ -544,7 +570,7 @@
+           dr2 = dphi * dphi + dctheta * dctheta;
+           if (dr2 < maxdRSquared) {
+             //Keep track with best score
+-            if (trk.score() > track2.score())
++            if (firstWins(itrack, jtrack))
+               track2.setDuplicateValue(true);
+             else
+               trk.setDuplicateValue(true);
+@@ -584,7 +610,7 @@
+ 
+           //selection here - 11percent fraction of shared hits to label a duplicate
+           if ((sharedCount - sharedFirst) >= ((minFoundHits - sharedFirst) * fraction)) {
+-            if (trk.score() > track2.score())
++            if (firstWins(itrack, jtrack))
+               track2.setDuplicateValue(true);
+             else
+               trk.setDuplicateValue(true);

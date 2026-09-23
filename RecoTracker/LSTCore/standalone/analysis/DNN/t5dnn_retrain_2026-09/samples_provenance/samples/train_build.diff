@@ -1,0 +1,241 @@
+diff --git a/RecoTracker/LSTCore/interface/Common.h b/RecoTracker/LSTCore/interface/Common.h
+index 2c85eef5087..234ac536929 100644
+--- a/RecoTracker/LSTCore/interface/Common.h
++++ b/RecoTracker/LSTCore/interface/Common.h
+@@ -102,10 +102,12 @@ namespace lst {
+     static constexpr int kLayers = 7, kHits = 14;  // 5 base + max 2 extensions
+     static constexpr int kBaseLayers = 5;
+     static constexpr int kEmbed = 6;
++    static constexpr int kExtraFeat = 10;  // T5 DNN training features (CUT_VALUE_DEBUG only)
+     using ArrayU8xLayers = edm::StdArray<uint8_t, kLayers>;
+     using ArrayU16xLayers = edm::StdArray<uint16_t, kLayers>;
+     using ArrayUxHits = edm::StdArray<unsigned int, kHits>;
+     using ArrayFxEmbed = edm::StdArray<float, kEmbed>;
++    using ArrayFxExtraFeat = edm::StdArray<float, kExtraFeat>;
+   };
+   struct Params_pT5 {
+     static constexpr int kLayers = 9, kHits = 18;  // 2 pixel + 7 OT (= T5::kLayers after extension)
+diff --git a/RecoTracker/LSTCore/interface/QuintupletsSoA.h b/RecoTracker/LSTCore/interface/QuintupletsSoA.h
+index 2dd6ef18c2b..d2ae54b7211 100644
+--- a/RecoTracker/LSTCore/interface/QuintupletsSoA.h
++++ b/RecoTracker/LSTCore/interface/QuintupletsSoA.h
+@@ -38,7 +38,8 @@ namespace lst {
+                       SOA_COLUMN(float, chiSquared),
+                       SOA_COLUMN(float, nonAnchorChiSquared),
+                       SOA_COLUMN(float, dBeta1),
+-                      SOA_COLUMN(float, dBeta2)
++                      SOA_COLUMN(float, dBeta2),
++                      SOA_COLUMN(Params_T5::ArrayFxExtraFeat, extraFeat)
+ #endif
+   );
+ 
+diff --git a/RecoTracker/LSTCore/src/alpaka/Quintuplet.h b/RecoTracker/LSTCore/src/alpaka/Quintuplet.h
+index e766906ae7d..5f885972d3f 100644
+--- a/RecoTracker/LSTCore/src/alpaka/Quintuplet.h
++++ b/RecoTracker/LSTCore/src/alpaka/Quintuplet.h
+@@ -1569,8 +1569,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+                                               outerRadius,
+                                               bridgeRadius,
+                                               dnnScore);
+-    if (!inference)  // T5-building cut
+-      return false;
++    // T5 DNN training build: creation cut disabled so the sample is the un-selected T5 population.
++    (void)inference;
++    // if (!inference)  // T5-building cut
++    //   return false;
+ 
+     if (not runQuintupletdBetaAlgoSelector(acc,
+                                            modules,
+@@ -1720,6 +1722,100 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+     return true;
+   }
+ 
++#ifdef CUT_VALUE_DEBUG
++  // T5 DNN training features (training build only): MD-direction log-likelihood (mean, max over the 5 MDs, module
++  // frame, circle through anchors 0,2,4), local density, topology, charge agreement and dcaXY of that circle.
++  template <alpaka::concepts::Acc TAcc>
++  ALPAKA_FN_ACC ALPAKA_FN_INLINE void computeT5ExtraFeatures(TAcc const& acc,
++                                                             ModulesConst modules,
++                                                             MiniDoubletsConst mds,
++                                                             MiniDoubletsOccupancyConst mdOccupancy,
++                                                             TripletsConst triplets,
++                                                             TripletsRangesConst tripletsRangesByMD,
++                                                             unsigned int innerTripletIndex,
++                                                             unsigned int outerTripletIndex,
++                                                             const uint16_t (&lm)[Params_T5::kBaseLayers],
++                                                             const unsigned int (&md)[Params_T5::kBaseLayers],
++                                                             float (&f)[Params_T5::kExtraFeat]) {
++    float ax[Params_T5::kBaseLayers], ay[Params_T5::kBaseLayers], az[Params_T5::kBaseLayers];
++    for (int i = 0; i < Params_T5::kBaseLayers; ++i) {
++      ax[i] = mds.anchorX()[md[i]];
++      ay[i] = mds.anchorY()[md[i]];
++      az[i] = mds.anchorZ()[md[i]];
++    }
++    const auto circle = computeRadiusFromThreeAnchorHits(acc, ax[0], ay[0], ax[2], ay[2], ax[4], ay[4]);
++    const float cr = std::get<0>(circle), cx = std::get<1>(circle), cy = std::get<2>(circle);
++    const float chx = ax[4] - ax[0], chy = ay[4] - ay[0];
++    const float chord = alpaka::math::sqrt(acc, chx * chx + chy * chy);
++    const float r = alpaka::math::sqrt(acc, (ax[0] - cx) * (ax[0] - cx) + (ay[0] - cy) * (ay[0] - cy));
++    float arc = chord;
++    if (edm::isFinite(r) && r > 0.f)
++      arc = 2.f * r * alpaka::math::asin(acc, alpaka::math::min(acc, chord / (2.f * r), 1.f));
++    const float cotTheta = (az[4] - az[0]) / arc;
++    float sumW = 0.f, maxW = 0.f;
++    int nPS = 0, nBarrel = 0;
++    for (int i = 0; i < Params_T5::kBaseLayers; ++i) {
++      const uint16_t lowerModuleIndex = lm[i];
++      nPS += (modules.moduleType()[lowerModuleIndex] == PS);
++      nBarrel += (modules.subdets()[lowerModuleIndex] == Barrel);
++      float tx = cy - ay[i], ty = ax[i] - cx;
++      const float tn = alpaka::math::sqrt(acc, tx * tx + ty * ty);
++      tx /= tn;
++      ty /= tn;
++      if (!edm::isFinite(tx) || !edm::isFinite(ty)) {
++        tx = chx / chord;
++        ty = chy / chord;
++      }
++      if (tx * chx + ty * chy < 0.f) {
++        tx = -tx;
++        ty = -ty;
++      }
++      float ux, uy, nx, ny, nz;
++      if (modules.subdets()[lowerModuleIndex] == Barrel) {
++        const float cphi = alpaka::math::cos(acc, modules.phi()[lowerModuleIndex]);
++        const float sphi = alpaka::math::sin(acc, modules.phi()[lowerModuleIndex]);
++        ux = -sphi;
++        uy = cphi;
++        nx = cphi;
++        ny = sphi;
++        nz = ((az[i] > 0.f) - (az[i] < 0.f)) * modules.drdzs()[lowerModuleIndex];
++      } else {
++        const float slope = modules.dxdys()[lowerModuleIndex];
++        ux = 0.f;
++        uy = 1.f;
++        if (edm::isFinite(slope)) {
++          ux = 1.f / alpaka::math::sqrt(acc, 1.f + slope * slope);
++          uy = slope * ux;
++        }
++        nx = 0.f;
++        ny = 0.f;
++        nz = 1.f;
++      }
++      const float dx = mds.outerX()[md[i]] - ax[i];
++      const float dy = mds.outerY()[md[i]] - ay[i];
++      const float dz = mds.outerZ()[md[i]] - az[i];
++      const float vu = tx * ux + ty * uy;
++      const float vn = tx * nx + ty * ny + cotTheta * nz;
++      const float residual = (dx * ux + dy * uy) - vu * (dx * nx + dy * ny + dz * nz) / vn;
++      const float width = (modules.moduleType()[lowerModuleIndex] == PS) ? kWidthPS : kWidth2S;
++      const float pull = alpaka::math::abs(acc, residual) / (width * 0.40824829f);
++      const float w = -alpaka::math::log(acc, alpaka::math::max(acc, 1.f - pull * 0.40824829f, 0.05f));
++      sumW += w;
++      maxW = alpaka::math::max(acc, maxW, w);
++    }
++    f[0] = sumW / Params_T5::kBaseLayers;
++    f[1] = maxW;
++    f[2] = tripletsRangesByMD.n()[md[2]];  // T3s leaving the middle MD
++    f[3] = tripletsRangesByMD.n()[md[0]];  // T3s leaving the first MD
++    f[4] = mdOccupancy.nMDs()[lm[0]];      // MDs in the first module
++    f[5] = nPS;
++    f[6] = nBarrel;
++    f[7] = modules.layers()[lm[0]] + (modules.subdets()[lm[0]] == Endcap ? 6 : 0);
++    f[8] = (triplets.charge()[innerTripletIndex] == triplets.charge()[outerTripletIndex]) ? 1.f : 0.f;
++    f[9] = alpaka::math::abs(acc, alpaka::math::sqrt(acc, cx * cx + cy * cy) - cr);
++  }
++#endif
++
+   ALPAKA_FN_ACC ALPAKA_FN_INLINE void tryAddQuintuplet(Acc3D const& acc,
+                                                        ModulesConst modules,
+                                                        MiniDoubletsConst mds,
+@@ -1732,6 +1828,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+                                                        QuintupletsRanges quintupletsRangesByMD1,
+                                                        QuintupletsByMD quintupletsByMD1,
+                                                        ObjectRangesConst ranges,
++                                                       [[maybe_unused]] MiniDoubletsOccupancyConst mdOccupancy,
++                                                       [[maybe_unused]] TripletsRangesConst tripletsRangesByMD,
+                                                        unsigned int innerTripletIndex,
+                                                        unsigned int outerTripletIndex,
+                                                        uint16_t lowerModule1,
+@@ -1851,6 +1949,21 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+                               t5Embed,
+                               tightCutFlag,
+                               dnnScore);
++#ifdef CUT_VALUE_DEBUG
++        {
++          const uint16_t t5Lm[Params_T5::kBaseLayers] = {lowerModule1, lowerModule2, lowerModule3, lowerModule4, lowerModule5};
++          const unsigned int t5Md[Params_T5::kBaseLayers] = {mdIndices[segIdx[innerTripletIndex][0]][0],
++                                                             mdIndices[segIdx[innerTripletIndex][0]][1],
++                                                             mdIndices[segIdx[innerTripletIndex][1]][1],
++                                                             mdIndices[segIdx[outerTripletIndex][0]][1],
++                                                             mdIndices[segIdx[outerTripletIndex][1]][1]};
++          float t5Feat[Params_T5::kExtraFeat];
++          computeT5ExtraFeatures(
++              acc, modules, mds, mdOccupancy, triplets, tripletsRangesByMD, innerTripletIndex, outerTripletIndex, t5Lm, t5Md, t5Feat);
++          for (int i = 0; i < Params_T5::kExtraFeat; ++i)
++            quintuplets.extraFeat()[quintupletIndex][i] = t5Feat[i];
++        }
++#endif
+ 
+         triplets.partOfT5()[quintuplets.tripletIndices()[quintupletIndex][0]] = true;
+         triplets.partOfT5()[quintuplets.tripletIndices()[quintupletIndex][1]] = true;
+@@ -1959,6 +2072,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+                                quintupletsRangesByMD1,
+                                quintupletsByMD1,
+                                ranges,
++                               mdOccupancy,
++                               tripletsRangesByMD,
+                                innerTripletIndex,
+                                outerTripletIndex,
+                                lowerModule1,
+@@ -2019,6 +2134,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+                            quintupletsRangesByMD1,
+                            quintupletsByMD1,
+                            ranges,
++                           mdOccupancy,
++                           tripletsRangesByMD,
+                            innerTripletIndex,
+                            outerTripletIndex,
+                            lowerModule1,
+diff --git a/RecoTracker/LSTCore/standalone/code/core/write_lst_ntuple.cc b/RecoTracker/LSTCore/standalone/code/core/write_lst_ntuple.cc
+index 510ee36af7a..fc4cec12e62 100644
+--- a/RecoTracker/LSTCore/standalone/code/core/write_lst_ntuple.cc
++++ b/RecoTracker/LSTCore/standalone/code/core/write_lst_ntuple.cc
+@@ -499,6 +499,19 @@ void createQuintupletBranches() {
+   // pt (computed based on average of the 4 circles formed by, (1, 2, 3), (2, 3, 4), (3, 4, 5), (1, 3, 5)
+   ana.tx->createBranch<std::vector<std::vector<float>>>("t5_embed");
+   ana.tx->createBranch<std::vector<float>>("t5_dnnScore");
++#ifdef CUT_VALUE_DEBUG
++  // T5 DNN training features (order = Params_T5::kExtraFeat slots)
++  ana.tx->createBranch<std::vector<float>>("t5x_mdDirMeanW");
++  ana.tx->createBranch<std::vector<float>>("t5x_mdDirMaxW");
++  ana.tx->createBranch<std::vector<float>>("t5x_nT3OutMid");
++  ana.tx->createBranch<std::vector<float>>("t5x_nT3OutFirst");
++  ana.tx->createBranch<std::vector<float>>("t5x_nMDFirstMod");
++  ana.tx->createBranch<std::vector<float>>("t5x_nPS");
++  ana.tx->createBranch<std::vector<float>>("t5x_nBarrel");
++  ana.tx->createBranch<std::vector<float>>("t5x_innermostLayer");
++  ana.tx->createBranch<std::vector<float>>("t5x_chargeAgree");
++  ana.tx->createBranch<std::vector<float>>("t5x_dcaXY");
++#endif
+   ana.tx->createBranch<std::vector<float>>("t5_pt");
+   ana.tx->createBranch<std::vector<float>>("t5_eta");        // eta (computed based on last anchor hit's eta)
+   ana.tx->createBranch<std::vector<float>>("t5_phi");        // phi (computed based on first anchor hit's phi)
+@@ -1657,6 +1670,18 @@ std::map<unsigned int, unsigned int> setQuintupletBranches(LSTEvent* event,
+       }
+       ana.tx->pushbackToBranch<std::vector<float>>("t5_embed", current_t5_embed);
+       ana.tx->pushbackToBranch<float>("t5_dnnScore", quintuplets.dnnScore()[t5Idx]);
++#ifdef CUT_VALUE_DEBUG
++      ana.tx->pushbackToBranch<float>("t5x_mdDirMeanW", quintuplets.extraFeat()[t5Idx][0]);
++      ana.tx->pushbackToBranch<float>("t5x_mdDirMaxW", quintuplets.extraFeat()[t5Idx][1]);
++      ana.tx->pushbackToBranch<float>("t5x_nT3OutMid", quintuplets.extraFeat()[t5Idx][2]);
++      ana.tx->pushbackToBranch<float>("t5x_nT3OutFirst", quintuplets.extraFeat()[t5Idx][3]);
++      ana.tx->pushbackToBranch<float>("t5x_nMDFirstMod", quintuplets.extraFeat()[t5Idx][4]);
++      ana.tx->pushbackToBranch<float>("t5x_nPS", quintuplets.extraFeat()[t5Idx][5]);
++      ana.tx->pushbackToBranch<float>("t5x_nBarrel", quintuplets.extraFeat()[t5Idx][6]);
++      ana.tx->pushbackToBranch<float>("t5x_innermostLayer", quintuplets.extraFeat()[t5Idx][7]);
++      ana.tx->pushbackToBranch<float>("t5x_chargeAgree", quintuplets.extraFeat()[t5Idx][8]);
++      ana.tx->pushbackToBranch<float>("t5x_dcaXY", quintuplets.extraFeat()[t5Idx][9]);
++#endif
+ 
+       unsigned int nL = quintuplets.nLayers()[t5Idx];
+       ana.tx->pushbackToBranch<int>("t5_nLayers", static_cast<int>(nL));

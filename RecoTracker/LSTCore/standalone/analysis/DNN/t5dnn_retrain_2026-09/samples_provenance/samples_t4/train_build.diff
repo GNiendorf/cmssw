@@ -1,0 +1,312 @@
+diff --git a/RecoTracker/LSTCore/interface/Common.h b/RecoTracker/LSTCore/interface/Common.h
+index 2c85eef5087..443eb492d07 100644
+--- a/RecoTracker/LSTCore/interface/Common.h
++++ b/RecoTracker/LSTCore/interface/Common.h
+@@ -94,6 +94,8 @@ namespace lst {
+   };
+   struct Params_T4 {
+     static constexpr int kLayers = 4, kHits = 8;
++    static constexpr int kExtraFeat = 6;  // T4 DNN training features (CUT_VALUE_DEBUG only)
++    using ArrayFxExtraFeat = edm::StdArray<float, kExtraFeat>;
+     using ArrayU8xLayers = edm::StdArray<uint8_t, kLayers>;
+     using ArrayU16xLayers = edm::StdArray<uint16_t, kLayers>;
+     using ArrayUxHits = edm::StdArray<unsigned int, kHits>;
+diff --git a/RecoTracker/LSTCore/interface/QuadrupletsSoA.h b/RecoTracker/LSTCore/interface/QuadrupletsSoA.h
+index ff96f4d96da..e5101272ab2 100644
+--- a/RecoTracker/LSTCore/interface/QuadrupletsSoA.h
++++ b/RecoTracker/LSTCore/interface/QuadrupletsSoA.h
+@@ -35,6 +35,7 @@ namespace lst {
+                       SOA_COLUMN(float, promptScore),
+                       SOA_COLUMN(int, layer),
+                       SOA_COLUMN(float, dBeta),
++                      SOA_COLUMN(Params_T4::ArrayFxExtraFeat, extraFeat),
+ #endif
+                       SOA_COLUMN(bool, partOfTC));
+ 
+diff --git a/RecoTracker/LSTCore/src/alpaka/LSTEvent.dev.cc b/RecoTracker/LSTCore/src/alpaka/LSTEvent.dev.cc
+index fc4ea552755..b455862bc92 100644
+--- a/RecoTracker/LSTCore/src/alpaka/LSTEvent.dev.cc
++++ b/RecoTracker/LSTCore/src/alpaka/LSTEvent.dev.cc
+@@ -1239,6 +1239,8 @@ void LSTEvent::createQuadruplets() {
+                         tripletsDC_->const_view().tripletsOccupancy(),
+                         tripletsDC_->const_view().tripletsBySegment(),
+                         tripletsDC_->const_view().tripletsRangesBySegment(),
++                        miniDoubletsDC_->const_view().miniDoubletsOccupancy(),
++                        tripletsDC_->const_view().tripletsRangesByMD(),
+                         rangesDC_->const_view(),
+                         ptCut_);
+   };
+@@ -1302,6 +1304,8 @@ void LSTEvent::createQuadruplets() {
+                         tripletsDC_->const_view().tripletsOccupancy(),
+                         tripletsDC_->const_view().tripletsBySegment(),
+                         tripletsDC_->const_view().tripletsRangesBySegment(),
++                        miniDoubletsDC_->const_view().miniDoubletsOccupancy(),
++                        tripletsDC_->const_view().tripletsRangesByMD(),
+                         quadrupletsDC_->view().quadruplets(),
+                         quadrupletsDC_->view().quadrupletsOccupancy(),
+                         rangesDC_->const_view(),
+diff --git a/RecoTracker/LSTCore/src/alpaka/Quadruplet.h b/RecoTracker/LSTCore/src/alpaka/Quadruplet.h
+index 16824589239..1d6c80efc42 100644
+--- a/RecoTracker/LSTCore/src/alpaka/Quadruplet.h
++++ b/RecoTracker/LSTCore/src/alpaka/Quadruplet.h
+@@ -299,6 +299,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+                                                                MiniDoubletsConst mds,
+                                                                SegmentsConst segments,
+                                                                TripletsConst triplets,
++                                                               MiniDoubletsOccupancyConst mdOccupancy,
++                                                               TripletsRangesConst tripletsRangesByMD,
+                                                                uint16_t lowerModuleIndex1,
+                                                                uint16_t lowerModuleIndex2,
+                                                                uint16_t lowerModuleIndex3,
+@@ -316,7 +318,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+                                                                float& dBeta,
+                                                                float& promptScore,
+                                                                float& displacedScore,
+-                                                               float& fakeScore) {
++                                                               float& fakeScore,
++                                                               float (&t4Feat)[dnn::t5dnn::kExtraFeatures]) {
+     // require both T3s to have the same charge
+     const short innerT3charge = triplets.charge()[innerTripletIndex];
+     const short outerT3charge = triplets.charge()[outerTripletIndex];
+@@ -411,6 +414,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+                                                              nonAnchorSigmas2,
+                                                              nonAnchorChiSquared);
+ 
++    const uint16_t t4Lm[Params_T4::kLayers] = {lowerModuleIndex1, lowerModuleIndex2, lowerModuleIndex3, lowerModuleIndex4};
++    const unsigned int t4Md[Params_T4::kLayers] = {firstMDIndex, secondMDIndex, thirdMDIndex, fourthMDIndex};
++    computeDnnFeatures<Params_T4::kLayers, 0, 1, 3, 1>(acc, modules, mds, mdOccupancy, tripletsRangesByMD, t4Lm, t4Md, t4Feat);
++
+     bool inference = lst::t4dnn::runInference(acc,
+                                               mds,
+                                               modules,
+@@ -436,9 +443,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+                                               triplets.promptScore()[outerTripletIndex],
+                                               triplets.displacedScore()[outerTripletIndex]);
+ 
+-    if (!inference) {
+-      return false;
+-    }
++    // T4 DNN training build: creation cut disabled so the sample is the un-selected T4 population.
++    (void)inference;
+     // only run dBeta selector for low/high pT to avoid removing displaced efficiency
+     if (pt > 10 || pt < 1) {
+       if (not runQuintupletdBetaAlgoSelector(acc,
+@@ -510,6 +516,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+                                   TripletsOccupancyConst tripletsOccupancy,
+                                   TripletsBySegmentConst tripletsBySegment,
+                                   TripletsRangesConst tripletsRangesBySegment,
++                                  MiniDoubletsOccupancyConst mdOccupancy,
++                                  TripletsRangesConst tripletsRangesByMD,
+                                   Quadruplets quadruplets,
+                                   QuadrupletsOccupancy quadrupletsOccupancy,
+                                   ObjectRangesConst ranges,
+@@ -619,11 +627,14 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+ 
+               float pt = (innerRadius + outerRadius) * k2Rinv1GeVf;
+ 
++              float t4Feat[dnn::t5dnn::kExtraFeatures];
+               bool success = runQuadrupletDefaultAlgo(acc,
+                                                       modules,
+                                                       mds,
+                                                       segments,
+                                                       triplets,
++                                                      mdOccupancy,
++                                                      tripletsRangesByMD,
+                                                       lowerModule1,
+                                                       lowerModule2,
+                                                       lowerModule3,
+@@ -641,7 +652,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+                                                       dBeta,
+                                                       promptScore,
+                                                       displacedScore,
+-                                                      fakeScore);
++                                                      fakeScore,
++                                                      t4Feat);
+               if (success) {
+                 int totOccupancyQuadruplets =
+                     alpaka::atomicAdd(acc,
+@@ -687,6 +699,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+                                         regressionCenterY,
+                                         regressionRadius,
+                                         nonAnchorRegressionRadius);
++#ifdef CUT_VALUE_DEBUG
++                  for (unsigned int i = 0; i < dnn::t5dnn::kExtraFeatures; ++i)
++                    quadruplets.extraFeat()[quadrupletIndex][i] = t4Feat[i];
++#endif
+                 }
+               }
+               continue;
+@@ -739,11 +755,14 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+ 
+           float pt = (innerRadius + outerRadius) * k2Rinv1GeVf;
+ 
++          float t4Feat[dnn::t5dnn::kExtraFeatures];
+           bool success = runQuadrupletDefaultAlgo(acc,
+                                                   modules,
+                                                   mds,
+                                                   segments,
+                                                   triplets,
++                                                  mdOccupancy,
++                                                  tripletsRangesByMD,
+                                                   lowerModule1,
+                                                   lowerModule2,
+                                                   lowerModule3,
+@@ -761,7 +780,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+                                                   dBeta,
+                                                   promptScore,
+                                                   displacedScore,
+-                                                  fakeScore);
++                                                  fakeScore,
++                                                  t4Feat);
+           if (success) {
+             int totOccupancyQuadruplets = alpaka::atomicAdd(
+                 acc, &quadrupletsOccupancy.totOccupancyQuadruplets()[lowerModule1], 1u, alpaka::hierarchy::Threads{});
+@@ -804,6 +824,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+                                     regressionCenterY,
+                                     regressionRadius,
+                                     nonAnchorRegressionRadius);
++#ifdef CUT_VALUE_DEBUG
++              for (unsigned int i = 0; i < dnn::t5dnn::kExtraFeatures; ++i)
++                quadruplets.extraFeat()[quadrupletIndex][i] = t4Feat[i];
++#endif
+             }
+           }
+         }
+@@ -831,6 +855,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+                                   TripletsOccupancyConst tripletsOcc,
+                                   TripletsBySegmentConst tripletsBySegment,
+                                   TripletsRangesConst tripletsRangesBySegment,
++                                  MiniDoubletsOccupancyConst mdOccupancy,
++                                  TripletsRangesConst tripletsRangesByMD,
+                                   ObjectRangesConst ranges,
+                                   const float ptCut) const {
+       // The atomicAdd below with hierarchy::Threads{} requires one block in x, y dimensions.
+@@ -897,11 +923,14 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+               float rzChiSquared, dBeta, nonAnchorChiSquared, regressionCenterX, regressionCenterY, regressionRadius,
+                   nonAnchorRegressionRadius, chiSquared, promptScore, displacedScore, fakeScore;
+ 
++              float t4Feat[dnn::t5dnn::kExtraFeatures];
+               const bool ok = runQuadrupletDefaultAlgo(acc,
+                                                        modules,
+                                                        mds,
+                                                        segments,
+                                                        triplets,
++                                                       mdOccupancy,
++                                                       tripletsRangesByMD,
+                                                        lowerModule1,
+                                                        lowerModule2,
+                                                        lowerModule3,
+@@ -919,7 +948,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+                                                        dBeta,
+                                                        promptScore,
+                                                        displacedScore,
+-                                                       fakeScore);
++                                                       fakeScore,
++                                                       t4Feat);
+               if (ok) {
+                 alpaka::atomicAdd(acc, &triplets.connectedLSMax()[innerTripletIndex], 1u, alpaka::hierarchy::Threads{});
+               }
+diff --git a/RecoTracker/LSTCore/src/alpaka/Quintuplet.h b/RecoTracker/LSTCore/src/alpaka/Quintuplet.h
+index 245ca799788..3be9fd8f893 100644
+--- a/RecoTracker/LSTCore/src/alpaka/Quintuplet.h
++++ b/RecoTracker/LSTCore/src/alpaka/Quintuplet.h
+@@ -1453,34 +1453,34 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+     return false;
+   }
+ 
+-  // T5 DNN inputs: MD-direction log-likelihood (mean, max over the 5 MDs, module frame, circle through anchors 0,2,4),
+-  // local density and dcaXY of that circle.
+-  template <alpaka::concepts::Acc TAcc>
+-  ALPAKA_FN_ACC ALPAKA_FN_INLINE void computeT5DnnFeatures(TAcc const& acc,
++  // T5/T4 DNN inputs over the N MDs: MD-direction log-likelihood (mean, max; module frame, circle through anchors
++  // iA,iB,iC), local density (T3s leaving MD iMid and MD 0, MDs in the first module) and dcaXY of that circle.
++  template <int N, int iA, int iB, int iC, int iMid, alpaka::concepts::Acc TAcc>
++  ALPAKA_FN_ACC ALPAKA_FN_INLINE void computeDnnFeatures(TAcc const& acc,
+                                                              ModulesConst modules,
+                                                              MiniDoubletsConst mds,
+                                                              MiniDoubletsOccupancyConst mdOccupancy,
+                                                              TripletsRangesConst tripletsRangesByMD,
+-                                                             const uint16_t (&lm)[Params_T5::kBaseLayers],
+-                                                             const unsigned int (&md)[Params_T5::kBaseLayers],
++                                                             const uint16_t (&lm)[N],
++                                                             const unsigned int (&md)[N],
+                                                              float (&f)[dnn::t5dnn::kExtraFeatures]) {
+-    float ax[Params_T5::kBaseLayers], ay[Params_T5::kBaseLayers], az[Params_T5::kBaseLayers];
+-    for (int i = 0; i < Params_T5::kBaseLayers; ++i) {
++    float ax[N], ay[N], az[N];
++    for (int i = 0; i < N; ++i) {
+       ax[i] = mds.anchorX()[md[i]];
+       ay[i] = mds.anchorY()[md[i]];
+       az[i] = mds.anchorZ()[md[i]];
+     }
+-    const auto circle = computeRadiusFromThreeAnchorHits(acc, ax[0], ay[0], ax[2], ay[2], ax[4], ay[4]);
++    const auto circle = computeRadiusFromThreeAnchorHits(acc, ax[iA], ay[iA], ax[iB], ay[iB], ax[iC], ay[iC]);
+     const float cr = std::get<0>(circle), cx = std::get<1>(circle), cy = std::get<2>(circle);
+-    const float chx = ax[4] - ax[0], chy = ay[4] - ay[0];
++    const float chx = ax[iC] - ax[iA], chy = ay[iC] - ay[iA];
+     const float chord = alpaka::math::sqrt(acc, chx * chx + chy * chy);
+-    const float r = alpaka::math::sqrt(acc, (ax[0] - cx) * (ax[0] - cx) + (ay[0] - cy) * (ay[0] - cy));
++    const float r = alpaka::math::sqrt(acc, (ax[iA] - cx) * (ax[iA] - cx) + (ay[iA] - cy) * (ay[iA] - cy));
+     float arc = chord;
+     if (edm::isFinite(r) && r > 0.f)
+       arc = 2.f * r * alpaka::math::asin(acc, alpaka::math::min(acc, chord / (2.f * r), 1.f));
+-    const float cotTheta = (az[4] - az[0]) / arc;
++    const float cotTheta = (az[iC] - az[iA]) / arc;
+     float sumW = 0.f, maxW = 0.f;
+-    for (int i = 0; i < Params_T5::kBaseLayers; ++i) {
++    for (int i = 0; i < N; ++i) {
+       const uint16_t lowerModuleIndex = lm[i];
+       float tx = cy - ay[i], ty = ax[i] - cx;
+       const float tn = alpaka::math::sqrt(acc, tx * tx + ty * ty);
+@@ -1527,9 +1527,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+       sumW += w;
+       maxW = alpaka::math::max(acc, maxW, w);
+     }
+-    f[0] = sumW / Params_T5::kBaseLayers;
++    f[0] = sumW / N;
+     f[1] = maxW;
+-    f[2] = tripletsRangesByMD.n()[md[2]];  // T3s leaving the middle MD
++    f[2] = tripletsRangesByMD.n()[md[iMid]];  // T3s leaving the middle MD
+     f[3] = tripletsRangesByMD.n()[md[0]];  // T3s leaving the first MD
+     f[4] = mdOccupancy.nMDs()[lm[0]];      // MDs in the first module
+     f[5] = alpaka::math::abs(acc, alpaka::math::sqrt(acc, cx * cx + cy * cy) - cr);
+@@ -1596,7 +1596,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+     const unsigned int t5Md[Params_T5::kBaseLayers] = {
+         firstMDIndex, secondMDIndex, thirdMDIndex, fourthMDIndex, fifthMDIndex};
+     float t5Feat[dnn::t5dnn::kExtraFeatures];
+-    computeT5DnnFeatures(acc, modules, mds, mdOccupancy, tripletsRangesByMD, t5Lm, t5Md, t5Feat);
++    computeDnnFeatures<Params_T5::kBaseLayers, 0, 2, 4, 2>(acc, modules, mds, mdOccupancy, tripletsRangesByMD, t5Lm, t5Md, t5Feat);
+     float dnnOutput[dnn::t5dnn::kOutputFeatures];
+     const bool inference = lst::t5dnn::runInference(acc,
+                                                     mds,
+diff --git a/RecoTracker/LSTCore/standalone/code/core/write_lst_ntuple.cc b/RecoTracker/LSTCore/standalone/code/core/write_lst_ntuple.cc
+index fdb53fa6d64..2bce772134f 100644
+--- a/RecoTracker/LSTCore/standalone/code/core/write_lst_ntuple.cc
++++ b/RecoTracker/LSTCore/standalone/code/core/write_lst_ntuple.cc
+@@ -176,6 +176,13 @@ void createT4DNNBranches() {
+   ana.tx->createBranch<std::vector<float>>("t4_regressionRadius");
+ #ifdef CUT_VALUE_DEBUG
+   ana.tx->createBranch<std::vector<float>>("t4_nonAnchorRegressionRadius");
++  // T4 DNN training features, computed before the T4 DNN
++  ana.tx->createBranch<std::vector<float>>("t4x_mdDirMeanW");
++  ana.tx->createBranch<std::vector<float>>("t4x_mdDirMaxW");
++  ana.tx->createBranch<std::vector<float>>("t4x_nT3OutMid");
++  ana.tx->createBranch<std::vector<float>>("t4x_nT3OutFirst");
++  ana.tx->createBranch<std::vector<float>>("t4x_nMDFirstMod");
++  ana.tx->createBranch<std::vector<float>>("t4x_dcaXY");
+ #endif
+ 
+   // Hit-specific branches
+@@ -2897,6 +2904,12 @@ void setT4DNNBranches(LSTEvent* event) {
+       ana.tx->pushbackToBranch<float>("t4_regressionRadius", quadruplets.regressionRadius()[t4Idx]);
+ #ifdef CUT_VALUE_DEBUG
+       ana.tx->pushbackToBranch<float>("t4_nonAnchorRegressionRadius", quadruplets.nonAnchorRegressionRadius()[t4Idx]);
++      ana.tx->pushbackToBranch<float>("t4x_mdDirMeanW", quadruplets.extraFeat()[t4Idx][0]);
++      ana.tx->pushbackToBranch<float>("t4x_mdDirMaxW", quadruplets.extraFeat()[t4Idx][1]);
++      ana.tx->pushbackToBranch<float>("t4x_nT3OutMid", quadruplets.extraFeat()[t4Idx][2]);
++      ana.tx->pushbackToBranch<float>("t4x_nT3OutFirst", quadruplets.extraFeat()[t4Idx][3]);
++      ana.tx->pushbackToBranch<float>("t4x_nMDFirstMod", quadruplets.extraFeat()[t4Idx][4]);
++      ana.tx->pushbackToBranch<float>("t4x_dcaXY", quadruplets.extraFeat()[t4Idx][5]);
+ #endif
+ 
+       if (t4s_used_in_tc.find(t4Idx) != t4s_used_in_tc.end()) {
