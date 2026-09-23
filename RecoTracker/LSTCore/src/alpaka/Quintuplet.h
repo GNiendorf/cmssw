@@ -1455,8 +1455,14 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
 
   // T5 DNN inputs: MD-direction log-likelihood (mean, max over the 5 MDs, module frame, circle through anchors 0,2,4),
   // local density and dcaXY of that circle.
+  // Not inlined on ROCm: inlining it into CountTripletConnectionsT crashes the gfx90a register allocator (ROCm 7.2).
+#if defined(ALPAKA_ACC_GPU_HIP_ENABLED)
+#define LST_T5DNN_FEATURES_INLINE [[gnu::noinline]]
+#else
+#define LST_T5DNN_FEATURES_INLINE ALPAKA_FN_INLINE
+#endif
   template <alpaka::concepts::Acc TAcc>
-  ALPAKA_FN_ACC ALPAKA_FN_INLINE void computeT5DnnFeatures(TAcc const& acc,
+  ALPAKA_FN_ACC LST_T5DNN_FEATURES_INLINE void computeT5DnnFeatures(TAcc const& acc,
                                                              ModulesConst modules,
                                                              MiniDoubletsConst mds,
                                                              MiniDoubletsOccupancyConst mdOccupancy,
