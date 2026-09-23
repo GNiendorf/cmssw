@@ -38,7 +38,8 @@ namespace lst {
                       SOA_COLUMN(float, chiSquared),
                       SOA_COLUMN(float, nonAnchorChiSquared),
                       SOA_COLUMN(float, dBeta1),
-                      SOA_COLUMN(float, dBeta2)
+                      SOA_COLUMN(float, dBeta2),
+                      SOA_COLUMN(Params_T5::ArrayFxExtraFeat, extraFeat)
 #endif
   );
 

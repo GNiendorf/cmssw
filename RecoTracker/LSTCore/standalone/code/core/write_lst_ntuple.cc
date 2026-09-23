@@ -499,6 +499,19 @@ void createQuintupletBranches() {
   // pt (computed based on average of the 4 circles formed by, (1, 2, 3), (2, 3, 4), (3, 4, 5), (1, 3, 5)
   ana.tx->createBranch<std::vector<std::vector<float>>>("t5_embed");
   ana.tx->createBranch<std::vector<float>>("t5_dnnScore");
+#ifdef CUT_VALUE_DEBUG
+  // T5 DNN training features (order = Params_T5::kExtraFeat slots)
+  ana.tx->createBranch<std::vector<float>>("t5x_mdDirMeanW");
+  ana.tx->createBranch<std::vector<float>>("t5x_mdDirMaxW");
+  ana.tx->createBranch<std::vector<float>>("t5x_nT3OutMid");
+  ana.tx->createBranch<std::vector<float>>("t5x_nT3OutFirst");
+  ana.tx->createBranch<std::vector<float>>("t5x_nMDFirstMod");
+  ana.tx->createBranch<std::vector<float>>("t5x_nPS");
+  ana.tx->createBranch<std::vector<float>>("t5x_nBarrel");
+  ana.tx->createBranch<std::vector<float>>("t5x_innermostLayer");
+  ana.tx->createBranch<std::vector<float>>("t5x_chargeAgree");
+  ana.tx->createBranch<std::vector<float>>("t5x_dcaXY");
+#endif
   ana.tx->createBranch<std::vector<float>>("t5_pt");
   ana.tx->createBranch<std::vector<float>>("t5_eta");        // eta (computed based on last anchor hit's eta)
   ana.tx->createBranch<std::vector<float>>("t5_phi");        // phi (computed based on first anchor hit's phi)
@@ -1657,6 +1670,18 @@ std::map<unsigned int, unsigned int> setQuintupletBranches(LSTEvent* event,
       }
       ana.tx->pushbackToBranch<std::vector<float>>("t5_embed", current_t5_embed);
       ana.tx->pushbackToBranch<float>("t5_dnnScore", quintuplets.dnnScore()[t5Idx]);
+#ifdef CUT_VALUE_DEBUG
+      ana.tx->pushbackToBranch<float>("t5x_mdDirMeanW", quintuplets.extraFeat()[t5Idx][0]);
+      ana.tx->pushbackToBranch<float>("t5x_mdDirMaxW", quintuplets.extraFeat()[t5Idx][1]);
+      ana.tx->pushbackToBranch<float>("t5x_nT3OutMid", quintuplets.extraFeat()[t5Idx][2]);
+      ana.tx->pushbackToBranch<float>("t5x_nT3OutFirst", quintuplets.extraFeat()[t5Idx][3]);
+      ana.tx->pushbackToBranch<float>("t5x_nMDFirstMod", quintuplets.extraFeat()[t5Idx][4]);
+      ana.tx->pushbackToBranch<float>("t5x_nPS", quintuplets.extraFeat()[t5Idx][5]);
+      ana.tx->pushbackToBranch<float>("t5x_nBarrel", quintuplets.extraFeat()[t5Idx][6]);
+      ana.tx->pushbackToBranch<float>("t5x_innermostLayer", quintuplets.extraFeat()[t5Idx][7]);
+      ana.tx->pushbackToBranch<float>("t5x_chargeAgree", quintuplets.extraFeat()[t5Idx][8]);
+      ana.tx->pushbackToBranch<float>("t5x_dcaXY", quintuplets.extraFeat()[t5Idx][9]);
+#endif
 
       unsigned int nL = quintuplets.nLayers()[t5Idx];
       ana.tx->pushbackToBranch<int>("t5_nLayers", static_cast<int>(nL));
