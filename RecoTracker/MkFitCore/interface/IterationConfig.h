@@ -135,6 +135,8 @@ namespace mkfit {
     float m_backward_fit_outlier_chi2 = 0.f;    // If > 0, hits above this chi2 are dropped in the backward fit ...
     int m_backward_fit_max_outliers = 0;        // ... up to this many per track
     float m_backward_fit_outlier_min_pt = 0.f;  // ... only on tracks with pT above this
+    float m_backward_search_max_d0 =
+        0.f;  // If > 0, backward search only for cands with |d0| to the beam spot below this
 
     // seed cleaning params with good defaults (all configurable)
     float sc_ptthr_hpt = 2.0;

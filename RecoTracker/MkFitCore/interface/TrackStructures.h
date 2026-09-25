@@ -382,7 +382,7 @@ namespace mkfit {
                                    bool sort_cands);
 
     void compactifyHitStorageForBestCand(bool remove_seed_hits, int backward_fit_min_hits);
-    void beginBkwSearch();
+    void beginBkwSearch(bool skip = false);
     void repackCandPostBkwSearch(int i);
     // not needed for CombCand::endBkwSearch(), reinit performed in reset() for a new event.
 
@@ -639,9 +639,9 @@ namespace mkfit {
         m_candidates[i].compactifyHitStorageForBestCand(remove_seed_hits, backward_fit_min_hits);
     }
 
-    void beginBkwSearch() {
+    void beginBkwSearch(float max_d0, float bs_x, float bs_y) {
       for (int i = 0; i < m_size; ++i)
-        m_candidates[i].beginBkwSearch();
+        m_candidates[i].beginBkwSearch(max_d0 > 0.f && std::abs(m_candidates[i][0].d0BeamSpot(bs_x, bs_y)) > max_d0);
       m_cands_in_backward_rep = true;
     }
     void endBkwSearch() {
