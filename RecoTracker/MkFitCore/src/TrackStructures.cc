@@ -203,7 +203,7 @@ namespace mkfit {
     }
   }
 
-  void CombCandidate::beginBkwSearch() {
+  void CombCandidate::beginBkwSearch(bool skip) {
     // Assumes compactifyHitStorageForBestCand() has already been called.
     //
     // This is to be called before backward-search to start with a single
@@ -213,7 +213,8 @@ namespace mkfit {
 
     TrackCand &tc = m_trk_cands[0];
 
-    m_state = Dormant;
+    // A skipped candidate is never activated and keeps its backward-fit state.
+    m_state = skip ? Finished : Dormant;
     m_pickup_layer = m_hots[0].m_hot.layer;
     m_lastHitIdx_before_bkwsearch = tc.lastCcIndex();
     m_nInsideMinusOneHits_before_bkwsearch = tc.nInsideMinusOneHits();

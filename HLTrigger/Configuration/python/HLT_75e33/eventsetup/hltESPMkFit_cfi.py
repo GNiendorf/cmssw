@@ -10,6 +10,7 @@ hltInitialStepTrackCandidatesMkFitConfig = cms.ESProducer("MkFitIterationConfigE
     config = cms.FileInPath('RecoTracker/MkFit/data/mkfit-phase2-lstStep.json'),
     backwardFitOutlierChi2 = cms.double(20),
     backwardFitOutlierMinPt = cms.double(5),
+    backwardSearchMaxD0 = cms.double(0.3),
     maxClusterSize = cms.uint32(8),
     minPt = cms.double(0.9)
 )

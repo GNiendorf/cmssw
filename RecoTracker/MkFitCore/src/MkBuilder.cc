@@ -1340,6 +1340,11 @@ namespace mkfit {
 
   //------------------------------------------------------------------------------
 
+  void MkBuilder::beginBkwSearch() {
+    const BeamSpot &bs = m_job->m_beam_spot;
+    m_event_of_comb_cands.beginBkwSearch(m_job->m_iter_config.m_backward_search_max_d0, bs.x, bs.y);
+  }
+
   void MkBuilder::backwardFit() {
     EventOfCombCandidates &eoccs = m_event_of_comb_cands;
 

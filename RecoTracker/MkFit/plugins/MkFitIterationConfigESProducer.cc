@@ -24,6 +24,7 @@ private:
   const float backwardFitOutlierChi2_;
   const int backwardFitMaxOutliers_;
   const float backwardFitOutlierMinPt_;
+  const float backwardSearchMaxD0_;
 };
 
 MkFitIterationConfigESProducer::MkFitIterationConfigESProducer(const edm::ParameterSet &iConfig)
@@ -33,7 +34,8 @@ MkFitIterationConfigESProducer::MkFitIterationConfigESProducer(const edm::Parame
       maxClusterSize_{iConfig.getParameter<unsigned int>("maxClusterSize")},
       backwardFitOutlierChi2_{(float)iConfig.getParameter<double>("backwardFitOutlierChi2")},
       backwardFitMaxOutliers_{iConfig.getParameter<int>("backwardFitMaxOutliers")},
-      backwardFitOutlierMinPt_{(float)iConfig.getParameter<double>("backwardFitOutlierMinPt")} {}
+      backwardFitOutlierMinPt_{(float)iConfig.getParameter<double>("backwardFitOutlierMinPt")},
+      backwardSearchMaxD0_{(float)iConfig.getParameter<double>("backwardSearchMaxD0")} {}
 
 void MkFitIterationConfigESProducer::fillDescriptions(edm::ConfigurationDescriptions &descriptions) {
   edm::ParameterSetDescription desc;
@@ -48,6 +50,8 @@ void MkFitIterationConfigESProducer::fillDescriptions(edm::ConfigurationDescript
       ->setComment("Max number of outliers dropped per track in the backward fit");
   desc.add<double>("backwardFitOutlierMinPt", 0.0)
       ->setComment("Outliers are dropped only on tracks with pT above this");
+  desc.add<double>("backwardSearchMaxD0", 0.0)
+      ->setComment("If > 0, the backward search runs only on candidates with |d0| to the beam spot below this (cm)");
   descriptions.addWithDefaultLabel(desc);
 }
 
@@ -62,6 +66,7 @@ std::unique_ptr<mkfit::IterationConfig> MkFitIterationConfigESProducer::produce(
   it_conf->m_backward_fit_outlier_chi2 = backwardFitOutlierChi2_;
   it_conf->m_backward_fit_max_outliers = backwardFitMaxOutliers_;
   it_conf->m_backward_fit_outlier_min_pt = backwardFitOutlierMinPt_;
+  it_conf->m_backward_search_max_d0 = backwardSearchMaxD0_;
   it_conf->setupStandardFunctionsFromNames();
   return it_conf;
 }
