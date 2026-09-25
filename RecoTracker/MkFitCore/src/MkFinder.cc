@@ -1673,6 +1673,16 @@ namespace mkfit {
 
     int nHitsAdded[NN]{};
     bool isTooLargeCluster[NN]{false};
+    // Backward search: if more than maxBkwAmbiguousHits hits pass the chi2 test for a candidate in one layer,
+    // the prediction cannot tell them apart; create no hit candidate (hole only).
+    constexpr int maxBkwAmbiguousHits = 2;
+    const bool bufferAdds = !m_in_fwd;
+    struct PendingAdd {
+      IdxChi2List l;
+      int module;
+      float chi2;
+    };
+    std::vector<PendingAdd> pending[NN];
 
     for (int hit_cnt = 0; hit_cnt < maxSize; ++hit_cnt) {
       mhp.reset();
@@ -1783,7 +1793,7 @@ namespace mkfit {
 
               // Register hit for overlap consideration, if chi2 cut is passed
               // To apply a fixed cut instead of dynamic cut for overlap: m_iteration_params->chi2CutOverlap
-              if (chi2 < max_c2) {
+              if (chi2 < max_c2 && !bufferAdds) {
                 ccand[m_CandIdx(itrack, 0, 0)].considerHitForOverlap(
                     hit_idx, layer_of_hits.refHit(hit_idx).detIDinLayer(), chi2);
               }
@@ -1800,7 +1810,10 @@ namespace mkfit {
               tmpList.chi2 = m_Chi2(itrack, 0, 0) + chi2;
               tmpList.chi2_hit = chi2;
               tmpList.score = getScoreStruct(m_steering_params->m_track_scorer, tmpList);
-              cloner.add_cand(m_SeedIdx(itrack, 0, 0) - offset, tmpList);
+              if (bufferAdds)
+                pending[itrack].push_back({tmpList, (int)layer_of_hits.refHit(hit_idx).detIDinLayer(), chi2});
+              else
+                cloner.add_cand(m_SeedIdx(itrack, 0, 0) - offset, tmpList);
 
               dprint("  adding hit with hit_cnt=" << hit_cnt << " for trkIdx=" << tmpList.trkIdx
                                                   << " orig Seed=" << m_Label(itrack, 0, 0));
@@ -1817,6 +1830,20 @@ namespace mkfit {
       }
 
     }  //end loop over hits
+
+    if (bufferAdds) {
+      for (int itrack = 0; itrack < N_proc; ++itrack) {
+        if ((int)pending[itrack].size() > maxBkwAmbiguousHits) {
+          nHitsAdded[itrack] = 0;
+          continue;
+        }
+        CombCandidate &ccand = cloner.combCandWithOriginalIndex(m_SeedIdx(itrack, 0, 0));
+        for (auto &p : pending[itrack]) {
+          ccand[m_CandIdx(itrack, 0, 0)].considerHitForOverlap(p.l.hitIdx, p.module, p.chi2);
+          cloner.add_cand(m_SeedIdx(itrack, 0, 0) - offset, p.l);
+        }
+      }
+    }
 
     //now add invalid hit
     for (int itrack = 0; itrack < N_proc; ++itrack) {
