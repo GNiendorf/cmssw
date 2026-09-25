@@ -21,13 +21,19 @@ private:
   const std::string configFile_;
   const float minPtCut_;
   const unsigned int maxClusterSize_;
+  const float backwardFitOutlierChi2_;
+  const int backwardFitMaxOutliers_;
+  const float backwardFitOutlierMinPt_;
 };
 
 MkFitIterationConfigESProducer::MkFitIterationConfigESProducer(const edm::ParameterSet &iConfig)
     : geomToken_{setWhatProduced(this, iConfig.getParameter<std::string>("ComponentName")).consumes()},
       configFile_{iConfig.getParameter<edm::FileInPath>("config").fullPath()},
       minPtCut_{(float)iConfig.getParameter<double>("minPt")},
-      maxClusterSize_{iConfig.getParameter<unsigned int>("maxClusterSize")} {}
+      maxClusterSize_{iConfig.getParameter<unsigned int>("maxClusterSize")},
+      backwardFitOutlierChi2_{(float)iConfig.getParameter<double>("backwardFitOutlierChi2")},
+      backwardFitMaxOutliers_{iConfig.getParameter<int>("backwardFitMaxOutliers")},
+      backwardFitOutlierMinPt_{(float)iConfig.getParameter<double>("backwardFitOutlierMinPt")} {}
 
 void MkFitIterationConfigESProducer::fillDescriptions(edm::ConfigurationDescriptions &descriptions) {
   edm::ParameterSetDescription desc;
@@ -36,6 +42,12 @@ void MkFitIterationConfigESProducer::fillDescriptions(edm::ConfigurationDescript
       ->setComment("Path to the JSON file for the mkFit configuration parameters");
   desc.add<double>("minPt", 0.0)->setComment("min pT cut applied during track building");
   desc.add<unsigned int>("maxClusterSize", 8)->setComment("Max cluster size of SiStrip hits");
+  desc.add<double>("backwardFitOutlierChi2", 0.0)
+      ->setComment("If > 0, hits with a larger chi2 increment in the backward fit are dropped as outliers");
+  desc.add<int>("backwardFitMaxOutliers", 3)
+      ->setComment("Max number of outliers dropped per track in the backward fit");
+  desc.add<double>("backwardFitOutlierMinPt", 0.0)
+      ->setComment("Outliers are dropped only on tracks with pT above this");
   descriptions.addWithDefaultLabel(desc);
 }
 
@@ -47,6 +59,9 @@ std::unique_ptr<mkfit::IterationConfig> MkFitIterationConfigESProducer::produce(
   it_conf->m_backward_params.minPtCut = minPtCut_;
   it_conf->m_params.maxClusterSize = maxClusterSize_;
   it_conf->m_backward_params.maxClusterSize = maxClusterSize_;
+  it_conf->m_backward_fit_outlier_chi2 = backwardFitOutlierChi2_;
+  it_conf->m_backward_fit_max_outliers = backwardFitMaxOutliers_;
+  it_conf->m_backward_fit_outlier_min_pt = backwardFitOutlierMinPt_;
   it_conf->setupStandardFunctionsFromNames();
   return it_conf;
 }
