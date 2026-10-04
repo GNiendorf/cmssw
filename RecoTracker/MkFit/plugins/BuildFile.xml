@@ -23,6 +23,9 @@
   <use name="Geometry/TrackerGeometryBuilder"/>
   <use name="PhysicsTools/TensorFlow"/>
   <use name="RecoTracker/MkFit"/>
+  <!-- local patch (MkFitAlpaka round 8, lane otdev): on-demand OT rechits in MkFitOutputTrackConverter -->
+  <use name="RecoLocalTracker/Phase2TrackerRecHits"/>
+  <use name="RecoLocalTracker/Records"/>
   <use name="RecoTracker/TkDetLayers"/>
   <use name="RecoTracker/TransientTrackingRecHit"/>
   <use name="RecoTracker/MeasurementDet"/>

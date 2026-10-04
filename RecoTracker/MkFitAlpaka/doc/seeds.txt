@@ -1,0 +1,200 @@
+MkFitAlpaka lane "seeds": both ends of the device chain (round 3, 2026-10-03)
+==============================================================================
+Reference: stock mkFit of CMSSW_20_1_0_pre2 (MkFitCMS/src/runFunctions.cc run_OneIteration, MkFitCore/src/MkBuilder.cc,
+MkFitCMS/src/MkSeedPartitioners-phase2.cc, MkFitCore/interface/binnor.h, MkFitCore/src/TrackStructures.cc,
+MkFitCMS/src/MkStdSeqs.cc) and mkfit-phase2-lstStep.json (m_seed_cleaner_name "" -> seeds_sorted = false,
+m_seed_partitioner_name phase2:1, m_requires_seed_hit_sorting false, m_n_regions 5).
+
+1. WHAT STOCK DOES (LST step), AND WHERE IT IS ON THE DEVICE
+  run_OneIteration:
+    seed_post_cleaning (MkBuilder.cc:427-457): erase seeds with a negative diagonal or non-finite error (Config.h:19-22:
+        check on, remove on, no fix)                                              -> S1 silly flag, S2 cleanIdx scan
+    find_tracks_load_seeds -> import_seeds (MkBuilder.cc:241-300):
+        phase2:1 partitioner per seed (region from pz sign, maxReachRadius, zAtR vs the TEC limits)  -> S1
+        binnor (phi 10-bit fine bins of [-pi, pi), eta 64 bins of [-3, 3)) of the LAST seed hit's
+        Hit::phi()/eta(), finalize_registration = stable LSD radix sort of the key (eta << 10 | phi)  -> S1 key
+        region-major placement in rank order, region separators, min/max last layer per region     -> S2-S4
+        EventOfCombCandidates::insertSeed -> CombCandidate::importSeed (TrackStructures.cc:53-72)  -> S5
+    ... building / backward fit / backward search (other lanes) ...
+    filter_comb_cands(post filter, attempt_all_cands = true) (MkBuilder.cc:314-361)   -> cands filterSeeds (engine's)
+    export_best_comb_cands(out, remove_missing_hits = true) (MkBuilder.cc:397-407)    -> E1-E3
+    clean_duplicates_sharedhits_pixelseed (MkStdSeqs.cc:505-641)                       -> clean's CleanAlgo
+    export_tracks; MkFitProducer: MkFitOutputWrapper(tracks, !backwardFitInCMSSW)     -> host converter (plugins/)
+
+2. FILES (lane-owned)
+  interface/seeds/SeedSoA.h               seed table layout (input columns + import results), kMaxSeedHits = 32,
+                                          kNSeedRegions = 5, Status bit positions, SeedPartitionLimits
+  interface/seeds/SeedsHostCollection.h, interface/seeds/alpaka/SeedsDeviceCollection.h
+  interface/seeds/SeedsHostPack.h         HOST: mkfit::TrackVec seeds -> seed table rows; phase2:1 limits from TrackerInfo
+  interface/seeds/alpaka/SeedsAlgo.h      exported entry points: importSeeds, exportBestCands, runChainTail
+  src/alpaka/seeds/SeedFunctions.h        host+device transliterations (hasSillyValues, maxReachRadius, zAtR,
+                                          partitionSeeds1, binnor key)
+  src/alpaka/seeds/SeedKernels.h          kernels S1-S5, E1/E3, one-block deterministic scan
+  src/alpaka/Seeds.dev.cc                 the component TU (D-layout): kernel launches + entry points
+  plugins/alpaka/MkFitAlpakaSeedImportProducer.cc   portable producer: seed table -> import -> CandStore product,
+                                          chain tail -> TrackSoA product; validate=True checks everything against
+                                          STOCK MkBuilder in the same job (SEED_COMPARE line per event)
+  plugins/MkFitAlpakaOutputWrapper.h      HOST function TrackSoA -> MkFitOutputWrapper (makeMkFitOutputWrapper)
+  plugins/MkFitAlpakaOutputWrapperFromTrackSoA.cc   HOST module: TrackSoA product (framework copy to host) ->
+                                          MkFitOutputWrapper, for the STOCK MkFitOutputConverter / MkFitOutputTrackConverter
+  plugins/alpaka/MkFitAlpakaSeedsTailProducer.cc    portable test producer: stock TrackVec (before the cleaner) ->
+                                          TrackSoA -> device post filter + duplicate cleaner -> TrackSoA device product
+  test/seeds_cfg.py                       replay test (serial or cuda), see 5.
+  Taken over from hits (round-3 open items): src/alpaka/hits/EventOfHitsKernels.h (no throw, build on views),
+  src/alpaka/EventOfHits.dev.cc + interface/hits/alpaka/EventOfHitsBuild.h (product entry point),
+  plugins/alpaka/MkFitAlpakaEventOfHitsProducer.cc (puts the EventOfHits product; useESLayers/esData: static layer
+  table from the es lane's host ESData instead of TrackerInfo), EventOfHitsViews in
+  interface/hits/alpaka/EventOfHitsDeviceCollections.h.
+
+3. DEVICE ALGORITHM (no sort; no decision depends on atomic order)
+  S1 KernelSeedPrepare   thread per input seed: silly flag; region (stock arithmetic, same order); key from the last
+                         hit position (device EventOfHits product: HitSoA row layers.hitBase[layer] + index, or the
+                         host-packed lastX/Y/Z); atomic count into 5 x 64 x 16 counting bins (region, eta bin, 4 high
+                         phi bits) -- bin order == (region, key) order; atomic min/max of the last layer per region.
+  S2 KernelSeedScan      one block (128 threads, contiguous chunks): cleanIdx = exclusive scan of !silly (= stock index
+                         after erase(), i.e. seed_idx / m_seed_origin_index); bin starts; nKept; region ends
+                         (m_seedEtaSeparators); "fix min/max layers"; resets the cands SoA scalars.
+  S3 KernelSeedFill      thread per kept seed: atomic slot in its bin (position fixed in S4).
+  S4 KernelSeedRank      thread per kept seed: pos = binStart + #{bin members with (key, row) < own}. The stock order is
+                         the stable radix order of the key over the cleaned vector, placed region-major; (region,
+                         key, input row) reproduces it exactly. Cost O(c^2) per bin, c <= ~10 on PU200.
+  S5 KernelSeedInitCands thread per cands row: importSeed (TrackCand(seed): state, chi2, label, status with
+                         n_seed_hits/eta_region; HoT chain via cands' seedAddHitIdx; score = getScoreCand(defaults));
+                         CombCandidate::reset defaults (best-short score = worst, *_before_bkwsearch = -1, Dormant,
+                         pickup layer = last seed layer); rows >= nKept get nCands = 0 (safe for per-seed kernels that
+                         loop over the capacity).
+  E1 KernelExportScan    one block: stable destination of every seed with candidates (and passed[s], if given).
+  E3 KernelExportBestCands thread per seed: TrackCand::exportTrack(true) of the front candidate: state, chi2, score,
+                         label, status fields, nOverlaps, hit list = HoT chain walked backwards keeping index >= 0.
+  runChainTail: cands filterSeeds (bkwRep, attempt_all_cands = true, minHitsQF of the backward params) -> export of the
+                passing seeds (= stock filter compaction + export) -> CleanAlgo flagDuplicates + removeDuplicates.
+  Capacities: seed rows = input seeds; seed hits <= 32 (nOverflowHits counts longer seeds; max seen 24); HoT pool
+  hotsPerSeed (cands' scalar, overflow bit + counter); TrackSoA rows = seeds (nOverflowTracks/Hits).
+  Registers (cuobjdump, block 128): seeds kernels 24-72 registers, hits kernels 24-56, LOCAL = 0 everywhere
+  (table: lanes/mkfit_alpaka/r3_seeds/run/registers.txt).
+
+4. PRODUCTS
+  MkFitAlpakaSeedImportProducer: CandStoreDeviceCollection (blocks seeds/slots/hots filled for the imported seeds;
+  opts/extras/upds allocated, untouched) and TrackSoADeviceCollection (the chain tail output; with no building yet it
+  is the tail applied to the imported seed candidates).
+  MkFitAlpakaEventOfHitsProducer: EventOfHitsDeviceCollection (integ's EventOfHits product). The seed table itself
+  is not a product yet (integ adds interface/SeedsProduct.h from SeedSoA.h).
+  MkFitAlpakaSeedsTailProducer: TrackSoADeviceCollection (filtered + cleaned stock tracks).
+  MkFitAlpakaOutputWrapperFromTrackSoA (host): MkFitOutputWrapper (stock type) -> stock MkFitOutputConverter.
+
+5. TESTS (replay files of the harness; cmsRun, 8 threads)
+  cmsRun RecoTracker/MkFitAlpaka/test/seeds_cfg.py sample=ttbar|qcd accelerators=cpu|gpu-nvidia [hits=1]
+         [maxEvents=N] [injectSillyEvery=k] [summaryFile=x.json]
+  a) SEED_COMPARE (seedsImport, validate=True): stock MkBuilder::seed_post_cleaning + find_tracks_load_seeds on the
+     same seeds in the same job vs the device: import order (cleanIdx at every position), region, seed origin index,
+     label, region separators, per-candidate bookkeeping (nCands, pickup layer, state, nFound/nMissing/lastHitIdx/
+     counters, nHots), state bitwise, Status bits, score/chi2 bitwise, HoT nodes; exportTrack(true) of every candidate
+     vs the device export; the chain tail vs stock filter_comb_cands(post) + export_best_comb_cands(true) + the stock
+     duplicate cleaner (tailExportMismatch ignores the duplicate flag, which the device cleaner sets in place;
+     flaggedDup = stock's removed count).
+  b) Export path: stock MkFitProducer with removeDuplicates=False -> MkFitAlpakaSeedsTailProducer (TrackSoA, device
+     filter + cleaner, device product) -> framework copy to host -> MkFitAlpakaOutputWrapperFromTrackSoA ->
+     MkFitOutputWrapper -> STOCK MkFitOutputConverter; compared with the stock chain's hltInitialStepTrackCandidates
+     (cmpSeedsCands) and its mkFit tracks (cmpSeedsMkFit), paramTolerance 0.
+  c) hits=1: the device EventOfHits product (layer table from ESData, MkFitAlpakaESProducer 'seedsES') with its
+     stock check (EOH_COMPARE), consumed by the seed import for the last-hit positions.
+  d) injectSillyEvery=k: every k-th seed gets a NaN / negative diagonal / inf error on a copy imported by both.
+  Results: lanes/mkfit_alpaka/r3_seeds/REPORT.txt.
+
+6. NOTES FOR OTHER LANES
+  - The engine takes the CandStore product of seedsImport (rows [0, nKept) in stock import order, region-contiguous;
+    the region ends and min/max last layers are in the seed table's scalars regionEnd/minLastLayer/maxLastLayer).
+  - nKept is a device scalar (seeds.nKept()); per-seed kernels can loop over the capacity (rows >= nKept have no
+    candidates).
+  - Stock quirk kept: Track::Status::n_seed_hits has 4 bits; LST seeds have up to 24 hits (~1 in 6 has > 15), so
+    stock stores nTotalHits & 15. It is read only by qfilter_n_hits / qfilter_n_layers and by
+    compactifyHitStorageForBestCand with backward_drop_seed_hits, none of which the LST step uses: no physics effect
+    here. Reproduced (CandState::nSeedHits and the status bits hold the truncated value).
+
+=====================================================================================================================
+ROUND 6 (lane seeds, 2026-10-03 9:00-11:45 pm): O6-1 option (b), device LST seed state. SWITCH-GATED, OFF by default.
+=====================================================================================================================
+1. WHAT THE HOST CHAIN DOES (menu config of hltInitialStepTrajectorySeedsLST: includeNonpLSTSs = True,
+   dropOTHitsPurePLS = True, produceTrackCandidates = False, SeedFromConsecutiveHitsCreator)
+   T5: seed hits = the sorted TC hits from the second PS-pixel hit on (+ the first PS-pixel hit); T4: one hit per layer
+   (PS-strip hits on the first layer dropped); pT3/pT5: ALL hits (pixel + OT); makeSeed = FastHelix(hit1, hit0, origin
+   (0,0,0)) + initial errors (default GlobalTrackingRegion: origin r 0.2 cm, half length 22.7 cm, q/p >= 1, angles
+   1 rad) + KF with PropagatorWithMaterial over every seed hit (hits refitted with the track-angle TTRH builder);
+   state at the last hit. T5/T4 whose makeSeed fails are dropped; pT3/pT5 fall back to the pixel seed. pLS: the
+   pixel seed (or makeSeed on its IT hits when dropOTHitsPurePLS applies). MkFitSeedConverter converts each state.
+   CONSUMERS of the TrajectorySeeds (hltInitialStepTrajectorySeedsLST): MkFitSeedConverter, MkFitOutputConverter
+   (TrackCandidate seed + seedRef, default menu), MkFitOutputTrackConverter (TrackExtra seedRef, trackingMkFitFit
+   menu), and the validation-only TrackFromSeedProducer. MkFitSeedWrapper consumers: the build module and both output
+   converters (which receive it but do not read it). So the module cannot simply leave the menu: refs are needed.
+
+2. DEVICE SEED FIT (src/alpaka/seeds/LstSeedKernels.h, entry fitLstSeeds in src/alpaka/LstSeeds.dev.cc,
+   interface/seeds/alpaka/LstSeedFit.h; host runner + validation dump interface/seeds/alpaka/LstSeedFitRunner.h)
+   Thread per seed row of the device seed table (after packSeedsToDevice, before importSeeds: the phase2:1 region
+   and the silly check see the new state). Rows without an OT hit (pLS, pT3/pT5 fallbacks) keep the copied pixel
+   state. Others: 3-hit helix (first, middle, last seed hit) -> initial (x,y,z,1/pT,phi,theta) at hit 0 with wide
+   errors (pos 1 cm^2, sigma(1/pT) = 1/pT + 0.01, angles 0.01 rad^2) -> mkFit Kalman over the seed hits in their
+   stored order with kalmanPropagateAndUpdateAndChi2Plane (param field + material; the device final-fit primitive),
+   material skipped on the first hit -> state at the last hit replaces params/errors/charge. Options (build module):
+   lstSeedFitPasses 3 (fwd/bkw/fwd), lstSeedFitErrScale, lstSeedFitOriginPrior 1/2 (host-creator beam-line prior for
+   T5/T4 / all), lstSeedFitDropFailed (light mode), lstSeedFitDump (per-seed host vs device states).
+   Registers (cuobjdump, block 64): KernelLstSeedFit REG 226 sm_89, 242 sm_75, 247 sm_80, 250 sm_90, 255 sm_100/120;
+   LOCAL 0 everywhere.
+   Light host seeds (LST package patch, r6_seeds/patches/0003): LSTOutputConverter seedStates = False skips the seed
+   creator (FastHelix + KF): seed hits + a placeholder state on the last hit's det; the device fit then replaces every
+   state with OT hits and removes failed fits (NaN error -> stock seed_post_cleaning).
+   Customise (python, patch 0002): DEVICE_LST_SEED_FIT (False), customizeHLTforMkFitAlpaka[Fit]LstSeeds,
+   ...LstSeedsLight, customizeHLTforMkFitAlpakaValidationLstSeeds.
+   In-job paired validation: r6_seeds/cfg/lstseeds_paired.py (OFF chain clone on the same inputs; [paired lstseeds],
+   [compare lstCmp*], MTV of lstOffTracks next to hltInitialStepTracks).
+3. RESULTS (in-job PAIRED ON vs OFF, 500 ttbar + 500 QCD, GPU; full tables in lanes/mkfit_alpaka/r6_seeds/REPORT.txt)
+   passes 3: paired TP efficiency -0.00003 +- 0.00001 (ttbar default, QCD default, QCD trackingMkFitFit), fake rate
+   0.2-0.4% rel. lower, duplicates equal, 0 MTV bins with |z| > 2 (pT, eta, phi, dxy, vxy); QCD pT > 100 GeV found
+   TPs +4 (default) / -13 of 1041 (fit menu). CPU serial agrees (-0.00004 +- 0.00002). Trigger paths and vertex DQM at
+   the run-to-run level. Not yet regression-free (3 sigma paired): stays OFF. See doc/DEVIATIONS.txt D2.
+   Seed states vs host: pT3/pT5 agree (1/pT pull w68 0.27); T5/T4 differ (w68 1.4-6 host sigma, bias growing with
+   |eta|: the port's pre-#186 field is the first suspect).
+   Timing: GPU no host cost; CPU serial +24 ms per tracked event (N = 1 lanes; group by kNN next).
+   Light LSTOutputConverter: 46.9 -> 21.5 ms per tracked event, but -0.00008 paired (host makeSeed rejections lost).
+
+R7. ROUND 7 (lane seedfit, 2026-10-04): OPTION (b') = the host creator's STRUCTURE with mkFit's propagation (D7-b)
+   Switch: build module lstSeedFit = True, lstSeedFitOriginPrior = 3 (mkfitdev::lstseeds::kHostCreator),
+   lstSeedFitPasses selects the field model (1 = host-like, the validated choice; 3 = the final fit's refitKernelFlags).
+   No producer change was needed (both parameters exist); default stays OFF.
+   Kernel (src/alpaka/seeds/LstSeedKernels.h fitHostLike, one thread per seed row, N = 1):
+   - initialKinematic: FastHelix(outer = seed hit 1, middle = seed hit 0, vertex = GlobalTrackingRegion() origin
+     (0,0,0)), double, nominal 3.8 T and 0.3 as stock (pT = 0.0114 rho), z at the vertex from the helix, charge from
+     the circle centre; the straight-line branch for rho > 10 TeV equivalents; FastCircle's Riemann-sphere fit is
+     replaced by the exact three-point circle (rounding level).
+   - initialError: curvilinear diag(C(q/p) = max(sin^2(theta)/ptMin^2, MinOneOverPtError^2) = 1, lambda 1, phi 1,
+     xT 0.2^2, yT 22.7^2 sin^2(theta) + 0.2^2 cos^2(theta)) rotated to mkFit CCS at the vertex (Jacobian in the code).
+   - buildSeed: ONE forward pass over every seed hit: propagateHelixToPlaneMPlex (the first step origin -> hit 0 as a
+     geometry-only step followed by the material step, i.e. 4 path refinements instead of 2), material at EVERY
+     destination incl. the first hit (PropagatorWithMaterial applies it at the destination surface), per-module
+     material (#186, from the surface MediumProperties), energy loss along the momentum; checkHit = true (the LST
+     converter passes no seed comparitor); the plane-local KF update (kalmanPropagateAndUpdateAndChi2Plane without
+     propagation); state at the last hit.
+   - Host rejections emulated: |dphi| of a step > MaxDPhi 1.6 (rejDPhi), a step against the momentum (rejBackward),
+     non-finite parameters per step / non-positive final covariance. Rejected seeds keep the host state (dropped
+     with lstSeedFitDropFailed in light mode).
+   - Float safety: the exact host prior spans ~1e9 of dynamic range in one update (the host works in double); a
+     failure with it is retried once with a capped prior (q/p sigma (1/pT + 0.01) sin(theta), angles 0.1 rad, yT 5 cm;
+     counter safeRetry). First version (per-step positivity check, no retry): 32% of the fits failed (pT3/pT5 43%).
+   - Field model: with refitKernelFlags (#186 mid-point B + radial kick) the T5/T4 1/pT keeps a bias growing with
+     |eta| (median pull vs host +0.08 / +0.60 / +1.15 sigma in |eta| < 0.9 / 0.9-1.6 / 1.6-2.5, smoke2); with B at
+     the START of each step and no kick (= the host's AnalyticalPropagator, passes = 1) it vanishes (smoke3).
+   Seed states vs host (dump, 17 ttbar events, results/seeddump_smoke3.txt; r6 in brackets):
+     T5/T4   (6261): 1/pT pull median -0.00, w68 0.06 [1.4-6]; phi 0.02, theta 0.02, x/y 0.02; sigma(1/pT) dev/host 0.98;
+                     charge agreement 99.9%; pT > 10 GeV (17 seeds): 1/pT pull w68 1.4-1.7 (float/linearisation).
+     pT3/pT5 (14704): 1/pT pull w68 0.11 [0.27], median 0.00; the pixel hits are not refitted with track angles.
+     Rejections 155 of 20965 (0.7%, all pT3/pT5, 153 rejBackward = seeds the host accepted: the check is too strict
+     for some multi-hit pixel seeds; open), safeRetry 21.
+   Registers (cuobjdump, block 64): KernelLstSeedFit REG 255, STACK 0, LOCAL 0 on every arch.
+   Regression (D7-b pre-declared criterion, in-job PAIRED vs the switch OFF, GPU): see lanes/mkfit_alpaka/
+   r7_seedfit/REPORT.txt. Default menu: ttbar -0.00002 +- 0.00001 (lost 88 / gained 52 TPs), QCD -0.00002 +- 0.00000
+   (181 / 97): NOT < 1 sigma -> option (b') FAILS the criterion although the changed-TP count fell 3x vs round 6 and
+   the MTV signal efficiency, fake and duplicate rates are unchanged (0 bins beyond 2 sigma; QCD > 100 GeV 1163 ->
+   1160). Stays OFF. The costed design of option (a) is doc/seeds_option_a.txt.
+   Diagnostics: errScale 1.05 on QCD does not help (175 lost / 81 gained): the 2% smaller device 1/pT error is not the
+   cause; the loss sits in ~130 seeds per 500 QCD events whose ON track disappears. Light mode with (b') + dropFailed:
+   LSTOutputConverter 20.9 vs 45.0 ms per tracked event, but -0.0128 paired: a rejected pT3/pT5 must fall back to its
+   pixel hits as the host does (LSTOutputConverter.cc:279), not be dropped; rejBackward needs a tolerance.

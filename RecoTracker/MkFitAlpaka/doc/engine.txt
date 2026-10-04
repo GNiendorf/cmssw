@@ -1,0 +1,118 @@
+MkFitAlpaka lane "engine" (round 3): clone-engine kernels and the plan driver
+=============================================================================
+Continues lane cands (doc/cands.txt, doc/clone_engine_design.txt). Reference: stock MkFitCore of CMSSW_20_1_0_pre2
+(MB.cc = src/MkBuilder.cc, MF.cc = src/MkFinder.cc).
+
+1. Files
+  interface/cands/CandEngineTypes.h   scratch + parameter PODs: CandSelHitsSoA (K2 output per (seed, ic): layer-
+                                      propagated state, <= 6 hits, RAW WSR, in_gap), CandHitChi2SoA (K3a output per
+                                      (seed, ic, ih)), EngineIterParams, EngineLayerParams (per layer: module row base,
+                                      pixel/barrel flags, the 4 chi2 window parameters of the search direction),
+                                      EngineModule (plane nrm/dir/pnt), EngineHitInputs (HitSoA column pointers +
+                                      module and layer tables), kRegBarrel.
+  interface/cands/alpaka/CandsEngine.h   exported entry points (below), EngineBuffers, step tables, EnginePropConfig.
+  src/alpaka/engine/EngineKernels.h   the kernels (K1, K3a, K3b, K4, K5, filter, scan, gather).
+  src/alpaka/Cands.dev.cc             the ONE TU instantiating them with the round-1 cands kernels (D-layout; two TUs
+                                      sharing the inline device functions broke the sm_100 device link) + driver.
+  test/alpaka/engine_step_t.dev.cc    testMkFitAlpakaEngineStep{SerialSync,CudaAsync}: kernels vs stock step dumps.
+  test/engine_step_format.h           reader of the step dumps.
+  Private instrumented stock (NOT in the package): r3_engine/stockdump/CMSSW_20_1_0_pre2, MkFitCore = lane_cands'
+  copy + src/EngineStepDump.h + hooks "ENGINE-LANE DUMP" in MkBuilder::find_tracks_in_layers (START record at call
+  entry, one STEP record per plan step after the update loop, FINAL after mergeCandsAndBestShortOne). Active only with
+  MKFIT_STEP_DUMP_DIR. Run: r3_engine/run/run_stepdump.sh <outdir> <nev> <skip> [input].
+
+2. Kernels per plan step (block size 128 everywhere; Matriplex N = 1 per thread on every backend)
+  K1  KernelEngineActivate   thread/seed: find_tracks_unroll_candidates with the kinematics computed in-kernel:
+                             pT = |1/par[3]|, posRsq = fma(x, x, y*y) (stock's GCC contraction, M5), posPhi =
+                             vdt::fast_atan2f(y, x) (interface/math getPhi), momPhi = par[4]. Resets per step: option
+                             slots, extras slots, sel rows of the seed, update counts. H4-failed seeds are skipped.
+  K2  (lane select)          must fill CandSelHitsSoA rows selRow(s, ic) of the cands listed by K1 (activeMask): prop =
+                             m_Par/m_Err[iP], sel.hit[] (m_XHitArr order), sel.n (m_XHitSize), sel.wsr = RAW m_wsr as
+                             selectHitIndicesV2 left it (WSR_Failed kept), sel.inGap. The engine reproduces
+                             find_tracks_handle_missed_layers itself (K3b/K4). select's SelHits.wsrRaw/inGap/hits and
+                             PropState.par/err map 1:1 (adapter = row (s, ic) from the slot row of its dense list).
+  K3a KernelEngineChi2       thread/(seed, cand, hit): kalmanPropagateAndComputeChi2Plane from the cand's last-hit
+                             state (usePropToPlane re-input, MB.cc:1123) to the hit's module plane, intra-layer flags;
+                             writes chi2 and x, y, z of propPar.
+  K3b KernelEngineOptions    thread/(seed, cand), MF.cc:1730-1850 in order: dynamic chi2 cut on the iP state
+                             (getHitSelDynamicChi2Cut, fma as GCC), |chi2| < cut, strip: cluster size < maxClusterSize,
+                             isStripQCompatible (iP errors + plane-propagated params, the stock mix; fma chains as GCC),
+                             pixel: duplicate-layer check on HoT nodes 0..min(nFound,3)-1, considerHitForOverlap in hit
+                             order, option at optSlot(ic, ih); invalid option at optSlot(ic, 6) unless (Failed->)Outside.
+                             handle_missed_layers: Outside -> extra; Failed on a barrel layer -> extra, needsStop in
+                             Reg_Barrel; the extra is the bookkeeping BEFORE the hit loop (stock copies it before
+                             findCandidatesCloneEngine). Written to extras slot ic (no atomics).
+                             passStripChargePCMfromTrack is not ported (dead on Phase-2, review L2).
+  K4  KernelEngineSelect     thread/seed: compacts the extras in ic order, appends their -2 stop nodes (single HoT
+                             writer per seed), then selectSeedCandidates (round-1 K4, exact on 508k stock records).
+  K5  KernelEngineUpdate     thread/(seed, update entry): kalmanPropagateAndUpdatePlane from the state copied from the
+                             parent, inter-layer flags (MkFinder::updateWithLoadedHit), writes par, err, charge.
+  K6  KernelEngineMerge      thread/seed after the last step: mergeCandsAndBestShortOne(update_score, sort).
+  Filters: KernelEngineFilter (filter_comb_cands per seed, attempt_all_cands = true, LST-step filters, repack in bkw
+  representation) -> KernelEngineScanPass (exclusive prefix scan of the pass flags in ONE block, chunks of 1024 with a
+  carry: deterministic, stable, no sort) -> KernelEngineGatherSeeds (copies surviving seed rows, slots and HoT pools to
+  their new rows of a second buffer set).
+
+3. Driver (CandsEngine.h)
+  makeEngineStepTables(plan, fwd): lock-step tables, step t of region r = plan index pickup +- (t + 1), -1 past the end,
+    prevLayer = previous plan layer (stock prev_layer). nSteps = max over regions.
+  engineActivate / engineStep / engineMerge: one step's kernels (K2 in between, by the caller).
+  engineSearch: for t: K1 -> K2 callback (EngineSelectFn) -> K3a -> K3b -> K4 -> K5; then K6.
+  engineFilterCompact: filter + scan + gather (returns survivors, synchronizes).
+  engineCompactifyBeginBkw(doCompactify, doBeginBkw).
+  engineRunChain: forward search -> pre-filter + compaction -> compactify -> backward fit (EngineBackwardFitFn; identity
+    when empty, lane bkfit plugs in) -> beginBkwSearch -> backward search (backward windows: inBkw layer table) ->
+    post-filter with repack + compaction. endBkwSearch is only stock's m_cands_in_backward_rep flag (host side here).
+  HoT overflow (H4): any overflow sets kOverflowHotsBit; the seed is failed at once (Finished, nCands = 0, no updates),
+  counted once in SeedCandsSoA::nOverflowHots, skipped by K1, and fails the filters (never exported).
+
+4. Test (how to run; lane area cmsenv as in DESIGN)
+  testMkFitAlpakaEngineStep{SerialSync,CudaAsync} <lane_prop/run/hlt/real_ttbar.bin> <step dump dirs...>
+  Material map = header of lane prop's HLT capture (stock TrackerInfo map). K2 replayed from the dump (stock iP state,
+  selected hits with position/error/module plane, raw WSR). Hit ids inside the test are remapped to a local table
+  (ids >= 0x400000) and mapped back for the comparison. Modes: isolated (each step from stock's state before it) and
+  chained (state evolves from the call's START; backward search from stock's post-beginBkwSearch state), K6 vs FINAL.
+  "identical" = state, count, order, bookkeeping and hit chains bitwise; states reported separately.
+
+5. Select bridge (src/alpaka/engine/EngineSelectBridge.h, kernels EngineSelectBridgeKernels.h, defined in Cands.dev.cc)
+  engineBuildSelectList(queue, b, list, nSeeds): KernelEngineScanActive (one-block exclusive scan of seeds.nActive,
+    list.n() = total) + KernelEngineFillList (row = candSlotRow(s, curBuf, ic), layer, region): stock seed_cand_idx
+    order (seed-major, ic ascending) - verified against the dumped stock order on 549k rows.
+  engineScatterSelect(queue, b, list, props, sels, nListMax): select's dense outputs -> CandSelHitsSoA(s, ic):
+    hits, nHits, wsr = wsrRaw (engine does handle_missed_layers), inGap, prop par/err (+ the cand's charge).
+  EngineSelectK2{list, props, sels, es, eoh layers/binned/bins, hits, nSeeds}: the EngineSelectFn for engineSearch.
+  Backward fit: lane bkfit's makeEngineBackwardFit(hitInputs, pflags) (src/alpaka/bkfit/BkFitLaunch.h) is the
+  EngineBackwardFitFn of engineRunChain.
+
+6. Results (r3_engine/REPORT.txt for the full table; 24 PU200 events, 12 ttbar + 12 QCD, K2 replayed from stock)
+  one layer step: 100% structurally identical forward (910,786 seed-steps) and backward (447,105), serial and cuda;
+    the non-bitwise rest is chi2 rounding only. K1 listing (in-kernel kinematics): 0 mismatches.
+  whole forward search (after K6): 48,750 / 48,754 (serial), 48,747 / 48,754 (cuda) seeds structurally identical;
+  backward search: 48,608 / 48,610 (serial), 48,602 / 48,610 (cuda). L4 output == L40 output (deterministic).
+  filter + stable compaction 0 mismatches; H4 overflow semantics verified with 24- and 16-node pools.
+  Commands (lane area env as in DESIGN):
+    T=$CMSSW_BASE/test/el9_amd64_gcc13; M=lane_prop/run/hlt/real_ttbar.bin
+    $T/testMkFitAlpakaEngineStep{SerialSync,CudaAsync} $M r3_engine/run/sd_{ttbar,qcd,ttbar10,qcd10}
+    options: --bridge (chained search through the select bridge), --hots=N (HoT pool per seed, H4 test)
+
+7. ES helpers and remaining contracts
+  interface/cands/EngineFromES.h (host): makeEnginePlan(ESConfig) -> makeEngineStepTables; makeEngineIterParams(params
+    or backward_params); enginePFBits(prop_config.finding_inter/intra_layer_pflags); makeEngineLayerParams(LayerInfoSoA)
+    (hasC2 = 0: the ES fill rejects non-empty hit windows, so the dynamic cut is chi2Cut_min for the LST step; the fma
+    form in engineDynamicChi2Cut is therefore not exercised on data); makeEngineModules(ModuleInfoSoA) (nrm = zdir,
+    dir = xdir, pnt = pos; row = module_begin + short id). Compiled in the test, not yet exercised by a producer.
+  Seed rows: lane seeds' KernelSeedInitCands fills SeedCandsSoA/CandSlotsSoA/CandHotsSoA exactly as the engine expects
+    (Dormant, pickupLayer = last seed-hit layer, region, nCands 1, seed hits as HoT nodes, best-short reset; rows past
+    the seed count Finished with nCands 0).
+  D-dup to resolve at integration: find_tracks_handle_missed_layers exists in select (SelHits.extra / wsr) and in the
+    engine (K3b/K4 from wsrRaw); the engine's version is the one verified end-to-end (step test).
+  EngineModule duplicates the ES ModuleInfoSoA planes (bkfit uses EngineModule too); switching EngineHitInputs to the
+    ES view is a cross-lane change left for integration.
+
+8. Stage noise floor (D-M4 at the engine stage)
+  r3_engine/stockdump_v2 = the private stock copy rebuilt with -march=x86-64-v2 (0 FMA instructions vs 1,897 in v3).
+  run/run_stepdump_area.sh <stockdump|stockdump_v2> <outdir> <nev> <skip> [input] dumps with 1 thread (same record
+  order in both builds); test/engine_floor_compare.py <v3 dir> <v2 dir> compares seed by seed (structural rule).
+  24 events: floor 36 / 48,754 seeds differ after the forward search, 39 / 47,337 after the backward search; the
+  engine (vs v3, same events) 4 / 2 (serial) and 7 / 8 (cuda): inside the floor. The engine side replays stock's K2 and
+  starts the backward search from stock's state (K2/bkfit rounding excluded); export-level D-M4 = harness.

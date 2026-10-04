@@ -1,0 +1,169 @@
+MkFitAlpaka lane fitgap (round 7, 2026-10-04): the D7-a reference floors, the -Ofast NaN finding, and why the mkFit-fit
+menu (trackingMkFitFit) is worse than the KF menu (O6-7 / O6-8)
+=====================================================================================================================
+L = lanes/mkfit_alpaka, F = L/r7_fitgap (lane dir). All jobs ran from L/main6/CMSSW (read-only) with the stock mkFit libraries
+chosen by LD_LIBRARY_PATH (frozen copies in F/floors/libs/<arm>); every job records the mapped libraries (*.libs / libs.txt).
+Numbers below are filled in from F/floors and F/menu/results; the lane report is F/REPORT.txt.
+
+1. THE D7-a FLOORS (F/floors/README.txt is the index)
+  Reference = r6_base + the NaN guard (RecoTracker/MkFitCore branch d1-nan-guards 85a2dba). Floor = per metric the MAX over
+  three stock-vs-reference arms: v2 (-Ofast, x86-64-v2), nof (no -Ofast: the stock .orig BuildFile = what our strict GPU build
+  corresponds to) and b6 (-Ofast -fno-associative-math -fno-finite-math-only -fsigned-zeros = our CPU flags, O6-3).
+  Tool: F/scripts/floor_max.py writes a summary in the comparator's own format (counts = ceil(max rate x denominator)), so
+  test/replay_floor_check.py and every lane's check script read it unchanged; a .txt next to each file names the arm that sets
+  each metric. testMkFitAlpakaBkFit takes BKFIT_FLOOR=a:b:c (worst arm).
+  Rates of the max floor (arm that sets it), 500 ttbar / 500 QCD for the chained ones, 100 events otherwise:
+    CHAINED cand    hit lists 2.4e-5 (v2) / 3.4e-5 (v2); unpaired 2.7e-5 / 2.9e-5; |pull| >= 1e-2 <= 1.1e-5 (nof/b6)
+    CHAINED fit     hit lists 7.6e-5 (nof) / 9.4e-5 (b6); unpaired 7.9e-5 / 8.1e-5 (nof); q/p >= 1e-2 1.40e-3 / 3.12e-3 (nof),
+                    lambda 4.1e-3 / 6.1e-3, dsz 5.6e-2 / 5.5e-2 (nof); truth one-side 1.8e-5 (nof, ttbar)
+    STAGE           fwd hit lists 1.8e-4 / 2.4e-4 (nof); bkfit pull z >= 1e-2 3.4e-3 (b6) / 3.2e-3 (nof); final pull z 3.5e-3 (b6)
+    ISOLATED fit    q/p >= 1e-2 1.36e-3 (b6), lambda 4.1e-3 (b6), dsz 5.6e-2 (nof) (ttbar)
+    ISOLATED bkfit  chi2 within 1e-4: v2 75.0%, nof 66.8%, b6 66.7% (ttbar), QCD 75.1 / 67.9 / 68.0%
+    v2 sets the max for hit lists and |pull| >= 1; nof/b6 set it at the 1e-2 pull level and for the bkfit chi2: the flag
+    difference that the port legitimately has (strict GPU, B6 CPU) - exactly what the r6 v2-only floors could not absorb.
+  Re-judged against these floors, the round-6 integrated port (main6, verify6_int chain recipe, in-job stock = the new
+  reference) PASSES all 16 checks: ttbar CPU + L40, QCD CPU + L4 x {candidates, export, final, fit} (F/floors/recheck_port);
+  against the r6 floors 13 of the 16 failed (verify6_int 4). testMkFitAlpakaBkFit with BKFIT_FLOOR=v2:nof:b6: serial and
+  CUDA, ttbar and QCD, PASS (F/tests/bkfit_*.log); one QCD charge change (port) vs 0 in every floor arm passes the Poisson
+  slack (n <= f + 3 sqrt(f) + 1) now used for these rare counts.
+
+2. -Ofast IN MkFitCore MAKES NaN FINAL-FIT STATES (write-up for the mkFit developers)
+  What: with MkFitCore compiled -Ofast (the ofast-flag tool: -Ofast -fno-reciprocal-math; the release BuildFile intends it,
+  see O6-5), MkBuilder::fit_tracks / MkFitter::reFitOutputTracks write non-finite track states for ~3e-4 of the final-fit
+  tracks (the MkFitFitProducer path, trackingMkFitFit). MkFitOutputTrackConverter then drops them.
+  Why: the two NaN tests of the final fit are written as x != x
+      MkFitter.cc (reFitOutputTracks): if (m_Chi2(itrack, 0, 0) != m_Chi2(itrack, 0, 0)) continue;  // trick for the nan
+      MkBuilder.cc (fit_tracks, outlier scorer): if (chi2fwd[..] != chi2fwd[..]) chi2fwd[..] = 1000000; (same for chi2bkwd)
+    -Ofast implies -ffinite-math-only, under which GCC folds x != x (and std::isnan) to false: the guards vanish, the NaN
+    state is copied out (and a NaN chi2 enters the outlier ranking). Lane ref bisected the loss by TU (#pragma GCC optimize
+    ("no-finite-math-only")): MkFitter.cc alone restores all of it; -fno-finite-math-only on the whole library likewise.
+  Fix (2 lines + a helper, d1-nan-guards 85a2dba): a bit-level NaN test that no flag can fold,
+      inline bool isNaN(float x) { union { unsigned int l; float d; } v = {.d = x}; return (v.l & 0x7fffffffu) > 0x7f800000u; }
+    used in both places. Physics-neutral without -Ofast (same decision as x != x); with -Ofast it restores the intended behaviour.
+  Evidence (same events, replay chain of the LST initial step, stock + #186 + #187, -Ofast MkFitCore, x86-64-v3;
+    F/floors/guard_counts.txt; "no guard" = lane ref's r6 chunks, "guard" = this lane's chunks):
+    - final-fit reco::Tracks per 100 events: ttbar +52 +57 +66 +58 +45, QCD +70 +58 +52 +49 +61 with the guard:
+      +278 of 960,414 (2.9e-4) ttbar, +290 of 987,458 (2.9e-4) QCD. Lane ref: ~30 of them are true tracks per 100 ttbar
+      events; MTV of the fit tracks (500 ttbar) .8894 / .0245 / .0116 with the guard vs .8893 / .0245 / .0116 without.
+    - stock built WITHOUT -Ofast vs the -Ofast reference, unpaired fit tracks per 100 ttbar events: 64 and 65 without the
+      guard (= the NaN tracks) -> 12 and 16 with it, at the v2-vs-v3 level (14 per 100 events). I.e. with the guard the
+      -Ofast build and the strict build agree at rounding level; without it they differ by the lost tracks.
+    - menu (trackingMkFitFit, CPU, 500 ttbar, job.sh command line): +161 tracks after the HP selection, +60 hltGeneral tracks;
+      efficiency / fake / duplicate unchanged at the 1e-4 level (.8854 / .0108 / .0097 both). A small effect, but it is a
+      silent loss of good tracks that depends on compiler flags, and NaN chi2 values also enter the outlier ranking.
+    - Other x != x / std::isnan tests in MkFitCore (MkFinder.cc building, debug code) are equally folded away under -Ofast;
+      the building floors (candidates, all stages) show no -Ofast effect beyond rounding, so there is no sign that
+      they fire on these samples, but they deserve the same helper.
+
+3. WHY THE mkFit-FIT MENU IS WORSE THAN THE KF MENU (O6-7), AND WHAT FIXES IT
+  (diagnosis, arms (a)-(d), ranked table: F/REPORT.txt section 3; per-track side-by-side: F/diag)
+3a. DIAGNOSIS on lane ref's same-event menu runs (CPU, job.sh command line, 500 ttbar + 500 QCD PU200; KF = default menu,
+    MFF = --procModifiers trackingMkFitFit, stock + #186; F/scripts/fitgap_diag.py -> F/menu/results/diag_r6_{ttbar,qcd}.txt)
+                                 ttbar KF        ttbar MFF               QCD KF          QCD MFF
+    BEFORE Torch  eff            .8909(20)       .8916 (+0.07 pp)        .8403(16)       .8392 (-0.11 pp)
+                  fake           .0213           .0245 (x1.15)           .0307           .0343 (x1.12)
+    AFTER Torch   eff (HP)       .8885           .8856 (-0.29 pp)        .8378           .8339 (-0.39 pp)
+                  fake (HP)      .0095           .0110 (x1.16)           .0157           .0178 (x1.13)
+    hltGeneral    eff / fake     .8881 / .0090   .8854 / .0108           .8376 / .0153   .8338 / .0176
+    Torch: true TPs lost         62              151 (x2.4)              127             276 (x2.2)
+           true reco tracks kept 99.37%          98.84%                  99.37%          98.82%
+           fakes removed         56.3%           56.4%                   49.8%           49.5%
+    => Before the selection the mkFit fit is as efficient as the KF fit. The efficiency gap is made by the Torch selection,
+       which rejects 2.2-2.4x more TRUE mkFit-fit tracks, in every pT and eta bin (ttbar HP loss 0.9-2 GeV -0.24 vs -0.62 pp,
+       5-10 GeV -0.08 vs -0.78, 30-100 GeV -0.27 vs -1.64; |eta| 0.9-1.6 -0.32 vs -0.95 pp). The fake excess exists already
+       before the selection (+15% / +12%) and the selection removes the same fraction in both: the mkFit fit keeps candidates
+       the KF fit rejects.
+    Why (track properties of true / fake reco tracks before the selection, ttbar; QCD the same to 0.05):
+                                 KF true / fake          MFF true / fake
+       chi2/ndof mean            1.26 / 2.45             1.72 / 7.36
+       chi2/ndof > 3             2.3% / 28%              8.1% / 63%
+       chi2/ndof > 10            0.1% / 1.7%             1.8% / 29%
+       valid hits                13.33 / 6.28            13.51 / 7.54     (+0.19 per true track)
+       lost (TRACK) hits         0.09 (all)              0.00             (fit-removed hits are not marked missing)
+       missing outer layers      0.69                    0.57             (navigated from the innermost state)
+       pulls (68% half-width)    q/p 1.60 dxy 1.36 dz 1.33 phi 1.45 theta 1.44   MFF 1.64 1.37 1.33 1.46 1.44 (#186 fixed the errors)
+    The mkFit fit keeps outlier hits that the KF fit drops: the KF rejects hits with an unbiased chi2 > 20 anywhere on the
+    track (incl. both ends, iterating), mkFit's fit_tracks only interior hits whose forward AND backward chi2 pass (> 8 and
+    sum > 20; > 7 / 15 below 1 GeV) and never the first/last hit (their one-sided chi2 comes from a x100-rescaled prior),
+    with one refit. The Torch classifier's strongest feature is normalizedChi2 (mkfitfit lane counterfactual on the IB:
+    swapping only normalizedChi2 for the KF value recovers 80% of the lost selections), so true tracks with a kept outlier
+    are rejected. The residual fake excess is mostly candidates the KF TrackProducer rejects outright (0.6% of the candidates;
+    mkfitfit lane D5) and that the mkFit fit keeps.
+3b. PER TRACK, SAME CANDIDATES (side-by-side job: the KF menu plus the mkFit fit + converter + Torch on the SAME mkFit
+    candidates in one process, matched by seed, truth from TrackMCQuality with the MTV associator; the mkfitfit lane's
+    diag_side.py / diag_dump.py / diag_ana.py / diag_truth.py, copied to F/diag; first ttbar RAW file = 70 tracked events,
+    132,685 KF tracks; reference = #186 + guard; files F/diag/{truth,ana}_{ref,fix}_tt.txt)
+                                        KF fit        mkFit fit (a)     mkFit fit + 0001/0005 (b)
+    tracks / Torch-selected             132685/130289 133514/130204     133478/130667
+    selected true / fake                129086/1203   128812/1392       129390/1277
+    pairs with identical valid hits     -             85.7%             88.7%
+    extra valid hits per pair           -             +0.19             +0.09
+    normalizedChi2 mean (median, q90)   1.29 (1.12, 2.01)  8.26 (1.18, 2.85)  53 (1.14, 2.27; a few huge values)
+    KF-selected but mkFit-rejected      -             0.96% of pairs    0.57%
+    mkFit-selected but KF-rejected      -             0.36%             0.36%
+    Counterfactual (Torch re-run in python on the dumped features, agrees with CMSSW to < 1e-6): giving the mkFit-fit
+    tracks the KF normalizedChi2 alone removes 89% of the lost selections in (a) (0.96% -> 0.11%); errors (dxy/dz/eta/phi),
+    hit-pattern and dxy/dz swaps change nothing (#186 already made the errors equal to the KF ones: ratio x1.00).
+    Tracks only in the mkFit fit (the KF TrackProducer rejects their candidate): 831 (a) / 822 (b), of which 717 / 670 are
+    Torch-selected and 89% / 94% of those are true - they are not the source of the fake excess.
+3c. ARMS ON THE SAME EVENTS (menu = exact job.sh command line, CPU, 8 threads, 500 ttbar + 500 QCD = the floor500 RAW events;
+    stock libraries by LD_LIBRARY_PATH, all with the NaN guard; F/menu/results/table_{ttbar,qcd}*.txt; errors are unpaired
+    binomial, sigma = sqrt(s1^2 + s2^2), conservative for same-event differences)
+    (a) stock mkFit fit + #186 (+ guard)          = the current target physics (the port reproduces it)
+    (b) (a) + mkfitfit patches re-applied on #186: 0001 (outlier test of the first/last hit with the pass that predicts it
+        from all other hits, cut 20 as the KF EstimateCut; outlier removal + refit up to 3 rounds; MkFitCore d2a08a4) and
+        0005 (converter drops candidates with a negative / non-finite chi2, as the KF; MkFit 60f1a5a). Overlaps with #186,
+        not re-applied: 0002 (getS stable roots = #186 commit 11), 0004 (material-free state to the first hit = #186's
+        converter no longer propagates to the first hit at all), 0007 (cfi for 0003/0004). 0003 (converter beamSpot /
+        algo / TrackExtra / lost-hit pattern) conflicts textually with #186's converter (hit states) and measured < 1e-4 on the
+        Torch selection on the IB: left out.
+    (c) Torch WP scan (clones of the HP selection with minScore 0.15-0.50, highDxyMinScore scaled; F/python/fitgap_wpscan.py)
+    (d) trackreco#184 (fine-grained material map, a new trackerRecoMaterial.xml for D121) via CMSSW_SEARCH_PATH, KF and mkFit fit
+                          hltGeneral eff          fake               dup        | HP eff   HP fake   before-Torch fake
+    ttbar KF              .8881                   .0090              .0103      | .8885    .0095     .0213
+          (b)             .8874 (-0.07pp,-0.2s)   .0096 (x1.07,+3.5s) .0106 (+1.4s) | .8877  .0100     .0222 (x1.04)
+          (a)             .8854 (-0.27pp,-0.9s)   .0108 (x1.20,+10s) .0097 (-3.2s) | .8857  .0110     .0246 (x1.15)
+    QCD   KF              .8376                   .0153              .0103      | .8378    .0157     .0307
+          (b)             .8359 (-0.17pp,-0.7s)   .0161 (x1.05,+4.3s) .0106 (+1.9s) | .8362  .0165     .0317 (x1.03)
+          (a)             .8339 (-0.37pp,-1.6s)   .0176 (x1.15,+12s) .0097 (-4.5s) | .8341  .0179     .0344 (x1.12)
+    (b) closes ~75% (ttbar) / ~55% (QCD) of the efficiency gap and ~2/3 of the fake excess; true-track chi2/ndof > 10 drops
+    from 1.8% to 0.8% (KF 0.1%), so half of the outlier tail is left. Duplicates rise slightly (+0.0003, < 2 sigma).
+    Still open in (b): QCD 100-1000 GeV after the selection .4000 vs KF .4105 (before it .4165 vs .4168; +-0.9 pp per point).
+    (c) WP retune (HP level), what it buys:
+                          KF HP eff reached at              KF HP fake reached at
+    ttbar (a)             WP .347, fake .0135 (x1.42)       WP .394, eff -1.47 pp
+          (b)             WP .363, fake .0109 (x1.15)       WP .384, eff -0.41 pp
+    QCD   (a)             WP .321, fake .0242 (x1.54)       WP .393, eff -1.49 pp
+          (b)             WP .332, fake .0204 (x1.30)       WP .385, eff -0.47 pp
+    KF's own scan (same events): WP .30 / .34 / .377 / .42 -> eff .8902 / .8898 / .8885 / .8810, fake .0135 / .0114 / .0095 /
+    .0070; at equal fake rate (a) is ~0.2 pp and (b) ~0.05-0.1 pp below the KF curve, and the KF curve is flatter above .377.
+    No WP recovers the efficiency at the KF fake rate: the classifier's ROC on mkFit-fit tracks is worse than on KF tracks
+    (it was trained on KF tracks; normalizedChi2 dominates). The default WP stays the best compromise for (b); closing the
+    rest needs the fit (a KF-like outlier rule) or a classifier trained on mkFit-fit tracks.
+3d. trackreco#184 (fine-grained material map), 4 arms, ttbar (QCD below; F/menu/results/table_{ttbar,qcd}_d.txt)
+                          hltGeneral eff   fake    dup     | pulls (68% half-width) q/p  dxy   dz    | pT res s68 |eta| <0.9 / 0.9-1.6 / 1.6-2.4
+    KF                    .8881            .0090   .0103   |                         1.60  1.35  1.33  | .0096 / .0150 / .0249
+    KF + #184             .8896 (+0.15pp)  .0104   .0111   |                         1.19  1.06  1.06  | .0088 / .0131 / .0214
+    mkFit fit (a)         .8854            .0108   .0097   |                         1.62  1.36  1.33  | .0091 / .0138 / .0239
+    mkFit fit (a) + #184  .8854 (+0.00pp)  .0126   .0107   |                         1.18  1.06  1.06  | .0084 / .0119 / .0193
+    #184 makes the track errors right (pulls 1.3-1.6 -> 1.06-1.19: the old 27-group map under-estimates the material) and
+    improves the pT resolution by 8-22% in BOTH fits (the mkFit fit stays the better of the two), but raises fakes x1.15-1.17
+    and duplicates in both (the Torch classifier was trained with the old errors). It does not close the mkFit-vs-KF gap:
+    -0.27 pp / x1.20 without it, -0.42 pp / x1.21 with it (KF gains +0.15 pp, the mkFit fit 0). As expected (O6-8): both
+    fits read the same MediumProperties after #186, so #184 moves both; adopting it needs a Torch retrain either way.
+    QCD: KF+#184 .8389 / .0165 / .0112 (+0.14 pp, x1.08 vs KF), mkFit fit+#184 .8346 / .0192 / .0108 (+0.07 pp, x1.09 vs (a));
+    gap vs KF+#184 -0.43 pp, x1.16 (without #184 -0.37 pp, x1.15); pulls q/p 1.58 -> 1.18, dxy 1.35 -> 1.06 as in ttbar.
+4. NEXT ROUND: THE OUTLIER FIX AS A DEVICE-FIT DEVIATION (design; not implemented this round - other lanes own the fit files)
+  Stock patch: RecoTracker/MkFitCore branch r7/fitgap-mkfitfit d2a08a4 (= lanes/mkfitfit patch 0001, re-applied cleanly on #186).
+  Port (src/alpaka/fit/FitKernels.h, owner: the fit files' lane):
+   - RefitConfig (interface/es/ESConfig.h) gets bool edgeOutliers + int outlierRounds, filled by esFill from new ES parameters
+     of our ES producer (defaults false / 1 = stock); a DEVIATION D<n> marker at each changed place.
+   - removeOutliers (FitKernels.h:477): cut |= (j == 0 && b > 20) || (j == nFH - 1 && f > 20) when edgeOutliers (j = fit order
+     index; for j = 0 the forward chi2 comes from the x100 prior, so the backward one decides; vice versa for the last hit).
+   - CPU path outliersAndRefit (:544): loop removeOutliers + refit up to outlierRounds times (removeOutliers runs again on
+     the refit's chi2f/chi2b except after the last round), exactly as d2a08a4's remap loop.
+   - GPU staged path (kStage 3 = outliers, then the refit stages): re-launch stage 3 and the refit stages for rounds 2..N with
+     a round argument; tracks with refit[t] == 0 skip. Extra cost bounded by the refit fraction (stock: ~5% of tracks refit).
+   - Acceptance: switch ON vs stock + d2a08a4 at the D7-a floor level (replay + TargetValidation with the var_fix stock
+     libraries, F/floors/libs/fix); then the O6-1 paired regression check (ttbar + QCD, >= 500 events each; MTV eff/fake/dup vs
+     pT/eta/phi/dxy/vxy, high-pT and jets, track counts and length, paired truth, trigger paths, vertices, timing).

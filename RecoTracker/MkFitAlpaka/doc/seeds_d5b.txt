@@ -1,0 +1,45 @@
+D5-b decision note: LST output -> device mkFit seeds (lane inputs, round 5, 2026-10-03)
+====================================================================================
+Question: the GPU menu spends 22.7 ms/job event in hltInitialStepTrajectorySeedsLST (LSTOutputConverter, host) and
+1.1 ms in hltInitialStepMkFitSeeds (MkFitSeedConverter, host). Can the mkFit seeds come from the LST device output?
+
+1. WHAT THE HOST CHAIN DOES (release CMSSW_20_1_0_pre2)
+  LSTOutputConverter (RecoTracker/LST/plugins/LSTOutputConverter.cc:175-330), per LST track candidate:
+    - pLS / pT3 / pT5: the pixel TrajectorySeed is reused (its starting state comes from the pixel track);
+      T5 / T4: the seed hits are chosen (first two PS hits for T5, one hit per layer for T4) and
+      SeedFromConsecutiveHitsCreator::makeSeed builds the state: FastHelix through three hits (double), the creator's
+      initial errors, then PropagatorWithMaterial to the last hit (helix + material effects, field = the
+      VolumeBasedMagneticField at the hit positions) -> PTrajectoryStateOnDet;
+    - for the track candidates: transientState + rescaleError(100) + propagateWithPath (opposite, then along) to
+      the first hit.
+  MkFitSeedConverter (MkFit/plugins/MkFitSeedConverter.cc:107-160), per seed: transientState(startingState, last hit
+    surface, mf) -> global position/momentum + curvilinearError (JacobianLocalToCurvilinear uses the field at the
+    position) -> mkfit::TrackState::convertFromGlbCurvilinearToCCS; seed hits = (cluster key, mkFit layer).
+  The output TrackCandidates (stock MkFitOutputConverter) reference these TrajectorySeeds (seedRef), so host
+  TrajectorySeeds are needed downstream whatever builds the mkFit seed state.
+
+2. OPTIONS
+  (A) Bitwise device port of the LSTOutputConverter seed creation. Needs FastHelix, the seed creator's error model,
+      PropagatorWithMaterial and the volume-based field map on the device. No device field map exists in CMSSW;
+      a parametrised field is not bitwise. Weeks of work, and the output TrajectorySeeds are still needed on the
+      host. REJECTED.
+  (B) Device port of the MkFitSeedConverter transform only (TrajectorySeeds stay host products of LSTOutputConverter).
+      Bitwise is possible: the local -> curvilinear Jacobian and convertFromGlbCurvilinearToCCS are fixed double/
+      float formulas; the field value at the seed position must be looked up on the host per seed (as stock) and
+      passed in. Saves at most the 1.1 ms of MkFitSeedConverter (less the host field lookups), and nothing of the
+      22.7 ms. LOW VALUE; not done this round (time went to the device hits, which are bitwise and in the menu).
+  (C) Seed state from the LST device track parameters (pT, eta, phi, charge, reference hit from the LST TC; seed
+      hits from the LST hit indices, which carry the cluster keys). This is a PHYSICS CHANGE (different state and
+      errors at the start of the mkFit search): a DEVIATION candidate behind a parameter, MTV on val5k. It removes
+      the per-seed host work of makeSeed only if the host TrajectorySeeds are made lazily, i.e. only for the
+      candidates mkFit outputs (the converter needs seed refs), so it also changes LSTOutputConverter (LST package).
+  (D) Cheaper host LSTOutputConverter, no physics change: measure first where the 22.7 ms go (makeSeed for T5/T4
+      vs the candidate-state propagation vs the per-hit OwnVector clones); the track-candidate branch may not be
+      needed in the mkFit menu at all (only the seeds feed mkFit). This is LST-package work.
+
+3. DECISION (coordinator rule D5-b applies: the default stays the host LSTOutputConverter)
+  - (A) no. (B) only after (C)/(D), and only if the 1.1 ms matters.
+  - Next round: (D) profile LSTOutputConverter per branch in the GPU menu (FastTimer + perf), because it is the
+    largest host cost of the step and may shrink without any physics change; then (C) as a prototype behind a
+    parameter (MkFitAlpakaSeedImportProducer from the LST device collection), DEVIATION entry + val5k MTV.
+  - Nothing was changed in the seed path this round; no DEVIATION.

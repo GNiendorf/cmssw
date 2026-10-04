@@ -1,0 +1,178 @@
+<!-- unit tests and standalone comparison drivers; each lane APPENDS its own entries, never edits others' -->
+<bin file="testPlaceholder.cpp" name="testMkFitAlpakaPlaceholder"/>
+<!-- prop lane: stock reference writer (host, links stock MkFitCore) and the Alpaka comparator (per backend) -->
+<bin file="testPropStockRef.cpp" name="testMkFitAlpakaPropStockRef">
+  <use name="RecoTracker/MkFitCore"/>
+  <flags NO_TESTRUN="1"/>
+</bin>
+<bin file="alpaka/testProp.dev.cc" name="testMkFitAlpakaProp">
+  <use name="alpaka"/>
+  <use name="FWCore/Utilities"/>
+  <use name="HeterogeneousCore/AlpakaInterface"/>
+  <flags ALPAKA_BACKENDS="1"/>
+  <flags NO_TESTRUN="1"/>
+  <!-- D5-a (lane cpu): the prop kernels are instantiated here, so the CPU backends get the library's flags -->
+  <flags USE_ALPAKA_SERIAL="ofast-flag&#9;"/>
+  <flags USE_ALPAKA_TBB="ofast-flag&#9;"/>
+  <flags CXXFLAGS="-fopenmp-simd -fno-associative-math -fno-finite-math-only -fsigned-zeros"/>
+  <flags REM_ROCM_HOST_CXXFLAGS="-fopenmp-simd -fno-associative-math -fno-finite-math-only -fsigned-zeros"/>
+</bin>
+<!-- mplex: portable Matriplex/math vs STOCK mkFit Matriplex/vdt on random inputs + similarity benchmark (per backend) -->
+<bin name="testMkFitAlpakaMplex" file="alpaka/test_mplex.dev.cc,alpaka/test_mplex_stockref.cc">
+  <use name="alpaka"/>
+  <use name="vdt_headers"/>
+  <use name="rootsmatrix"/>
+  <use name="FWCore/Utilities"/>
+  <use name="HeterogeneousCore/AlpakaInterface"/>
+  <use name="RecoTracker/MkFitCore"/>
+  <flags ALPAKA_BACKENDS="1"/>
+</bin>
+<!-- mplex: same test with FMA contraction off on host and device: port and stock must agree bit by bit -->
+<bin name="testMkFitAlpakaMplexStrict" file="alpaka/test_mplex.dev.cc,alpaka/test_mplex_stockref.cc">
+  <use name="alpaka"/>
+  <use name="vdt_headers"/>
+  <use name="rootsmatrix"/>
+  <use name="FWCore/Utilities"/>
+  <use name="HeterogeneousCore/AlpakaInterface"/>
+  <use name="RecoTracker/MkFitCore"/>
+  <flags ALPAKA_BACKENDS="1"/>
+  <flags CXXFLAGS="-ffp-contract=off -DMPLEX_TEST_STRICT"/>
+  <flags CUDA_FLAGS="-fmad=false -DMPLEX_TEST_STRICT"/>
+</bin>
+<!-- mplex: CPU micro-benchmark port vs stock Matriplex (N=8), with CMSSW default flags and with stock MkFitCore flags -->
+<bin name="testMkFitAlpakaMplexCpuBench" file="test_mplex_cpubench.cpp">
+  <use name="alpaka"/>
+  <use name="vdt_headers"/>
+  <use name="rootsmatrix"/>
+  <use name="RecoTracker/MkFitCore"/>
+</bin>
+<bin name="testMkFitAlpakaMplexCpuBenchOfast" file="test_mplex_cpubench.cpp">
+  <use name="alpaka"/>
+  <use name="vdt_headers"/>
+  <use name="rootsmatrix"/>
+  <use name="RecoTracker/MkFitCore"/>
+  <use name="ofast-flag"/>
+  <flags CXXFLAGS="-fopenmp-simd -DMPLEX_CPUBENCH_OFAST"/>
+</bin>
+<test name="testMkFitAlpakaReplayFidelity" command="cmsRun ${LOCALTOP}/src/RecoTracker/MkFitAlpaka/test/replay_cfg.py sample=ttbar maxEvents=5 threads=4 requireIdentical=1"/>
+<bin file="testESFill.cpp" name="testMkFitAlpakaESFill">
+  <use name="alpaka"/>
+  <use name="FWCore/Utilities"/>
+  <use name="DataFormats/Portable"/>
+  <use name="HeterogeneousCore/AlpakaInterface"/>
+  <use name="RecoTracker/MkFitCore"/>
+  <use name="RecoTracker/MkFitAlpaka"/>
+</bin>
+<!-- prop lane: self-contained chain (stock reference on synthetic tracks -> port on each backend) for scram b runtests -->
+<test name="testMkFitAlpakaPropChain" command="${LOCALTOP}/src/RecoTracker/MkFitAlpaka/test/testPropChain.sh"/>
+<bin name="testMkFitAlpakaHits" file="testHitsBinning.dev.cc">
+  <use name="alpaka"/>
+  <use name="HeterogeneousCore/AlpakaInterface"/>
+  <use name="DataFormats/Portable"/>
+  <use name="RecoTracker/MkFitCore"/>
+  <use name="RecoTracker/MkFitAlpaka"/>
+  <flags ALPAKA_BACKENDS="1"/>
+  <flags NO_TESTRUN="1"/>
+</bin>
+<bin name="cleanCompare" file="alpaka/cleanCompare.dev.cc">
+  <use name="alpaka"/>
+  <use name="DataFormats/Portable"/>
+  <use name="FWCore/Utilities"/>
+  <use name="HeterogeneousCore/AlpakaInterface"/>
+  <use name="RecoTracker/MkFitAlpaka"/>
+  <flags ALPAKA_BACKENDS="1"/>
+  <flags NO_TESTRUN="1"/>
+</bin>
+<bin name="cleanStockTiming" file="cleanStockTiming.cpp">
+  <use name="alpaka"/>
+  <use name="DataFormats/Portable"/>
+  <use name="RecoTracker/MkFitAlpaka"/>
+  <use name="RecoTracker/MkFitCMS"/>
+  <use name="RecoTracker/MkFitCore"/>
+  <flags NO_TESTRUN="1"/>
+</bin>
+<!-- cands lane: device per-seed candidate selection vs stock CandCloner dumps (args: dump dir; no args = usage, exit 0) -->
+<bin name="testMkFitAlpakaCandsSelection" file="alpaka/cands_selection_t.dev.cc">
+  <use name="alpaka"/>
+  <use name="DataFormats/Portable"/>
+  <use name="HeterogeneousCore/AlpakaInterface"/>
+  <use name="RecoTracker/MkFitAlpaka"/>
+  <flags ALPAKA_BACKENDS="1"/>
+</bin>
+<!-- cands lane: device per-seed bookkeeping ops (activate, merge best-short, compactify, bkw search) vs stock snapshots -->
+<bin name="testMkFitAlpakaCandsSeedOps" file="alpaka/cands_seedops_t.dev.cc">
+  <use name="alpaka"/>
+  <use name="HeterogeneousCore/AlpakaInterface"/>
+  <use name="RecoTracker/MkFitAlpaka"/>
+  <flags ALPAKA_BACKENDS="1"/>
+</bin>
+<!-- cands lane: tie-order study, device selection vs a std::sort transliteration of stock CandCloner -->
+<bin name="testMkFitAlpakaCandsTies" file="alpaka/cands_ties_t.dev.cc">
+  <use name="alpaka"/>
+  <use name="HeterogeneousCore/AlpakaInterface"/>
+  <use name="RecoTracker/MkFitAlpaka"/>
+  <flags ALPAKA_BACKENDS="1"/>
+</bin>
+<!-- integ: MPlex <-> SoA packers and the PropagationFlags adapter vs stock Matriplex copy-in (host, stock width NN) -->
+<bin name="testMkFitAlpakaIntegPackers" file="alpaka/testIntegPackers.cpp">
+  <use name="alpaka"/>
+  <use name="vdt_headers"/>
+  <use name="rootsmatrix"/>
+  <use name="DataFormats/Portable"/>
+  <use name="HeterogeneousCore/AlpakaInterface"/>
+  <use name="RecoTracker/MkFitCore"/>
+  <use name="RecoTracker/MkFitAlpaka"/>
+</bin>
+<!-- integ: register CI check, fails on any MkFitAlpaka CUDA kernel with LOCAL > 0 (harness register report) -->
+<test name="testMkFitAlpakaKernelRegisters" command="${LOCALTOP}/src/RecoTracker/MkFitAlpaka/test/integ_check_registers.sh"/>
+<!-- bkfit lane: device backward fit vs stock dumps (MKFIT_BKFIT_DUMP hook, doc/bkfit.txt), per backend -->
+<bin name="testMkFitAlpakaBkFit" file="alpaka/bkfit_replay_t.dev.cc">
+  <use name="alpaka"/>
+  <use name="FWCore/Utilities"/>
+  <use name="HeterogeneousCore/AlpakaInterface"/>
+  <use name="RecoTracker/MkFitAlpaka"/>
+  <flags ALPAKA_BACKENDS="1"/>
+  <flags NO_TESTRUN="1"/>
+</bin>
+<!-- bkfit lane: stock backward-fit re-run on dump inputs (v3 lib: bit-exact check; v2 lib: D-M4 floor of the stage) -->
+<bin file="bkfit_stock_rerun.cpp" name="testMkFitAlpakaBkFitStockRerun">
+  <use name="RecoTracker/MkFitCore"/>
+  <flags NO_TESTRUN="1"/>
+</bin>
+<!-- engine lane (round 3): clone-engine kernels K1/K3a/K3b/K4/K5/K6 vs stock step dumps (args: material file, dump dirs) -->
+<bin name="testMkFitAlpakaEngineStep" file="alpaka/engine_step_t.dev.cc">
+  <use name="alpaka"/>
+  <use name="DataFormats/Portable"/>
+  <use name="HeterogeneousCore/AlpakaInterface"/>
+  <use name="RecoTracker/MkFitAlpaka"/>
+  <flags ALPAKA_BACKENDS="1"/>
+</bin>
+<test name="testMkFitAlpakaReplayStockStages" command="cmsRun ${LOCALTOP}/src/RecoTracker/MkFitAlpaka/test/replay_stages_cfg.py sample=ttbar maxEvents=5 threads=4 requireIdentical=1"/>
+<test name="testMkFitAlpakaReplayPortTemplate" command="cmsRun ${LOCALTOP}/src/RecoTracker/MkFitAlpaka/test/replay_port_cfg.py sample=ttbar maxEvents=3 threads=4 portCff=RecoTracker.MkFitAlpaka.replayMockPort_cff portSeq=mockPort compare=bkfit:mockPortBkFit,final:mockPortFinal requireIdentical=1"/>
+<!-- integ (review M1): CUDA canary, a plugin-library kernel writes known values and the host check fails otherwise -->
+<test name="testMkFitAlpakaCudaCanary" command="${LOCALTOP}/src/RecoTracker/MkFitAlpaka/test/integ_cuda_canary.sh"/>
+<!-- fitdev (round 9): per-event PF / MET / TICL dump for the D6 TrackExtra-states check (validation only, no output file) -->
+<library file="FitDevPfStudy.cc" name="testMkFitAlpakaFitDevPfStudy">
+  <use name="DataFormats/HGCalReco"/>
+  <use name="DataFormats/HepMCCandidate"/>
+  <use name="DataFormats/JetReco"/>
+  <use name="DataFormats/METReco"/>
+  <use name="DataFormats/ParticleFlowCandidate"/>
+  <use name="DataFormats/TrackReco"/>
+  <use name="FWCore/Framework"/>
+  <use name="FWCore/MessageLogger"/>
+  <use name="FWCore/ParameterSet"/>
+  <flags EDM_PLUGIN="1"/>
+</library>
+<!-- fitphys (round 10): follows every HP pT > 1 GeV track through hltPfTrack / hltParticleFlowBlock / barrel PF (R9-H1) -->
+<library file="FitPhysPfTrace.cc" name="testMkFitAlpakaFitPhysPfTrace">
+  <use name="DataFormats/HGCalReco"/>
+  <use name="DataFormats/ParticleFlowCandidate"/>
+  <use name="DataFormats/ParticleFlowReco"/>
+  <use name="DataFormats/TrackReco"/>
+  <use name="DataFormats/VertexReco"/>
+  <use name="FWCore/Framework"/>
+  <use name="FWCore/MessageLogger"/>
+  <use name="FWCore/ParameterSet"/>
+  <flags EDM_PLUGIN="1"/>
+</library>

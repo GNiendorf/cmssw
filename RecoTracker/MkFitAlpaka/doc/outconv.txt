@@ -1,0 +1,99 @@
+outconv (round 7, stage C): the single host output conversion of the device mkFit final fit
+=============================================================================================
+Owner files: plugins/MkFitAlpakaOutputTrackConverter.cc, plugins/MkFitAlpakaOutputTrackCompare.cc, doc/outconv.txt.
+Customise (proposed for python/, menu lane owns it): L/r7_outconv/patches/customizeOutConv.py.
+
+1. WHAT RUNS TODAY (target menu, device fit from build)
+  hltInitialStepTrackCandidatesMkFitFitDevice (device fit, TrackSoA) -> host copy (framework)
+  -> hltInitialStepTrackCandidatesMkFitFit = MkFitAlpakaOutputWrapperFromTrackSoA (TrackSoA -> mkfit::TrackVec)
+  -> hltInitialStepTracks = stock MkFitOutputTrackConverter (RecoTracker/MkFit/plugins/MkFitOutputTrackConverter.cc)
+  The stock converter per candidate (no per-hit states in the menu):
+   a) state quality cuts, CCS -> global curvilinear, FreeTrajectoryState, Sylvester positive-definiteness checks;
+   b) on-track hits: clone of every legacy rechit into an OwnVector (OT: a new Phase2TrackerRecHit1D with the yy error
+      at float max); the OwnVector is then COPIED (clones again) into hitsVecs, and the output collection is filled by
+      a THIRD clone; ordering = OwnVector::sort (std::sort) with a comparator that recomputes det()->subDetector(),
+      globalPosition() and the TOB side on every comparison;
+   c) the PCA: TSOS on the first hit's surface, TSCBLBuilderNoMaterial to the beam line with the CMSSW MagneticField;
+   d) hit pattern: appendHits;
+   e) missing inner / outer hits: NavigationSchool::compatibleLayers(innermost / outermost layer, fts at the first hit)
+      and for every compatible layer compatibleDets(first-hit TSOS, PropagatorWithMaterial[Opposite], Chi2 estimator):
+      the front det -> missing_inner/outer or inactive_inner/outer from MeasurementTrackerEvent;
+   f) TrackExtra (seed ref, zero traj params), SeedStopInfo (unfilled).
+  Consumers of the missing inner/outer pattern: the HP Torch classifier features lostInnerHits / lostOuterHits
+  (TrackFeatureExtractor), so (e) is physics for the HP selection.
+
+2. THE NEW MODULE: MkFitAlpakaOutputTrackConverter (host, global)
+  Input: the device fit's TrackSoA (host copy) + its status product; legacy hits through the index-only
+  MkFitClusterIndexToHit maps; seeds; MeasurementTrackerEvent; beam spot; ES as the stock converter. No
+  MkFitOutputWrapper, no MkFitEventOfHits (is_pixel per layer from MkFitGeometry's TrackerInfo, which is what
+  LayerOfHits::is_pixel returns), no MkFitSeedWrapper (unused by the stock code).
+  Same operations as the stock converter in the same order (a, c, d, e, f unchanged CMSSW calls), except:
+   - hits are referenced while the track is built and cloned ONCE into the output (stock: three clones);
+   - ordering keys (position, barrel flag, tilted-TOB flag) computed once per hit; the stock comparator is applied by
+     a stable insertion (no general sort). std::sort (stock) is not stable, and the comparator is not a strict weak
+     order for mixed mag2/perp2 pairs, so ~4e-4 of the tracks list two such hits in the other order (TrackExtra only;
+     see SIMPLIFICATIONS). validateStockOrder = True uses std::sort: then every field is identical to stock.
+     29% of the tracks have > 16 on-track hits (Phase-2 PS/2S double hits), counted in the timing summary.
+  The comparator only asks isBarrel(subDetector()): the flag comes from the DetId subdetector (PXB/TIB/TOB), checked
+  per hit against det()->subDetector() when validateStockOrder is on (identical on 133521 tracks).
+  Refused: TrajectoryInEvent (mtd_at_hlt needs per-hit states the device fit does not export), Phase-1 geometry.
+  Instrumentation (untracked, off in the menu): timing (per-section timers), fieldStudy (the field question, sec. 4,
+  and the missing-hit bookkeeping study, sec. 5).
+  Acceptance: MkFitAlpakaOutputTrackCompare, field by field (params, covariance, chi2/ndof/charge/algo, the three
+  hit-pattern categories word by word, seed ref, every rechit's detId/type/cluster/local position and error) against
+  the stock converter in the same job on the same TrackSoA -> must be IDENTICAL.
+
+3. RESULTS (2026-10-04, round 7; loaded box, timing indicative; details L/r7_outconv/REPORT.txt)
+  Identity, in-job vs the stock converter on the same TrackSoA (MkFitAlpakaOutputTrackCompare):
+    validateStockOrder = True (std::sort):  ttbar GPU 133521 tracks: IDENTICAL in every field.
+    default (stable insertion):             ttbar GPU 47/133510, QCD GPU 79/195757 tracks differ in the TrackExtra
+                                            hit order only (see SIMPLIFICATIONS); params/cov/chi2/pattern/seeds identical.
+  Deterministic CPU menu A/B (main6 target vs + this module + LST patch 0001, ttbar 100): MTV identical, 68/68 trigger
+    paths identical, vertex DQM 860/860 bin-identical, tracking DQM counting histograms identical.
+  Section split of the module (ms per tracked event, ttbar, GPU menu, 1907 tracks/event, 25.5k hits/event):
+    state+checks 0.80 | hits + order 3.6 (final code; 4.4-5.6 before the DetId barrel flag) | PCA (TSCBL, CMSSW
+    field) 1.4 | hit pattern 0.7 | navigation inner 4.4 | navigation outer 9.7 | output (1 clone/hit, TrackExtra)
+    2.1 | total 22.7 (quieter box; 26-28 on the loaded box)
+    -> the missing-hit navigation is ~60% of what is left (985 inner + 1479 outer compatibleDets calls per event,
+       673 / 1148 of them return a det; ~5.7 us per call); legacy-hit access (keys + clone) ~25%; PCA ~6%.
+       Calls (found) per ttbar event by layer kind: inner pixel barrel 433 (202), pixel endcap 479 (414), OT barrel
+       66 (51), OT endcap 8 (6); outer OT barrel 354 (210), pixel endcap 413 (390), OT endcap 713 (548).
+  Host time (FastTimer thread ms per job event, ttbar 300, GPU target menu, arms run concurrently):
+    stock MkFitOutputTrackConverter 22.7 + fit wrapper 0.15 + light host EventOfHits 0.45 -> this module 16.7.
+
+4. THE FIELD QUESTION
+4. THE FIELD QUESTION
+  The stock converter's PCA uses the CMSSW MagneticField at the first-hit state (TSCBLBuilderNoMaterial: helix with
+  the field at the start point). A device PCA would use mkFit's parabolic Bz(z, r) with #186's constants. The study
+  recomputes the PCA with a MagneticField stand-in returning mkFit's Bz (no Br, as mkFit's helix) and reports
+  |Bz_mkFit/Bz_CMSSW - 1| at the first-hit states and the reco::Track parameter pulls (mkFit field - CMSSW field) /
+  sigma.
+  RESULT (ttbar, 133510 tracks): |Bz_mkFit/Bz_CMSSW - 1| at the first-hit states mean 2.0e-4, max 5.8e-4.
+  Tracks with |pull| >= 1e-2 (qoverp, lambda, phi, dxy, dsz): 0, 0, 4209 (3.2e-2), 54 (4.0e-4), 5 (3.7e-5);
+  >= 1e-1 and >= 1: none. Isolated-fit reco::Track floor (D7-a, r7_fitgap floors/isolated/floor_ttbar_100_cpe1_
+  fitisotrk.txt) at >= 1e-2: 1.4e-3, 4.1e-3, 9.5e-4, 9.4e-4, 5.6e-2. phi is 33x over the floor (a coherent bias:
+  the ~2e-4 field difference over the first-hit -> PCA extrapolation), the rest inside.
+  VERDICT: a device PCA with mkFit's field is NOT inside the floor. Keep the PCA with the CMSSW MagneticField: on the
+  host (1.5 ms per tracked event, kept in this module), or on the device with Bz sampled from the menu's MagneticField
+  (an (r, z) grid ES product filled at IOV time, or Bz at each first-hit module from a per-module table) - only then
+  is a device PCA a rounding-level change.
+
+5. THE MISSING-HIT PATTERN FROM MKFIT'S BOOKKEEPING (study, for the device design)
+  mkFit records crossed layers without a hit as -1 (miss) / -7 (inactive) entries in the hit list. The study tables
+  compare, per track, the navigation's missing inner / outer counts with the -1/-7 entries before the first / after
+  the last valid entry and in total.
+  RESULT (ttbar, 133510 tracks): navigation finds >= 1 missing inner hit on 14% of the tracks, mkFit has a -1/-7
+  entry before the first valid hit on < 1%; >= 1 missing outer hit on 24%, mkFit tail misses on 0.4%. mkFit's
+  bookkeeping is NOT a proxy for the CMSSW missing-hit pattern (building stops at the last hit; LST seeds already
+  carry the outer hits). A device missing-hit pattern needs its own per-track propagation to the compatible layers.
+
+6. NEXT STEPS (stage C on the device), ranked by host ms
+  a) Device missing-hit navigation (55-60% of the module): per track, the inner/outer compatible-layer lists of the
+     SimpleNavigationSchool as an ES table (per mkFit layer and direction), the device state propagated to each listed
+     layer (mkFit propagation to the layer's r or z), the module hit there (EventOfHits module table) and its activity
+     (per-event inactive-module mask from the MeasurementTrackerEvent). Physics: lostInnerHits / lostOuterHits are
+     HP Torch features, so this is a switch-gated change (OFF) with the per-track count agreement table and the HP
+     decision comparison (hpsel's in-job comparator), then MTV / paired truth per O6-1.
+  b) PCA on the device with the CMSSW field (see 4): saves ~1.5 ms; output sparse (5 params + 15 cov per track).
+  c) Hit ordering keys on the device from the HitSoA positions + a module (subdet, tilt) table: the host only reads an
+     index order (~3-4 ms of 'hits + order'); the clones stay until stage D slims the legacy hit collections.

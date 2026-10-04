@@ -1,0 +1,456 @@
+Stage C (round 8, lane stagec): the output conversion and the HP selection, toward one sparse conversion on the host
+====================================================================================================================
+Scope (verify7_rev section 6 item 6, R7-M1, R7-M4, R7-M5): device PCA with the exact field, device ordering keys and
+the R7-M4 counters, HP option (b) (an MLP kernel with weights derived from model.pt) and a device HP mask, and the first
+design + prototype of the device missing-hit navigation. Host cost addressed (quiet box, ms per input event, round 7):
+output converter ~13.6 (navigation ~10, keys ~3, PCA ~1.5), Torch 4.2, HP cloner + merger 3.1.
+
+0. HOW THIS LANE BUILT AND RAN (area trap)
+  The lane area (copy of main6) rebuilt every package for cuda + rocm + serial at the first scram b (missing
+  LST/LSTCore/MagneticField libraries + the R7-L5 ROCm tool-cache trap); stopping that build was refused by the
+  permission system. To get results in the round, the stage-C sources (they use no MkFitAlpaka or local-package code)
+  were ALSO built in a small build-vehicle area L/r8_stagec/aux (scram project CMSSW_20_1_0_pre2, ALPAKA_BACKENDS cuda
+  serial, package RecoTracker/MkFitAlpakaStageC = symlinks to the files of this package), and loaded at run time from
+  the read-only integration area main6 by prepending aux/lib to LD_LIBRARY_PATH (the plugin manager reads
+  .edmplugincache from every LD_LIBRARY_PATH directory). The code lives in this package (branch r8/stagec); the aux
+  area only compiles it. Runs: L/r8_stagec/scripts/menu_job.sh (= the verify recipe: 75e33_timing, trackingMkFitFit,
+  customizeHLTforMkFitAlpakaTarget) + customizeOutConv (D8-c) + the arm (L/r8_stagec/pylib/StageC/customizeStageC.py).
+
+1. HP OPTION (b): THE MLP KERNEL (DEVIATION D5, switch-gated, OFF)
+  Files: plugins/alpaka/MkFitAlpakaHpClassifier.cc (FixedQueue producer), plugins/alpaka/MkFitAlpakaHpMlpKernels.{h,dev.cc},
+  plugins/MkFitAlpakaHpMaskCheck.cc (validation), python/customizeHpSel.py: customizeHpSelMlp(process, produceHpMask)
+  and customizeHpSelMlpValidation(process, dumpFile, checkProgramFile).
+  - Weights DERIVED FROM model.pt (R7-M5): torch::jit::load on the host at construction, named parameters and buffers,
+    BatchNorm (eval, eps 1e-5) folded into the Linear layers in double, rounded once to float32, W transposed to
+    [nIn][nOut]. Shape checks against the kernel envelope (width <= 256, residual width 32, 15 inputs, 1 output) throw
+    on a different model. checkProgramFile (untracked) compares with r7_hpsel's exported .bin: 54,783 floats, 0 differ.
+  - Kernel: 128-thread blocks, a tile of 16 tracks per block, activations ping-pong in shared memory (34-35 kB), no
+    per-thread arrays. GPU: one thread per (track, output). CPU backends: the same sums in the same k order, output loop
+    innermost (vectorisable). Registers (cuobjdump, 6 archs): REG 31-56, STACK 16, LOCAL 0.
+  - Inputs/outputs = the stock module's (TrackFeaturesDeviceCollection -> TrackScoresDeviceCollection), so
+    TrackTorchClassifierFromSoA, the cut classifier, the HP cloner and TrackListMerger are untouched. The features come
+    from the host extractor through hpsel's MkFitAlpakaHpFeaturesToDevice (async copy).
+  - Device HP mask (produceHpMask): TrackTorchClassifierFromSoA's rule in the kernel, 0/1 per track (instance
+    "hpMask", a TrackScoresDeviceCollection so no new dictionary). Nothing reads it in production yet (section 5).
+  - Results (in-job vs the release serial libtorch classifier on the same features; target menu + outconv):
+      GPU ttbar 200 / QCD 100 / ttbar 100 / QCD 100 (L40, L4) and the r8 area itself (ttbar 100): 0 HP flips in
+      924,519 tracks, max |dscore| 1.25e-6; CPU (serial kernel) ttbar 60 x 3: 0 flips in 85,160 tracks, max 1.28e-6.
+      Device HP mask = the host rule on the same scores for every track; mask count = HP collection size every event.
+      Deterministic CPU A/B (ttbar 100, plain vs MLP): every trigger path identical, 3247/3309 harvested DQM histograms
+      identical, the other 62 are mean/prob profiles differing by <= 2.3e-15 (also in hltInitialStep, upstream of the
+      HP selection: harvest rounding).
+      Host (GPU menu, ttbar 300, 8 threads, two reps with the arms concurrent and the GPUs swapped): HP chain
+      (extractor + classifier [+ copy] + threshold) 4.64-4.67 -> 0.44-0.45 ms per input event; classifier 4.33-4.36 ->
+      0.06-0.07 (+0.05 copy). Device memory (nvidia-smi peak per job): same GPU +18 MiB (L40, 2612 -> 2630) and
+      -72 MiB (L4, 2312 -> 2240) = noise (expected ~2 MB); step 1 (libtorch on the GPU) was +1.2 GB.
+      CPU: the serial kernel costs 10.1-10.3 ms vs libtorch 4.5-4.7 (a W-row-per-tile loop order measured the same;
+      the scalar exp of the ELUs is the likely limit): GPU menus only.
+
+2. DEVICE PCA (prototype; R7-M1) -- round 9: wired into production, see section 7 (the prototype check modules named
+   below were removed; the header is now interface/math/PcaToBeamLine.h with the shared TkBfield.h)
+  Files: plugins/MkFitAlpakaPcaToBeamLine.h (portable, ALPAKA_FN_HOST_ACC; in plugins/ while a prototype, so editing it
+  rebuilds no device library), plugins/MkFitAlpakaPcaCheck.cc (host validation), plugins/alpaka/MkFitAlpakaPcaKernels.{h,
+  dev.cc} + plugins/alpaka/MkFitAlpakaPcaDeviceCheck.cc (the same code ON THE DEVICE vs the host TSCBL).
+  What it transliterates (types as stock: GlobalPoint/Vector float, the algebra in double):
+    TSCBLBuilderNoMaterial -> TwoTrackMinimumDistance helix-line (TwoTrackMinimumDistanceHelixLine.cc: coefficients,
+    12 Newton steps on the helix phase, tolerance 1e-6f, bracket pull-back 0.8, the field z at the start point only),
+    the PCA momentum as GlobalVector(Cylindrical(perp, phi, pz)) in float, AnalyticalCurvilinearJacobian in the
+    USE_EXTVECT variant CMSSW builds (AnalyticalCurvilinearJacobianEXT.icc, incl. the s*qbp > 5 branch and the
+    straight-line branch), C' = J C J^T.
+    The field at the start point: TkBfield "3_8T" (BCyl.h float, unsafe_expf<3>, the cm -> m scale of
+    OAEParametrizedMagneticField) where r < 115 cm and |z| < 280 cm, which is what the menu's VolumeBasedMagneticField
+    returns there (R7-M1). The double vdt::fast_sincos of the Jacobian is used on the host; the device uses sin/cos
+    (TODO: port vdt's double fast_sincos to interface/math/vdtMath.h).
+  Validation input: the converter's own input (the device fit's state at the first hit) is not persisted, so the check
+  modules use, per output track, its PCA state propagated analytically to its first hit's surface: realistic states
+  and errors, the same code path afterwards (TSCBL vs portable). Both field sources are run: the CMSSW value at the
+  start point (tests the PCA code alone) and the portable TkBfield (the full device chain).
+  Cost: ~0.3-0.4 us per track on the host (scalar), vs ~0.8 us for TSCBL. Kernel (one thread per track, block 64):
+  REG 160-242, STACK 72, LOCAL 0.
+  Results (pulls = parameter difference / host error; the D7-a isolated reco::Track floor at |pull| >= 1e-2 is
+  1.4e-3, 4.1e-3, 9.5e-4, 9.4e-4, 5.6e-2 of the tracks for qoverp, lambda, phi, dxy, dsz):
+    host code, ttbar 265,910 tracks: 0 failures, 58% parameters bitwise; |pull| >= 1e-2: 0, 0, 0, 0, 8 (3.0e-5);
+      >= 1e-1: none; max 5.2e-5, 7.7e-4, 1.4e-3, 4.9e-4, 3.6e-2; QCD 195,769: >= 1e-2 only dsz 3 (1.5e-5).
+    CUDA, ttbar 133,515: >= 1e-2: dsz 6 (4.5e-5); max 2.4e-5, 7.7e-4, 3.7e-3, 2.0e-3, 3.6e-2; device == the same code
+      on the host (x, p bitwise) for 58.5% (FMA contraction, sin/cos instead of vdt's fast_sincos); QCD 195,757:
+      >= 1e-2: phi 1, dsz 3; max phi 1.0e-2, dxy 6.0e-3.
+    serial backend: bitwise equal to the host code (85,158 tracks).
+    Field: the portable TkBfield equals the CMSSW value bitwise for 94% of the states, max |dBz/Bz| 1.9e-7; the pulls
+      are the same with either field source. => inside the isolated floor by 30x-1000x.
+  Next: a production kernel on the device fit's TrackSoA (state at the first hit is what the converter attaches to the
+  first hit surface), output (x, p, C) per track into a small SoA read by the converter instead of calling TSCBL;
+  the beam spot from hltOnlineBeamSpot vs offlineBeamSpot (R7-L6: the converter uses offlineBeamSpot; identical in
+  MC). Move the header to interface/math and share the field part with lanes seeds/otdev/lstin (one header, R7-M1).
+
+3. ORDERING KEYS AND R7-M4
+  Exact counter in the converter (untracked orderStudy; customizeOutConv(orderStudy=True)): insertion vs std::sort
+  on the same input order: hit 0 differs for 14 / 265,941 ttbar and 7 / 195,755 QCD tracks, the last hit never
+  (any position: 341 / 250).
+  plugins/MkFitAlpakaHitOrderCheck.cc: per output track, the converter's keys (global position, barrel flag from the
+  DetId, TOB-tilted clause from TrackerTopology); counts tracks where hit 0 (or the last hit) is not forced by the
+  comparator ("ambiguous"), outright inversions, and std::sort of the output order vs the output order.
+  doc/SIMPLIFICATIONS.txt [outconv] entry corrected (TrackListMerger reads recHit(0) with allowFirstHitShare).
+  Device ordering keys (design, not built): the keys need per hit the global position (the device HitSoA position is
+  bitwise the host rechit globalPosition: verify7 "device hits identical") and two per-module flags (barrel; TOB side
+  < 3) that go into the EventOfHits module table at ES time (the TOB side from TrackerTopology, once per module). A
+  thread per track runs the same stable insertion (<= kMaxTrkHits, almost sorted input) on the device and writes a
+  uint8 permutation per track next to the hit list; the host converter then reads the order instead of computing keys
+  and sorting (saves the keys + order part, ~3-3.5 ms per tracked event). By construction identical to the host
+  insertion (same keys, same algorithm), so the R7-M4 numbers above carry over unchanged.
+
+4. DEVICE MISSING-HIT NAVIGATION: DESIGN + FIRST PROTOTYPE PIECE
+  What the host does per track (MkFitAlpakaOutputTrackConverter = stock MkFitOutputTrackConverter; 10 ms of the ~14):
+    for (start layer, direction) in {(innermost hit's layer, oppositeToMomentum), (outermost hit's layer,
+    alongMomentum)}: compatibleLayers(layer, fts, dir) [SimpleNavigationSchool], then for each compatible layer
+    compatibleDets(tsos at the first hit, PropagatorWithMaterial(dir), Chi2MeasurementEstimator(30, -3 sigma bounds));
+    the FIRST det returned becomes a missing (active) or inactive (MeasurementTrackerEvent: !isActive or
+    hasBadComponents at the predicted point) hit in the pattern. NOTE: fts is the state at the FIRST hit for both
+    directions. The pattern words feed lostInnerHits / lostOuterHits of the HP features (zeroing them flips 0.9% of HP
+    decisions), and the reco::Track hit pattern (MTV, vertexing quality cuts).
+  The navigation structure (read from RecoTracker/TkNavigation/plugins, SimpleBarrel/Forward/NavigableLayer.cc):
+    - compatibleLayers = the closure (BFS, std::set of DetLayer pointers, <= 150 rounds) of nextLayers(layer, fts, dir)
+      evaluated with the SAME fts for every layer; the returned order is the set's POINTER order (arbitrary, harmless
+      for the counts).
+    - nextLayers(layer, fts, dir) picks ONE of a few static candidate lists (Neg/Pos Outer/Inner, Inner/Outer
+      Left/Right Forward, Inner/Outer Barrel) from direction bits of fts: transverse in-out (x px + y py > 0), z in-out
+      (pz z > 0), sign(pz), dir. Along that list it propagates the ERROR-FREE fts analytically (AnalyticalPropagator) to
+      each candidate surface (cylinder / disk), skips invalid or crossing-over propagations, keeps a candidate if the
+      crossing is inside the bounds extended by the layer thickness term, and STOPS at the first one well inside.
+  => Device design (ES table + per-track kernel; fixed capacities with overflow counters):
+    (a) ES (once per IOV, host): per mkFit layer and key (dir, 3 bits) the static candidate list (<= 16 layer ids), and
+        per layer the surface (barrel: radius, half length, thickness; disk: z, inner/outer radius, thickness). The
+        lists are extracted from the NavigationSchool by enumeration (nextLayers on synthetic error-free states that
+        cross no layer well inside, per key), validated on real tracks by the study below.
+    (b) Kernel, thread per track, both directions: BFS over the table (bitset of <= 64 layers, no sets), per candidate
+        a helix propagation of the state at the first hit to the cylinder/disk with the shared field (the device PCA
+        header's TkBfield; the propagation is mkFit's propagateHelixToR/Z, or an exact helix as AnalyticalPropagator
+        for rounding-level agreement), the bounds test with the thickness term.
+    (c) compatibleDets on the device: per compatible layer, the modules near the crossing from the EventOfHits
+        module table (phi/z bins for barrel rods/ladders, phi/r for disks), propagation of the state WITH ERRORS to the
+        module plane (the port's propagateHelixToPlane + material as PropagatorWithMaterial), the -3 sigma shrunken
+        bounds test (Chi2MeasurementEstimator(30, -3.0, 0.5, 2.0, 0.5, 1e12)), first det in the stock order.
+    (d) Per-event inactive mask (one bit per module, from the MeasurementTrackerEvent's inactive pixel/strip module
+        lists, filled on the host once per event or from the device cluster producers' bad-module lists) and the
+        hasBadComponents test at the predicted point (pixel ROC / strip APV bad lists: per module bad-region tables).
+    (e) Output per track: <= 4 + 4 (detid, type) entries; the host appends InvalidTrackingRecHit patterns from them
+        (TrackerGeometry::idToDet, no navigation) and the HP features read the counts directly on the device.
+    Judge: per-track lost inner/outer counts vs the host navigation (exact agreement fraction, the residual by layer
+    kind) and the HP decision flips (the MkFitAlpakaHpCompare harness with the device features), switch-gated, then
+    the O6-1 paired list. Expected difficulty ranking: (c) error propagation with material + -3 sigma bounds (edge
+    cases), (d) bad components, (b) exactness of the stop rule near layer edges.
+  First prototype piece (this round): plugins/MkFitAlpakaNavStudy.cc measures on real tracks (same first-hit states
+  as the PCA check) that (1) an own BFS over nextLayers reproduces compatibleLayers, (2) per key (layer, dir, 3 bits)
+  every nextLayers result is an ordered subsequence of ONE candidate list (the static-table premise of (a)), and (3)
+  the sizes (fixed capacities). Results (ttbar 60 CPU: 85,158 tracks, 280,732 nextLayers calls; GPU ttbar 100 and
+  QCD 100 the same picture): (1) closure == compatibleLayers for every track and direction, no 150-round overflow;
+  (2) 164 keys (184 in QCD), 0 keys with a precedence cycle: every result is an ordered subsequence of one static
+  candidate list per key (longest candidate list 10, <= 24 distinct results per key) => the ES table of (a) is
+  sound; the TRUE order of layers that never co-occur must come from the school itself (TkLayerLess order), not from
+  data; (3) compatible layers per track: inner/opposite 0 for 82% of the tracks, <= 9 in ttbar, <= 12 in QCD;
+  outer/along 0 for 72%, <= 9 / 10 => capacity 16 with an overflow counter.
+  Step (b) prototype (NAVSTUDY-EMU, CPU ttbar 100 + QCD 60): wellInside re-evaluated (A) with the stock
+  AnalyticalPropagator, (B) with a device-style double helix (field z at the start point, AnalyticalPropagator's
+  maxDPhi 1.6 rule, the same bounds/thickness/crossing-side tests):
+    - every layer a call returned: A says "pushed" for 100% (the logic transliteration is right); B: 0 decision flips
+      in 346,617 evaluations, crossing points within 3.8 um of A;
+    - EVERY static neighbour of every visited layer (NavigableLayer::nextLayers(insideOut) + (outsideIn), i.e. the
+      candidates of all branches, also those a call did not return): 6.55M evaluations, "pushed" flips 4 and
+      "well inside" flips 2 (6e-7). Without the maxDPhi rule: 2,936 / 2,323 flips (4.5e-4): the rule is required.
+      Remaining validity differences (~17k, where the stock propagator also rejects for other reasons, e.g. the
+      curvature-change check or a far solution) never change a decision except those 6.
+  End to end (NAVSTUDY-EMUSET): compatibleLayers EMULATED from the branch logic, the candidate lists REBUILT from the
+  school's public static lists (nextLayers(insideOut) = NegOuter + the z > 0 endcaps of PosOuter, nextLayers(outsideIn)
+  likewise, split by barrel / z side and re-sorted with TkLayerLess(insideOut / outsideIn) exactly as the school builds
+  them), the stop rule and (i) the stock propagator or (ii) the device helix: the per-track compatible-layer SET equals
+  the stock one for EVERY track and direction: 0 differences in 267,020 (ttbar) + 237,612 (QCD) cases, both with the
+  stock propagator and with the device helix.
+  ON THE DEVICE (plugins/MkFitAlpakaNavDevice.h portable, plugins/alpaka/MkFitAlpakaNavKernels.{h,dev.cc}, check module
+  plugins/alpaka/MkFitAlpakaNavDeviceCheck.cc): table = 44 layers, 790 list entries (~23 kB, built on the host from the
+  school's static lists + TkLayerLess); kernel = one thread per (track, direction), BFS on a 64-bit layer set, the
+  helix + bounds + stop rule in double; REG 144-183, STACK 40-336, LOCAL 0. Result vs the host
+  NavigationSchool::compatibleLayers with the converter's calls: CUDA ttbar 200: 0 differences in 531,834 track x
+  direction cases; CUDA QCD 100: 0 / 391,418; serial ttbar 60: 0 / 170,316.
+  => (a) + (b) are solved: an ES table per layer (10 index lists for barrel, 6 for disks, <= 44 layers -> a 64-bit
+     layer bitset) + the helix + the bounds reproduce the host navigation's layer sets exactly. What remains is
+     (c) compatibleDets with errors and material, (d) the inactive / bad-component mask, (e) the output.
+  COST SPLIT (why (c) is next): the host compatibleLayers costs 0.48 us per call (NAVSTUDY-COST, ttbar, 2 calls per
+  track) = ~1.8 ms per tracked event of the converter's ~14 ms navigation; the rest (~12 ms) is compatibleDets with
+  PropagatorWithMaterial + the MeasurementTrackerEvent lookups (outconv r7: 2,464 calls per event). (a)+(b) on the
+  device remove ~1.8 ms; (c)-(e) carry the remaining ~12.
+  Step (c) requirements (plugins/MkFitAlpakaNavDetsStudy.cc, CPU ttbar 100 + QCD 60, the converter's calls and
+  estimator): 156,547 / 172,539 compatibleDets calls, a det found in 74%, 3.9-4.1 us per stock call (= the ~10 ms).
+    V1 AnalyticalPropagator instead of PropagatorWithMaterial: 0 found flips, 0 other first det => the device can
+       propagate WITHOUT material;
+    V2 the same state without errors: +16% found (25-28k dets the -3 sigma shrink rejects) and 5% other first det
+       => the propagated position ERRORS are required (the -3 sigma bound shrink), but analytic ones suffice: the
+       PCA prototype's AnalyticalCurvilinearJacobian + the curvilinear -> local plane Jacobian on the device.
+  => (c) on the device = per compatible layer, the modules near the helix crossing (module table), per module the
+     analytic helix to its plane + the analytic error propagation (no material), Chi2MeasurementEstimator's
+     -3 sigma isInside test, first det in the stock order (GeometricSearchDet's compatibleDets order: next step to
+     study per layer type).
+
+5. WHERE THE DEVICE HP MASK GOES (the single sparse conversion)
+  Today the HP features need the host reco::Track (PCA params and errors, lost hits). With the device PCA (2) and the
+  device navigation (4) the features can be computed from the device fit's TrackSoA (hpsel's step-2 module already
+  does the 5 exact ones), the MLP runs on them, and the HP mask decides on the device. Then ONE host conversion writes
+  hltInitialStepTracks (all tracks; readers: vertices, MTV, cluster masking) with the pattern entries from (4e) and the
+  PCA from (2), and the HP subset collection directly from the mask: the threshold module, TrackCutClassifier
+  (passThroughForAll), the HP cloner and the one-collection TrackListMerger (3.1 ms) become one index pass. The
+  merger's duplicate/shared-hit logic on a single collection (MinPT 0.8, MinFound 3, indivShareFrac 0.1,
+  allowFirstHitShare) must then be reproduced or kept.
+
+6. NUMBERS: see L/r8_stagec/REPORT.txt (runs in L/r8_stagec/runs/<tag>/hlt.log: HPCMP-*, HPMASK-*, PCACHECK-*,
+   PCADEV-*, HITORDER-*, NAVSTUDY lines).
+
+=====================================================================================================================
+7. ROUND 9 (lane stagec, Sunday 2026-10-04): DEVICE PCA IN PRODUCTION, MLP SELF-TEST, NAVIGATION (c) REQUIREMENTS
+   Runs: L/r9_stagec/runs/<tag>/hlt.log (arms: L/r9_stagec/pylib/StageC9/customizeStageC9.py; script
+   L/r9_stagec/scripts/menu_job.sh = the verify recipe from the r9 area). Numbers: L/r9_stagec/REPORT.txt.
+
+7.1 Device PCA, wired (switch customizeOutConv.customizeOutConvDevicePca(process, check=False), OFF by default)
+  Chain: device fit TrackSoA (hltInitialStepTrackCandidatesMkFitFitDevice) -> MkFitAlpakaOutConvStateProducer@alpaka
+    (hltInitialStepOutConvStates, in hltMkFitAlpakaTask) -> OutConvDeviceCollection -> framework copy to the host ->
+    MkFitAlpakaOutputTrackConverter (pcaStates = hltInitialStepOutConvStates).
+  The fit's first-hit state: the fitted TrackSoA row IS the state the converter attaches to the first hit's surface
+    (CCS x, y, z, 1/pT, phi, theta + 21 errors), so no fit change was needed: the producer reads the fit's own output.
+  Product (interface/outconv/OutConvSoA.h, dictionaries in MkFitAlpakaFormats + src/classes_def.xml): per row
+    pcaState (x, y, z, px, py, pz float = GlobalPoint/GlobalVector of the PCA), pcaCov (15 float, reco::TrackBase
+    packed order; reco::Track stores float, so the rounding happens where the host's does), pcaStatus (int8).
+  Kernel (plugins/alpaka/MkFitAlpakaOutConvKernels.dev.cc, one thread per row, 64-thread blocks, the row count stays on
+    the device: no synchronisation): interface/math/PcaToBeamLine.h =
+      ccsToCurvilinear (mkfit::TrackState::convertFromCCSToGlbCurvilinear, float, the 6x6 Jacobian similarity) ->
+      the field at the first-hit state from interface/math/TkBfield.h (the shared bitwise copy; outside its volume
+      -> status host fallback) -> pcaToBeamLine (TSCBLBuilderNoMaterial: TTMD helix-line Newton, the EXT curvilinear
+      Jacobian with vdt's DOUBLE fast_sincos now ported, C' = J C J^T).
+    Precision detail that matters: the host's float sin/cos/atan2 are glibc's (correctly rounded in practice); the
+    device's are 1-3 ulp. With device float trig, dsz pulls >= 1e-2 were 6.4e-3 of the tracks (GPU); with the float
+    functions evaluated in double and rounded once (cosF/sinF/atan2F) they are 1.3e-4: a 50x reduction for free.
+    Registers (sm_89): REG 255, STACK 104, LOCAL 0 (64-thread blocks: 16k registers per block).
+  Converter: status ok -> the device state; host fallback or device failure -> the host TSCBL decides (as stock).
+    pcaCheck (untracked) runs the host TSCBL for every track too and prints [outconv PCACHECK] at endJob.
+  Beam spot (R7-L6): the converter (and stock MkFitOutputTrackConverter, hard-coded) read offlineBeamSpot, which the
+    HLT job takes from the INPUT FILE (no producer in the menu dump). Decision: the device side uses the same product
+    (the converter's new beamSpot parameter, default offlineBeamSpot, is passed to the producer), so stock physics is
+    kept. Measured: offlineBeamSpot == hltOnlineBeamSpot (x, y, z, dxdz, dydz) in every event of every check job
+    ([outconv BSCMP], 70 + 31 + 139 + 45 + 100 + 40 events). Switching both to hltOnlineBeamSpot is a one-line menu
+    change with no effect on these MC samples and is what an online menu needs (offlineBeamSpot does not exist in
+    RAW data); it changes the stock converter's behaviour on data, so it is left to the owner.
+  Results: see REPORT.txt section 2 (PCACHECK on GPU and serial, ttbar + QCD; CPU A/B; GPU timing).
+
+7.2 HP MLP probe self-test (R8-M5) and one fold per job
+  MkFitAlpakaHpClassifier now folds model.pt once per job and file (process-wide cache; the stream instances copy the
+  program) and checks the fold: libtorch's own forward() vs the folded program on the host (the kernel's float order)
+  on 272 fixed probes (256 stratified over [feature_min, feature_max] per feature, 16 at 10% outside), throw if
+  |dscore| >= 1e-5. Release model: max |dscore| 1.7e-6, PASS. Negative test (L/r9_stagec/aux/mutate_model.py): a
+  TorchScript model with the SAME tensor names and ReLU instead of ELU in one residual block is refused (REPORT.txt).
+  customizeHpSelMlp keeps the release classifier when the job's accelerators allow no GPU (cpuToo=True overrides,
+  for validation).
+
+7.3 Ordering keys (ii): not built this round; the design is now concrete
+  Size of the prize (converter timers split in round 9, GPU ttbar 500): hits 1.27 + keys+order 1.53 ms per tracked
+  event; the device permutation removes the 1.53 (~1.1 box ms per input event).
+  Where: the device fit's export (fitdev's FitKernels.h, the loop that walks hot[m] with ha.row(layer, index) and
+  ha.es.modules[mod]): it has, per hit, the EventOfHits position (bitwise the legacy rechit globalPosition, verify7)
+  and the module's raw detid (ES module table). Keys = (x, y, z), barrel = subdet in {PXB, TIB, TOB}, tiltedOrNotBarrel
+  = TOB && tobSide < 3 (one bit per module, filled at ES time from TrackerTopology: the topology's bit layout is not
+  public, so do not hard-code it). The same stable insertion as the converter, written as uint8 order[kMaxTrkHits]
+  in a column next to the fit's rows (the OutConv SoA or a fit-export SoA). The converter then skips the keys and
+  the insertion (hits+order section 3.2-3.8 ms per tracked event; the keys part ~2-3). Owner of the change: fitdev
+  (the fit kernel) + es (the module bit). It cannot be done in a separate module without keeping the EventOfHits
+  alive past the fit (lane mem's early delete) or recomputing the positions.
+
+7.4 Navigation (c): what compatibleDets' FIRST det depends on (measured, [outconv NAVORDER], navStudy untracked)
+  For every non-empty compatibleDets call of the converter: does another returned det give a different hit-pattern
+  entry (subdet/layer/side/stereo + missing/inactive type) than front()?
+    ttbar (CPU 60 ev): inner 30,213 non-empty calls, 7,784 with >= 2 dets, 2,463 where another det gives another
+      word; outer 51,241 / 36,768 / 33,222. Missing-vs-inactive type: never differs (0 in all runs).
+    Of the >= 2-det calls: all dets in ONE module (the two sensors of a Phase-2 stack) inner 2,342, outer 32,028
+      (front = the lower sensor in ~50%: no fixed sensor order); >= 2 modules inner 5,442 / outer 4,740, of which
+      another MODULE gives another word 119 / 1,145.
+    front() = the det nearest to the start state: outer 99%, inner 64% (QCD: 83,377 / 84,341 and 11,563 / 17,993).
+  => The device version of (c) must reproduce which SENSOR of the crossed stack comes first (it changes the pattern
+     word in ~65% of the outer calls), not just "some det is compatible". Measured rule:
+       - one module (stack) returned: front() = its innermost sensor (barrel: smaller surface r, endcap: smaller |z|)
+         in 100% of the cases, both directions (ttbar inner 2,342/2,342, outer 32,028/32,028; QCD 2,428 / 29,481);
+         "nearest to the start state" is wrong for the inner direction (19/2,342);
+       - device rule = "the module of the det nearest to the start state, then its innermost sensor": its pattern
+         entry differs from front()'s in 73 inner + 15 outer of 81,454 non-empty calls (ttbar CPU 60 ev, 85,160
+         tracks) and 61 + 18 of 76,029 (QCD CPU 40 ev): ~1e-3 of the calls; the rest is the crossing-side merge order
+         of two different modules (DetGroupMerger::orderAndMergeTwoLevels) and can be added later if needed.
+     This assumes the device finds the same SET of compatible dets (the -3 sigma bounds test below on the analytic
+     propagated errors); that set is the remaining (c) work. The missing-vs-inactive type never depends on the choice
+     of det (0 in all runs), so (d) reduces to one activity bit per module + the bad-component test at the predicted
+     point.
+  END-TO-END DESIGN TEST (converter untracked navEmuStudy, [outconv NAVEMU]): compatibleDets EMULATED by brute force,
+    exactly what a device kernel would do: every basic component of the layer near the layer crossing (prefilter
+    |dphi| < 0.35, |dz| or |dr| < 25 cm), AnalyticalPropagator WITH ERRORS (no material) from the first-hit state to
+    the det plane, the estimator's -3 sigma bounds test (Chi2MeasurementEstimatorBase::estimate(ts, plane)), then the
+    rule above (nearest det's module, its innermost sensor); compared per call with the stock front() entry:
+      ttbar 40 ev: inner 30,122 calls: same entry or both empty 29,953 (99.44%), emulation-only 113, stock-only 2,
+        different entry 54; outer 45,123: 44,108 (97.75%), emulation-only 851 (1.9%), stock-only 0, different 164.
+      QCD 30 ev: inner 32,713: 99.4%; outer 45,397: 97.7% (emulation-only 871, different 183).
+      Adding the layer-level DetLayer::compatible(start, analytic, estimator) gate changes nothing (same numbers).
+      Per layer kind (ttbar 40 ev, calls / emulation-only / different): pixels are nearly exact (in/barrel/pixel
+        13,322/67/0, in/endcap/pixel 14,650/23/0, out/endcap/pixel 12,743/0/0); the residual is the OT:
+        out/barrel/OT 10,857/617/15 (5.7% over-finding), out/endcap/OT 21,523/234/149, in/barrel/OT 1,930/22/32,
+        in/endcap/OT 220/1/22.
+      A "closest component" filter (keep a det only if its centre is the nearest to the crossing among the dets of
+        the same local plane) does NOT reduce the out/barrel/OT over-finding (851 -> 851) and adds stock-only cases.
+      FOUND: Phase2OTtiltedBarrelLayer::groupedCompatibleDetsV (Phase2OTtiltedBarrelLayer.cc:88) tests the tilted
+        rings of ONE z side only, chosen by the z of the START state (the track's first hit), not by the crossing. A
+        track whose first hit is at z > 0 and that crosses a tilted ring at z < 0 (or the reverse) never gets that
+        ring tested. With the same gate in the emulation (tilted TOB modules, tobSide 1/2, only on the start state's
+        side): outer emulation-only 851 -> 345 (ttbar), 871 -> 359 (QCD), no new stock-only. Agreement per call:
+        inner 99.44% / outer 98.87% (ttbar 40 ev), 99.4% / 98.8% (QCD 30 ev). Residual: outer emulation-only 0.76%,
+        different entry 0.36% (mostly out/endcap/OT); inner 0.38% / 0.18%.
+      The OT endcap residual sits in tkDetUtil::groupedCompatibleDetsV (TkDetUtil.h:100-230): the three rings by
+        crossing proximity, "if the closest ring is empty use the next one and return", the overlapInR tests with the
+        negative window, the in/out direction from z*pz of the start state. That is next round's first transliteration.
+      The device version reproduces this side rule as stock does. The quirk itself (missing-hit entries not recorded
+        for rings on the crossing side) is a CMSSW TkDetLayers behaviour, not mkFit: noted for the owner, not changed.
+    => An analytic, material-free device kernel already reproduces 97.7-99.4% of the calls. The emulation almost
+       never MISSES a stock det (stock-only 0-2). The residual is mostly OVER-finding: a det passes the shrunk bounds
+       but the GeometricSearchDet never tests it, because it only tests the det closest to the sub-layer crossing (the
+       closest rod by phi, then the closest det in z / closest ring and blade) and the negative window adds no
+       neighbours. Next step: the sub-layer "closest component" selection per layer type (Phase2OTBarrelRod /
+       tilted rings, TBPLayer ladders, Phase2EndcapRing / SubDisk) from bin tables, then re-measure with NAVEMU.
+  The bounds test itself is simple once the state is on the plane: RectangularPlaneBounds::inside(p, err, -3) =
+    |z| < halfThickness && |x| < halfWidth - 3 sqrt(err.xx) && |y| < halfLength - 3 sqrt(err.yy); and the negative
+    nSigma makes Chi2MeasurementEstimatorBase::maximalLocalDisplacement negative, i.e. the neighbour windows of the
+    GeometricSearchDets are empty: only the closest det group (plus its stack partner) and the other sub-layer's
+    closest are ever tested. That bounds the device search to the closest module per sub-layer crossing.
+
+8. ROUND 10 (lane stagec, Sunday 2026-10-04): NAVIGATION (c) TRANSLITERATED ON THE HOST, 100% PER CALL
+   Runs: L/r10_stagec/runs/<tag>/hlt.log (arms: L/r10_stagec/pylib/StageC10/customizeStageC10.py: navemu,
+   navemulated, plain; script L/r10_stagec/scripts/menu_job.sh = the verify recipe from the r10 area).
+   Code: plugins/OutConvNavEmulation.h (class mkfitdev::outconv::NavEmulation: the transliteration, per-stream layer
+   tables), used by plugins/MkFitAlpakaOutputTrackConverter.cc (study untracked navEmuStudy; switch navEmulated, OFF).
+   The round-9 brute-force variants and navStudy stay in the converter (study only).
+
+8.1 What was missing in round 9 and what closed it
+  The round-9 emulation tested every det of the layer near the crossing (brute force) and reached 98.9-99.4% per call.
+  The stock search does NOT test every det: each TkDetLayers class tests the closest component per sub-layer crossing
+  and walks to neighbours only inside a window that the -3 sigma estimator makes NEGATIVE (so a neighbour is tested
+  only when the crossing lies well inside it). Round 10 transliterates the four Phase-2 layer classes the converter
+  meets, on host types, with the SAME analytic propagator (AnalyticalPropagator with errors, no material):
+    OT endcap   Phase2EndcapLayer -> tkDetUtil::groupedCompatibleDetsV (TkDetUtil.h:100-230): ring crossings with
+                HelixForwardPlaneCrossing, findThreeClosest by |r - ringR|, the closest ring; if it is empty the
+                next ring is returned instead; else rings 1/2 only if overlapInR (rWindow < 0); front/back ring
+                order, DetGroupMerger addSameLevel / orderAndMergeTwoLevels with the z*pz direction.
+                Phase2EndcapRing: front/back sub-layer disks (ForwardRingDiskBuilderFromDet z), PeriodicBinFinderInPhi,
+                closest sub-layer by |dphi| to the closest det centre, closest det + its brother (upper sensor); if
+                the closest LOWER sensor fails, the ring is empty; phi neighbours with the negative window
+                (tkDetUtil::calculatePhiWindow); the other sub-layer's closest det only if the crossing is inside its
+                phi span shrunk by |window|; LayerCrossingSide::endcapSide; then the |z| sort of the groups
+                (DetGroupElementZLess) - this sort is why round 9 found "front() = the innermost sensor".
+    barrel      TBPLayer (pixel and OT barrel): inner/outer rods (split at the mean r), cylinders from
+                CylinderBuilderFromDet, HelixBarrelCylinderCrossing (onlyPos, inBetween rule), computeIndexes, the
+                closest rod; if empty only the other sub-layer's closest rod; barrelUtil window and overlap (phi
+                offset 3.4e-4), a quarter of the rods each way; LayerCrossingSide::barrelSide.
+                Phase2OTBarrelRod: inner/outer sub-rods (mean r), RodPlaneBuilderFromDet planes,
+                HelixBarrelPlaneCrossingByCircle, GenericBinFinderInZ, closest det + brother, z neighbours with the
+                y window (1.01 x half length), the perp sort (DetGroupElementPerpLess).
+                PixelRod: propagate to the rod plane, PeriodicBinFinderInZ, closest + z neighbours.
+                Phase2OTtiltedBarrelLayer: the rods, then the tilted rings of the START state's z side only (the
+                round-9 finding), each a Phase2EndcapRing, results appended (with the stock overwrite semantics of
+                orderAndMergeTwoLevels when one half is empty).
+    pixel endcap Phase2EndcapLayerDoubleDisk (its components() throws: the sub-disks and single rings are rebuilt
+                from basicComponents as runs of (pxfPanel, pxfBlade)): two closest sub-disks by |z|, the sub-disk
+                order, tkDetUtil over Phase2EndcapSingleRing (one sub-layer, no brothers, addSameLevel).
+  Per det: GeomDetCompatibilityChecker (the straight-line sagitta pre-check with maxSagitta 2 cm / minTolerance,
+  then the propagation and Chi2MeasurementEstimatorBase::estimate = the -3 sigma bounds test).
+  The stock sorts (by |z| / by r, <= 4 groups with distinct keys) are reproduced by insertion; nothing else orders.
+
+8.2 Result (in-job, per compatibleDets call: stock front() pattern entry vs the emulation's, incl. both empty)
+  CPU (serial) ttbar 40 ev: inner 30,115 / 30,115, outer 45,300 / 45,300 calls agree (100%); 58,214 tracks, 0 with
+    any missing-hit entry different. QCD 30 ev: inner 32,640 / 32,640, outer 45,572 / 45,572; 58,913 tracks, 0.
+  CPU ttbar 200 ev: 137,229 + 208,878 calls, 265,756 tracks; QCD 200 ev: 212,089 + 300,248 calls, 388,740 tracks:
+    100%, 0 tracks differ.
+  Per layer kind: every kind 0 stock-only, 0 emulation-only, 0 different.
+  Variant 4 = the same search with the stock PropagatorWithMaterial: identical counts. The material (the det's own
+    multiple scattering, added at the destination surface) never changes a decision: the device kernel needs NO
+    material.
+  GPU menu (CUDA, tracks from the device fit): ttbar 100 ev: inner 68,782 / 68,782, outer 103,958 / 103,958, 133,428
+    tracks, 0 differ; QCD 60 ev: inner 65,315 / 65,315, outer 91,541 / 91,541, 118,735 tracks, 0 differ;
+    ttbar 300 ev: 200,260 + 305,260 calls, 388,794 tracks; QCD 300 ev: 323,752 + 454,474 calls, 589,591 tracks: 100%.
+  In total 2,625,413 calls and 2,002,171 tracks (CPU + GPU, ttbar + QCD): 0 differences, variant 3 and variant 4.
+  Steps (how the residual closed, ttbar 40 ev, agreement inner / outer): round 9 brute force + side rule 99.44 /
+    98.87%; + OT endcap transliterated 99.53 / 99.72% (OT endcap 100%: 21,770 calls); + barrel 99.92 / 100%; + pixel
+    endcap 100 / 100%.
+
+8.3 Switch navEmulated (tracked, default False): the converter's missing-hit entries from the transliteration
+  (stock DetLayer::compatibleDets only as a per-call fallback for a layer that is not laid out as expected: 0 calls).
+  Layer tables per stream, built at first use (rings, rods, cylinders, sub-disk planes, bin finders), rebuilt when the
+  TrackerRecoGeometryRecord IOV changes (they point into the GeometricSearchTracker).
+  Customise: customizeOutConv.customizeOutConvNavEmulated(process[, study=True for the in-job comparison]).
+  CPU A/B (serial, ttbar 100, same events): TrigReport identical (3,945 lines); MTV counting histograms identical;
+  HP collection 130,143 = 130,143; harvested DQM 2,915 / 2,975 identical, the other 60 are mean/prob profiles at
+  <= 2.9e-15 relative (the known harvest rounding, as in rounds 8/9).
+  QCD 60 the same: TrigReport identical (3,945 lines), see REPORT.txt for the DQM.
+  Host time: the transliteration costs the SAME as the stock search on the host. CPU ttbar 100: nav inner + outer
+  11.70 -> 12.14 ms per tracked event; QCD 60: 13.34 -> 12.95. GPU menu ttbar 300, 8 threads, two reps with the GPUs
+  swapped (box loaded, indicative): hltInitialStepTracks 15.92 / 16.73 (stock) vs 15.59 / 16.76 (navEmulated) ms per
+  input event. The cost is the propagation with errors to each tested det, not the GeometricSearchDet search. The
+  host switch therefore saves nothing; its value is a validated, complete reference for the device kernel. The ~9.4
+  box ms of stage C navigation go away only on the device.
+
+8.4 The device kernel (next): what it needs, now known exactly
+  Tables (ES time, per IOV), all from the TkDetLayers objects as rebuilt here:
+    - per layer: kind (TBP barrel / tilted barrel / OT endcap ring layer / pixel double disk), surfaces;
+    - TBP: 2 sub-layer cylinders (r, z range), phi bin finder (offset, step, n), rods in phi order;
+    - rod: 2 sub-rod planes, z bin borders (GenericBinFinderInZ) or z offset/step (PixelRod), dets + brothers;
+    - ring: ring disk (z, r range, thickness; ringR, thetaMin/Max), 2 sub-layer z planes, phi offset/step, dets +
+      brothers; tilted rings per z side in construction order;
+    - double disk: sub-disk z, single rings;
+    - per det: plane (position, rotation), RectangularPlaneBounds / TrapezoidalPlaneBounds half sizes, thickness,
+      phiSpan, isLower/isUpper, the activity bit (d).
+  Per track: the converter's start state (the first-hit TSOS: device fit row, already on the device) and the layer
+    lists of NavigationSchool::compatibleLayers (the r8 (a)+(b) table), then per layer the searches above with the
+    analytic helix (no material) and the curvilinear -> local error transport for the -3 sigma test.
+  Sizes ([outconv NAVEMUSIZE], QCD 60 CPU, one search per compatibleDets call): 156,772 searches, 4.96 det tests
+    (propagation + bounds test) per search, max 35 (the tilted-barrel layers test every ring of the start side);
+    max 8 dets returned, max 8 groups. Det tests per search 0..15+: 521 22261 56421 13645 34714 499 9172 29 8034 0 96
+    1 130 1 127 11121. Device capacities: 64 det tests per (track, layer) and 8 results, with overflow counters.
+  Judged by: per-call identity vs stock with navEmuStudy (the same counters), per-track missing-hit identity, HP flips.
+
+8.5 Two design inputs measured this round (navEmuStudy, once per job / per stock entry)
+  (d) [outconv NAVACTIVE]: in these MC samples (auto:phase2_realistic_T35) no stock missing-hit entry is inactive:
+    det not active 0 and bad components at the predicted point 0 of 372,059 (ttbar 300 GPU) and 572,566 (QCD 300 GPU)
+    entries. The device (d) still needs the per-event activity bits for data, but MC cannot exercise it: test it with
+    an injected inactive-module list.
+  Ordering keys (ii) [outconv TILTCHECK]: of the 14,576 TOB sensors, the 3,840 with tobSide < 3 (the stock
+    comparator's "tilted" clause) are exactly those whose plane normal has |n_z| > 1e-3 (0 mismatches; min |n_z| of a
+    tilted sensor 0.643, max of a flat one 3.8e-16). The device keys can therefore take the clause from the ES module
+    table's plane normal (zdir_z, already there) with a wide threshold: no new topology bit and no ES change. Keep the
+    check as an ES-time assert in the device module.
+
+8.6 First device piece: the per-det test (interface/math/DetPlaneTest.h, portable, double)
+  What GeomDetCompatibilityChecker + AnalyticalPropagator + Chi2MeasurementEstimator(-3 sigma) do for one det plane:
+    sagittaOk       the straight-line sagitta pre-check (maxSagitta 2 cm, minTolerance 0.5 cm);
+    helixToPlane    the helix (field along z at the start, the start transverse curvature) to the plane: Newton on the
+                    3D path from the straight-line solution, the crossing in the propagation direction, the maxDPhi
+                    rule (|rho s_T| <= 1.6);
+    pca::curvilinearJacobian + pca::similarity5 (PcaToBeamLine.h: the device PCA's AnalyticalCurvilinearJacobian,
+                    now a function that pcaToBeamLine calls; same code) for the error transport from the start;
+    localPositionErrors   the (x_T, y_T) block of the curvilinear covariance at the crossing projected along the track
+                    onto the plane's local axes (u = z x t / |z x t|, v = t x u);
+    insideShrunk    RectangularPlaneBounds::inside(p, err, -3) (every Phase-2 det the converter tests is rectangular).
+  Check (navEmuStudy, [outconv DETTEST], every det test of the analytic transliteration, host = AnalyticalPropagator +
+  the estimator on the same start state), CPU ttbar 40 ev: 376,180 tests; sagitta pre-check flips 0; crossing found by
+  one side only 556 (host only 541, never compatible on the host; device only 15, none inside the unshrunk bounds);
+  307,060 compared: |dpos| max 8.9 um (315 above 1 um: the host state is float), local errors with the HOST end
+  covariance max rel 8.0e-5, with the full DEVICE chain (start covariance transported over the device crossing) max
+  rel 9.3e-5; decision flips 0 and 0. QCD 30 ev: 388,358 tests, 313,753 compared, |dpos| max 6.9 um, local errors
+  max rel 2.3e-5 / 2.5e-5, decision flips 0 / 0; one-side crossings 813 (host only 782, never compatible; device only
+  31, of which 1 inside the unshrunk bounds: the only undecided case in 764,538 tests).
+  The extraction of the Jacobian from pcaToBeamLine is not bitwise for the device PCA itself: serial ttbar 60 (same
+  events, main6 vs this area) every PCACHECK count and maximum is identical (dsz >= 1e-2: 11 / 11, max pulls equal to
+  all printed digits), but the tracks whose device state equals the host bitwise go from 2,444 to 2,514 of 85,113
+  (the compiler contracts the moved expressions differently). Rounding-level, closer to the host, switch OFF.
+  So the per-det test is solved in portable code; it has run only on the host so far (serial check), not yet inside a
+  device kernel. What remains for (c): the layer tables as an ES product, the search kernel (the four layer kinds of
+  8.1, with the crossings HelixBarrelCylinderCrossing / HelixForwardPlaneCrossing / HelixBarrelPlaneCrossingByCircle
+  for the sub-layer selection), the start state and its curvilinear covariance from the fit row (pca::ccsToCurvilinear
+  exists), the field at the start (TkBfield.h), and the r8 device layer lists.
+  Note (pre-existing, unchanged by this lane): ptxas reports spill stores for KernelOutConvPca on 4 of the CUDA
+  architectures in both the round-start build (b0) and after the refactor (b15), with identical byte counts.

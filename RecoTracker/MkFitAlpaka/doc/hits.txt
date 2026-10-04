@@ -1,0 +1,103 @@
+MkFitAlpaka lane "hits": EventOfHits on device (round 1, 2026-10-03)
+=====================================================================
+Reference: stock MkFitCore/interface/HitStructures.h, binnor.h, src/HitStructures.cc, radix_sort.cc and
+MkFit/plugins/MkFitEventOfHitsProducer.cc of CMSSW_20_1_0_pre2.
+
+WHAT IT IS
+  The device EventOfHits: every input hit in a HitSoA plus, per mkFit layer, the stock LayerOfHits binning:
+  - the same (q N-bin, phi N-bin) bin for every hit, the same internal order (bins in q-major order; inside a bin by the
+    16-bit fine phi bin, ties by original index, = stock LSD radix order),
+  - the same bin table (C_pair first|count, first = internal index inside the layer, 0 for empty bins),
+  - the same cached hit infos (phi, q, q half-length, qbar) per internal index, bit-identical (vdt fast_atan2f is
+    transliterated in interface/hits/HitsMath.h),
+  - the same dead-bin table (LayerOfHits::suckInDeads transliterated; the dead REGIONS are collected on the host, as
+    the stock producer does, then the bins are filled on device).
+  Validated bit-for-bit against stock on 70 ttbar PU200 events (serial and CUDA), see REPORT.txt of the lane.
+
+FILES (lane-owned)
+  interface/hits/HitSoA.h                 HitSoA layout (+ hitpack:: helpers for stock PackedData bits)
+  interface/hits/EventOfHitsSoA.h         LayerSoA, BinnedHitSoA, BinSoA layouts, constants, DeadRegionDev
+  interface/hits/EventOfHitsHostCollections.h      PortableHostCollection aliases (mkfitdev::...)
+  interface/hits/alpaka/EventOfHitsDeviceCollections.h  device aliases + struct EventOfHitsDevice
+  interface/hits/HitsMath.h               fastAtan2f (vdt transliteration, branches as selects: same operations,
+                                          bit-identical), toBin (stock float->ushort bin conversion)
+  interface/hits/LayerOfHitsAccess.h      device/host accessor with the stock LayerOfHits query API (for hit selection)
+  interface/hits/LayerAxes.h              host: static layer table from the stock binnor axis classes (nvcc-safe)
+  interface/hits/EventOfHitsHostSetup.h   host: layer inputs from mkfit::TrackerInfo, HitSoA rows from mkfit::HitVec
+  src/alpaka/hits/EventOfHitsKernels.h    the 8 kernels + makeEventOfHitsDevice / buildEventOfHits (header, include it
+                                          from a .dev.cc)
+  plugins/alpaka/EventOfHitsBuild.{h,dev.cc}       host-callable runBuildEventOfHits for the portable plugins
+  plugins/alpaka/MkFitAlpakaEventOfHitsProducer.cc portable producer (+ in-job validation against stock)
+  plugins/MkFitHitsCompareDumper.cc       host: dumps stock inputs + stock EventOfHits (+ synthetic deads, stock timing)
+  test/testHitsBinning.dev.cc             replay test (bin testMkFitAlpakaHits, per backend)
+  test/hits_make_hlt.sh, test/hitsCommon.py, test/hitsDump_cfg.py, test/hitsEventOfHits_cfg.py   cmsRun configs
+
+DATA LAYOUT / INTERFACE FOR OTHER LANES (namespace mkfitdev; device aliases in ALPAKA_ACCELERATOR_NAMESPACE::mkfitdev)
+  HitSoA (one row per input hit): rows [0, nPixel) = pixel MkFitHitWrapper hits in their original order, rows
+    [nPixel, nPixel+nStrip) = strip/OT wrapper hits. Columns x y z, e00 e10 e11 e20 e21 e22 (SMatrixSym33 packed order,
+    = stock Hit::errArray()), packed (stock PackedData bits: hitpack::detIDinLayer/chargePerCM/spanRows/spanCols),
+    layer (-1 = not registered), origIdx (index inside its wrapper). Scalars nPixel, nStrip.
+    Stock refHit(orig) of layer l  ==  HitSoA row layers.hitBase[l] + orig.
+  LayerSoA (one row per mkFit layer): q-axis constants (qRMin qRMax qMFac qNFac qMLbhp qNLbhp qLastMBin qLastNBin
+    nQBins, copied from the stock axis objects), isBarrel, isPixel, binBegin (first BinSoA row of the layer),
+    hitBase (first HitSoA row of the layer's wrapper), hitBegin/nHits (filled on device: the layer's range in
+    BinnedHitSoA). Scalars: phi axis (phiRMin phiMFac phiNFac), nBinsTotal, overflow counters nOverflowFirst
+    (first >= 2^18) / nOverflowCount (count >= 2^14) - stock would wrap these bit-fields silently.
+  BinnedHitSoA (one row per registered hit): row hitBegin[l] + i  <->  stock eoh[l] internal index i.
+    rank = getOriginalHitIndex(i); phi, q, qHalfLength, qbar = hit_phi/hit_q/hit_q_half_length/hit_qbar(i).
+  BinSoA (one row per bin): row binBegin[l] + qBin*256 + phiBin. content = first | count << 18 (binFirst/binCount),
+    dead = m_dead_bins.
+  LayerOfHitsAccess{layers, binnedHits, bins, layer}: qBin, qBinChecked, phiBin, phiBinChecked, phiMaskApply,
+    binContent(pi, qi), isBinDead, nHits, hit_phi/hit_q/hit_q_half_length/hit_qbar(i), getOriginalHitIndex(i),
+    hitRow(orig). Same arithmetic as stock; usable in kernels and on the host.
+  Build:
+    auto d = hits::makeEventOfHitsDevice(queue, nHits, nLayers, nBinsTotal);   // fill d.hits and d.layers (static part)
+    hits::buildEventOfHits(queue, d, deadRegions);                             // all on `queue`
+    or hits::buildEventOfHits(queue, hitsHostCollection, layersHostCollection, deadRegions) (copies first).
+    Layer table: fillLayers(layerAxisInputs(mkFitGeom.trackerInfo()), nPixel, layersHost.view()).
+  The beam spot is not part of this product (stock EventOfHits carries it; take it from the beam spot product).
+
+ALGORITHM (src/alpaka/hits/EventOfHitsKernels.h; no sort, nothing depends on atomic order)
+  1 KernelBinHits      per hit: fast_atan2f phi, q, M-bins (register_entry_safe), masked key, N-bin, hit info;
+                       atomic histogram per bin.
+  2 KernelScanRows     one block per q row (256 phi bins): block prefix scan of the counts.
+  3 KernelScanLayerRows one block per layer: scan of its row totals (<= 256 rows).
+  4 KernelScanLayers   one block: scan of the layer totals -> hitBegin, nHits.
+  5 KernelFinalizeBins per bin: stock C_pair (0 when empty), global start of the bin, overflow counters.
+  6 KernelFillMembers  per hit: atomic slot in its bin; stages only the (fine phi << 24 | row) word (round 4, io).
+  7 KernelRankAndStore per bin: rank of each member = #members with smaller (key, row); reads origIdx/info by row.
+                       (key, row) order == stable LSD radix order of stock. Cost O(c^2) per bin; max c = 56 seen.
+  8 KernelDeadBins     per dead region: LayerOfHits::suckInDeads.
+  Fixed capacities: all buffers are sized from the event's hit count and the static bin count, so nothing can
+  overflow except stock's own C_pair bit-fields, which are counted (nOverflowFirst / nOverflowCount).
+
+DIFFERENCES FROM STOCK (all deliberate, none seen in the tests)
+  - Stock uses std::sort (not stable) instead of the radix sort for layers with < 256 hits: there, hits with
+    EXACTLY equal keys (same q bin and same 2pi/65536 fine phi bin) may come out in a different order than here
+    (here: original index order). PU200 ttbar has no such layer; low-PU events can. Measured with the dumper's
+    keepOneHitIn=40 subsample: 16 of 181,704 hits in such layers sit at swapped tie positions, all exact ties.
+  - Dead regions: collected on the host from SiPixelQuality (as stock); the strip quality DB path is not
+    implemented (useStripStripQualityDB = False in the HLT LST step). Bins are filled on device.
+  - The beam spot is not copied into the device EventOfHits.
+
+HOW TO RUN THE TESTS (area CMSSW_20_1_0_pre2, after scram b)
+  mkdir run && cd run && ../src/RecoTracker/MkFitAlpaka/test/hits_make_hlt.sh /mnt/data1/gsn27/here/ttbar_raw/<f>.root
+  # dump stock inputs + stock EventOfHits (args: out, nEvents, input, syntheticDeadsPerLayer, timeStockRepeats)
+  cmsRun ../src/RecoTracker/MkFitAlpaka/test/hitsDump_cfg.py dump.bin 10
+  cmsRun ../src/RecoTracker/MkFitAlpaka/test/hitsDump_cfg.py dump_dead.bin 20 <other.root> 20      # synthetic deads
+  cmsRun ../src/RecoTracker/MkFitAlpaka/test/hitsDump_cfg.py dump_low.bin 20 "" 0 0 40          # 1/40 of the hits
+  cmsRun ../src/RecoTracker/MkFitAlpaka/test/hitsDump_cfg.py dump_t.bin 10 "" 0 5   # + STOCK_EOH_MS stock timing
+  testMkFitAlpakaHitsSerialSync dump.bin 5         # replay + compare (+ best-of-5 timing); exit code 0 = all exact
+  CUDA_VISIBLE_DEVICES=0 testMkFitAlpakaHitsCudaAsync dump.bin 5
+  # full chain in cmsRun with the portable producer validating against hltMkFitEventOfHits (EOH_COMPARE lines)
+  cmsRun ../src/RecoTracker/MkFitAlpaka/test/hitsEventOfHits_cfg.py serial_sync 10
+  cmsRun ../src/RecoTracker/MkFitAlpaka/test/hitsEventOfHits_cfg.py cuda_async 10 [input.root]
+
+INTEGRATION ITEMS (for the coordinator)
+  - The producer does not put the device EventOfHits into the Event yet: the products need dictionaries
+    (src/classes*.h / classes_def.xml, src/alpaka/classes_cuda*.h / _def.xml), which are shared files no lane owns.
+    Suggested: four products (PortableCollection<HitSoA>, <LayerSoA>, <BinnedHitSoA>, <BinSoA>) or one
+    PortableMultiCollection, with the standard dictionary entries, then `produces()` + iEvent.emplace in the producer.
+  - plugins/BuildFile.xml got appended top-level <use> lines: CondFormats/SiPixelObjects, CondFormats/DataRecord,
+    DataFormats/TrackerCommon, Geometry/Records, Geometry/TrackerGeometryBuilder, FWCore/MessageLogger.
+  - fastAtan2f should move to the mplex lane's interface/math once that is published (same formula).

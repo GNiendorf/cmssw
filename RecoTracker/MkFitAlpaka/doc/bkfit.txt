@@ -1,0 +1,136 @@
+MkFitAlpaka - lane bkfit: backward fit + propagation/Kalman numerics (round 3, 2026-10-03)
+======================================================================================
+Reference: stock mkFit of CMSSW_20_1_0_pre2. Round-1 notes of the propagation/Kalman primitives: doc/prop.txt.
+
+1. WHAT IS HERE
+  src/alpaka/bkfit/BkFitKernel.h   the port of MkBuilder::fit_cands (usePropToPlane branch, backward_fit_to_pca off) =
+                                   MkFinder::bkFitInputTracks(EventOfCombCandidates&) + bkFitFitTracksProp2Plane
+                                   (MkFinder.cc:1991-2020, 2450-2665). Generic over an IO object:
+                                     BkFitCandsIO  production: clone-engine SoAs (best cand = slot (s, curBuf, 0),
+                                                   compacted HoT chain in the seed's pool) + the engine's
+                                                   EngineHitInputs (section 5)
+                                     BkFitFlatIO   self-contained records (stock-replay test)
+                                   Kernel BkFitKernel<IO>: one Alpaka thread per kNN candidates (1 on GPU, 8 on CPU),
+                                   the stock Matriplex loop; block size 64.
+  src/alpaka/bkfit/BkFitLaunch.h   host entry points backwardFit(...) (production, in place) and backwardFitFlat(...);
+                                   makeEngineBackwardFit(hits, pflags) = the engine's EngineBackwardFitFn;
+                                   backwardFitFlags(hostESConfig, deviceMaterial) = PropagationConfig::backward_fit_pflags.
+  src/alpaka/bkfit/BkFitTypes.h    FlatCand / FlatNode / FlatOut records.
+  src/alpaka/BkFit.dev.cc          the only TU that instantiates the bkfit kernels (D-layout).
+
+  Contract with the clone engine (call order of stock runFunctions.cc:78-87):
+    pre-bkfit filter -> compactifyHitStorageForBestCand -> backwardFit -> beginBkwSearch -> backward search.
+    Input per seed s with nCands > 0 and overflowBits == 0: best candidate (state + book) in slot (s, curBuf, 0),
+    its chain from book.lastHitIdx through HoTNode.prev in the seed's pool (hotRow(s, n, hotsPerSeed)).
+    Output in place: state.par / err / charge; book.chi2 = backward-fit chi2; book.score = getScoreCand(book, pT).
+    Nothing else changes (chain, counters, curBuf, nCands).
+
+2. STOCK BEHAVIOUR REPRODUCED (review H3; all of it verified against stock dumps, section 3)
+  a) bkFitInputTracks scales the input errors by 100 (MkFinder.cc:2019 m_Err[iC].scale(100.0f)).
+  b) chi2: reset to 0 at input (MkFinder.cc:2015) and then ACCUMULATED over the backward-fit updates
+     (MkFinder.cc:2662 m_Chi2.add(tmp_chi2)). So the forward chi2 is replaced by the backward-fit chi2; the score is
+     recomputed with it (MkFinder.cc:2499-2504). Correction to review H3 b), which said the chi2 stays 0: the stock dump
+     has the backward-fit chi2 in every candidate (the first port without the add matched 0% of the scores).
+  c) Same-layer runs collapse to the EARLIEST node (MkFinder.cc:2513-2516): overlap hits never enter the fit.
+     343k same-layer hit pairs in the 214k ttbar candidates of the dump.
+  d) kalmanCheckChargeFlip after every update; the propagation fail flag is not checked (PROP-FAIL-ENABLE comments).
+  Not reproduced on purpose: nothing. The stock loop over N slots (done slots keep being propagated with stale hit
+  data) is kept on CPU; it cannot change a result because slots are independent and a done slot is copied out first.
+
+3. STOCK COMPARISON (REAL EVENTS)
+  Dump: private stock MkFitCore with an inert hook (MKFIT_BKFIT_DUMP; $L/r3_bkfit/stockdump/CMSSW_20_1_0_pre2,
+  MkBuilder.cc fit_cands + backwardFit): material map once, then per best candidate the input (state, counters,
+  whole HoT pool with hit pos/err and module pos/zdir/xdir resolved) and stock's output (state, charge, chi2, score).
+  The hook library is x86-64-v3 (= production stock). Produced with the harness replay:
+    MKFIT_BKFIT_DUMP=bkfit_<s>.bin LD_LIBRARY_PATH=<stockdump>/lib/el9_amd64_gcc13:$LD_LIBRARY_PATH \
+      cmsRun RecoTracker/MkFitAlpaka/test/replay_cfg.py sample=<s> maxEvents=100 threads=1     ($L/r3_bkfit/run/dump.sh)
+  Tools (test/BuildFile.xml):
+    testMkFitAlpakaBkFit{SerialSync,CudaAsync} dump.bin [maxCands] [reps]   port via backwardFitFlat vs the dump
+    testMkFitAlpakaBkFitStockRerun dump.bin                                   stock functions + stock loop vs the dump
+      (must be bit-exact with the production library: it is, 214576/214576 ttbar and 235255/235255 QCD)
+    D-M4 floor of this stage on IDENTICAL inputs: the same re-run source compiled -march=x86-64-v2 and linked to
+      $CMSSW_RELEASE_BASE/lib/el9_amd64_gcc13/scram_x86-64-v2/libRecoTrackerMkFitCore.so (stock NN = 4):
+      $L/r3_bkfit/run/bin/bkfit_stock_rerun_v2 (built by hand, command in REPORT.txt).
+  Metric per candidate: max over params of |d|/max(|ref|, 1e-3) (phi on the circle) and over the 21 error elements of
+  |d C_ij| / sqrt(C_ii C_jj); charge, finiteness, chi2 and score separately.
+  Results (100 ttbar + 100 QCD PU200 replay events; files $L/r3_bkfit/run/*.txt):
+                                  params<=1e-5  <=1e-4   <=1e-3 | par+err<=1e-4  <=1e-3 | chi2 within 1e-4 | worst
+    ttbar 214576 cands
+      floor stock(v2) vs stock(v3)    77.83%    97.58%   99.848% |   87.69%     98.69% |     48.4%        | 3.7
+      port serial vs stock(v3)        84.43%    98.50%   99.903% |   92.08%     99.54% |     56.9%        | 0.90
+      port cuda (L40) vs stock(v3)    84.38%    98.51%   99.898% |   92.01%     99.53% |     56.5%        | 1.17
+    QCD 235255 cands
+      floor stock(v2) vs stock(v3)    73.35%    94.89%   98.897% |   83.85%     97.44% |     45.6%        | 29.1
+      port serial vs stock(v3)        80.39%    96.44%   99.137% |   89.11%     98.54% |     54.6%        | 28.9
+      port cuda (L40) vs stock(v3)    80.16%    96.38%   99.102% |   88.82%     98.48% |     54.1%        | 28.7
+    Charge agreement 100%, finiteness flips 0 in every row. => The port is closer to stock(v3) than stock(v2) is, on
+    every metric, both samples, both backends: D-M4 passes for this stage.
+  The stage is numerically touchy by construction (errors x100 at input: the first updates almost replace the state
+  by the hit), so rounding-level input differences grow to 1e-4..1e-3 for a few % of candidates in stock itself.
+  Test exit status: with BKFIT_FLOOR (section 5) the D-M4 rule decides; without it an absolute rule (charge >= 99.9%,
+  flips <= 1e-4, >= 99% within 1e-3) that QCD misses for the port AND for stock(v2) itself (97.4%).
+
+4. SPEED AND REGISTERS
+  Serial (1 core, N = 8): 4135 ns/cand ttbar (8.9 ms/event), stock re-run on the same inputs 3987 ns/cand (v3,
+    -Ofast): the port is ~4% slower than stock here (stock is -Ofast; the port is not, see doc/prop.txt).
+  CUDA, all 100 events in one launch: L40 0.88 ms (4.1 ns/cand), L4 2.13 ms (9.9 ns/cand); QCD 0.95 / 2.30 ms.
+  CUDA, one event per launch (2146 cands): L40 0.10 ms, L4 0.12 ms (latency bound: one thread walks ~14 hits;
+    block 32 instead of 64 gives the same times, run/blk/).
+  Registers (cuobjdump, per arch; test/replay_kernel_registers.sh agrees), block size 64, LOCAL 0 everywhere:
+    BkFitKernel<BkFitCandsIO>  sm_75 208, sm_80 209, sm_89 199, sm_90 207, sm_100 202, sm_120 200; STACK 32-48 B
+    BkFitKernel<BkFitFlatIO>   sm_75 226, sm_80 226, sm_89 210, sm_90 210, sm_100 178, sm_120 183; STACK 32 B
+    (STACK = CUDA's division/sqrt slow path, not spills.)
+
+5. PRODUCTION PATH AND THE ENGINE HOOK
+  BkFitCandsIO reads the engine's own hit inputs (EngineHitInputs: x..e22, packed, nPixel, layers[].isPixel /
+  moduleBegin, modules[].nrm/dir/pnt; row = engineHitRow) and hotsPerSeed from the SoA scalar, exactly as the
+  engine's K3 does. The engine plugs it in with
+      EngineBackwardFitFn bkfit = makeEngineBackwardFit(inBkw, backwardFitFlags(hostESConfig, deviceMaterial));
+  (src/alpaka/bkfit/BkFitLaunch.h) and passes it to engineRunChain.
+  Test: the device test also loads every event of the dump into SeedCands/CandSlots/CandHots collections and a
+  synthetic EngineHitInputs (same numbers), runs backwardFit and requires bit identity with the flat path:
+  214576/214576 ttbar and 235255/235255 QCD, serial and CUDA.
+  D-M4 decision in the test: BKFIT_FLOOR=<outputs of the v2 stock re-run (BKFIT_RERUN_OUT)> makes the exit status
+  "port vs stock(v3) no worse than stock(v2) vs stock(v3)" on every fraction from 1e-5 up, chi2, charge and
+  finiteness (2-sigma binomial slack). PASS on ttbar and QCD, serial, CUDA L40 and CUDA L4.
+  Command lines: $L/r3_bkfit/REPORT.txt.
+
+6. H6: FP64 IN THE 2x2 CRAMER INVERTER (GPU)
+  The backward fit inverts one 2x2 per hit (kalmanOperationPlaneLocal). Kernel time, ttbar 214576 cands, best of 30:
+                                         L40        L4         physics vs stock(v3)
+    stock: double det, double 1/det      0.881 ms   2.129 ms   (section 3)
+    double det, float 1/float(det)       0.878 ms   2.118 ms   unchanged within 0.1% on every fraction
+    float det, float 1/det               0.874 ms   2.108 ms   fractions unchanged; worst candidate 1.2 -> 11.5
+  The FP64 share is <= 1% of the backward-fit kernel on both GPUs: not worth a change. Kept stock (no code change;
+  the study build switch was removed). The per-operation prop test kernels are memory bound (~0.85 ns/slot for every
+  op on the L40), so they cannot resolve it either. If K3 ever shows a larger share, variant 1 is the candidate
+  (no visible physics effect); variant 2 moved the worst candidate and would need the DEVIATION path.
+
+7. L6: CPU LOOP SHAPE OF propagateHelixToRMPlex
+  ns/slot, serial, 1 core, lane_prop real captures (ttbar 23658 / QCD 32012 propR slots):
+    per-slot body (round 1, kept)          201 / -      bit-identical to stock(v3)
+    stock loop shape (per-step slot loops)  179 / 182   rounding-level
+    stock(v3) itself                        142.5
+  Agreement of the stock-shape variant vs stock(v3), next to the floor stock(v2) vs stock(v3) (same metrics,
+  PROPTEST_GOT mode of testMkFitAlpakaProp):
+                                   params q99   params max   err frac<=1e-4   err frac<=1e-3   err q999
+    ttbar  stock shape             8.3e-07      1.4e-05      0.99286          0.99903          9.4e-04
+           floor v2                9.3e-07      1.0e-05      0.99374          0.99890          1.8e-03
+    QCD    stock shape             8.3e-07      6.3e-06      0.99019          0.99844          3.2e-03
+           floor v2                9.8e-07      6.9e-06      0.99185          0.99834          4.8e-03
+  The stock shape is inside the floor on most metrics but slightly outside on two (errors within 1e-4: -0.09% ttbar,
+  -0.17% QCD; params max on ttbar), gains 11% on an operation that is ~6% of the plane-and-layer propagations, and
+  loses the bit identity that makes every stage comparison trivial. Decision: keep the per-slot body. The remaining
+  gap to stock is -Ofast (doc/prop.txt), not the loop shape.
+
+7b. SCORER CHECK
+  getScoreCand (interface/cands/CandTypes.h, as the kernel calls it) on stock's OUTPUT chi2 and pT reproduces stock's
+  score bit for bit on the device: 214576/214576 ttbar, 235255/235255 QCD, serial and CUDA. The same expression
+  compiled as HOST code in the CUDA test binary (nvcc host pass) matches only 92.7% / 93.5%: the stock score is
+  FMA-contracted (gcc -Ofast, x86-64-v3) and that host pass does not contract the same way. Harmless for the port
+  (the score is computed on the device), but a warning for any host-side re-scoring in a CUDA-built translation unit.
+
+8. OPEN
+  - The engine still has to call makeEngineBackwardFit in its producer (one line); not done here (engine owns it).
+  - engineHitRow is written out once in BkFitKernel.h (with a pointer to the engine's helper) because the engine's
+    header with that helper also holds kernels needing prefixScan.h; integ can move the helper to interface/cands.

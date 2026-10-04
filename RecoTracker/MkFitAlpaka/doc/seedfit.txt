@@ -1,0 +1,25 @@
+MkFitAlpaka lane "seedfit" (round 7, 2026-10-04): LST -> mkFit seeds on the device, the bounded option (b') retry (D7-b).
+Details of the algorithm and the seed-state numbers: doc/seeds.txt section R7. Option (a) design: doc/seeds_option_a.txt.
+Lane report with all run numbers: lanes/mkfit_alpaka/r7_seedfit/REPORT.txt.
+
+HOW TO SWITCH IT ON (no code change; the build module parameters exist since round 6)
+  hltInitialStepTrackCandidatesMkFitDevice.lstSeedFit            = True
+  hltInitialStepTrackCandidatesMkFitDevice.lstSeedFitOriginPrior = 3   # kHostCreator: option (b')
+  hltInitialStepTrackCandidatesMkFitDevice.lstSeedFitPasses      = 1   # field model as AnalyticalPropagator (validated)
+  light host seeds (no host seed creator): + hltInitialStepTrajectorySeedsLST.seedStates = False and
+  lstSeedFitDropFailed = True (customizeHLTforMkFitAlpaka[Fit]LstSeedsLight sets these two; it sets passes 3).
+  Default: OFF (python DEVICE_LST_SEED_FIT = False, build module lstSeedFit = False).
+
+VALIDATION RECIPE (lanes/mkfit_alpaka/r7_seedfit)
+  menu/run_paired.sh <arm> <acc> <ttbar|qcd> <nev> [fit]  env ORIGIN=3 PASSES=1 [LIGHT=True] [DUMPEV=n]
+    = the exact job.sh command line (menu/menu_job.sh) + cfg/lstseeds_paired.py: the device chain with the switch
+    OFF runs on the same inputs in the same job (+ the device fit from build in the fit menu); [paired lstseeds]
+    paired truth, [compare lstCmp*] per-seed comparators, MTV of lstOffTracks next to hltInitialStepTracks.
+  menu/post.sh <tag>: harvest + paired/comparator/counter summary + MTV bins (|z| > 2) + coarse regions.
+  ana/seeddump.py <dump>: device vs host seed states (pulls by parameter, class, |eta|); ana/seeddump_pt.py by pT.
+
+STATUS
+  Seed states agree with the host creator at the 0.06-sigma level (T5/T4 1/pT pull w68; round 6: 1.4-6) once the
+  structure is the host's and the field is sampled at the start of each step. The in-job paired efficiency still
+  loses -0.00002 (ttbar 88 lost / 52 gained TPs; QCD 181 / 97), so (b') FAILS the pre-declared criterion
+  (|delta| < 1 sigma) and stays OFF; the MTV signal efficiency, fakes and duplicates are unchanged.

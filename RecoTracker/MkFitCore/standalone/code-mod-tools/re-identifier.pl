@@ -1,4 +1,4 @@
-#!/ usr / bin / perl
+#!/usr/bin/env perl
 
 #For full function lowercasing
 #@headers = grep{chomp; $_ !~m !(attic | Ice | CMS - 2017 | MatriplexCommon | binnor) !; } `find.- name \*.h`;

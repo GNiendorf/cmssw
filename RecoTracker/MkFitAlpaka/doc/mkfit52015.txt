@@ -1,0 +1,54 @@
+Lane mkfit52015 (round 10, O10-1): cms-sw#52015's mkFit changes in the device chain
+====================================================================================
+The reference changes: O10-1 brings the owner's four PRs into it. #52015 (mkFit + HLT LST-step fixes) changes stock
+mkFit. These are NOT deviations. They are the new stock, and the port follows stock with the same operations, in the
+same order and with the same switches. Every item is behind the JSON key / ES parameter that stock has, so the old
+reference (keys at 0, the pixelseed cleaner) still runs the old code path.
+
+Source of the diff: SL#285's stack, b096cd4b4d..1c9cd668e8 (the #52015 squash at #285's own boundary), repo
+mem_ref/base (read-only). The cms-data JSONs: lanes/merged5k/areas/mkfit281disp/src/RecoTracker/MkFit/data (16 files,
+the cms-data PR copy, = data-RecoTracker-MkFit V00-20-00 + the three outlier keys in all files + the LST-step changes).
+
+1. STOCK SIDE IN THIS AREA (temporary, = lane prstack's squash; drop at merge in favour of prstack)
+   MkFitCore a8b5a01, MkFitCMS 6928b41, MkFit 2e63204 (incl. data/*.json), HLTrigger/Configuration 5467e79 (mkFit
+   parts only: hltESPMkFit_cfi backwardSearch params, candMinPtCut 0.85 in hltInitialStepTrackCandidates_cfi and
+   hltInitialStepTrackCandidatesMkFitFit_cfi). NOT applied here: the outlier-tolerant KF fitter cfis and their
+   hltInitialStepTracks / cff hunks (they do not apply to pre2's HLT config: Fitter there is 'FlexibleKFFittingSmoother'
+   with MeasurementTracker ''; that resolution is prstack's job). The target menu (trackingMkFitFit) does not use the KF
+   fitter of the initial step.
+
+2. DEVICE PORT (RecoTracker/MkFitAlpaka)
+   a) ES / envelope: ESConfig gets backward_fit_outlier_chi2 / max_outliers / outlier_min_pt (JSON keys),
+      backward_search_min_pixel_layers / prompt_max_d0 (MkFitIterationConfigESProducer parameters, read from the stock
+      IterationConfig product), pixel_layer_mask[4] (TrackerInfo is_pixel(), layers < 256 checked) and the cleaner name
+      phase2:clean_duplicates_sharedhits_pixelpriority (DuplicateCleaner::SharedHitsPixelPriority). checkSupportedConfig /
+      checkSupportedBuildConfig accept the new cleaner (src/esFill.cc, src/SupportedConfig.cc, interface/es/ESConfig.h).
+   b) Pixel-priority duplicate cleaner (stock MkStdSeqs.cc clean_duplicates_sharedhits_pixelseed_impl<true>):
+      src/alpaka/clean/CleanFunctions.h dupPairDecision. After the dphi pre-cut: hasPixel (>= 2 found hits on pixel
+      layers) per track; both with pixels and no shared pixel hit (index and layer) -> not a pair; winner =
+      pixelOrScoreWins (a track with pixels beats one without, else the higher score) in both the dR and the shared-hit
+      branch. Decisions still read only immutable inputs, so the flagged set stays order-independent. Plumbing:
+      exportAndClean / runChainTail take pixelPriorityLayers (nullptr = the phase-1 cleaner).
+   c) Backward-fit outlier rejection (stock MkFinder::bkFitFitTracksProp2Plane): src/alpaka/bkfit/BkFitKernel.h. Per
+      step, the fitted node (after the same-layer collapse) is remembered; after the update and the charge-flip check,
+      if !(chi2 > m_backward_fit_outlier_chi2) is false, outliers < max and TrackCand::pT() of the INPUT state >= min pT:
+      the propagated state and the pre-propagation charge are restored, the step chi2 is 0, the HoT node becomes
+      kHitMissIdx, nFound - 1, nMissing + 1. Same order as stock. OutlierParams (BkFitTypes.h) defaults to off; the
+      flat stock-replay IO never enables it (its records have no writable HoT chain).
+   d) Backward-search gate (stock EventOfCombCandidates::beginBkwSearch / gateBkwSearch): at beginBkwSearch the per-seed
+      threshold (1 if |d0BeamSpot| of the front candidate < backwardSearchPromptMaxD0, else
+      backwardSearchMinPixelLayers) and the pre-search front candidate (book + state, AFTER CombCandidate::beginBkwSearch)
+      are stored in three new SeedCandsSoA columns; after the backward search KernelEngineBkwGate counts the distinct
+      pixel layers (layer < 64, as stock) of the found hits the search added (nodes > 0 of the front chain) and restores
+      the saved candidate (nCands = 1) below the threshold. The beam spot is the stock EventOfHits one: new build-module
+      parameter beamSpot (default hltOnlineBeamSpot; the customise copies hltMkFitEventOfHits.beamSpot). d0BeamSpot is
+      transliterated in interface/cands/CandSeedOps.h. No-op when the parameter is 0.
+   e) candMinPtCut 0.85 (|eta| < 1.4): nothing to port. The device fit (MkFitAlpakaFitDeviceProducer) and the stock
+      converter read candMinPtCut from the menu's modules (customize copies hltInitialStepTrackCandidatesMkFitFit's value).
+   f) Stock replicas in the harness follow the new API: ReplayStockStages calls gateBkwSearch() before the 'bkwsearch'
+      snapshot and passes TrackerInfo to the cleaner; MkFitCleanDump uses the iteration's own cleaner; the seed-import
+      validation and cleanStockTiming pass TrackerInfo. MkFitAlpakaChainProducer (validation only) throws if the outlier
+      rejection or the gate is configured (the production MkFitAlpakaBuildProducer implements both).
+
+3. VALIDATION: see $L/r10_mkfit52015/REPORT.txt (replay D-M4 against the in-job stock + #52015 reference, serial and
+   CUDA; floors: the D7-a floors as a proxy until prstack's regenerated floors are published).

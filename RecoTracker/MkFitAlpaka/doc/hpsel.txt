@@ -1,0 +1,142 @@
+hpsel - stage C: the initial step's high-purity (HP) selection on the device (round 7, lane hpsel, 2026-10-04)
+=====================================================================================================================
+
+1. THE HP SELECTION IN THE TARGET MENU (python dump of verify6_int/menu/timing/cfg/target_gpu.py = the exact job.sh
+   command line + customizeHLTforMkFitAlpakaTarget, trackingMkFitFit)
+  module (label)                              type                                            host ms / input event (*)
+  hltInitialStepTrackFeatureExtractor         alpaka_serial_sync::TrackFeatureExtractor       0.25  host loop over reco::Track
+  hltInitialStepTrackTorchClassifier          alpaka_serial_sync::TrackTorchClassifierAlpaka  4.27  libtorch on the CPU
+  hltInitialStepTrackTorchClassifierOutput    TrackTorchClassifierFromSoA                     0.09  threshold + copy of tracks
+  hltInitialStepTrackCutClassifier            TrackCutClassifier (passThroughForAll = True)   0.01
+  hltInitialStepTrackSelectionHighPurity      TrackCollectionFilterCloner (copyExtras)        1.51  copy of tracks+extras+hits
+  (*) verify6_int CI-shape GPU run target_gpu_r3 (FastTimerService, real time / job event); stockfit 4.09 / 1.47.
+  For scale: hltPhase2PixelTrackTorchHighPuritySelector@alpaka (Patatrack pixel tracks, libtorch on the GPU in the
+  same menu) costs 0.86 ms host time on the GPU menu and 41 ms on the CPU menu: libtorch CUDA is already loaded and
+  used by the GPU menu, so moving this classifier to the GPU adds no new runtime dependency.
+  Consumers (same dump):
+    hltInitialStepTracks        -> hltFirstStepPrimaryVerticesUnsorted (ALL tracks), FeatureExtractor, ClassifierOutput
+    ...TorchClassifierOutput    -> CutClassifier, SelectionHighPurity
+    ...SelectionHighPurity      -> hltGeneralTracks (TrackListMerger) and hltHighPtTripletStepClusters
+                                   (TrackClusterRemoverPhase2: in a sequence, NOT on any path of this menu: no cluster
+                                   masking consumer runs in the target menu)
+    hltGeneralTracks            -> PF (hltPfTrack), vertices (hltUnsortedOfflinePrimaryVertices[4D]), MTD
+                                   (hltTrackExtenderWithMTD, hltTofPID*, hltMtdTrackQualityMVA), e/gamma isolation,
+                                   TICL, track refs for jets.
+  So the HP decision = the Torch score rule alone: score >= 0.377, or |dxy(bs)| > 0.5 cm and score >= 0.267
+  (CutClassifier passes everything).
+
+2. THE MODEL (RecoTracker/FinalTrackSelectors/data/TrackTorchClassifier/model.pt, TorchScript)
+  forward(x) = sigmoid(net((x - feature_min) / (feature_max - feature_min + c0))), 15 float inputs:
+    dxyBeamSpot, dzBeamSpot, dxyError, dzError, normalizedChi2, eta, phi, etaError, phiError, ndof, lostInnerHits,
+    lostOuterHits, layersWithoutMeas, validPixelHits, validStripHits.
+  net: Linear 15->256, BN, act, dropout | 256->128 | 128->64 | 64->32 (each Linear + BatchNorm + act + dropout),
+    fc_in 32->32, 3 residual blocks (Linear 32->32, BN, act, dropout, Linear, BN), out 32->1. ~80k MAC per track,
+    ~320 kB of weights. ~1.9k tracks/event (ttbar PU200) -> ~150 MFLOP per event: why the serial classifier costs 4.3 ms.
+
+3. STEP 1 - THE SAME CLASSIFIER ON THE DEVICE (code on r7/hpsel, NOT YET COMPILED, see section 6)
+  Why the release runs it on the CPU: the extractor writes a HOST SoA (PortableHostCollection, filled by a host loop
+  over reco::Track); TrackTorchClassifierAlpaka consumes a device collection, which only the serial backend's
+  instance can match. Fix (no change to any release module):
+    hltInitialStepTrackFeatureExtractor (unchanged, host, exact)
+      -> hltInitialStepTrackFeaturesDevice = MkFitAlpakaHpFeaturesToDevice@alpaka   (plugins/alpaka/
+         MkFitAlpakaHpFeaturesToDevice.cc: one async memcpy of the 15 columns, ~120 kB/event; no wait)
+      -> hltInitialStepTrackTorchClassifier = TrackTorchClassifierAlpaka@alpaka     (release module, same model.pt,
+         PyTorchAlpaka: the torch CUDA stream is the event's queue, asynchronous)
+      -> scores back through the framework's automatic device->host copy (the release has the CUDA dictionaries of
+         TrackFeaturesDeviceCollection / TrackScoresDeviceCollection) -> TrackTorchClassifierFromSoA etc. unchanged.
+  Customise: $L/r7_hpsel/patches/customizeHpSel.py (proposed for python/, menu lane's file):
+    customizeHpSelDevice(process)                 production swap; on CPU-only jobs @alpaka = serial_sync (= release)
+    customizeHpSelDeviceValidation(process, dumpFile='', featuresFromTrackSoA=False)
+                                                  device chain in the menu + the release serial classifier on the same
+                                                  features in the same job + MkFitAlpakaHpCompare (per-track |dscore|
+                                                  bins, HP decision flips with their distance to the threshold, HP
+                                                  collection sizes vs decisions; optional per-column feature compare
+                                                  and a per-track binary dump for offline studies).
+  Expected host saving on the GPU menu: 4.27 -> ~0.5-0.9 ms (the pixel classifier's @alpaka host time is 0.86).
+  Physics: the inputs are bitwise the host ones, so the only difference is libtorch CUDA vs CPU floating point
+  (section 5 measures it offline with the same model); HP decisions can differ only for scores within that noise of
+  0.377 / 0.267.
+  GPU memory (D7-f): one model copy per stream (~0.3 MB) + libtorch's caching allocator for the activations (batch
+  ~2k x 256 floats ~ 2 MB per layer) + a 4992-track warm-up per stream in beginStream (release code).
+
+4. STEP 2 - FEATURES FROM THE DEVICE FIT OUTPUT (prototype code, NOT YET COMPILED)
+  plugins/alpaka/MkFitAlpakaHpFeaturesKernels.{h,dev.cc} + MkFitAlpakaHpFeaturesFromTrackSoA.cc (validation module:
+  reads the device row count back to size the output). Per feature, from the fitted TrackSoA
+  (hltInitialStepTrackCandidatesMkFitFitDevice) - what the host gets from MkFitOutputTrackConverter + reco::TrackBase:
+    validPixelHits, validStripHits   EXACT: valid HoTs (index >= 0) per layer type (ES LayerInfo::is_pixel)
+    ndof                             EXACT: 2 per pixel hit + 1 per Phase-2 OT hit - 5 (converter: sum of dimensions)
+    normalizedChi2                   EXACT: float chi2 / float ndof (TrackBase), chi2 = the fit's chi2 (= reco chi2)
+    layersWithoutMeas                EXACT: 0 - the converter appends no invalid TRACK_HITS (it skips mkFit's index<0
+                                     hits), so TRACK_HITS has no MISSING layer (to be confirmed on data, section 5)
+    eta, phi, dxyBeamSpot, dzBeamSpot  PROTOTYPE: helix in a uniform Bz (mkFit's #186 field at the innermost hit) from
+                                     the fitted state at the innermost hit to the beam spot. The host: TSCBLBuilderNoMaterial
+                                     with CMSSW's field, tilted beam line. To be replaced by lane outconv's device PCA
+                                     state (same field model as the converter).
+    dxyError, dzError, etaError, phiError  MISSING: need the PCA covariance (the converter's curvilinear error propagated
+                                     by TSCBL) -> lane outconv's device state code.
+    lostInnerHits, lostOuterHits     MISSING, and the hard part: the converter computes them per track with
+                                     NavigationSchool::compatibleLayers + DetLayer::compatibleDets (PropagatorWithMaterial,
+                                     Chi2MeasurementEstimator) + MeasurementTracker activity/bad components, inward from the
+                                     innermost and outward from the outermost hit. A device port = CMSSW navigation +
+                                     det-layer geometry + the measurement-tracker masks on the device.
+  Row mapping: TrackSoA rows = reco::Track rows only when the converter drops no candidate (its state quality / pos-def /
+  TSCBL checks); the comparator compares only such events.
+
+5. RESULTS (offline, real events; scripts and outputs in $L/r7_hpsel/ana, jobs in $L/r7_hpsel/menu/runs)
+  Data: the target menu (main6, CUDA L4) on ttbar 200 RAW events (139 tracked, 265,919 initial-step tracks) and QCD 100
+  (195,772 tracks); hltInitialStepTracks + beam spot + the in-job serial classifier scores persisted; the 15 features
+  recomputed with the extractor's own reco::Track / HitPattern calls (FWLite, ana/hp_fwlite_features.py).
+  5a. Feature reconstruction check: python libtorch CPU, one forward per event (as the module) vs the in-job serial
+      scores: max |dscore| 4.2e-7 (ttbar) / 2.4e-7 (QCD), 0 HP decision flips -> the persisted features = the in-job ones.
+  5b. Step 1 physics (the same model on the GPU): python libtorch CUDA (py3-torch-cuda 2.13, L4), one forward per event,
+      vs the in-job serial scores: max |dscore| 9.8e-7 (ttbar) / 1.0e-6 (QCD); 0 HP decision flips in 461,691 tracks.
+      HP acceptance 97.5% (ttbar) / 97.1% (QCD). So the device classifier gives identical HP decisions on these
+      samples; a flip needs a score within ~1e-6 of 0.377 / 0.267 (tracks within 1e-5 of the binding threshold: 1 in
+      ttbar, 2 in QCD; expected ~0.4 flips per million tracks). MTV and the HP consumers are then unchanged by
+      construction (hltGeneralTracks is a TrackListMerger of the HP collection alone).
+  5c. Features: layersWithoutMeas is 0 for every track (as predicted: the converter adds no invalid TRACK_HITS);
+      lostInnerHits > 0 for 14-15% of tracks, lostOuterHits > 0 for 24%.
+      Ablation (feature forced to 0, flips vs the unmodified decisions):
+                                       ttbar                         QCD
+        lostInnerHits = 0              446 (0.17%; 345 lost, 101 gained)   470 (0.24%)
+        lostOuterHits = 0              1978 (0.74%; 108 lost, 1870 gained) 1417 (0.72%)
+        both = 0                       2420 (0.91%)                         1839 (0.94%)
+      -> the navigation-based lost hits matter (~1% of decisions, mostly extra accepted tracks): a device feature path
+      must compute them (or the model must be retrained without them: a physics change with its own MTV check).
+  5d. Precision a device feature computation needs (HP decision flips per 1M tracks, random-sign perturbation):
+        relative 1e-4 on any single feature: 0 (ttbar), <= 5 (QCD: one track at the |dxy| = 0.5 cm rule boundary)
+        relative 1e-3: <= 30;  relative 1e-2: up to 250 (eta, normalizedChi2 most sensitive)
+        dxy / dz absolute 1 um / 5 um: 0-5 / 0;  20 um: 4-20.   eta / phi absolute 1e-4: 0.
+      -> a device PCA state within ~1e-4 relative / ~5 um reproduces the host HP decisions at the 1e-5 level.
+  5e. Cost of one forward per event (ana/hp_torch_cost.py): CPU 1 thread 4.6 ms (1913 tracks; the menu measures 4.3-4.8);
+      CUDA L4: host enqueue 0.20 ms, device ~0.06-0.2 ms, activations 3.9 MB (14.6 MB at the 4992-track warm-up).
+      Expected host saving on the GPU menu ~4.0 ms per input event (4.27 -> ~0.25 incl. the copy module).
+  5f. GPU memory (D7-f) - the risk of step 1: libtorch's caching allocator keeps per-CUDA-stream pools; with one model
+      per stream module and the release 4992-track warm-up, a python simulation reserves 26 MB (1 stream), 198 MB (8),
+      408 MB (16 streams, the CI shape) per process (ana/hp_torch_streams_mem.py). The target job on 8 threads/streams
+      peaks at 1668 MiB of device memory (nvidia-smi per PID, 100 ttbar, L4; menu/runs/gpumem_ttbar), so +198 MB is
+      ~+12% at 8 streams: likely OVER the +10% budget. No sharing with the pixel classifier's pools: every
+      FixedQueueEDProducer instance makes its own queue (CUDA stream) per EDM stream in beginStream
+      (HeterogeneousCore/AlpakaCore/interface/alpaka/stream/FixedQueueEDProducer.h). To be confirmed in-menu.
+  5g. Option (b) feasibility (ana/hp_mlp_emulate.py, ana/hp_export_weights.py + hp_weights_check.py): the model as a
+      plain float32 MLP with the BatchNorms folded into the Linear layers (54,783 floats = 214 kB, 12-layer program),
+      evaluated as a per-track kernel would (sequential float32 dot products), reproduces the in-job serial libtorch
+      scores to max |dscore| 1.5e-6 with 0 HP decision flips on all 461,691 tracks. Weights file:
+      ana/hp_weights_folded.bin (format in hp_export_weights.py).
+
+6. STATUS / OPEN
+  - The lane area's first build (b1) compiled ROCm objects (the area's ALPAKA_BACKENDS change was not set up); the lane
+    stopped its own build and ran scram setup self; the rebuild was then not permitted in this session. Nothing of
+    sections 3-4 is compiled or run yet. Next: build (cuda + serial), then customizeHpSelDeviceValidation on ttbar 200 +
+    QCD 100, serial and CUDA; MTV hltGeneral vs the target run; FastTimer host ms of the swapped module.
+  - Device features end to end (no host extractor) need: outconv's device PCA state + covariance, and a device answer for
+    lostInnerHits / lostOuterHits (or a retrained model without them - a physics change, section 5 quantifies it).
+  - Option (b) for the inference (DRAFT: $L/r7_hpsel/drafts/optionb, not compiled): a hand-written Alpaka MLP kernel (weights exported once from model.pt, BatchNorm folded,
+    section 5g; an ES product or a data file). GPU layout: a block of 128 threads per tile of 32 tracks, activations of
+    the tile in shared memory (32 x 256 floats = 32 kB), threads over output neurons, weights through L1/L2 (214 kB);
+    no per-thread 256-float arrays (LOCAL must stay 0). ~54k MAC per track, ~0.1 GFLOP per event: microseconds on an
+    L40. Pros: no libtorch device memory (5f), deterministic, fuses with the feature kernel and the threshold (the HP
+    decision never leaves the device), no FixedQueue producer. Cons: a second implementation of the model (weights are
+    data; an architecture change needs code); on CPU backends a scalar per-track loop would be ~10x slower than
+    libtorch's GEMMs, so the CPU menu keeps the release serial libtorch module. Cost ~0.5-1 day incl. the in-menu
+    tolerance check (emulation: 1.5e-6, 0 flips).

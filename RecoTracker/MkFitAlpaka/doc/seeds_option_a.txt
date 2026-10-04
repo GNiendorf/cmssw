@@ -1,0 +1,100 @@
+MkFitAlpaka - LST seeds, OPTION (a): a device port of the CMSSW seed creator. COSTED DESIGN NOTE (lane seedfit, round 7,
+2026-10-04). NOT IMPLEMENTED: the owner decides (D7-b, O6-1).
+=====================================================================================================================
+0. WHAT (a) IS
+  The host seed state of every LST T5/T4/pT3/pT5 seed comes from LSTOutputConverter (RecoTracker/LST/plugins/
+  LSTOutputConverter.cc:282-288): SeedFromConsecutiveHitsCreator::makeSeed with a default GlobalTrackingRegion, then
+  MkFitSeedConverter turns the state into mkFit CCS. Option (a) runs THE SAME ALGORITHM on the device, bit-for-bit in
+  structure and at rounding level in numbers, so that the host creator (the largest host cost of the step,
+  LSTOutputConverter 27.9-34.5 ms per input event at CI shape, roughly half of it makeSeed) can leave the menu without
+  any physics change. Option (b') (this round, doc/seeds.txt R7) keeps mkFit's propagation/material model; (a) ports
+  CMSSW's. The same component serves the pLS seeds (hltInitialStepSeeds = SeedGeneratorFromProtoTracksEDProducer,
+  SeedCreatorPSet seedFromProtoTracks = the SAME creator and PSet values), i.e. lane lstin's stage-B pixel seeds.
+
+1. THE MENU'S CONFIGURATION (edmConfigDump of the exact job.sh menu, r6_seeds/cfgdump/dump_default.py)
+  hltInitialStepTrajectorySeedsLST.SeedCreatorPSet: SeedFromConsecutiveHitsCreator, propagator 'PropagatorWithMaterial',
+    TTRHBuilder 'hltESPTTRHBuilderWithTrackAngle', MinOneOverPtError 1, OriginTransverseErrorMultiplier 1,
+    magneticField '' (the default field), forceKinematicWithRegionDirection False. Region: GlobalTrackingRegion()
+    = ptMin 1 GeV, origin (0, 0, 0), originRBound 0.2 cm, originZBound 22.7 cm, direction (0, 0, 0) (no eta-phi check).
+    No seed comparitor (init(region, iSetup, nullptr)): checkHit() and the helix filter are always true.
+  PropagatorWithMaterial (process.MaterialPropagator): PropagatorWithMaterialESProducer, Mass 0.105 (muon), MaxDPhi 1.6,
+    alongMomentum, useRungeKutta False (= AnalyticalPropagator), SimpleMagneticField '' (the default field), ptMin -1.
+  hltESPTTRHBuilderWithTrackAngle: Phase2StripCPE 'Phase2StripCPE', PixelCPE 'PixelCPEGeneric'.
+    Phase2StripCPE (RecoLocalTracker/Phase2TrackerRecHits/interface/Phase2StripCPE.h:35) overrides only
+    localParameters(cluster, det): the track-angle refit of an OT hit RETURNS THE SAME POSITION AND ERROR (Lorentz drift
+    only). Only pixel hits (pT3/pT5 and pLS) change under the refit (PixelCPEGeneric with cot(alpha), cot(beta)).
+  MAGNETIC FIELD (checked by running the menu's GT, auto:phase2_realistic_T35 = 150X_mcRun4_realistic_v1, job
+    r7_seedfit/mf/mfcheck_cfg.py, log mf/mfcheck.log):
+      "Current :18160 (from RunInfo DB); using map configuration with label: 3.8T"
+      "Version: grid_160812_3_8t geometryVersion: 160812 slaveFieldVersion: OAE_1103l_071212"
+    i.e. the volume-based map, whose inTesla() DELEGATES to the parametrised slave field wherever it is defined:
+    OAEParametrizedMagneticField::isDefined = r^2 < 115^2 cm^2 && |z| < 280 cm (ParametrizedEngine/src/
+    OAEParametrizedMagneticField.cc:47-48). Every seed hit (OT outer radius ~110 cm, |z| < 270 cm) and every point a
+    seed propagation evaluates lies inside: THE TRACKER FIELD IS PARAMETRISED, CLOSED FORM. The grid/volume code is not
+    needed. nominalValue() = 38 kG (FastHelix uses 3.8 T and 0.3, not the local field).
+
+2. THE CLOSED-FORM FIELD (OAE_1103l_071212 = TkBfield, ParametrizedEngine/src/{TkBfield.cc, BCyl.h}; 3.8 T parameters
+   fpar4 = {4.24326, 15.0201, 3.81492, 0.0178712, 0.000656527, 2.45818, 0.00778695, 2.12500, 1.77436}, lengths in m):
+     derived: ap2 = 4 p0^2 / p1^2, hb0 = 0.5 p2 sqrt(1 + ap2), hlova = 1/sqrt(ap2), ainv = 2 hlova / p1, coeff = 1/p8^2
+     z' = z - p3;  u = hlova - z' ainv;  v = hlova + z' ainv
+     f(w) = { w a^(1/2),  a^(3/2),  -3 a^2 w a^(1/2),  -3 a^2 a^(3/2) (1 - 4 w^2) }   with a = 1/(1 + w^2)
+     rat = 0.5 ainv;  rat2 = rat^2 r^2
+     Br/r = hb0 rat (f1(u) - g1(v) - (f3(u) - g3(v)) rat2 / 2)  + p4 z' (|z'| - p5)^2
+     Bz   = hb0 (f0(u) + g0(v) - (f2(u) + g2(v)) rat2)          - p6 (exp(-(z' - p7)^2 coeff) + exp(-(z' + p7)^2 coeff))
+     B = (Br/r * x, Br/r * y, Bz)  [stock: float, exp = unsafe_expf<3> from DataFormats/Math/approx_exp.h (header-only,
+     portable)]
+   Line counts: stock BCyl.h 101 + TkBfield.cc 69 + TkBfield.h 42 + OAE wrapper 49; a portable header-only port is
+   ~60 lines (the MagneticField/Portable package already has the same pattern for the Parabolic fit, 69 lines).
+   Note: mkFit's own field (Config::bFieldFromZR, the ParabolicMf constants of #187) is a FIT TO this function;
+   (a) needs the function itself to reach rounding level.
+
+3. COMPONENTS TO PORT (stock file, stock lines, what the seed path uses, port estimate in portable lines)
+   a. initialKinematic: FastHelix.cc 127 + FastCircle.cc 95 + FastLine.cc 37; DONE in round 7 (b') as
+      fitHostLike() in src/alpaka/seeds/LstSeedKernels.h (~70 lines; the Riemann-sphere FastCircle replaced by the
+      exact three-point circle: rounding-level).                                                     0 new (reuse)
+   b. initialError: 15 lines; DONE in (b') (curvilinear diag; (a) keeps it curvilinear, no CCS rotation).      0
+   c. Field: section 2.                                                                                         60
+   d. AnalyticalPropagator::propagateWithPath(fts, Plane) (AnalyticalPropagator.cc 391; the plane path ~90): the
+      crossing choice (HelixBarrelPlaneCrossingByCircle 192 for planes parallel to z, HelixForwardPlaneCrossing 92
+      for planes perpendicular to z, HelixArbitraryPlaneCrossing 231 + 2nd-order 162 for the TILTED PS modules,
+      StraightLinePlaneCrossing 32), the alongMomentum path-sign check, the MaxDPhi check
+      (dphi = s * rho * sin(theta) > 1.6 fails), the new position/momentum, all in double.               ~380
+   e. Curvilinear error transport: AnalyticalCurvilinearJacobian.cc 320 (full helix Jacobian with the field
+      direction at the start point; the straight-line branch).                                            ~220
+   f. Frames: JacobianCurvilinearToLocal 97, JacobianLocalToCurvilinear 95, LocalTrajectoryParameters/Error,
+      global <-> module-local with the module rotation (already on the device: ES module table xdir/ydir/zdir/pos). ~150
+   g. Material at the destination surface: CombinedMaterialEffectsUpdator = MultipleScatteringUpdator (172; Highland
+      with the log term, mass 0.105, in the local frame of the surface) + EnergyLossUpdator (229; Bethe-Bloch mean
+      loss from xi, its variance; electrons not needed). Per-module radLen / xi: ALREADY on the device (#186's
+      MkFitGeometryESProducer.cc:401-402 fills the module table from det->surface().mediumProperties()).   ~150
+   h. KFUpdator (192): 2D local update (Phase2TrackerRecHit1D::dimension() = 2, pixels 2), R = V + H C H^T 2x2.  ~80
+   i. Hit refit: OT none (1.); pixel hits through the fit lane's device PixelCPEGeneric with track angles
+      (src/alpaka/cpe/*, already validated bitwise against the host CPE on the fit path).                   ~40 glue
+   j. Kernel + entry + counters + status product; output = the updated local state on the last det -> CCS (the
+      round-5 device port of MkFitSeedConverter's transform, doc/seeds_d5b.txt, bitwise vs host).          ~150
+   k. Host side: the light LSTOutputConverter (seed hits only, round-6 patch 0003) plus a D2H copy of the device
+      states into the TrajectorySeeds (their consumers: hltInitialStepTrackCandidates seed refs, the mkFit-fit
+      output converter, hltInitialStepTrajectorySeedsLSTTracks = TrackFromSeedProducer, which reads the state).  ~100
+   TOTAL ~1300 portable lines (+ ~300 lines of tests: a per-seed host-vs-device dump comparator).
+
+4. COST AND PLAN
+  - Effort: two lane-rounds. Round 1: components c-h as one header set (namespace mkfitdev::cmsseed), a replay test
+    that feeds the host seed hits and compares the device state with the host TrajectorySeed state per seed (local
+    params and errors, target |pull| < 1e-3 and identical rejections). Round 2: menu integration with the light
+    converter, the O6-1 paired list (should then be at the noise level by construction), val5k.
+  - Precision: stock does the helix crossings and Jacobians in double; on the device double costs nothing measurable
+    here (~3-6k seeds x ~10 hits per event; the round-6 N = 1 float seed kernel was 1.6 ms of GPU time).
+  - Registers: one thread per seed, double 5x5 matrices: expect REG 255 / possible spills: split kernel per step
+    (state in global scratch), as the final fit (D4-H1). Block <= 128.
+  - Host time removed: makeSeed inside LSTOutputConverter (light converter 21.5 vs full 46.9 ms per tracked event in
+    round 6, i.e. ~25 ms per tracked event, ~14-17 ms per input event at CI shape), plus the same for hltInitialStepSeeds
+    (19.6 ms per input event, lane lstin) if the pLS seeds use the same component.
+  - Risks: HelixArbitraryPlaneCrossing's Newton iteration and its fallback order must be transliterated exactly
+    (tilted modules); the curvilinear Jacobian's small-step branches; the creator's FreeTrajectoryState carries the
+    field at the vertex, every later step the field at its start point (no midpoint: unlike #186's mkFit refit).
+  - What (a) does NOT need: the volume-based field map (the param field covers the tracker), Runge-Kutta, the
+    strip CPE refit, the seed comparitor, the region direction check.
+
+5. RECOMMENDATION
+  (a) is a bounded, mechanical port (~1300 lines, two rounds) because the field is closed form and the OT refit is the
+  identity. It is the only route that removes the host creator with NO physics change by construction. Decision: owner.

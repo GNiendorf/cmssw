@@ -1,4 +1,4 @@
-#!/usr/bin/perl
+#!/usr/bin/env perl
 
 $RUNDIR = '/data2/matevz/CMSSW_12_2_0_pre2/src';
 

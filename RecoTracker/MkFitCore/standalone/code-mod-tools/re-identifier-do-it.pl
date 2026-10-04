@@ -1,4 +1,4 @@
-#!/ usr / bin / perl
+#!/usr/bin/env perl
 
 die "Usage: $0 replacement-rules-file" unless - r $ARGV[0];
 

@@ -1,0 +1,65 @@
+MkFitAlpaka: the device chain of the LST step (integration, round 3)
+====================================================================
+plugins/alpaka/MkFitAlpakaChainProducer.cc wires the lanes' exported entry points into one module; it has no physics
+of its own:
+  MkFitSeedWrapper (host) -> SeedsHostPack -> seeds::importSeeds (lane seeds) into the engine buffers
+  -> engineRunChain (lane engine): forward search (K1, K2 = select's runSelectHits via EngineSelectK2, K3a/b, K4, K5,
+     K6) -> pre-filter + stable compaction -> compactify -> backward fit (lane bkfit, makeEngineBackwardFit)
+     -> beginBkwSearch -> backward search -> post-filter with repack + compaction
+  -> seeds::runChainTail (export of the front candidate + duplicate cleaner, lanes seeds + clean), bkwRep = false
+     because the engine's post-filter already repacked the front candidates
+  -> TrackSoA products '' (final = stock MkFitProducer output) and 'export' (before the duplicate cleaner);
+     stages = True adds 'fwd' and 'bkfit' (front candidate after the forward search / after the backward fit, run
+     with the same calls as engineRunChain one by one).
+Inputs: device EventOfHits product (MkFitAlpakaEventOfHitsProducer, useESLayers), MkFitAlpaka ES product (device
+view + host ESData for the engine tables: makeEnginePlan / makeEngineLayerParams / makeEngineModules, copied per
+event), MkFitGeometry (seed partition limits), the pixel hit wrapper (only for nPixel = strip hit base).
+Output path: MkFitAlpakaOutputWrapperFromTrackSoA (host) -> STOCK MkFitOutputConverter (TrackCandidates).
+Final fit: test/chain_cfg.py fit=1 feeds the chain's MkFitOutputWrapper to lane fit's MkFitAlpakaFitProducer
+(no CPE yet) and compares with the stock MkFitFitProducer with the CPE off (lane fit's private stock RecoTracker/MkFit
+must come first in LD_LIBRARY_PATH: verify3_int/swap_fit).
+
+Configs
+  test/chain_cfg.py      sample=ttbar500|qcd500 accelerators=cpu|gpu-nvidia maxEvents=N summaryDir=D prefix=P
+                         [stages=1] [fit=1] [truth=1] [verbose=1] [timingJson=F]
+                         comparators: cmpChainExport / cmpChainFinal (TrackSoA vs stockStages:export|''),
+                         cmpChainMkFit (MkFitOutputWrapper), cmpChainCands (TrackCandidates), stages: cmpChainFwd,
+                         cmpChainBkFit; fit: cmpChainFitVsStockNoCPE, cmpChainTracksVsStockNoCPE.
+  test/chain_mtv_cfg.py  MTV of chainTracks / stockTracksNoCPE / hltInitialStepTracksMkFitFit (replay_mtv recipe).
+Acceptance: test/replay_floor_check.py <floor> <summary JSON>; floors in r3_harness/stagefloor (stage, 100 events)
+and r3_harness/floor500 (TrackCandidates *_cand.json, fit tracks *_fit.json, 500 events).
+
+Interface fix found by chaining (commit 2fd78f5): EngineSelectFn now takes (queue, b, t, nSeeds). EngineSelectK2 used
+its fixed forward seed count also in the backward search, where the buffers hold only the compacted survivors.
+
+HLT MENU (round 4, lane menu; python/customizeHLTforMkFitAlpaka.py, D4-menu)
+==============================================================================
+Reference command line = lanes/pre2_4way/scripts/job.sh (val5k recipe: one-step HLT + DQM, 75e33_timing, no extra
+procModifier), copied exactly; the port adds ONE --customise. Lane script: r4_menu/scripts/menu_job.sh.
+  SETUP="--conditions auto:phase2_realistic_T35 --geometry ExtendedRun4D121 --era Phase2C22I13M9"
+  cmsDriver.py step2 -s L1P2GT,HLT:75e33_timing,VALIDATION::hltMultiTrackValidation+hltMultiPVValidation \
+    --processName=HLTX --hltProcess HLTX $SETUP \
+    --customise SLHCUpgradeSimulations/Configuration/aging.customise_aging_1000 \
+    --customise RecoTracker/MkFitAlpaka/customizeHLTforMkFitAlpaka.customizeHLTforMkFitAlpaka \
+    --filein file:<RAW> \
+    --inputCommands='keep *, drop *_hlt*_*_HLT, drop triggerTriggerFilterObjectWithRefs_l1t*_*_HLT' \
+    --eventcontent DQM --datatier DQMIO --fileout file:DQM.root \
+    --customise_commands "process.hltTrackValidator.label += [\"hltInitialStepTracks\"]\nprocess.options.wantSummary = True\nprocess.hltSeedsForMkFit = process.hltInitialStepTrajectorySeedsLSTTracks.clone()\nprocess.HLTInitialStepSequence += process.hltSeedsForMkFit\nprocess.hltTrackValidator.label += [\"hltSeedsForMkFit\"]\n\n" \
+    --python_filename hlt.py --mc -n -1 --nThreads 16 --accelerators cpu --no_exec          # GPU menu: gpu-nvidia
+  (lane runs: --nThreads 8 by the box rule; --filein = all local RAW files of the sample.)
+Customise functions (all keep the menu labels; see the header of the python file):
+  customizeHLTforMkFitAlpaka            production: device EventOfHits + device building + host wrapper; the stock
+                                        MkFitOutputConverter reads hltMkFitEventOfHitsHost (light when io's
+                                        MkFitAlpakaLightEventOfHits is wired: LIGHT_EVENT_OF_HITS_PLUGIN)
+  customizeHLTforMkFitAlpakaEventOfHits the device EventOfHits next to the stock one, compareTo the stock (step 1)
+  customizeHLTforMkFitAlpakaValidation  production + the stock chain on demand in an EndPath + comparators
+                                        [compare menuCmpMkFit|menuCmpCands|menuCmpTracks] and [paired menu]
+  customizeHLTforMkFitAlpakaFit         + device final fit (needs --procModifiers trackingMkFitFit); throws while
+                                        DEVICE_FIT_HAS_CPE is False (D4-H1)
+  customizeHLTforMkFitAlpakaFitNoCPE    explicit opt-in to the no-CPE device fit (validation only)
+Safety checks at customise time: the stock MkFitProducer must be in the validated envelope (cloneEngine, no CMSSW
+backward fit, seed cleaning, duplicate removal, no clustersToSkip, no strip charge cut, the LST-step config label);
+after the swap no host module may still read the device hltMkFitEventOfHits (throws otherwise).
+Throughput (CI-like, patatrack benchmark; r4_menu/scripts/make_timing_cfg.sh + bench.sh):
+  make_timing_cfg.sh stock|port cpu|gpu <cfg.py>    (HLT-only 75e33_timing, 5 local ttbar files, as hltqcd/timing)
+  bench.sh stock|port <cfg.py> <outdir> <jobs> <threads> <streams> <events> <skip>

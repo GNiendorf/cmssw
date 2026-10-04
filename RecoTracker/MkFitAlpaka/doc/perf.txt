@@ -1,0 +1,152 @@
+MkFitAlpaka: numerics and speed (lane perf, round 4, 2026-10-03)
+================================================================
+All timings are INDICATIVE: the box is shared by 6 lanes (load ~10-64, other jobs on both GPUs). Serial A/B runs were
+alternated (b1 / b3 / b1 / b5 / b6); GPU kernel sums are GPU time and do not depend on CPU load, but other jobs on the
+same GPU inflate single calls (use medians, prof/kmed.py).
+Tools ($L = lanes/mkfit_alpaka, all in $L/r4_perf/prof):
+  libktrace.so (ktrace.cc)  CUPTI activity tracer for CUDA 13.3, loaded with CUDA_INJECTION64_PATH (no code change):
+                            kernels (grid, block, regs, local), memcpy, memset, runtime-API calls (KTRACE_API=1)
+  run_trace.sh <sample> <L40|L4> <nev> <label> [threads]   chain_cfg.py under the tracer
+  ksum.py <nev> <tsv>        per-kernel calls/event, ms/event, us/call, regs, grid; memcpy; runtime API
+  kspan.py <tsv>             per-event GPU span = busy + idle (launch/sync gaps)
+  kmed.py A.tsv B.tsv        per-kernel median call time (robust against other GPU users)
+  run_timing.sh <libsnap|-> <sample> <cpu|L40|L4> <nev> <label> [threads]   FastTimerService per module, chain vs
+                            stock in the same job + the comparator JSONs; floorcheck.sh <prefix> <sample> = D-M4
+                            (CHAINED floors: r3_harness/stagefloor export/final, r3_harness/floor500 candidates)
+  run_perf.sh <sample> <nev> <label>   perf record (user space, flat) of the serial chain job
+
+1. GPU PROFILE OF THE CHAIN MODULE (main 6f294d1, 100 events, 1 thread, CUPTI)
+  Per event                         ttbar L40        QCD L4
+    kernel time (sum)               8.76 ms          11.81 ms
+    GPU span of the chain           10.33 ms         13.23 ms    (busy 9.45 / 12.41 incl. 0.9 ms HtoD; idle 0.88 / 0.82)
+    launches                        450              450         (46 plan steps x 9 + import/bkfit/tail/EventOfHits)
+    host stream syncs               5                5           (7.6 ms/event host blocked = GPU work, not overhead)
+    cudaLaunchKernel host time      1.8 ms (4.0 us/launch)
+    HtoD                            23.5 MB, 0.90 ms (one ~20-25 MB copy per event + 1.5 MB fixed-size per event)
+  Kernels, ranked (ttbar L40 ms/event, share; QCD L4 ms/event; regs/block/max grid):
+    K2  select::KernelSelectHits    5.19  59%   7.12   177 / 64 / 237   STACK 128 B (6-entry heap)
+    K4  KernelEngineSelect          1.06  12%   1.38    80 / 128 / 24
+        KernelEngineScanActive      0.47   5%   0.61    35 / 128 / 1     (ONE block per call, 46 calls)
+    K1  KernelEngineActivate        0.39   4%   0.47    58 / 128 / 24
+    K5  KernelEngineUpdate          0.29   3%   0.35   176 / 128 / 119
+    K3a KernelEngineChi2            0.25   3%   0.35   153 / 128 / 710
+        KernelEngineScatterSelect   0.23   3%   0.27    32 / 128 / 119
+    K3b KernelEngineOptions         0.23   3%   0.27    81 / 128 / 119
+        KernelEngineGatherSeeds     0.15   2%   0.18    64 / 128 / 24    (2 calls)
+        BkFitKernel<BkFitCandsIO>   0.11   1%   0.14   199 / 64 / 48
+        KernelEngineFillList        0.10   1%   0.11
+        everything else (hits, seeds, clean, filter, merge, compactify) 0.3 ms
+  K2 call distribution (ttbar L40, 4600 calls): median 77 us, p90 216 us, p99 725 us, max 1.39 ms; the top 10% of the
+  calls are 34% of K2. Per plan step the mean ranges from 8 us to 718 us (step 45; steps 1-2, 9-10, 32-33, 36-37, 44
+  are 175-375 us). The grid is the fixed upper bound (168 x 64 threads) every step.
+  Occupancy: K2 at 177 regs x 64 threads -> 5 blocks/SM possible, but the launch only has ~1.2 blocks per SM
+  (168-237 blocks on 142 SMs): about 2 warps per SM. K4/K1 run 24-26 blocks = 24 of 142 SMs. The engine is
+  latency-bound, not throughput-bound: the long serial per-thread work (K2 hit loop, K4 per-seed selection) sets the time.
+  Launch overhead (M2): the GPU is idle 0.88 ms/event of the 10.3 ms span (8.5%): ~0.5 ms of kernel-to-kernel gaps
+  (450 x ~1 us) + ~0.4 ms around the 5 syncs and copies. Kernels are longer than launches (4 us) on average, so the
+  host keeps ahead; CUDA graphs are not the first lever.
+
+  RANKED SPEED-UP LIST (GPU; estimates for ttbar L40, chain span 10.3 ms/event):
+   1. K2 work split (select/build): propagation thread per candidate as now, then the hit scan of selectHitIndicesV2
+      with a warp (or 8-16 lanes) per candidate; each lane keeps a local best-6 by (score, scan index), then a warp
+      merge. Stock pops its priority queue in score order and only inserts on strict '<' (MkFinder.cc
+      selectHitIndicesV2, pqueue), so (score, scan order) reproduces stock except for exact score ties inside the
+      best 6 (count them first). Also drop the fixed 168-block grid (device count). Estimate 5.2 -> 1.2-1.8 ms:
+      -3.5 ms/event (-35%).
+   2. K2 list plumbing: ScanActive (single block) + FillList + ScatterSelect = 0.80 ms and 138 launches/event. r4/build
+      removed the scatter and fused scan + fill (KernelEngineBuildList, one 1024-thread block since 9b2b568:
+      0.33 ms/event on the head, section 6). The rest: K2 over the (seed, cand) grid with the active mask, no
+      list. Estimate -0.3 ms.
+   3. K4 (and K1): thread per seed on 24 blocks. MEASURED (patch 0003, experiment, r4/perf head, L40, A/B/A
+      medians): block 32 instead of 128 (95 blocks) gives K4 22.43 / 22.24 / 22.46 us (no gain) and K1 8.29 / 7.81 /
+      8.29 us (-6%, -0.03 ms/event); physics identical. Not worth applying. K4's cost is the serial work per seed:
+      move the CandState copies cur -> nxt (5 x 112 B per seed per step) into a thread per (seed, cand) or swap
+      indices instead of copying, and split selectSeedCandidates' option scan. Estimate -0.3 to -0.5 ms.
+   4. Per-event host->device copies: 1.5 MB fixed-size every event = engine tables from the ES (build's per-IOV
+      tables in 1a327a3 should remove it); the 20-25 MB copy is the EventOfHits input (io). -0.1 ms GPU, plus host.
+   5. Launch count / syncs: after 1-3, ~300 launches; then CUDA graphs per plan step. -0.3 ms span.
+   6. K3a/K5/K3b/Gather/bkfit: 1.0 ms together; not worth work before 1-3.
+  D-H6 (FP64 Cramer, section 3): <= 0.1% of the chain. M6 (GPU propagation spread): not investigated this round.
+
+2. NUMERICS: propagateHelixToR/Z NO LONGER DEPEND ON INLINING (verify3_int 4a)
+  Problem: select's serial stock check dropped from 100% to 92.6% bit-exact propagated parameters when integ forced
+  isFinite inline. GCC contracts a*b+c into FMA (-ffp-contract=fast, default in CMSSW) on the inlined, CSE'd
+  dataflow, so the result of the R/Z propagators depended on the caller's inlining context.
+  Fix (commit 7ff63d5, prop): on host compilers the R and Z propagators are compiled out of line with
+  __attribute__((noipa)) (device compilers keep forced inlining; macro MKFITDEV_PROP_HOST_OUTLINE). Stock compiles them
+  as exported functions of their own .cc, so this is also the stock structure. Explicit std::fma was considered and not
+  used: GCC has no per-expression contraction control, so pinning the FMAs would also need every other a*b+c blocked
+  in every caller; an out-of-line body gives the same machine code in every TU.
+  This alone fixes the context dependence but not select's N = 1 instantiation: compiled standalone, the N = 1 scalar
+  code contracts differently from stock's Matriplex<8> code (select check: par bit-exact 91.6%, err 51%, but max
+  pull 1e-3 instead of 0.5). The N = 8 instantiation is bit-identical to stock (prop test). So the K2 propagation
+  runs at N = kNN = 8 on CPU (patch 0001 for build, section 4), and both hold:
+    prop test (serial, ttbar + QCD captures): all 7 output hashes unchanged, R and Z max diff 0 vs stock;
+    select stock check (serial, 20 ttbar): propagated par AND err bit-exact 428573/428573 (main: 396692 / 390631),
+      bins 0 mismatches (main: 1), q_c/dq/dphi bit-exact 100%, hit lists 182904/182904 identical;
+    CUDA: unchanged (select check identical to verify3_int; device code is not touched).
+
+3. D-H6: FP64 IN THE 2x2 CRAMER INVERTER, FULL CHAIN ON GPU -> KEPT STOCK (double)
+  Study build: kalmandetail::invertCramerSym with float division 1.f/float(det) on the device (double det kept;
+  bkfit's variant 1). It covers K3a, K5, the backward fit and the final fit (all go through
+  kalmanOperationPlaneLocal). 100 events, 1 thread, CUPTI:
+                                   stock (double)            float division
+    QCD L4:  K3a / K5 / bkfit      0.345 / 0.351 / 0.139     0.339 / 0.347 / 0.137 ms/event
+             chain kernels         11.805 ms/event           11.794 ms/event   (-0.1%)
+    ttbar L40: the same within noise (another job shared the L40: medians equal).
+  Registers unchanged (K3a 153, K5 176, bkfit 199). The gain is <= 0.1% of the chain: the option is dropped, no code
+  change, no floor run needed. Revisit only if K3a/K5 become a large share after the K2 work.
+
+4. CPU (serial backend): N = kNN AND THE FIXED-GRID LOOPS (patches for build: $L/r4_perf/patches)
+  Serial chain vs stock MkFitProducer in the same job, 1 thread, 100 events, ms/event (stock = the job's own
+  hltInitialStepTrackCandidatesMkFit; the box load moves both, so the ratio is the number to read):
+                                         ttbar chain / stock   ratio      QCD chain / stock   ratio
+    b1  main 6f294d1                      70.46 / 55.11        1.279
+    b1  repeat                            69.97 / 55.64        1.258      (see REPORT)
+    b3  + K3a/K5 at N = kNN               71.92 / 56.22        1.279      no gain
+    b5  + K3a/K5 seed loop (+K2 kNN)      64.06 / 56.03        1.143
+    b6  final patches                     63.60 / 56.58        1.124      75.69 / 69.39       1.091
+  Why N = kNN alone gives nothing: the plane propagation and Kalman bodies are per-slot loops with branches and
+  libm calls; without -Ofast they do not vectorize, so N = 8 is 8 scalar slots in a row. Per operation the port is
+  already as fast as stock -Ofast (prop test, serial, ns/slot port N = 8 / stock: chi2 220/244, update 278/283,
+  plane 211/231, propR 208/146, propZ 97/100).
+  What the profile shows instead (perf annotate of K3a): ~45% of K3a's serial time was the loop over the fixed
+  (seed, cand, hit) grid (nSeeds x 5 x 6 slots per step, 46 steps), i.e. the integer index decode and the activeMask /
+  sel.n loads of mostly inactive slots. On CPU the kernels now walk the seeds (one mask read per seed) and run kNN
+  rows per Matriplex. K3a serial: ~18 -> ~8.5 ms/event.
+  Patches (against r4/build 1a327a3; the GPU code paths are textually unchanged):
+    0001-select-K2-cpu-propagation-kNN.patch      K2 step 1 (R/Z propagation) on 8 candidates per Matriplex on CPU,
+                                                   first for the whole block, then hit selection per candidate as
+                                                   before. Needs prop commit 7ff63d5 for the stock bit-exactness.
+    0002-engine-K3a-K5-cpu-seed-loop-kNN.patch    K3a/K5 on CPU: seed loop + kNN batches (runBatch<N>,
+                                                   loadCandStateSlot / loadHitSlot).
+  Tests (equivalent code on the main base, build b6):
+    select serial stock check: 100% bit-exact (section 2);
+    D-M4 chained floors, serial: ttbar100 export/final/candidates PASS (candidates 16 / 191592 differ vs floor
+      allowance 37.7; main 13), qcd100 PASS;
+    engine step test (isolated, lane floor): serial fwd FINAL 48749/48754 (main 48750), bkw 48608/48610 (= main),
+      isolated fwd states bitwise 97.53% (main 97.36%): rounding level, both ways;
+    CUDA: chain comparator JSONs (export, final, mkfit, candidates; 100 ttbar on the L40) byte-identical to main,
+      engine test (L4) identical, registers identical (K2 177, K3a 153, K5 176; LOCAL 0 everywhere).
+  Remaining serial gap (b6 profile, ttbar): K2 ~22 ms/event (stock's selection incl. mini-propagators is about the
+  same), backward fit ~11 ms (zeroing and copying Matriplex temporaries are the visible hot spots; r3 measured
+  4% over stock in isolation), EventOfHits 25 ms vs stock 12.4 (io: host fill), K1 3, K5 3, K3b 2 ms.
+  Next CPU items: the same seed-loop shape for K3b (thread per (seed, cand) grid) and K1/K4 mask skips; bkfit
+  temporaries (avoid zero-filling MPlexLL/HV temporaries that are fully overwritten); then vectorizable plane bodies.
+
+5. BUILD MODULE (r4/build) WITH THE PATCHES
+  Build applied patches 0001 + 0002 in r4/build 0e02bde (files identical to the ones tested here); merged into r4/perf.
+  r4/build 1a327a3 + patches (BuildProducer through r4_build/cfg/build_cfg.py, 100 events, 1 thread):
+    serial ttbar: module 64.49 vs stock 56.44 ms (1.143), D-M4 PASS (export, final, candidates), status counters 0.
+    CUDA L40 ttbar: module 10.09 ms, D-M4 PASS. Trace: 357 launches/event (was 450), 1.1 stream syncs (was 5),
+      HtoD 2.1 copies / 22 MB (the 1.5 MB per-event ES tables are gone). Kernel medians vs main: unchanged except
+      K2 +5% (it now also writes the engine rows; 185 regs) and the fused list kernel KernelEngineBuildList
+      (one 128-thread block: 18.4 us x 46 = 0.83 ms/event, more than the old scan + fill 0.57 ms; build's
+      9b2b568 moves it to one 1024-thread block, 6.95 us in their trace).
+
+6. FINAL STATE (r4/perf head = r4/build 0e02bde + prop 7ff63d5 + docs; build b8, BuildProducer, 100 ttbar events)
+  serial: module 62.56 vs stock 55.56 ms (1.126; main 1.258-1.279), D-M4 PASS; select stock check 100% bit-exact;
+  prop test hashes = main (serial ttbar + QCD, CUDA).
+  CUDA L40: kernels 8.41 ms/event (main 8.76), GPU span 9.49 ms (main 10.33), idle 0.45 ms (main 0.88), 357 launches,
+  1 sync; D-M4 PASS. QCD: serial 74.20 vs 69.14 (1.073), L4 module 12.55 ms, D-M4 PASS. K2 is now 63% of the
+  kernel time: it is THE GPU item (section 1, item 1).

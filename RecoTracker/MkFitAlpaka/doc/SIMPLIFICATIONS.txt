@@ -1,0 +1,149 @@
+MkFitAlpaka: physics-neutral simplifications vs stock mkFit (CMSSW_20_1_0_pre2). One line each: what, why neutral.
+Stock counters below come from a private instrumented MkFitCore (lane select: r3_select/CMSSW/src/RecoTracker/MkFitCore,
+MKFA_SEL_COUNTERS lines), on 100 ttbar + 100 QCD PU200 replay events (4.80M selectHitIndicesV2 candidate slots).
+---------------------------------------------------------------------------------------------------------------------
+[select] selectHitIndicesV2: phi_c = PI - phi_c wrap (MkFinder.cc:846) and Bins::dphi dropped (review L3): both feed only
+         the RNT_DUMP_MkF_SelHitIdcs ntuple and dprintf. The wrap branch is reached in 4863 + 5887 of 4.80M slots; hit
+         lists, WSR and bins stay identical to stock in all of them.
+[select] selectHitIndicesV2: m_iteration_hit_mask test dropped. The LST step has clustersToSkip = "" and Phase-2 (no strip
+         charge cut), so MkFitProducer passes all-false masks: stock counter "mask_denied" = 0 on all events. A later
+         iteration with clustersToSkip needs a per-hit mask column (one load + branch in the hit loop).
+         Guard: checkSupportedBuildConfig throws unless clustersToSkip is empty (H3 c).
+[select] passStripChargePCMfromTrack not ported (review L2; K3 side): MkFitGeometryESProducer sets has_charge(false)
+         on every Phase-2 OT layer, stock counter "passStripChargePCM_calls" = 0 on all events.
+         Guard: checkSupportedConfig throws if any strip layer has_charge() (H3 d).
+[select] RNT_DUMP_MkF_SelHitIdcs instrumentation and dprintf not ported (compile-time debug only).
+[select] One candidate per thread (N = 1) on every backend instead of NN slots: every step of propagate-to-layer,
+         Bins and the hit loop is per slot in stock; serial results are bit-identical to stock (doc/select.txt).
+[select] m_in_gap of WSR_Failed slots: stock leaves the previous call's value (not reset), the port writes false; never
+         read, since find_tracks_handle_missed_layers turns WSR_Failed into WSR_Outside and K3 skips Outside first
+         (MkFinder.cc:1823 before 1837).
+[engine] D-ties: removed the libstdc++ introsort transliteration (CandStdSort.h, kExactStdSortTies) from the per-seed
+         selection. Equal option scores keep the input order (stable): identical to stock for <= 16 options (libstdc++
+         uses insertion sort there) and whenever there is no exact tie; 1 exact tie in 426k real seed-layer records,
+         none with > 16 options. Also removes K4's 480 B stack frame (review L5).
+[engine] passStripChargePCMfromTrack: not called in K3b either (same reason as [select] above, has_charge() false on
+         every Phase-2 layer). Guard: H3 d (as above).
+[seeds] Seed (phi, eta) binnor rank for events with < 256 seeds: stock binnor::finalize_registration uses std::sort
+        (unstable) there instead of the stable radix sort; the device always uses the stable order (key, input index).
+        Differs only for exact key ties in events with < 256 seeds (PU200: 1500-4000 seeds, never). Same as D-ties.
+[seeds] filter_comb_cands + export_best_comb_cands: stock compacts the passing seeds (stable swap loop) and then exports
+        them; the device exports the passing seeds directly at their stable prefix-scan position. Same rows, same order.
+[hits]  The device bin table is not memset per event: KernelFinalizeBins writes content and clears dead for every bin
+        (implementation only; EventOfHits identical to stock on 40 events).
+fit (GPU backends): no grouping of tracks by nFoundHits into NN-wide groups (one thread per track, N = 1): Matriplex slots are independent, so the per-track arithmetic is the same. CPU backends keep the stock grouping (kNN = 8).
+fit: pass-2 refits run with N = 1 per track on every backend (stock regroups them by the new hit count): slots are independent.
+fit: pass 2 (refit of tracks that lost outliers) runs right after pass 1 of the same track instead of after all pass-1 groups: tracks are independent.
+fit: the iC/iP buffer swap of fwdFitFitTracks/bkReFitFitTracks is a copy of the output state into the input state (same values, no index parity bookkeeping).
+[integ] Shared adapters (review H5): one implementation of the MPlex loaders (src/alpaka/Packers.h, two input forms) and
+        of the ES -> PropagationFlags conversion (src/alpaka/PropagationFlagsAdapter.h); engine, bkfit and select call
+        them (the final fit keeps the same stores inline). Same stores, same flag values: every chain summary and lane
+        test is byte-identical to round 3 on serial, L40 and L4.
+[integ] find_tracks_handle_missed_layers: select's copy (SelHits.extra / post-WSR) runs only with diagnostics on; the
+        engine's K3b/K4 implementation (from wsrRaw) is the only one in the chain, as before (the bridge read wsrRaw).
+[integ] Configuration-dependent simplifications above (and the filter / cleaner / partitioner / scorer names, the
+        compile-time kMaxCandsPerSeed, one minHitsQF, seed-hit sorting, drop-seed-hits, prop-to-plane) are guarded by
+        interface/SupportedConfig.h (review H3): outside the validated envelope the job throws.
+[build] Sync-free driver: engine grids are sized from the event's seed capacity and every kernel reads the current
+        row count on the device (EngineBuffers::nRowsDev), skipping rows past it; the survivor compaction clears the
+        destination rows past the survivors. Implementation only: the same rows are processed in the same order
+        (per-stage and final candidates identical in count to round 3 on 500 + 500 events).
+[build] K1 -> K2 candidate list: the exclusive scan of nActive and the list fill are one single-block kernel (was two
+        launches); same list order (stock seed_cand_idx order: seed-major, ic ascending).
+[build] K2 writes the engine's CandSelHits / CandPropState rows itself (the scatter kernel is gone); same values.
+[build] Engine tables, iteration parameters and propagation flags are built once per IOV (cached per device) instead
+        of per event; same contents.
+[build] The post-backward-search filter takes backward_params.minHitsQF (stock params_cur() of that filter) instead of
+        params.minHitsQF; both are 4 in mkfit-phase2-lstStep.json, so no change here; it follows stock if they differ.
+fit: CPE hook (kalmanOperationPlaneLocal, review H2 c): when the CPE callback returns false the slot keeps the projected hit (position + error); stock (KalmanUtilsMPlex.cc:1556-1559, 1689-1712) leaves msPar_local/msErr_local uninitialised and still copies them. The menu callback always returns true and the device CPE returns false only for a pixel module without a CPE/GenError entry (0 in the validation): no physics change.
+fit: CPE errors port only what PixelCPEGeneric::localError reads from SiPixelGenError::qbin with IrradiationBiasCorrection = False (sigma/sx1/sx2/sy1/sy2 of the charge bin); the Lorentz-width/bias side outputs, the deltas and the qbin 4/5 flags are not computed (stock uses them only in LogDebug or with irradiation corrections / useLAWidthFromGenError, both off).
+fit (GPU backends): the fit runs as 6 stage kernels (pass-1 indices, pass-1 fwd, pass-1 bkw, outliers + pass-2 indices, pass-2 fwd, pass-2 bkw) with the state in the track row + per-track scratch (DESIGN D4-H1): the same operations per track in the same order.
+[gpu] K2 on GPU backends is two kernels (round 5): K2a thread per candidate (propagation, Bins, WSR), K2b 16 lanes per
+      candidate over the stock scan order, per-lane best-6 by (ddphi, scan position) merged by lane 0. Without exact ddphi
+      ties this is the stock selection and order; a conservative exact-tie detector reruns stock's heap loop
+      (selectScanHeap, the same code as the serial selectHitIndicesV2) for the flagged candidates (D5-d: stock order
+      kept). Implementation only: all stage summaries byte-identical to round 4 on CUDA (ttbar + QCD).
+[gpu] selectHitIndicesV2 split into selectPrepare / selectHitScore / selectScanHeap (same statements, shared by the
+      serial and GPU paths); serial summaries byte-identical to round 4.
+[gpu] K4 copy split on GPU backends: K4 records each output candidate's parent slot (CandUpdatesSoA::outSrc) and K5's
+      (seed, slot) threads copy (or copy + update) the state; same operands as K4's copy followed by the in-place update.
+[gpu] BuildProducer: seeds packed by io's packSeedsToDevice (no host staging copy on CPU backends); the 'export'
+      TrackSoA is put only with putExport = True (an empty 'export' otherwise). No physics content change.
+[inputs] Index-only MkFitClusterIndexToHit (MkFitAlpaka{Pixel,Phase2}ClusterIndexToHit): the stock converters' cluster-key -> rechit map without building the mkfit::HitVec, for consumers that read only the map (stock MkFitOutputConverter; the build module's nPixel). Same map (pointer-equal on 200 events), TrackCandidates bit-identical.
+[inputs] Device hit input (deviceHits): the HitSoA rows are computed on the device from the local hit quantities with the stock float formulas (toGlobal, ErrorFrameTransformer) written with explicit fmaf where the host compiler contracts (fma(a, b, c*d)); bitwise equal to the stock converters on 400 replay event-backends and 140 menu event-backends, so the contraction pattern is fixed, not left to each compiler.
+[cpu] CPU EventOfHits (round 6): on CPU backends the 7 binning kernels are one sequential kernel organised like stock
+      (hits grouped by layer while their infos are computed; per layer a bin histogram, the bin table written once, and a
+      stable two-digit counting sort, fine phi then bin = stock's LSD radix order (key, original index)). No sort; GPU
+      backends keep the parallel kernels. Order, bin table, hit infos and dead bins bit-identical to stock (serial and
+      CUDA, 10 ttbar + 20 ttbar-with-deads events).
+[gpu] (round 6) Fit input on the device: MkFitFitProducer's candCutSel (MkFitFitProducer.cc:139-151) evaluated per row
+      of the device building TrackSoA (same predicate: |1/invpT|, getEta(theta) with the vdt approximations, nTotalHits)
+      and an order-preserving compaction (count + exclusive scan + copy), instead of the host TrackVec loop. The fit
+      reads the kept count on the device. Menu ttbar 100 ev, L40 and serial: fit output bit-identical to the round-5
+      host-input fit (70/70 events, 132.5k tracks).
+[gpu] (round 6) CPE cluster quantities (ClusterCpe) computed for EVERY pixel hit (not only those on the input tracks), on
+      the device from the pixel digi + cluster SoA: same digi selection as SiPixelDigisClustersFromSoAAlpaka,
+      AccretionCluster's 256-digi cap (first 256 in digi order) and SiPixelCluster's 255 span cap reproduced; integer
+      atomics only. Bitwise equal to the host clusterCpe() of the legacy clusters on 13.1M rows (ttbar 70 ev, 273
+      clusters > 256 pixels), CUDA and serial. Rows not on a track are never read: no physics content change.
+[gpu] (round 6) EventOfHits device input: the per-module table (rotation, position, layer, uniqueIdInLayer) is an ES
+      product (MkFitAlpakaEventOfHitsModuleTableESProducer, one device copy per IOV) or, by default, a per-(device, IOV)
+      copy inside the module, instead of a 1.7 MB copy per event. Same contents (HitSoA identical).
+[cpu] (round 7, R5-M1/R6-M4) K2b exact-tie detector completed: a full lane list now records the score it EVICTS on an
+      insert (and every score it refuses, not only one equal to its maximum). Every evicted or refused score is >= v6,
+      so 'rej <= v6' is exactly a contending tie: the in-lane eviction case (verify5_rev R5-M1: stock keeps f, the port
+      kept e, unflagged) now reruns stock's heap loop. The selection is stock's in every case; GPU only (K2b).
+[cpu] (round 7, D7-c) Per-stream scratch: the build module's clone-engine scratch (EngineBuffers x2, K2 list/props/
+      sels) and, on CPU backends, the device-hit input's raw host rows are allocated once per EDM stream at a grow-only
+      capacity (+25%) and reused every event (scratchReuse: 1 = CPU backends, default; 2 = every backend; 0 = per-event).
+      Rows past the event's seed / hit count are never read; the reused seed rows are zeroed as the constructor does.
+      Outputs byte-identical (doc/cpu.txt section 9).
+[outconv] (round 7) MkFitAlpakaOutputTrackConverter (replaces MkFitAlpakaOutputWrapperFromTrackSoA + the stock
+      MkFitOutputTrackConverter in the device-fit menu): same CMSSW calls in the same order; each on-track rechit is
+      cloned once (stock: three clones), ordering keys are computed once per hit, is_pixel comes from MkFitGeometry's
+      TrackerInfo, the unused MkFitSeedWrapper / MkFitEventOfHits inputs are dropped. Hit order: the stock comparator
+      applied by a stable insertion instead of std::sort (no general sort). In-job vs the stock converter on the same
+      TrackSoA: parameters, covariances, chi2/ndof, all hit-pattern words, seed refs IDENTICAL (ttbar 133510 tracks,
+      QCD 195757, GPU; serial ttbar 85160); 47 / 79 tracks (3.5e-4 / 4.0e-4) list two hits that the stock comparator ranks
+      equal or inconsistently (mixed mag2/perp2) in the other order in the TrackExtra (std::sort is not stable); with validateStockOrder = True (std::sort) every field
+      is identical. The direct readers of hltInitialStepTracks (vertices, feature extractor, classifiers, HP cloner,
+      cluster masking, MTV) use track parameters, the hit pattern or order-free hit sets. CORRECTION (R7-M4, round 8
+      lane stagec): TrackListMerger is NOT order-free: hltGeneralTracks has allowFirstHitShare = True and
+      TrackListMerger.cc:590-596 compares recHit(0) of the two tracks. Measured (MkFitAlpakaHitOrderCheck, output
+      order, converter keys): hit 0 is not forced by the comparator ("ambiguous": some later hit not strictly after
+      it) for 32 of 265,921 ttbar tracks (1.2e-4) and 26 of 195,785 QCD tracks (1.3e-4); an outright inversion at
+      hit 0 never occurs; std::sort applied to the output order moves hit 0 for 14 / 7 tracks (5e-5 / 4e-5). So a
+      first-hit-share decision can differ from stock for at most ~1e-4 of the tracks (and only where such a track
+      shares a hit with another one). EXACT count (converter untracked orderStudy: the insertion order vs std::sort on
+      the same input order, in-job, GPU target menu + outconv): ttbar 200 ev, 265,941 tracks: hit 0 differs for 14
+      (5.3e-5), the last hit for 0, any position 341; QCD 100 ev, 195,755 tracks: 7 (3.6e-5) / 0 / 250. The
+      deterministic A/B runs (ttbar 100, QCD 60) were identical. Gate: val5k-r7 hltGeneralTracks identical. Deterministic CPU menu A/B (ttbar 100): MTV, 68 trigger paths, vertex DQM and every
+      counting histogram of the tracking DQM identical.
+
+[stagec] (round 8) MkFitAlpakaHpClassifier folds model.pt at construction instead of reading a separately exported
+      weights file: one copy of the model (no-duplicated-constants rule, R7-M5); the fold is byte-identical to the
+      round-7 export (54,783 floats). Physics of the kernel itself: D5.
+
+[mem] (round 9) The target menu no longer schedules the build's host wrapper hltInitialStepTrackCandidatesMkFit (its only
+      reader, hltInitialStepTrackCandidates, is unscheduled): MkFitAlpakaStatusCheck on the build status keeps its
+      status warnings (H4); no device->host copy of the build TrackSoA (customizeDropBuildWrapper, doc/mem.txt 7).
+[stagec] (round 9) Device PCA (switch customizeOutConv.customizeOutConvDevicePca, OFF by default): the converter takes the
+      state at the beam-line PCA from MkFitAlpakaOutConvStateProducer (interface/math/PcaToBeamLine.h: the CCS ->
+      curvilinear conversion, TSCBLBuilderNoMaterial's helix-line TTMD + EXT curvilinear Jacobian, the field at the
+      first-hit state from interface/math/TkBfield.h, vdt's double fast_sincos ported) instead of calling
+      TSCBLBuilderNoMaterial per track. Same operations as the host; not bitwise (device sin/cos/atan2, FMA). Rows
+      whose state lies outside the closed-form field volume, and rows where the device TTMD does not converge, are
+      done by the host TSCBL, so validity stays the host's except where the device converges and the host does not
+      (counted by pcaCheck). Rounding-level: see doc/stagec.txt section 7 (PCACHECK vs the D7-a isolated floor).
+      Same beam spot product as the host converter (offlineBeamSpot, R7-L6). The r8 prototype check modules
+      (MkFitAlpakaPcaCheck, MkFitAlpakaPcaDeviceCheck, MkFitAlpakaPcaKernels) are replaced by the converter's
+      in-job pcaCheck and removed (R8-L5).
+[stagec] (round 10) Converter switch navEmulated (OFF by default): the missing inner/outer hit entries come from the
+      TkDetLayers search transliterated in plugins/OutConvNavEmulation.h (analytic propagator, no material; layer tables
+      rebuilt per stream) instead of DetLayer::compatibleDets with PropagatorWithMaterial. Identical entries in every
+      call measured (CPU + GPU menus, ttbar + QCD, doc/stagec.txt section 8); identical TrigReport / MTV counts in CPU
+      A/B. No host time gain (the propagation dominates); it is the reference for the device kernel.
+[stagec] (round 10) The device PCA's AnalyticalCurvilinearJacobian and C' = J C J^T are now functions
+      (pca::curvilinearJacobian, pca::similarity5 in PcaToBeamLine.h) shared with the navigation per-det test
+      (DetPlaneTest.h). Same code; rounding-level for the device PCA (serial ttbar 60: every PCACHECK count and maximum
+      identical, tracks bitwise equal to the host 2,444 -> 2,514 of 85,113).

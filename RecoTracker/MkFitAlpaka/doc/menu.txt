@@ -1,0 +1,346 @@
+MkFitAlpaka lane menu (round 4, 2026-10-03): the device mkFit chain in the Phase-2 HLT menu
+==========================================================================================
+Lane area: lanes/mkfit_alpaka/r4_menu (scripts/, runs/, harv/, results/, timing/, REPORT.txt).
+Command lines: doc/chain.txt section "HLT MENU". Customise: python/customizeHLTforMkFitAlpaka.py.
+
+1. WHAT THE CUSTOMISE DOES (D4-menu)
+  Base: the exact val5k command line of lanes/pre2_4way/scripts/job.sh (75e33_timing, one-step HLT + DQM, no extra
+  procModifier); the port adds --customise RecoTracker/MkFitAlpaka/customizeHLTforMkFitAlpaka.<function>.
+  Module swaps, menu labels kept (every downstream InputTag resolves unchanged):
+    hltMkFitEventOfHits                        MkFitEventOfHitsProducer -> MkFitAlpakaEventOfHitsProducer@alpaka
+                                               (useESLayers, ES product hltMkFitAlpakaES)
+    hltMkFitEventOfHitsHost (new)              host MkFitEventOfHits for the stock converters: io's hit-less
+                                               MkFitAlpakaLightEventOfHits (LIGHT_EVENT_OF_HITS_PLUGIN), or a clone of
+                                               the stock producer when the stock MkFitFitProducer is scheduled
+                                               (trackingMkFitFit without the device fit)
+    hltInitialStepTrackCandidatesMkFitDevice   the device building module (BUILD_PLUGIN: build's
+                                               MkFitAlpakaBuildProducer@alpaka; round-3 MkFitAlpakaChainProducer has the
+                                               same parameters)
+    hltInitialStepTrackCandidatesMkFit         MkFitProducer -> MkFitAlpakaOutputWrapperFromTrackSoA (host
+                                               MkFitOutputWrapper; the stock MkFitOutputConverter reads it unchanged)
+    [fit] hltInitialStepTrackCandidatesMkFitFit MkFitFitProducer -> MkFitAlpakaFitProducer@alpaka; refused while
+                                               DEVICE_FIT_HAS_CPE is False unless customizeHLTforMkFitAlpakaFitNoCPE
+                                               is used (D4-H1). Lane fit flips the constant when the CPE lands.
+    ES: hltMkFitAlpakaESProducer (MkFitAlpakaESProducer@alpaka, ComponentName hltMkFitAlpakaES)
+  The two new producers sit in a Task associated with HLTInitialStepSequence: they run on demand, i.e. exactly in the
+  events where the menu runs the initial step (332/500 ttbar events).
+  Checks at customise time: the stock MkFitProducer must be inside the validated envelope (cloneEngine, no CMSSW
+  backward fit, seed cleaning on, duplicate removal on, no clustersToSkip, empty minGoodStripCharge, the LST-step
+  IterationConfig label); after the swap no host module may still read the device hltMkFitEventOfHits.
+  Variants: customizeHLTforMkFitAlpakaEventOfHits (device EventOfHits next to the stock one, compareTo the stock:
+  the first step, physics untouched by construction), customizeHLTforMkFitAlpakaValidation (production swap + the stock
+  chain scheduled after the initial step, on its own full EventOfHits hltMkFitEventOfHitsStock, + comparators +
+  paired truth; the port runs in its exact production configuration).
+  Pitfall found: an on-demand stock reference in an EndPath fails, because the menu's early deletion
+  (customiseEarlyDelete, appended by cmsDriver after the customise functions) has already deleted MkFitHitWrapper
+  when the EndPath runs ("Found zero products ... hltMkFitSiPixelHits"). The validation variant therefore schedules the
+  stock reference + comparators at the end of HLTInitialStepSequence; only the paired-truth module is in an EndPath
+  (it needs the VALIDATION associator) and it skips events without tracks.
+
+2. VALIDATION RECIPE (r4_menu/scripts)
+  menu_job.sh <stock|portval|portvalm> <cpu|gpu-nvidia> <ttbar|qcd> <nev> [customise function]
+     job.sh command line; --nThreads 8 (box rule; job.sh 16); --filein = all local RAW files of the sample in ls order
+     (ttbar 5 x 100 ev; qcd 10 x 50 ev, -n 250 = the first 5 files); stock = release env, port = the lane area (AREA=).
+  harv.sh <name> <DQM>   val5k harvest + postProcessorHLTvertexing (= pre2_4way/scripts/harv.sh), release env
+  summarize.sh <acc> <smp>   writes results/menu_<acc>_<smp>.txt: MTV (replay_mtv_numbers.py), TriggerResults
+     (compare_trig.py: passed count per path), DQM histogram check of hltMultiPVValidation + MTV (compare_dqm.py:
+     counting histograms bin by bin, |diff| > 3 sqrt(N) flagged), the in-job per-seed comparators, and three D-M4
+     checks (test/replay_floor_check.py) against the CHAINED floors:
+       TrackCandidates  vs r3_harness/floor500/tgt_mkfit_<s>.log floorCand + paired truth vs the floor's [paired floor]
+       mkFit level      vs r3_harness/stagefloor/floor_<s>500_final.json (stage 'final', 100 ev)
+       KF tracks        vs floor500 floorFit: a PROXY (mkFit-fit floor; no KF-fit floor exists, the KF fit is a
+                        CMSSW module on identical inputs, so its differences are the candidates' differences)
+
+3. RESULTS (2026-10-03, r4_menu/REPORT.txt has the full tables; in-job per-seed numbers, D-M4 vs CHAINED floors)
+  sample/backend        code           cands hit-diff  paired truth one-side  D-M4                      MTV hltGeneral eff
+  ttbar 500 CPU         chain = Build  36/627204       5+7, 0 transitions     PASS (cands, mkFit, KF)   0.8845 = 0.8845
+  ttbar 500 GPU (L40)   Build          36/627239       5+6, 0                 PASS                      0.8847 / 0.8848
+  qcd 250 CPU           chain          36/478477       25+18, 1               FAIL: 4 cand pull>=1e-2   0.8416 / 0.8413
+                                                                              metrics 1.01-1.05x, mkFit
+                                                                              1/pT>=1 1.01x; rest PASS
+  qcd 100 GPU (L4)      Build          13/191273       5+10, 0                FAIL: cand y pull>=1e-2   0.8358 / 0.8373
+                                                                              1.03x; rest PASS          (GPU run-to-run)
+  TriggerResults: ttbar CPU 0/68 paths differ; others 2-3 paths by 1-3 events. The QCD pull FAILs are the first check
+  of those metrics (M3 a hid them); the floor is from other events/seeds: a same-sample floor is the open item.
+
+4. REVIEW M3 (harness tooling), fixed in this round
+  a) replay_floor_check.py: a floor metric missing in the port summary now FAILS ("MISSING ... FAIL").
+  b) paired truth in the gate: "truth one-side" (TPs found by one side only / found by either) and "truth transitions"
+     (seed-paired true->fake + fake->true / seed-paired), from the "[paired X]" lines of a log (FLOOR/PORT or
+     --floor-paired/--port-paired); same Poisson rule.
+  c) the round-4 gate is this tool only (lane metrics stay diagnostics).
+  Comparators (TrackCollectionCompare, PairedTruthCompare) read the target first and count events without it as
+  missing (menu events without tracking).
+
+==========================================================================================
+ROUND 5 (2026-10-03, lane menu, branch r5/menu): validation at scale, same-sample floors, val5k, timing recipe
+==========================================================================================
+Lane dir L/r5_menu: menu/ (scripts, runs, harv, results, timing), val5k/ (areas, runs, scripts, tables, csv, web), REPORT.txt.
+Scripts are in the package as test/menu_*.sh / test/menu_val5k_* (copies of the lane scripts; lane paths hard-coded).
+
+R5.1 MENU VALIDATION IN THE val5k REFERENCE ENVIRONMENT (same events AND same seeds as the D-M4 floor500)
+  The r3 floor500 samples (replay_ttbar500 = all 5 local ttbar RAW files, replay_qcd500 = all 10 local QCD RAW files)
+  were made in lanes/pre2_4way/areas/vA (current LST), and the replay is bit-identical to the HLT (500/500 events). So a
+  menu job in a vA-based area on the same RAW files sees exactly the floor's events and LST seeds: the floor500 IS the
+  same-sample "stock v3 vs stock v2" floor of the menu (QCD: every event is tracked by the menu, so the event set is the
+  same; ttbar: the menu tracks a subset, 332/500, of the floor's 500 forced-tracking events).
+  Area: val5k/areas/port = cp -a pre2_4way/areas/vA + MkFitAlpaka (main 371210e) + MkFitAlpakaFormats (af3da8c),
+  scram b ProjectRename, scram b -j 8 (scram rebuilds every package of the copy after the rename; same sources).
+  test/menu_job.sh <tag> <stock|port> <cpu|gpu-nvidia> <ttbar|qcd> <nev> [function]
+    = job.sh command line, --nThreads 8, all local RAW files; stock = vA area, port = val5k/areas/port (AREA= overrides);
+    XC= extra customise_commands; PRELOAD_LIBDIR= prepended to LD_LIBRARY_PATH (x86-64-v2 mkFit libraries:
+    r3_harness/floor500q/v2mkfit, with its own .edmplugincache); the job writes libs.txt (mkFit libraries mapped).
+  test/menu_queue_r5.sh: portval_{cpu,gpu}_{ttbar,qcd} (customizeHLTforMkFitAlpakaValidation + MkFitAlpakaStatusCheck
+    requireClean) and portv2_cpu_{ttbar,qcd} (the same with the stock mkFit libraries switched to x86-64-v2).
+  test/menu_summarize.sh <run> <smp> [stock harvest]: in-job comparisons + the three D-M4 checks vs floor500 (same
+    sample) + status + MTV/DQM vs a separate stock job.
+  GPU run-to-run floor: the stock GPU menu twice (stockgpu1/2_ttbar, vA area, L40, 500 ev), compared cross-job with
+  menu/scripts/crossjob.sh (MTV numbers, TriggerResults, DQM histograms incl. vertex validation).
+
+R5.2 val5k (D5-f)
+  Arms: stock = the existing pre2_4way vA outputs of the SAME job.sh command line (vA unchanged since they were made:
+  lib mtime 10:06 pm 2026-10-02 < first DQM 10:18 pm), linked into val5k/runs/stock; a vA rerun on 2 local files
+  (stockrep) reproduces them exactly (346/346 MTV count histograms, 68/68 trigger paths). port = val5k/areas/port +
+  --customise RecoTracker/MkFitAlpaka/customizeHLTforMkFitAlpaka.customizeHLTforMkFitAlpaka (job.sh otherwise
+  exact: 16 threads, --accelerators cpu). ttbar 5k (50 files of hltqcd/val5k/files_ttbar.txt).
+  Machinery (setsid, may outlive the lane): val5k/scripts/scheduler.py (= pre2_4way scheduler4 for 2 arms; nfetch 2,
+  stage_gb 18, maxj 2, strict disk floor 45 GB counting bytes still to arrive; STOP file; control files in val5k/),
+  chain.sh (PROGRESS.txt every 30 min, post.sh on ALL DONE / STOPPED; STOP at 9:00 am), post.sh (harvests, npz,
+  sums check, paired tables stats5.py, CSVs, MTV pages web/val5k_ttbar two-way with ratio, TriggerResults summed over
+  files, status warnings, clone-the-baseline check: hltSeedsForMkFit identical per file, stockrep reproducibility).
+  STREAM mode (file val5k/stream): with ~55 GB free the strict floor never allows a 12.7 GB stage copy, so the remote
+  files are read with xrootd directly (root://cmsxrootd.fnal.gov/<lfn>, the other redirector on a retry). Same events,
+  no disk.
+
+R5.3 TIMING RECIPE (quiet box only; CI shape 4 jobs x 16 threads x 16 streams, 500 events after 100, 3 repetitions,
+  arms alternated; GPU = the L40 = CUDA_VISIBLE_DEVICES=0)
+  S=L/r5_menu/menu/scripts (= test/menu_timing_cfg.sh, test/menu_bench.sh, menu_module_times.py); configs already made
+  in L/r5_menu/menu/timing/cfg (5 local ttbar files, HLT only, 75e33_timing; port area = L/main (= r5/menu head)):
+    stock_{cpu,gpu}.py, port_{cpu,gpu}.py                      default menu (KF fit on the CPU, untouched)
+    stock_{cpu,gpu}_mkfitfit.py, port_{cpu,gpu}_mkfitfit.py    --procModifiers trackingMkFitFit (D5-c); port = the
+        production swap with the STOCK MkFitFitProducer (full host EventOfHits) until lane fit flips DEVICE_FIT_HAS_CPE;
+        then regenerate with FUNC=customizeHLTforMkFitAlpakaFit (device fit).
+    regenerate: [AREA=<area>] [PROCMOD=trackingMkFitFit] [FUNC=<customise function>] $S/make_timing_cfg.sh <stock|port> <cpu|gpu> <out.py>
+  run (one benchmark at a time, nothing else on the box; check uptime < 5 before each):
+    cd L/r5_menu/menu/timing
+    for m in "" _mkfitfit; do for acc in gpu cpu; do for i in 1 2 3; do for a in stock port; do
+      REP=1 CUDA_VISIBLE_DEVICES=0 $S/bench.sh $a cfg/${a}_${acc}${m}.py out/${a}_${acc}${m}_$i 4 16 16 500 100
+    done; done; done; done
+    grep -h -iE "throughput" out/*/bench.log ; python3 $S/module_times.py out/*/Phase2Timing_resources.json
+  Expected cost: GPU ~2.5 min, CPU ~4 min per benchmark -> ~80 min for both menus.
+
+R5.4 RESULTS (2026-10-03, 5:45-7:30 pm; code = main 371210e / Formats af3da8c in the vA-based area; production configuration
+  = customizeHLTforMkFitAlpakaValidation: the production swap + the stock chain in the same job + MkFitAlpakaStatusCheck
+  requireClean; --nThreads 8; floors = r3 floor500 / stagefloor of the SAME sample; results in r5_menu/menu/results/)
+  sample, backend      ev (tracked)  status  cands hit-diff  unpaired  truth one-side / transitions  D-M4 cands/mkFit/KF  in-job eff
+  ttbar CPU            500 (332)     clean   36/634980       8+12      3+8 / 0                       PASS PASS PASS        = (0.26709)
+  ttbar GPU (L40)      500 (332)     clean   35/635020       12+19     6+9 / 0                       PASS PASS PASS        =
+  QCD CPU              500 (500)     clean   168/980900      136+130   88+76 / 3                     PASS PASS PASS        -1e-5
+  QCD GPU (L40)        500 (500)     clean   177/981079      142+150   79+99 / 7                     PASS PASS PASS        +1e-5
+  QCD pull question SETTLED: on the floor's own events and seeds every candidate pull metric passes, e.g. y |pull|>=1e-2
+  510 (CPU) / 485 (GPU) vs 636 allowed (floor 564). The round-4 FAILs (1.01-1.05x) came from comparing a release-LST
+  menu sample (other events, other seeds) with the vA floor.
+  Stock x86-64-v2 libraries IN THE MENU (portv2_cpu_*: the four stock mkFit libraries incl. the hit/seed converters
+  switched to v2; libs.txt proves the mapping): port vs stock_v2 = 236/980833 QCD candidate hit lists (floor500 v2-v3:
+  233/980851), y>=1e-2 564 (floor 564); ttbar 79/634975 (1.24e-4; floor 1.17e-4). So the replay floor500 equals the
+  in-menu v2/v3 distance, and the port is closer to stock v3 than stock v2 is (port vs v3: 168 QCD, 36 ttbar).
+  The mkFit-level stage floor ('final', 100 events) is too tight at 500 events: the v2 build itself exceeds it on
+  1 (QCD) / 9 (ttbar) metrics by 1.01-1.4x. Regenerate it on 500 events before using it as a gate at that size.
+  Cross-job (port job vs a separate stock job of the same events):
+    CPU ttbar vs vA stock: hltGeneral 617395 -> 617396 tracks, eff 0.8876 -> 0.8877, fake 0.0089 =, dup 0.0104 =;
+      LST seeds identical (690125); TriggerResults 1/68 paths (tau 7 -> 6); vertex DQM 0 histograms > 3 sigma.
+    CPU QCD vs vA stock: 950663 -> 950652, eff 0.8351 -> 0.8348 (+-0.0016), fake 0.0154 =, dup 0.0104 =; 2 paths
+      (tau 134 -> 133, MET 218 -> 222); vertex DQM 0 > 3 sigma.
+    GPU run-to-run floor (stock GPU menu twice, ttbar 500, L40): hltGeneral 617411 / 617408, eff 0.8881 / 0.8879, LST
+      seeds 689845 / 689840 (GPU LST), 2 paths differ (MET 19 -> 18, HT-btag 23 -> 21), vertex DQM 4 > 3 sigma.
+    GPU ttbar port vs stock run 1 / run 2: 617456 tracks, eff 0.8881; paths 2 (the same two as the floor) / 0; vertex
+      DQM 15 / 11 > 3 sigma, incl. hltPhase2PixelVertices (upstream of mkFit): GPU run-to-run, not the port.
+  Chain times in the SAME job (FastTimerService, ms per job event, 8 threads, box load 30-40: indicative):
+    CPU ttbar  port 19.1 EOH + 45.3 build + 0.2 light EOH + 0.1 wrapper = 64.7  vs stock 9.3 + 35.8 = 45.0  (x1.44)
+    CPU QCD    port 29.1 + 87.7 + 0.3 + 0.2 = 117.2                        vs stock 14.1 + 74.0 = 88.0  (x1.33)
+    GPU ttbar  port host time 2.2 + 1.0 + 0.2 + 0.1 = 3.5                   vs stock 9.4 + 37.0 = 46.4
+  trackingMkFitFit menu (D5-c), test/menu_queue2_mkfitfit.sh + test/menu_xc_mkfitfit.txt: production swap (device EOH +
+  device build; the STOCK MkFitFitProducer + MkFitOutputTrackConverter on a full host EventOfHits until the device fit
+  is in main) + an in-job stock chain (EOH, MkFitProducer, MkFitFitProducer, track converter) + comparators + status.
+  The python Validation variant cannot be used there (it clones hltInitialStepTracks with src=TrackCandidates).
+  D-M4 vs the same-sample floors: mkFit level vs stage 'final'; mkFit-fit reco::Tracks vs floor500 floorFit (the floor's
+  hltInitialStepTracksMkFitFit is the same module chain: a direct floor).
+    ttbar CPU / GPU: status clean (332 ev); fit-track hit lists 193 / 183 of 635k (allowed 278), unpaired 55 / 57 (96): PASS
+    QCD   CPU / GPU: status clean (500 ev); 902 / 855 of 981k (allowed 1163), unpaired 328 / 379 (498): PASS
+    mkFit level: PASS in all four. In this menu the initial-step fit costs MkFitFitProducer 21.4 + converter 15.8 ms per
+    job event (CPU ttbar) instead of the KF fit's 137 ms.
+  GPU QCD run-to-run floor (stock GPU menu twice, QCD 500, L40): 950822 / 950781 tracks, eff 0.8356 / 0.8353, 4 trigger
+    paths, 10 vertex DQM histograms > 3 sigma, 1 MTV histogram. Port GPU QCD (950866, eff 0.8356) vs run 1 / run 2:
+    5 / 3 paths, 6 / 10 vertex, 5 / 5 MTV (the dzres_vs_eta single-bin z = 3.2 pattern, also seen on CPU at +2
+    entries): at the floor.
+
+==========================================================================================
+ROUND 6 (lane menu, 2026-10-03, 9:00-11:45 pm): THE TARGET MENU, its validation, the tracking-time table
+==========================================================================================
+Reference (O6-2/O6-5): r6_base = pre2 + current LST (vA) + trackreco#186 (refit* switches on by default in
+hltMkFitGeometryESProducer, new bFieldParams) + #187 + -Ofast for all of MkFitCore. Lane area L/r6_menu/CMSSW = r6_base +
+our two repos (branch r6/menu). Scripts: L/r6_menu/menu/scripts (copies of the r5/verify5 recipes with an area argument).
+
+R6.1 CUSTOMISE (python/customizeHLTforMkFitAlpaka.py)
+  customizeHLTforMkFitAlpakaTarget            THE TARGET MENU, needs --procModifiers trackingMkFitFit:
+      device hit input (DEVICE_HITS = True: HitSoA made on the device from the pixel rechit SoA + OT rechits, bitwise
+      vs the stock converters) + index-only MkFitClusterIndexToHit producers under hltMkFitSiPixelHits /
+      hltMkFitSiPhase2Hits + device EventOfHits + device building + light host EventOfHits + device mkFit final fit
+      with the CPE (replaces MkFitFitProducer; MkFitOutputTrackConverter stays). DEVICE_SEEDS = False: lane seeds'
+      device seed fit (O6-1 (b), BuildProducer lstSeedFit), OFF by default; customizeHLTforMkFitAlpakaTargetDeviceSeeds
+      switches it on for the O6-1 regression checks.
+  customizeHLTforMkFitAlpakaDeviceHits(process, compare=False, soaOnDevice=None)  device hit input on top of a swap;
+      keeps the stock converters as <label>Stock (unscheduled: they run only if something reads them); python guard
+      (R5-M2): the legacy pixel rechits must be SiPixelRecHitFromSoAAlpaka* of the same SoA label; refuses any remaining
+      reader of the hit labels that needs the MkFitHitWrapper (stock MkFitProducer/MkFitFitProducer/EventOfHits, or
+      the device fit without eventOfHits).
+  customizeHLTforMkFitAlpakaTargetValidation  target menu + the COMPLETE stock chain of the same events in the same job
+      (stock converters, full EventOfHits, MkFitProducer, MkFitFitProducer, MkFitOutputTrackConverter), appended to
+      HLTInitialStepSequence, + in-job checks:
+        DEVICE_HITS_EOH ... IDENTICAL       device HitSoA vs the stock converters, every event (compareHostHits)
+        [compare menuCmpMkFit]              building, port vs stock (chained: each on its own hits/EventOfHits)
+        [compare menuCmpFit]                device fit vs stock MkFitFitProducer on the SAME input (the device building
+                                            output): ISOLATED fit check; [compare menuCmpFitTracks] its reco::Tracks
+        [compare menuCmpFitSerial|DevSerial] serial clone of device EOH + fit: same-job rounding reference / determinism
+        [compare menuCmpFitChain]           device fit (device build) vs stock fit (stock build): chained, mkFit level
+        [compare menuCmpTracks] + [paired menu]  hltInitialStepTracks chained vs stock, paired truth (MTV TP selection)
+        MkFitAlpakaStatusCheck requireClean on the device building status product
+  Needs fit patch 0001 (L/r6_menu/patches/0001-fit-devhits-counts-from-ClusterIndexToHit.patch, lane fit owns the
+  file; applied UNCOMMITTED in this lane's tree): with eventOfHits set, MkFitAlpakaFitProducer takes nPix/nStr from
+  MkFitClusterIndexToHit, so it runs with the index-only producers (R5-H1). Without it: ProductNotFound.
+
+R6.2 RECIPES
+  validation  [PROCMOD=none|trackingMkFitFit] [XC=...] menu/scripts/menu_job.sh <tag> <area> <cpu|gpu-nvidia> <ttbar|qcd>
+              <nev> [func]   (job.sh command line exactly, 8 threads, local RAW); summary:
+              menu/scripts/summarize_target.sh <port tag> [stock tags]  -> menu/results/<tag>.txt
+  timing      menu/scripts/make_timing_cfg.sh <area> <cpu|gpu> <out.py> (PROCMOD, FUNC env) -> menu/timing/cfg/
+              {stock,stockfit,target}_{cpu,gpu}.py; menu/scripts/run_timing.sh <reps> (CI shape 4 x 16 x 16, 300 events
+              after 50, L40, odd reps S F T / even reps T F S, GPU then CPU; STOP_TIMING stops);
+              menu/scripts/tracking_table.py arm=dir,dir ... : events/s + CI 'Tracking' slice (groups Tracking +
+              Tracking|Conversion + Tracking|Portable of circles hlt.json, as hltqcd/timing/ci_ib/track_break.py; types
+              unknown to circles that contain 'MkFit' are counted as Tracking) + per-module table (H/D/S).
+  6c floor    menu/scripts/run_q6c.sh: verify5's trackingMkFitFit CPU ttbar job rerun with the release's x86-64-v2 stock
+              mkFit libraries (LD_LIBRARY_PATH prefix, libs.txt proves the mapping); replay_floor_check.py with that
+              log as the FLOOR and verify5's log as the PORT.
+
+R6.3 RESULTS (2026-10-03, 9:17-11:20 pm; lane area = r6_base + r6/menu; "+186" = local test branch r6/menu-fit186 =
+  r6/menu + lane fit's r6/fit 16353b7 (#186 field constants / refit switches / per-module material in the device fit);
+  all runs need patches/0001 (fit producer reads the hit counts from MkFitClusterIndexToHit). Results: L/r6_menu/menu/results)
+  a) In-job vs the NEW reference (customizeHLTforMkFitAlpakaTargetValidation; ttbar 200 RAW = 139 tracked, QCD 100):
+                                  ttbar CPU / GPU      QCD CPU / GPU       ttbar CPU / GPU +186   QCD CPU / GPU +186
+     status                       clean / clean        clean / clean       clean / clean          clean / clean
+     device hits vs converters    IDENTICAL every event, CPU and GPU (139, 100 events)
+     building hit lists identical 97.90 / 97.89 %      97.91 / 97.91 %     99.993 / 99.993 %      99.992 / 99.991 %
+     fit isolated hit lists       99.20 / 99.20 %      99.14 / 99.15 %     99.985 / 99.986 %      99.977 / 99.975 %
+     tracks chained ref/tgt-only  1979/160, 1987/146   1421/177, 1417/164  8/73, 9/75             6/77, 8/78
+     paired eff tgt - ref         -.00178 / -.00179    -.00164 / -.00165   +.00003 / +.00003      +.00006 / +.00006
+     (+-0.00005 without #186, +-0.00001 with). Without #186 the port misses the reference's #186 gain; switching #186
+     off in the stock modules (bFieldParams old, refit* false; diagnostic run tvalold) closes it (+.00004). With lane
+     fit's port the distance is back at the rounding level of the building (r5: 5.7e-5 hit-list rate; here 7.6e-5).
+     The tgt-only excess at reco::Track level (~60-75 per 100-139 events) = stock tracks the MkFitOutputTrackConverter
+     drops as NaN: -Ofast's -ffinite-math-only removes stock's x != x guards (lane fit); the port keeps them.
+  b) MTV hltGeneral eff/fake/dup (separate jobs, same events): ttbar CPU (i) KF .8893/.0086/.0100, (ii) stock+#186
+     trackingMkFitFit .8862/.0105/.0096, (iii) target .8861/.0104/.0096, (iii)+186 .8862/.0105/.0096; ttbar GPU (ii)
+     .8861/.0105/.0095, (iii) .8858/.0105/.0096, (iii)+186 .8864/.0105/.0096; QCD CPU (i) .8377/.0155/.0101, (ii)
+     .8337/.0178/.0093, (iii) .8309/.0177/.0093, (iii)+186 .8339/.0178/.0093. +186 vs (ii): trigger paths 1 (ttbar)
+     / 0 (QCD) differ by 1 event; tracking DQM 0 histograms > 3 sigma; vertex DQM 0-8.
+  c) 6c SETTLED (old reference, verify5 head): run_q6c.sh = verify5's trackingMkFitFit CPU ttbar job with the release's
+     x86-64-v2 stock mkFit libraries. Port vs stock_v3 (verify5) against port vs stock_v2 (same sample, same job shape)
+     as the floor: PASS on every metric (mkFit level theta>=1 195 vs 233 -> allowed 280; hit lists 42 vs 72; reco::Track
+     lambda>=1 149 vs 178, dsz>=1 109 vs 149). The ttbar menu sample is noisier than the replay floor's sample; the port
+     is closer to stock v3 than v2 is. results/q6c_settle.txt.
+  d) D-M4 with the new reference (+186 state, lane ref's floors): replay ISOLATED fit floors FAIL 1.0-3.5x (fit hit
+     lists 38-50 vs 17-24 allowed; results/t186_newfloors.txt). Same-sample in-menu proxy (test/menu_r6_v2floor.sh: the
+     validation job rerun with lane ref's v2mkfit libraries) PASS on building, fit, fit tracks, chained tracks
+     (results/t186_menufloor_v2.txt), but weak: the port's fit is as far from v2 as from v3 (41 vs 38 hit lists).
+     The reco::Track unpaired excess (76-84) is a stock effect: stock v2 also drops 81.
+  e) Tracking-time table (CI shape 4 x 16 x 16, ttbar 300 ev after 50, L40, 4 reps alternated S F T / T F S, box load
+     30-97 from other lanes: indicative; L/r6_menu/REPORT.txt section 3). Tracking slice without hltLST (GPU-wait host
+     time), rescaled by the calorimeter groups' time as a load correction, ms per input event:
+       GPU  (i) KF menu 372 | (ii) stock trackingMkFitFit (#186) 236 | (iii) target 157-159 (with or without the #186 fit)
+       CPU  352-373 | 222-234 | 240-252 (device-hit EventOfHits on serial +16 ms, build +9 ms vs stock)
+     Events/s did not resolve differences below ~10% (same-arm spread up to 20%). GPU host modules left in the target's
+     slice: LSTOutputConverter 34.5, OT rechits 30.4, MkFitOutputTrackConverter 23.6, KF pixel seeds 19.6, HP classifier
+     5.3, small ones ~11; @alpaka host time 38.6 (LST 12, LST input 9, OT SoA 7, fit CPE packing 5, EOH 4, build 2).
+
+==========================================================================================
+ROUND 7 (lane menu, 2026-10-04, 1:00-3:30 am): integrated-head validation vs the D7-a reference, timing, stage-D audit
+==========================================================================================
+Area L/r7_menu/CMSSW = main6 (verify6 integration head: MkFitAlpaka main 6f88f2e, Formats af3da8c) on branch r7/menu, with
+RecoTracker/MkFitCore r7/menu = d1-nan-guards 85a2dba (D7-a: the reference = r6_base + fit's NaN-guard patch; MkFitCore built
+alone, 22 TUs, 0 errors; the other packages are main6's build). No other lane's round-7 code is in these numbers (none had landed).
+Scripts: L/r7_menu/menu/scripts (menu_job.sh, wave.sh, chain.sh, summarize.sh, maxfloor.py, run_timing.sh, timing_chain.sh,
+bench.sh, gpumem2.sh, gpumem_table.py, tracking_table.py), copies of verify6_int's with the lane paths.
+
+R7.1 PYTHON
+  _checkStockFitConfig (customizeHLTforMkFitAlpaka.py, 7c21637): before the device fit replaces the stock MkFitFitProducer,
+  every stock parameter must be one the device fit honours (tracks, eventOfHits, hits, config, pixelCPE, cand* cuts,
+  untracked) or have its default; otherwise RuntimeError (review R6-M1: storeHitStates was dropped silently). D7-g: with
+  --procModifiers trackingMkFitFit,mtd_at_hlt (storeHitStates = True) the target customise raises "mtd_at_hlt with the
+  device fit is not supported yet (D7-g)". Checked: target, TargetValidation and the timing configs load unchanged; the
+  mtd_at_hlt combination raises at cmsDriver time (L/r7_menu/menu/guardtest).
+
+R7.2 VALIDATION (customizeHLTforMkFitAlpakaTargetValidation, job.sh command line, 8 threads, local RAW: ttbar 500 = all 5
+  files (332 events reach tracking), QCD 500 = all 10 files; CPU = serial, GPU = CUDA on the L40; results/tv_*.txt)
+                                        ttbar CPU       ttbar GPU       QCD CPU         QCD GPU
+  status build / fit (requireClean)     clean 332       clean 332       clean 500       clean 500
+  device HitSoA vs stock converters     IDENT 332/332   IDENT 332/332   IDENT 500/500   IDENT 500/500
+  building identical hit lists          99.9940 %       99.9937 %       99.9923 %       99.9920 %
+    (menuCmpMkFit; ref-only/tgt-only)   6 / 10          7 / 8           22 / 19         17 / 15     of 700k / 1.08M tracks
+  fit isolated identical hit lists      99.9953 %       99.9959 %       99.9934 %       99.9930 %
+  fit chained (mkFit level)             99.9889 %       99.9881 %       99.9855 %       99.9845 %
+  device fit vs its serial clone        bit-identical   99.9969 %       bit-identical   99.9954 %
+  reco::Track chained ref-only/tgt-only 26 / 31         30 / 28         39 / 47         43 / 42     of 640k / 988k
+  paired truth: TPs only ref / only tgt 4 / 4           6 / 5           3 / 8           6 / 8       of 602k / 921k found
+  paired eff (tgt - ref)                +0.00000(0)     -0.00000(0)     +0.00000(0)     +0.00000(0)
+  fake / dup (paired, ref = tgt)        .02462/.01126   .02453/.01126   .03436/.01130   .03440/.01133
+  MTV hltGeneral eff/fake/dup (target)  .8854/.0108/.0097 .8854/.0107/.0097 .8339/.0176/.0097 .8347/.0176/.0097
+  With the NaN guard in the reference, D1 is gone: verify6's 56-87 target-only reco::Tracks per 100-139 events and its
+  +31..+40 one-sided TPs are now 4-8 TPs per side over 500 events, symmetric.
+
+R7.3a D-M4 CHAINED vs the D7-a MAX FLOOR (lane fitgap's floors/chained/{ttbar500,qcd500}/floor_*_chained.log, 500 replay
+  events, max over v2-Ofast / v3-noOfast / v3-B6 vs v3-Ofast + NaN guard; results/dm4_chained_maxfloor.txt):
+  hltInitialStepTracks chained (menuCmpTracks vs floorFit, with paired truth on ttbar): PASS on ttbar CPU, ttbar GPU, QCD CPU,
+  QCD GPU (truth one-side 1.3e-5 / 1.8e-5 vs the max floor 1.77e-5). menuCmpMkFit vs floorCand is NOT like-for-like (mkFit
+  tracks vs TrackCandidates: different states, MISSING metrics; hit lists 6-8e-5 vs 2.4-3.4e-5): the building verdict is the
+  replay chain (lane fitgap: the round-6 port vs these floors 16/16 PASS).
+R7.3b D-M4 ISOLATED vs the D7-a MAX FLOOR (lane fitgap's floors, max over v2-Ofast / v3-noOfast / v3-B6 vs v3-Ofast + NaN guard;
+  ISOLATED fit floors on the replay samples, 100 events: NOT the menu events; results/dm4_isolated_maxfloor.txt;
+  maxfloor.py = the port passes a metric iff it passes against at least one variant, i.e. against the max rate)
+                                        ttbar CPU       ttbar GPU       QCD CPU         QCD GPU
+  reco::Track isolated (menuCmpFitTracks) PASS          PASS            FAIL (hits 1.01, lambda>=1e-2 1.003)  FAIL (hits 1.09)
+  mkFit-level isolated fit (menuCmpFit) FAIL            FAIL            FAIL            FAIL
+     pull z >= 1e-2 (port/allowed)      1.11            1.13            1.14            1.14
+     pull z >= 1                        1.03            1.20            ok              ok
+     hit lists                          ok              ok              1.08            1.14
+  device fit vs its serial clone        PASS            FAIL (pull z >= 1: 94 vs 80 allowed) PASS   PASS
+  Reading: every metric is within 1.0-1.2x of the max floor on a DIFFERENT sample; the only consistent excess is the
+  z-parameter pull of the mkFit-level fit state (>= 1e-2 and, on ttbar, >= 1), and the GPU-vs-serial distance of the same
+  device code shows the same z tail (94 tracks >= 1 sigma), so it is a numerically sensitive z, not a port difference to
+  stock alone. The reco::Track level (what the menu uses) passes on ttbar and is at the floor on QCD. Same-sample floors
+  (the floor arms run on the menu events) would settle it: see the report's next steps.
+
+R7.4 TIMING (CI shape; menu/scripts/timing_chain.sh -> run_timing.sh <rep> <arm>_<acc>...; bench.sh starts gpumem2.sh for GPU
+  arms: device MiB of the benchmark's own cmsRun processes, matched by cwd under $TMPDIR/multirun*, every 2 s;
+  gpumem_table.py; tracking_table.py as R6.2). INDICATIVE: the box ran at load 31-100 with 3-12 cmsRun of other lanes.
+                                      KF              stockfit (#186)  target
+  GPU ev/s rep 1 (load 31-55)         25.4            27.1             26.7
+  GPU ev/s mean of 4 (S F T/T F S/S F T/T F S) 20.9   22.6             23.9
+  GPU Tracking ms/input ev, rep 1     322.8           204.7            141.5     (verify6 quiet: 311.0 / 194.5 / 130.2)
+  GPU Tracking, 4 reps (excl. hltLST) 437.9 (428.2)   256.4 (242.4)    166.0 (154.9)
+  mkFit-side host time (3 reps)       -               95.0             10.3      (-85 ms/input event)
+  GPU memory peak, MiB (4 jobs)       11814-12698     12320-12820      14134-14592   target +14% vs stockfit, +16% vs KF
+  GPU memory median, MiB              9016-9299       8535-10358       10205-11951   +20% / +24%  => over D7-f (+10%)
+  CPU ev/s (load 55-100)              14.8            13.8             13.6 (2 reps); target + MALLOC_CONF 12.2 (inconclusive)
+  Files: menu/results/timing_gpu.txt, timing_gpu_r1.txt, timing_gpu_r4.txt, timing_cpu.txt, gpumem.txt.
+  GPU memory attribution (menu/scripts/memattr.sh = test/menu_r7_memattr.sh: ONE job, 16 threads x 16 streams, 250 ttbar events,
+  peak device MiB of the process): KF 3170, stockfit 3162, build-only (customizeHLTforMkFitAlpaka) 3520, target 3620:
+  target - stockfit = +458 MiB (+14.5%), of which device EventOfHits + build +358 MiB, device hits + fit +100 MiB.
+
+R7.5 STAGE-D AUDIT: doc/stageD.txt (table + ranked round-8 plan); tools test/menu_stageD_{gen.sh,consumers.py,join.py}.
+
+R7.6 val5k-r7 (prepared, not launched): L/r7_menu/val5k (= test/menu_r7_val5k_*). ONE frozen area for all arms
+  (scripts/setup_area.sh <integrated area>: rsync without tmp/, ProjectRename, edmPluginRefresh, NaN-guard check), arms
+  ref (stock + #186 + guard, trackingMkFitFit, serial), target (customizeHLTforMkFitAlpakaTarget, serial), tgpu (target,
+  CUDA L40, first 10 files); scheduler/chain/post as r5's (streaming, maxj 2, disk floor 45 GB, partial post every 10
+  files, no clock deadline); scripts/launch.sh = 10-event pilot per arm -> <arm>.READY -> GO + scheduler + chain (setsid).

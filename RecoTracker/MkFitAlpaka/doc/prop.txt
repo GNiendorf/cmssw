@@ -1,0 +1,89 @@
+MkFitAlpaka - lane prop: propagation, material effects and Kalman operations on device (round 1, 2026-10-03)
+=====================================================================================================
+Reference: stock mkFit of CMSSW_20_1_0_pre2, RecoTracker/MkFitCore/src/{PropagationMPlex*.cc, KalmanUtilsMPlex.cc}.
+
+WHAT IS HERE
+  src/alpaka/prop/  (header-only, ALPAKA_FN_HOST_ACC, namespace ALPAKA_ACCELERATOR_NAMESPACE::mkfitdev)
+    PropagationMPlex.h   squashPhiMPlex, squashPhiMPlexGeneral, applyMaterialEffects,
+                         helixAtRFromIterativeCCS + propagateHelixToRMPlex          (PropagationMPlex.cc)
+                         helixAtZ + propagateHelixToZMPlex                          (PropagationMPlexEndcap.cc)
+                         helixAtPlane + propagateHelixToPlaneMPlex (getS, parsFromPathL, parsAndErrPropFromPathL,
+                         curvilinear Jacobians)                                     (PropagationMPlexPlane.cc)
+    KalmanUtilsMPlex.h   KalmanFilterOperation (KFO_*), kalmanCheckChargeFlip, kalmanOperationPlaneLocal,
+                         kalmanUpdatePlane, kalmanPropagateAndUpdatePlane, kalmanPropagateAndUpdateAndChi2Plane,
+                         kalmanComputeChi2Plane, kalmanPropagateAndComputeChi2Plane  (KalmanUtilsMPlex.cc)
+    PropagationFlags.h   mkfitdev::prop::PropagationFlags (device mirror of mkfit::PropagationFlags: the TrackerInfo
+                         back-pointer is replaced by a MaterialView), PF_* enum, material_checked(view, z, r)
+    PropMatriplex.h      includes lane mplex's interface/matriplex/MatriplexBackend.h (MPlexLV<N>, ..., kNN, vdt::,
+                         Config::, Const::, hipo, sincos4, getPhi, getTheta) and defines idx_t
+    PropMath.h           isFinite (bit test = edm::isFinite, the CMSSW branch of mkfit::isFinite)
+    *.ah                 the 15 generated multiplications the ported code includes (MultHelixProp[Transp][Endcap],
+                         MultHelixPlaneProp[Transp], JacErrPropCurv1/2, JacCCS2Loc, PsErrLoc[Transp|Upd], JacLoc2CCS,
+                         OutErrCCS[Transp]) = the scalar (non-intrinsics) branch of the stock files, omp pragma dropped.
+
+  Port rules followed: stock names, argument order and default arguments; templated on N (tracks per Alpaka thread,
+  use mkfitdev::kNN: 1 on GPU, 8 = stock NN on CPU); same operations in the same order. Stock Matriplex vector
+  expressions (plane propagation) are written as explicit per-slot loops with the identical per-element arithmetic.
+  helixAtRFromIterativeCCS runs its per-slot body as one loop over slots (stock: one loop per step over all slots);
+  this keeps it bit-identical to stock on the CPU (the stock loop shape was tried: 11% faster on CPU, no longer
+  bit-identical) - see REPORT.txt.
+  getS keeps the stock formula: the float cancellation fix (s = 2A / (-B - sign(B) sqrt(B^2 - 4AC))) is NOT applied.
+
+  Phase-2 settings baked in (as stock sets them in MkFitGeometryESProducer): Config::usePropToPlane = true,
+  Config::usePtMultScat = true (lane mplex constexpr), Config::useTrigApprox = true, Niter = 5, nSStepsInProp2Plane = 2.
+
+INTERFACE FOR OTHER LANES
+  #include "RecoTracker/MkFitAlpaka/src/alpaka/prop/PropagationMPlex.h"
+  #include "RecoTracker/MkFitAlpaka/src/alpaka/prop/KalmanUtilsMPlex.h"
+  using namespace ALPAKA_ACCELERATOR_NAMESPACE::mkfitdev;   // functions, MPlex types, kNN
+  ::mkfitdev::prop::PropagationFlags pf(PF_use_param_b_field | PF_apply_material, materialView);  // ES lane fills
+                                                                                              // ::mkfitdev::MaterialView
+  Inside a kernel, per thread, N = kNN:
+    MPlexLS<kNN> err; MPlexLV<kNN> par; MPlexQI<kNN> chg; ... (load N_proc <= kNN tracks)
+    propagateHelixToRMPlex(err, par, chg, msRad, outErr, outPar, failFlag, N_proc, pf);          // building, barrel layer
+    propagateHelixToZMPlex(err, par, chg, msZ, outErr, outPar, failFlag, N_proc, pf);            // building, endcap layer
+    kalmanPropagateAndComputeChi2Plane(err, par, chg, msErr, msPar, nrm, dir, pnt, chi2, propPar, failFlag, N_proc,
+                                       pf, propToHit);                                          // hit tests
+    kalmanPropagateAndUpdatePlane(err, par, chg, msErr, msPar, nrm, dir, pnt, outErr, outPar, failFlag, N_proc, pf,
+                                  propToHit);                                                   // candidate update
+    propagateHelixToPlaneMPlex(...) + kalmanOperationPlaneLocal(KFO_Calculate_Chi2 | KFO_Update_Params | KFO_Local_Cov,
+                                  ...) + kalmanCheckChargeFlip(...)                             // backward fit
+    kalmanPropagateAndUpdateAndChi2Plane(..., noMatEffPtr)                                      // final fit (no CPE)
+  Flags of the Phase-2 LST step (PropagationConfig, MkFitGeometryESProducer.cc:625-635): finding_inter_layer,
+  finding_intra_layer, backward_fit, forward_fit = PF_use_param_b_field | PF_apply_material; seed_fit, pca = PF_none;
+  finding_requires_propagation_to_hit_pos = true; backward_fit_to_pca = false.
+  Not ported (not called by the Phase-2 LST step, verified by a call census on real HLT events, see REPORT.txt):
+  propagateLineToRMPlex, helixAtRFromIterativeCCSFullJac, the barrel/endcap Kalman flavours (kalmanOperation[Endcap]
+  and their update/chi2 wrappers, KalmanUtilsMPlex.icc), kalmanOperationPlane (global-frame plane update), and the
+  CPE-correction hook (doCPE + cpe_func, a host std::function) of kalmanOperationPlaneLocal /
+  kalmanPropagateAndUpdateAndChi2Plane. The final fit DOES use that hook for every pixel hit (PixelCPETemplateReco).
+
+TEST (STOCK vs PORT)
+  Binaries (test/BuildFile.xml):
+    testMkFitAlpakaPropStockRef            host, links stock MkFitCore. (a) <out.bin> [ntracks] [seed]: generates
+                                           Phase-2-like states/planes/hits, runs the STOCK functions, writes inputs +
+                                           outputs. (b) --rerun <file> [reps]: re-runs stock on a captured file, checks the
+                                           capture is reproduced bit-exactly and times stock (ns/slot, 1 core).
+    testMkFitAlpakaProp{SerialSync,CudaAsync,ROCmAsync} <file>: runs the port (one kernel per operation, N = kNN) on the
+                                           same inputs and prints agreement numbers + kernel ns/slot; exit 0 = PASS
+                                           (fail flags >= 99.9% agree, >= 99% of tracks within 1e-3, no finiteness flips).
+    Record format: test/propTestIO.h (blocks per (operation, flags, propToHit); 6x6 errors packed lower triangle).
+  Real inputs (stock calls captured inside the HLT, LST step + mkFit final fit):
+    1. Private instrumented MkFitCore in the lane area (test/propDumpHook.patch, stock + a dump hook, inert unless
+       MKFIT_PROP_DUMP is set):
+         cp -r $CMSSW_RELEASE_BASE/src/RecoTracker/MkFitCore $CMSSW_BASE/src/RecoTracker/ && chmod -R u+w ...
+         cd $CMSSW_BASE/src && patch -p1 < RecoTracker/MkFitAlpaka/test/propDumpHook.patch && scram b -j 8
+    2. HLT config (pre2_4way recipe without validation, plus the mkFit final fit):
+         cmsDriver.py step2 -s L1P2GT,HLT:75e33_timing --processName=HLTX --hltProcess HLTX \
+           --conditions auto:phase2_realistic_T35 --geometry ExtendedRun4D121 --era Phase2C22I13M9 \
+           --procModifiers trackingMkFitFit --customise SLHCUpgradeSimulations/Configuration/aging.customise_aging_1000 \
+           --filein file:<RAW> --inputCommands='keep *, drop *_hlt*_*_HLT, drop triggerTriggerFilterObjectWithRefs_l1t*_*_HLT' \
+           --no_output --python_filename hlt_dump.py --mc -n 5 --nThreads 4 --accelerators cpu --no_exec
+         MKFIT_PROP_DUMP=real_ttbar.bin cmsRun hlt_dump.py      # also prints a call census of all stock entry points
+       RAW used: /mnt/data1/gsn27/here/ttbar_raw/0033230b-a131-453a-95c0-fe14d5027d1f.root (5 events, 3 reach tracking),
+                 /mnt/data1/gsn27/here/qcd_raw/03b794c3-dede-4201-b0a2-279c27f5a723.root (3 events). <=150k slots/block.
+    3. testMkFitAlpakaPropSerialSync real_ttbar.bin ; testMkFitAlpakaPropCudaAsync real_ttbar.bin
+       testMkFitAlpakaPropStockRef --rerun real_ttbar.bin 5
+  Diagnostics: PROPTEST_DUMP=<thr> prints tracks whose max element error difference exceeds thr.
+  Registers: cuobjdump --dump-resource-usage $CMSSW_BASE/test/$SCRAM_ARCH/testMkFitAlpakaPropCudaAsync
+             (kernel PropKernel<1, op>, op = enum Op in propTestIO.h).

@@ -1,0 +1,349 @@
+MkFitAlpaka harness lane: replay inputs, replay config, comparator, timing          (round 1, 2026-10-03)
+====================================================================================================
+L = /mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/mem_ref/lanes/mkfit_alpaka
+
+1. DATA FILES (read-only for everyone but the harness lane)
+  $L/data/replay_ttbar.root  100 ev, 1.0 GB  ttbar PU200 (ttbar_raw/0033230b-...root, events 201-300)
+  $L/data/replay_qcd.root    100 ev, 1.0 GB  QCD 1800-2400 PU200 (qcd_raw/03b794c3-... 50 ev + 057d0c1d-... 50 ev;
+                                             the first file holds only 50 events)
+  Made by $L/lane_harness/scripts/make_replay.sh <sample> <RAW> 100: the HLT exactly as lanes/pre2_4way/scripts/job.sh
+  (area pre2_4way/areas/vA = CMSSW_20_1_0_pre2 + current LST + STOCK mkFit; 75e33_timing, accelerators cpu, process HLTX,
+  aging 1000, VALIDATION step) with two additions:
+    - replayForceTracking: a Path that runs the HLT tracking on every event (the menu runs it only on L1-seeded paths,
+      70/100 ttbar events). Deterministic modules: events where the menu ran tracking are unchanged.
+    - replayOut: PoolOutputModule keeping (all process HLTX):
+        hltInitialStepTrajectorySeedsLST   LST TrajectorySeeds (the mkFit seeds input)
+        hltSiPixelClusters                 legacy pixel clusters
+        hltPhase2SiPixelRecHitsSoA         pixel rechit SoA (legacy rechits are re-made from it, see 3.)
+        hltSiPhase2Clusters                OT clusters (OT rechits are re-made by the menu's Phase2TrackerRecHits)
+        hltOnlineBeamSpot
+        hltInitialStepTrackCandidates      FIDELITY REFERENCE: stock mkFit candidates (MkFitOutputConverter)
+        hltInitialStepTracks               KF fit-smoother tracks (+extras, hits)
+        hltInitialStepTrackSelectionHighPurity
+        addPileupInfo, genParticles, generator (small)
+  Sim truth (TrackingParticles, simlinks, SimTracks: ~55 MB/event) is NOT copied: read it from the RAW parent with
+  secondaryFileNames (replay_cfg.py truth=1; RAW_FILES in python/replay_cff.py).
+
+2. REPLAY COMMAND (copy-paste)
+  source /cvmfs/cms.cern.ch/cmsset_default.sh; export SCRAM_ARCH=el9_amd64_gcc13
+  cd <your CMSSW>/src && eval $(scramv1 runtime -sh); export TMPDIR=<your lane>/tmp
+  cmsRun RecoTracker/MkFitAlpaka/test/replay_cfg.py sample=ttbar            # or sample=qcd; maxEvents=N; threads=N(<=8)
+  Options: fit=1 (mkFit final fit), timing=1 (FastTimerService), compare=0, printEvents=1, summaryFile=x.json,
+           accelerators=cpu|gpu-nvidia|'*', truth=1 (attach RAW for sim truth), out=file.root (write replayed products),
+           inputFiles=file:..., skipEvents=N, processName=X (default REPLAY), requireIdentical=1.
+  Cross-run / cross-version comparison: run 1 with out=file:r1.root (keeps the inputs + its candidates/tracks), then
+    run 2 with inputFiles=file:r1.root processName=REPLAY2 and
+    addCandidateCompare(process, 'cmp12', 'hltInitialStepTrackCandidates::REPLAY', 'hltInitialStepTrackCandidates::REPLAY2')
+    (checked: 5/5 events bit-identical run 1 vs run 2 and HLT vs run 2; ~10 MB/event).
+  Expected output (stock chain, CPU, 8 threads, ~20 s per sample):
+    [compare compareCandidatesHLTvsReplay] events identical (count, hits, seed refs) 100 / 100 (1); ... fully bit-identical 100
+
+3. WHAT THE REPLAY RUNS (python/replay_cff.py: makeReplayProcess)
+  Process REPLAY, era Phase2C22I13M9, geometry ExtendedRun4D121, GT auto:phase2_realistic_T35, ES + modules from
+  HLTrigger.Configuration.HLT_75e33_timing_cff (the release menu = vA menu: HLTrigger and MkFit* are identical to the
+  release in vA). The menu schedule is replaced by one Path:
+    hltSiPixelRecHits        MkFitAlpakaReplayPixelRecHits (harness): legacy pixel rechits from the SoA, see below
+    hltSiPhase2RecHits       the menu's Phase2TrackerRecHits from hltSiPhase2Clusters
+    hltInitialStepTrajectorySeedsLST  MkFitAlpakaReplaySeeds (harness): copy of the HLTX seeds with det re-attached
+    hltMkFitSiPixelHits, hltMkFitSiPhase2Hits, hltMkFitEventOfHits, hltInitialStepMkFitSeeds,
+    hltInitialStepTrackCandidatesMkFit, hltInitialStepTrackCandidates      (menu modules, untouched)
+    [fit=1] hltMeasurementTrackerEvent, hltInitialStepTrackCandidatesMkFitFit (MkFitFitProducer),
+            hltInitialStepTracksMkFitFit (MkFitOutputTrackConverter = the menu's trackingMkFitFit hltInitialStepTracks)
+  EndPath replayEndPath: comparators (compareCandidatesHLTvsReplay by default).
+  The three harness modules carry the SAME labels as the menu's, so every menu InputTag resolves to them unchanged.
+  Why they are needed (persistence pitfalls, worth knowing for any file-based test):
+    - BaseTrackerRecHit pos_/err_ are TRANSIENT: legacy rechits read from a file have position (0,0) and zero errors.
+    - TrackingRecHit det() is transient: seeds read from a file have hits without GeomDet (MkFitSeedConverter crashes).
+    - SiPixelCluster::originalId() is transient: the menu's SiPixelRecHitFromSoAAlpaka asserts on persisted clusters.
+      MkFitAlpakaReplayPixelRecHits recovers the per-module SoA index (exact charge, nearest position, 3 passes),
+      validated in-memory against originalId(): 0 wrong out of 3,610,066 clusters (20 ttbar events).
+
+4. ADDING YOUR PRODUCER + A COMPARATOR (in your own test/<lane>*_cfg.py)
+  import FWCore.ParameterSet.Config as cms
+  from RecoTracker.MkFitAlpaka.replay_cff import makeReplayProcess, replayFile, addCandidateCompare, addTrackCompare, \
+       setAlpakaBackend, addTiming
+  process = makeReplayProcess([replayFile('ttbar')], maxEvents=-1, threads=8, accelerators=['cpu'])
+  process.myCands = cms.EDProducer('MyCandsProducer@alpaka', ...)        # consumes e.g. hltMkFitEventOfHits
+  process.replayPath += process.myCands
+  addCandidateCompare(process, 'cmpMine', reference='hltInitialStepTrackCandidates::REPLAY', target='myCands')
+  # tracks: addTrackCompare(process, 'cmpFit', reference='hltInitialStepTracksMkFitFit::REPLAY', target='myTracks')
+  The stock chain stays in the same job, so the reference is always the stock output of the same inputs.
+
+5. COMPARATOR PLUGINS (plugins/TrackCollectionCompare.cc)
+  MkFitAlpakaCandidateCompare  (TrackCandidateCollection)   MkFitAlpakaTrackCompare  (edm::View<reco::Track>)
+  Parameters: reference, target (InputTag), label, paramTolerance (|pull| for "params agree", default 1e-3),
+    validHitsOnly (default False for candidates, True for tracks), seedKeyOnly (default True: pair by seed index, so
+    copies of the seed collection pair with the originals), maxPrint (details of the first N differing pairs),
+    printEvents, summaryFile (JSON).
+  Pairing: by seed ref key (first unused target with that seed); tracks without seed ref pair by index.
+  Per pair: hit list identity (detId, hit type, cluster ProductID+index, in order), per-parameter pull
+    (tgt-ref)/sigma_ref (candidates: local q/p, dxdz, dydz, x, y at the state's det; tracks: qoverp, lambda, phi, dxy, dsz),
+    |sigma_tgt/sigma_ref-1|, |dchi2|; sort-free bucket histograms ==0, <1e-6, ..., <1, >=1.
+  Event identical = same count, all paired, identical hit lists. Summary lines are prefixed "[compare <label>]".
+  requireIdentical=True makes endJob throw unless every event is identical incl. params within tolerance (unit tests).
+  mkFit-level variants (same parameters):
+    MkFitAlpakaMkFitTrackCompare  two MkFitOutputWrapper (mkFit candidates hltInitialStepTrackCandidatesMkFit, or the
+                                  fit output hltInitialStepTrackCandidatesMkFitFit): paired by track label (= seed
+                                  index), hits = (layer, index) incl. negative indices (misses/stops), mkFit's
+                                  6 parameters (x, y, z, 1/pT, phi, theta) and 6x6 error diagonal, chi2.
+                                  Both sides must be the same stage (states at the same reference point).
+    MkFitAlpakaMkFitSeedCompare   two MkFitSeedWrapper (mkFit seeds, hltInitialStepMkFitSeeds).
+    python: addMkFitTrackCompare(process, name, ref, tgt, ...), addMkFitSeedCompare(...).
+    Lanes producing mkfit::TrackVec-equivalent output can wrap it in an MkFitOutputWrapper (host) and compare at mkFit
+    level, or feed the stock MkFitOutputConverter and compare TrackCandidates (section 4).
+  Stock mkFit products available inside a replay job (not persistable, but consumable by your analyzers):
+    hltMkFitSiPixelHits, hltMkFitSiPhase2Hits     MkFitHitWrapper  (mkfit::HitVec + cluster index maps)
+    hltMkFitEventOfHits                          MkFitEventOfHits (mkfit::EventOfHits, binned LayerOfHits)
+    hltInitialStepMkFitSeeds                     MkFitSeedWrapper (mkfit::TrackVec seeds)
+    hltInitialStepTrackCandidatesMkFit           MkFitOutputWrapper (building + backward fit + cleaning output)
+    hltInitialStepTrackCandidatesMkFitFit [fit]  MkFitOutputWrapper (mkFit final fit)
+    ES: MkFitGeometry (TrackerRecoGeometryRecord), mkfit::IterationConfig label hltInitialStepTrackCandidatesMkFitConfig
+  Validation of the comparator itself: seeds vs themselves -> 40082/40082 bit-identical (20 ev); building output vs
+  fit output -> differences detected as expected (test/replay_fit_cfg.py and run/replay/mkfcmp_cfg.py).
+
+6. TIMING AND BACKENDS
+  Per-module times: cmsRun test/replay_cfg.py sample=ttbar timing=1 compare=0 threads=1 timingJson=t.json
+    (FastTimerService job summary in the log + JSON with per-module real/cpu time; ThroughputService prints ev/s).
+  Backend selection (CMSSW Alpaka):
+    - whole job:  accelerators=cpu (serial_sync) | accelerators=gpu-nvidia (cuda_async) | accelerators='*' (GPU if any)
+    - one module: setAlpakaBackend(process.myCands, 'serial_sync' | 'cuda_async')
+                  (= module.alpaka = cms.untracked.PSet(backend = cms.untracked.string(...)))
+    - both in one job: from HeterogeneousCore.AlpakaCore.functions import makeSerialClone
+        process.myCandsSerial = makeSerialClone(process.myCands); setAlpakaBackend(process.myCands, 'cuda_async')
+        then compare myCands vs myCandsSerial with addCandidateCompare (needs accelerators='*' on a GPU node).
+    - pick the GPU: CUDA_VISIBLE_DEVICES=0 (L40) or 1 (L4).
+
+7. MTV (efficiency / fake / duplicate vs simulation)
+  cmsRun RecoTracker/MkFitAlpaka/test/replay_mtv_cfg.py sample=ttbar dqmFile=DQM_replay_ttbar.root \
+         [mtvLabels=hltInitialStepTracks::HLTX,hltInitialStepTracksMkFitFit]      # adds fit=1 truth=1 itself
+  RecoTracker/MkFitAlpaka/test/replay_mtv_harvest.sh harv_ttbar.root DQM_replay_ttbar.root
+  python3 RecoTracker/MkFitAlpaka/test/replay_mtv_numbers.py harv_ttbar.root
+  Uses the menu-validation modules (hltTPClusterProducer, hltTrackAssociatorByHits, trackingParticleNumberOfLayers,
+  hltTrackValidator = HLTmultiTrackValidator_cff) with truth read from the RAW parent (secondaryFileNames).
+  Cross-check: replay MTV of hltInitialStepTracks (HLTX) == the HLT job's own in-process MTV, ttbar 100 ev:
+  nSimTP 6766, nReco 190402, eff 0.8847, fake 0.0212, dup 0.0104 in both.
+
+8. RESULTS (round 1, 2026-10-03)
+  Fidelity, stock chain replay vs HLT (hltInitialStepTrackCandidates), per seed:
+    ttbar  100/100 events identical (count, hits, seed refs, order), 191595/191595 candidates bit-identical states
+    qcd    100/100 events identical,                                  194436/194436 candidates bit-identical states
+    same with accelerators=cpu (serial_sync) and accelerators=gpu-nvidia (CUDA service up; stock chain is host code)
+  Pixel SoA-index recovery: 0 wrong / 3,610,066 clusters checked in memory against originalId() (20 ttbar events);
+    in replay: 0 unpaired, ~410 clusters per 100 events paired by position only (no equal-charge partner).
+  Comparator on non-identical input (test/replay_fit_cfg.py, KF hltInitialStepTracks vs replayed mkFit-fit tracks,
+    ttbar): 190398 pairs, valid-hit lists identical 85.6%, |pull| median bucket 0.1-1 (q/p), 1183 mkFit-fit-only.
+  MTV (ttbar / qcd, 100 ev):     efficiency        fake            duplicate
+    KF (HLT hltInitialStepTracks) 0.8847 / 0.8384   0.0212 / 0.0309  0.0104 / 0.0107
+    mkFit fit (replay)            0.8858 / 0.8375   0.0243 / 0.0347  0.0107 / 0.0109
+  Per-module times, replay, 1 thread, EPYC 9654, ms/event (ttbar / qcd): MkFitProducer 54.1 / 69.0,
+    MkFitEventOfHits 12.2 / 12.4, hit converters 4.1+6.5 / 4.2+5.9, seed conv 1.4 / 1.5, MkFitOutputConverter 6.7 / 7.0,
+    MkFitFitProducer 30.6 / 31.7, MkFitOutputTrackConverter 21.9 / 22.8; harness-only: replay pixel rechits 25,
+    Phase2TrackerRecHits 21, seed copy 1.7 (table: lane_harness/run/timing_table.txt).
+
+9. OTHER TOOLS
+  test/replay_timing_summary.py a.json b.json   per-module ms/event table from FastTimerService JSONs
+  test/replay_kernel_registers.sh [lib...]      REG/STACK/LOCAL per CUDA kernel of the package's CudaAsync libs
+                                                 (STACK or LOCAL > 0: local memory = spills or local arrays)
+  unit test: scram b runtests_testMkFitAlpakaReplayFidelity   (5 ttbar events, throws unless identical)
+  lane_harness/scripts/make_replay.sh           regenerates the data files (HLT job, ~5 min per sample, 8 threads)
+  test/replay_inhlt_check_cfg.py                in-memory check of the replay helpers inside the HLT job:
+      HLTCFG=lane_harness/run/ttbar/hlt.py NEV=10 cmsRun test/replay_inhlt_check_cfg.py   (10/10 identical, 0 wrong ids)
+  Note: the 75e33_timing menu configures its own FastTimerService (writes Phase2Timing_resources.json in the cwd);
+  timing=1 replaces it with per-module JSON output.
+
+====================================================================================================
+ROUND 3 (2026-10-03, branch r3/harness): noise floor, per-stage references, comparators, 500-event samples,
+throughput recipe, register report
+====================================================================================================
+R3.1 THE D-M4 NOISE FLOOR (acceptance criterion of every lane)
+  What: stock mkFit (release libraries, production x86-64-v3: AVX2+FMA, Matriplex width 8) vs the SAME stock mkFit
+  built for x86-64-v2 (shipped in the release under lib/el9_amd64_gcc13/scram_x86-64-v2: SSE only, no FMA,
+  Matriplex width 4), same events, same inputs. Only the four mkFit libraries are switched (libRecoTrackerMkFitCore,
+  libRecoTrackerMkFitCMS, libRecoTrackerMkFit, pluginRecoTrackerMkFitPlugins): hit rechits/CPE stay v3, so the floor is
+  the rounding sensitivity of mkFit itself. The job records which libraries were mapped (<outdir>/*.libs).
+  Recipe (2 jobs, ~8 min each for 500 events with MTV; the 2nd job loads the v2 libraries via LD_LIBRARY_PATH):
+    test/replay_floor.sh ttbar mkfit <outdir> -1 file:<replay file> <RAW list>       (PAIRED=1: + paired truth)
+    variants: mkfit (the floor), all (whole release v2, informational), v3 (recipe check)
+  Outputs: per-seed comparisons [compare floorCand] (hltInitialStepTrackCandidates = MkFitProducer output after
+  MkFitOutputConverter) and [compare floorFit] (hltInitialStepTracksMkFitFit = mkFit final fit), MTV DQM of both
+  runs, [paired floor] (paired truth, below).
+  Acceptance check of a port comparison against the floor (same comparator type, same sample):
+    python3 test/replay_floor_check.py <floor log or JSON> <port log or JSON> --label floorCand --port-label <yours>
+    per metric: n_port <= r_floor * N_port + 3 sqrt(r_floor * N_port) + 1 (hit-list differences, unpaired tracks,
+    |pull| >= 1e-2 and >= 1 per parameter). Exit status 0 = PASS.
+  RESULT ttbar500 (500 ev, 953831 candidates; floor logs: r3_harness/floor500/tgt_mkfit_ttbar.log):
+    candidates   paired 953814, unpaired 17 ref + 21 tgt (3.98e-5); hit lists differ 112 (1.17e-4);
+                 events fully identical (count, hits, order) 371/500; params bit-identical 0.33%;
+                 |pull| >= 1e-4: q/p 0.95%, dydz 8.2%, y 4.0%; >= 1e-3: q/p 0.07%, dydz 0.75%, y 0.24%;
+                 >= 1e-2: <= 4.5e-4 per parameter; >= 1: 6 (dydz), 4 (y), 2 (x); max |pull| 2.9
+    fit tracks   paired 953680, unpaired 62 + 43 (1.10e-4); valid-hit lists differ 348 (3.65e-4);
+                 |pull| >= 1e-2: qoverp 1.1%, lambda 7.0%, dsz 10.2%; |pull| >= 1: 1.4e-4..6.4e-4 per parameter;
+                 max |pull| 1.3e4 (q/p): the final fit is chaotic for a few tracks even with identical hits
+    MTV (HLT validator selection, mkFit-fit tracks): eff 0.8888 / 0.8888, fake 0.0244 / 0.0244, dup 0.0116 / 0.0116
+    paired truth (MkFitAlpakaPairedTruthCompare, all in-time TPs pT > 0.4, |eta| < 4.5 incl. PU, 3.36M TPs):
+                 found by both 897540, v3 only 23, v2 only 20 -> efficiency difference -1e-6 +- 2e-6;
+                 fake 0.02443 / 0.02442, dup 0.01158 / 0.01158; seed-paired true->fake 7, fake->true 3
+  RESULT qcd500 (500 ev, 981036 candidates; r3_harness/floor500/tgt_mkfit_qcd.log (8 streams, no truth) and
+  r3_harness/floor500q/ (1 stream + truth: per-seed numbers identical to the 8-stream run)):
+    candidates   paired 980851, unpaired 185 + 163 (3.55e-4); hit lists differ 233 (2.38e-4); events identical 195/500;
+                 |pull| >= 1e-2: q/p 2.5e-4, dxdz 3.4e-4, dydz 1.8e-3, x 1.7e-4, y 5.8e-4; >= 1: <= 5e-6; max 8.8
+    fit tracks   paired 980700, unpaired 233 + 201; valid-hit lists differ 1064 (1.08e-3); events identical 40/500;
+                 |pull| >= 1: q/p 709 (7.2e-4), lambda 2734 (2.8e-3); max |pull| 3.4e3
+  Variant "all" (the WHOLE release x86-64-v2, hit CPEs included), ttbar500: candidates hit lists differ 112 (same as
+    mkFit-only), unpaired 42; fit tracks 357 differ: the floor is mkFit's own rounding sensitivity.
+    MTV (fit tracks)  eff 0.8369 / 0.8366, fake 0.0344 / 0.0344, dup 0.0113 / 0.0113 (v3 / v2; 51987 TPs)
+    paired truth (3.39M in-time TPs): found by both 914742, v3 only 140, v2 only 114 -> -7.7e-6 +- 4.7e-6;
+                 fake 0.03443 / 0.03443, dup 0.01127 / 0.01127; seed-paired true->fake 11, fake->true 12
+  The floor depends on the sample (QCD is 2-9x noisier than ttbar): check a port against the floor of the SAME
+  sample (replay_floor_check.py of qcd vs the ttbar floor FAILS on 7 of 12 metrics).
+  Truth with many RAW parents: with the 10 QCD RAW files as secondaryFileNames and 8 streams the job aborted
+  ("pure virtual method called" in RootDelayedReader during a secondary-file switch, floor500/ref_qcd_crash_secondary.log);
+  ttbar500 (5 parents) ran fine. Use STREAMS=1 (replay_floor.sh) / streams=1 for truth on qcd500 (~15 min per job).
+  Reading: stock mkFit is NOT bit-reproducible across builds; ~1e-4 of the candidates change their hit list, and the
+  final fit amplifies rounding. A port that matches stock at this level is as good as stock is with itself.
+  Pitfalls found on the way: (1) a ref job that attaches the RAW secondaries (mtv=1) and writes 'keep *' copies the
+  RAW (14 GB for 100 events): the floor ref output keeps only HLTX inputs + REPLAY candidates/tracks (12.8 MB/ev).
+  (2) rebuilding a plugin library while a cmsRun job uses it gives SIGBUS: run long jobs from a frozen area.
+
+R3.2 PER-STAGE STOCK REFERENCES (in-job, no instrumented stock copy needed)
+  plugins/ReplayStockStages.cc = MkFitAlpakaReplayStockStages: runs mkfit::run_OneIteration exactly as MkFitProducer
+  does (same IterationConfig ES product, same seeds/hits/EventOfHits products, stock MkFitCore library) and puts an
+  MkFitOutputWrapper snapshot after each stage; product instance = stage:
+    seeds        seeds after seed cleaning + seed_post_cleaning (+ hit sorting): input of find_tracks_load_seeds
+    loaded       front() of every CombCandidate after find_tracks_load_seeds = the seed table in stock (region) order
+    fwd          ALL candidates of every CombCandidate after the forward search (best-short merged), per seed in order
+    fwdFiltered  ALL candidates after the pre-backward-fit filter (removed seeds compacted away, stock order)
+    bkfit        front() after backwardFit (state at the innermost hit; chi2 reset to 0 by stock, see review H3)
+    bkwsearch    ALL candidates after the backward search; hits = the backward chain only: hot 0 (innermost forward
+                 hit) then the hits picked up inward (exportTrack cannot walk the backward representation)
+    postFilter   front() after the post-backward-fit filter + endBkwSearch (only front() is repacked by stock)
+    export       export_best_comb_cands (before duplicate removal)
+    (empty)      final = MkFitProducer's output. Self-check: bit-identical to hltInitialStepTrackCandidatesMkFit
+  Every track: TrackCand::exportTrack(false) (label = seed index, all hits incl. negative indices in chain order,
+  state/errors/chi2/score of that stage). Add with replay_cff.addStockStages(process) (copies the menu MkFitProducer
+  parameters). Test: cmsRun test/replay_stages_cfg.py sample=ttbar maxEvents=10 (requireIdentical=1).
+  Self-check results: ttbar500 100/100 and qcd500 100/100 events bit-identical to the menu MkFitProducer (also in a
+  job with accelerators=gpu-nvidia, CUDA service on the L40: 20/20).
+  Candidate counts per stage, ttbar 10 ev: seeds 19886, loaded 19886, fwd 39191, fwdFiltered 39138, bkfit 19833,
+    bkwsearch 24007, postFilter 19833, export 19833, final 19523 (== MkFitProducer: 10/10 events bit-identical).
+  Fitted tracks: stock hltInitialStepTrackCandidatesMkFitFit (MkFitOutputWrapper, replay fit=1) and
+  hltInitialStepTracksMkFitFit (reco::Track).
+
+R3.3 COMPARATORS (plugins/TrackCollectionCompare.cc, plugins/PairedTruthCompare.cc; python helpers in replay_cff)
+  stage                         reference (stock, in-job)                    comparator (port product type)
+  EventOfHits                   hltMkFitEventOfHits                          MkFitAlpakaEventOfHitsProducer compareTo=
+                                                                             (hits lane, in-producer) or the hits dump
+  seed table / order            stockStages:seeds, stockStages:loaded        addMkFitTrackCompare (MkFitOutputWrapper)
+  fwd search / filters / bkfit  stockStages:fwd|fwdFiltered|bkfit|...      | addTrackSoACompare (mkfitdev::TrackSoA
+  bkw search / export / final   stockStages:bkwsearch|postFilter|export|'' |   host collection, rows [0, nTracks))
+  final fit (mkFit level)       hltInitialStepTrackCandidatesMkFitFit         addMkFitTrackCompare / addTrackSoACompare
+  output tracks                 hltInitialStepTracksMkFitFit                  addTrackCompare (reco::Track) +
+                                                                             MkFitAlpakaPairedTruthCompare (truth)
+  Pairing: by label = seed index, first unused target with that label (several candidates per seed pair in order);
+  "same index" counts tracks at the same position (order check). Metrics: hit lists (layer, index) incl. negative
+  indices, pulls of the 6 mkFit parameters in reference sigmas, sigma ratios, chi2; JSON summary (summaryFile=) incl.
+  bucket histograms for replay_floor_check.py.
+  DUMP / PRODUCT CONVENTION for the port (so stock and port compare 1:1): one mkfitdev::TrackSoA row per candidate, in
+  stock order (seed table order, candidates of a seed in rank order); label = seed index; hits in chain order (first
+  hit first) as TrackCand::exportTrack, the backward-search stage as described for bkwsearch; state, errors, chi2, score
+  as stored at that stage. A lane without a TrackSoA product can also wrap mkfit::TrackVec in an MkFitOutputWrapper.
+  MkFitAlpakaTrackSoACompare validated on real products: plugins/ReplayStockToTrackSoA.cc (MkFitAlpakaReplayStockToTrackSoA)
+  turns every stockStages snapshot into a mkfitdev::TrackSoAHostCollection; compared back: 9/9 stages 20/20 events
+  bit-identical (test/replay_stages_cfg.py runs it). The same producer gives a stock reference in the port's own type.
+  MkFitAlpakaPairedTruthCompare: two reco::Track collections of the same events + hltTrackAssociatorByHits + the MTV
+  TP selection (copied from hltTrackValidator): per selected TP found by both / ref only / tgt only / neither ->
+  paired efficiency difference with McNemar error; seed-paired true/fake transitions; duplicate flags.
+
+R3.4 500-EVENT SAMPLES (r3_harness/data, README.txt there; sample=ttbar500 / qcd500 in the configs)
+  replay_ttbar500.root 5.0 GB (all 5 local ttbar RAW files), replay_qcd500.root 5.1 GB (all 10 QCD RAW files).
+  Total replay data with round 1: 12.1 GB. Made with test/replay_make.sh (output dir argument; HLT 8:41 for ttbar).
+  ttbar500 replay == HLT: 500/500 events bit-identical (953831 candidates).
+
+R3.5 THROUGHPUT RECIPE (test/replay_throughput.sh, test/replay_throughput_cfg.py)
+  RepeatingCachedRootSource keeps `cache` replay events in memory and repeats them: no I/O in the measurement.
+  Modes: inputs (replay rechits, seed copy, beam spot, [fit] measurement tracker event: what every mode needs),
+  stock (+ the stock chain: hit converters, EventOfHits, seed converter, MkFitProducer, output converter,
+  [fit=1] MkFitFitProducer + MkFitOutputTrackConverter), port (+ the sequence portSeq of a lane's cff portCff).
+    test/replay_throughput.sh <outdir> inputs,stock,port 1,4,8 maxEvents=2000 cache=50 fit=1 \
+         portCff=RecoTracker.MkFitAlpaka.<chain>_cff portSeq=<seq> [accelerators=gpu-nvidia]
+  Table per (mode, streams): events/s and cost ms/ev = 1000 * threads * (1/rate_mode - 1/rate_inputs) (CPU-bound
+  estimate of the chain's CPU time per event; on GPU compare the rates). 8 threads (box rule), sequential jobs,
+  quiet box. Serial vs CUDA: accelerators=cpu vs gpu-nvidia; CUDA_VISIBLE_DEVICES=0 (L40) or 1 (L4).
+  Recipe check (ttbar500, 8 threads/8 streams, 800 events from a 40-event cache, box load ~22, indicative only):
+    inputs 105.3 ev/s, stock (no fit) 48.8 ev/s -> cost 88.0 ms/ev; FastTimer chain CPU 89.4 ms/ev
+    (MkFitProducer 53.8, EventOfHits 12.3, hit converters 4.4 + 8.1, seed conv 1.4, output converter 9.4).
+
+R3.6 REGISTER REPORT (test/replay_kernel_registers.sh)
+  cuobjdump -res-usage of every *MkFitAlpaka*CudaAsync* library/plugin (-t: also test binaries), all CUDA archs
+  built (sm_75..sm_120): table REG/STACK/LOCAL/SHARED per kernel for one arch (-a, default sm_89 = L40/L4), and a
+  summary line; exit status 1 if any kernel has LOCAL > 0 on any arch (round-3 rule: a spill fails the build).
+  Wire after every build:  scram b -j 8 && RecoTracker/MkFitAlpaka/test/replay_kernel_registers.sh -q
+  Wired by integ: test/integ_check_registers.sh (runtests testMkFitAlpakaKernelRegisters) runs this report and greps
+  the per-kernel "LOCAL:n" tokens (rows keep the cuobjdump token format for that reason). Status after merging integ
+  8563bde: 66 kernel entries, max REG 168 (KernelMergeSeeds, sm_89), STACK > 0 in 35, LOCAL > 0 in none: PASS.
+
+R3.7 PER-STAGE FLOOR (test/replay_stage_floor.sh <sample> <outdir> [N]; 100 events each, r3_harness/stagefloor)
+  Both jobs run MkFitAlpakaReplayStockStages and dump every stage (plugins/ReplayStageDump.cc: MkFitAlpakaReplayStageDump
+  for MkFitOutputWrapper, MkFitAlpakaReplayStageDumpSoA for a port's TrackSoA; flat 278-byte records, first 32 hits);
+  the v2 job loads the x86-64-v2 mkFit libraries. test/replay_stage_compare.py pairs (event, label, k-th candidate of
+  the seed) and writes per-stage JSONs for replay_floor_check.py (stagefloor/floor_<sample>_<stage>.json).
+  The stage producer's final output equals the menu MkFitProducer in BOTH jobs (100/100, v3 and v2).
+  hit-list differences per paired candidate (unpaired ref+tgt) | |pull| >= 1e-2 z / theta | >= 1 z / theta:
+    stage        ttbar500 (100 ev)                          qcd500 (100 ev)
+    seeds        0 of 215118                                0 of 235837
+    loaded       0 (scores differ in 5%)                    0 (4.5%)
+    fwd          185 = 4.4e-4 (1+2)  | 512 / 263 | 65 / 9   340 = 7.5e-4 (4+12)   | 1635 / 488   | 326 / 10
+    fwdFiltered  185 = 4.4e-4 (1+2)                         338 = 7.5e-4 (6+14)
+    bkfit         12 = 5.6e-5 (0)    | 24873 / 15304 (11.6% / 7.1%) | 291 / 80     40 = 1.7e-4 | 28733 / 21111 | 574 / 591
+    bkwsearch    279 = 1.1e-3 (6+4)                         807 = 2.7e-3 (82+63)
+    postFilter    48 = 2.2e-4                               157 = 6.7e-4 (2+2)
+    export        47 = 2.2e-4                               149 = 6.3e-4
+    final         45 = 2.1e-4 (2+2)  | 25217 / 15671 | 306 / 84   89 = 4.2e-4 (35+39) | 26976 / 17896 | 468 / 375
+  Reading: the backward fit is the most rounding-sensitive step in the parameters (z, theta at the innermost hit move
+  by >= 1e-2 sigma in ~10% of the tracks between two stock builds), hit selection the most in hit lists (backward
+  search 1-3e-3). A lane's stage is "near-identical" when replay_floor_check.py passes against these files.
+  Port side: dump the port's TrackSoA of a stage with MkFitAlpakaReplayStageDumpSoA (src = the port product, files =
+  <prefix><stage>.bin) on the same events, then replay_stage_compare.py <stagefloor>/v3_<sample>_ <prefix> --json X_
+  and replay_floor_check.py <stagefloor>/floor_<sample>_<stage>.json X_<stage>.json. Or in one job: R3.8.
+
+R3.8 PORT-VS-STOCK TEMPLATE (test/replay_port_cfg.py)
+  cmsRun test/replay_port_cfg.py sample=ttbar500 maxEvents=100 accelerators=cpu|gpu-nvidia \
+     portCff=RecoTracker.MkFitAlpaka.<lane>_cff portSeq=<sequence or task> compare=bkfit:<module>[:<instance>],final:<module> \
+     [fit=1 compareFit=<module>] summaryPrefix=<dir>/port_
+  = stock chain + stockStages + the lane's modules + MkFitAlpakaTrackSoACompare per listed stage ([compare port_<stage>]),
+  JSON per stage for replay_floor_check.py (use --label/--port-label as needed). Tested with python/replayMockPort_cff.py
+  (stock snapshots re-packed as TrackSoA): 10/10 events bit-identical for bkfit and final.
+
+====================================================================================================
+ROUND 6 (lane ref, branch r6/ref): FLOORS OF THE NEW REFERENCE (stock pre2 + #186 + #187 + -Ofast MkFitCore)
+====================================================================================================
+The round-3 floors (r3_harness/floor500, stagefloor; r4_fit isolated) are floors of the OLD reference (stock pre2,
+MkFitCore effectively without -Ofast). From round 6 on, judge against these files. Background: doc/ref.txt.
+F = lanes/mkfit_alpaka/r6_ref/floors. Every floor = the reference (x86-64-v3) vs the SAME sources built for x86-64-v2
+(R/v2 area, scram multi-target build; libraries frozen in F/v2mkfit, used through LD_LIBRARY_PATH / env V2LIB).
+
+  kind      file(s)                                                  what is compared                         events
+  CHAINED   F/chained/<s>/floor_<s>_chained.log  (s = ttbar500, qcd500; merged from 100-event chunks c0..c4,
+            per-chunk logs tgt_v2_<s>_c<k>.log)                      whole replay chain both sides:          500 + 500
+            labels [compare floorCand] (hltInitialStepTrackCandidates, MkFitProducer+converter),
+                   [compare floorFit] (hltInitialStepTracksMkFitFit, #186 final fit, all switches default),
+                   [paired floor] (ttbar only: MTV TP selection, truth)
+  CHAINED   F/stage/floor_<s>_<stage>.json, floor_<s>.txt (stages seeds .. final, mkFit level),
+            v3 dumps F/stage/v3_<s>_<stage>.bin for the port side   per stage, chained                        100 + 100
+  ISOLATED  F/isolated/fit_<sample>_100_cpe1_fitiso.json (mkFit level, label floorFitIso),
+            ..._fitisotrk.json (reco::Track, floorFitIsoTrk); <sample> = ttbar, qcd (replay_<sample>.root, as r4/r5 fit)
+            stock MkFitFitProducer (#186, CPE on = menu default) on IDENTICAL input tracks (fitFloor_cfg.py;
+            dump hook ported to the #186 producer: R/patches/0001-ref-isolated-floor-dump-hook*.patch)  100 + 100
+  ISOLATED  F/isolated/bkfit/floor_v2_<sample>.out (BKFIT_FLOOR input of testMkFitAlpakaBkFit*), rerun_*_<v>_<s>.txt:
+            stock backward fit (building) re-run on dumped inputs, v3 vs v2 (doc/bkfit.txt recipe; hook
+            R/patches/0001-ref-backward-fit-dump-hook*.patch)                                               100 + 100
+  MENU      R/menu/results/menufloor_<menu>_cpu_<s>.txt: the stock menu (default | trackingMkFitFit) of the reference,
+            CPU, x86-64-v3 vs the v2 mkFit libraries (PRELOAD), same RAW events (5 ttbar / 10 QCD local files):
+            MTV numbers, TriggerResults, DQM histograms (cross-job quantities; per-seed checks use CHAINED)     500 + 500
+Check a port result:  python3 test/replay_floor_check.py F/chained/<s>/floor_<s>_chained.log <port log> --label floorCand
+  (--label floorFit for the fit; --port-label <yours>); stage: replay_floor_check.py F/stage/floor_<s>_<stage>.json X;
+  isolated fit: replay_floor_check.py F/isolated/fit_<s>_100_cpe1_fitiso.json <port json> --label floorFitIso.
+Chunked recipe (disk was ~42 GB free: a 500-event ref file is 6.4 GB): r6_ref/scripts/floor_job.sh (ref | v2 |
+  stockpre2 | noofast | rmref, one 1.3 GB chunk file alive), merge: r6_ref/scripts/merge_chunks.py (sums every
+  "[compare X]"/"[paired X]" summary; replay_floor_check.py reads the merged log as one job; verified on the r3 log).
+  test/replay_floor_cfg.py has skipEvents=N for this.

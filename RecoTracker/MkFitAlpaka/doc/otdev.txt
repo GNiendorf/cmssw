@@ -1,0 +1,75 @@
+MkFitAlpaka - STAGE D: DEVICE OT RECHITS (round 8, lane otdev, 2026-10-04)
+==========================================================================
+Goal: the Phase-2 OT rechits (hltSiPhase2RecHits, Phase2TrackerRecHits + Phase2StripCPE, ~23-25 host ms per event on
+the GPU menu) made once on the device, read by every tracking consumer from one SoA, legacy Phase2TrackerRecHit1D
+objects only on demand; no physics change (bitwise).
+
+1. THE DEVICE CPE (plugins/alpaka/MkFitAlpakaOTRecHitsProducer.cc, MkFitAlpakaOTRecHitsKernels.dev.cc,
+   interface/othits/{OTRecHitSoA.h, OTCpe.h})
+  - Input: the OT clusters (hltSiPhase2Clusters). ONE host pass over the cluster detsets writes, per cluster key, the
+    GeomDet index, DetId, cluster size and firstStrip | column << 16 into the SoA's prefix columns (pinned staging,
+    one contiguous copy on GPU; in place on CPU). One kernel (128 threads per block, one thread per cluster) applies
+    Phase2StripCPE::localParameters and Surface::toGlobal.
+  - Per-IOV table (index = GeomDet index - first OT index, as Phase2StripCPE::m_Params), built from the STOCK objects so
+    the per-module numbers are bitwise stock by construction:
+      coveredStrips  = the verbatim fillParam lines with the public Phase2StripCPE::driftDirection (LorentzAngle_DB:
+                       SiPhase2OuterTrackerLorentzAngle x the local B of the MagneticField ES product at the module) -
+                       no field model on the device is needed (the field enters once per IOV, on the host);
+      errors         = Phase2StripCPE::localParameters of a dummy cluster (pitch^2/12, xy = 0, checked);
+      topology       = RectangularPixelPhase2Topology constants (the PixelGeomDetUnit holds a ProxyPixelTopology;
+                       localX/localY forward to the wrapped topology - unwrapped);
+      surface        = TkRotation rows + position.
+  - Contraction: localX/localY have one a*b + c*d (float(binoff*pitch) + fraction*local_pitch); the host compiler
+    contracts it as fma(a, b, c*d) ("fuse first", the variant the stock hit converters also show). mkfitdev::
+    sumOfProducts<M> makes it explicit (fmaf is correctly rounded everywhere, so CUDA = host). Parameters contractLocal
+    (default 1 = fuse first) / contractGlobal / contractCA select the variant; the gate prints the per-variant counts.
+    Surface::toGlobal: our TU, the mkFit converters and LSTInputProducer.cc all match fuse first (LSTIN_OT: 0 of
+    5.66M ttbar hits differ; fuse second: 275k differ). The SoA's gx/gy/gz use contractGlobal (default 1); the CA and
+    EventOfHits readers compute their own from (module, lx, ly) with the same variant.
+  - SoA (mkfitdev::OTRecHitSoA, row = OT cluster key = flat index of the legacy rechits): nHits; module, detId,
+    clustSize, strip; lx, ly, exx, eyy; gx, gy, gz. 46 bytes per hit (~11 MB device memory per PU200 event).
+
+2. CONSUMERS
+  a) CA OT layers (replaces Phase2OTRecHitsSoAConverter = hltPhase2OtRecHitsSoA, 4.0 host ms): produceCAHits puts
+     reco::TrackingRecHitsSoACollection (P-module hits of the OT barrel, selection kernel MkFitAlpakaOTCAHitsKernels:
+     row = hitStart[P-module] + key - firstKey, global - beam spot in double, rGlobal, iphi = unsafe_atan2s<7>,
+     detectorIndex = modulesInPixel + P offset) + the host hitModuleStart vector. Host part: per-module ranges from the
+     cluster detset sizes (no rechit touched).
+  b) hltMkFitEventOfHits (patch for lane mem, commit "otdev -> lane mem"): otSoA = the OT rows read module/lx/ly/exx/
+     eyy/size straight from the device SoA; no host pass over the legacy OT rechits (fillRaw keeps only the pixel part).
+  c) Full mode (customizeOTDevFull; local patches, D8-b / D7-e): every remaining reader of hltSiPhase2RecHits switched,
+     the legacy producer leaves the menu:
+       hltInputLST (RecoTracker/LST LSTInputProducer)  otSoA: OT detId / size / global position from the SoA host copy;
+                                                       no hit pointers; compareOTTo = bitwise check (LSTIN_OT lines)
+       LSTOutputConverter (RecoTracker/LST)            otClustersOnDemand: OT hits of the TCs made on demand
+       PixelTrackProducerFromSoAAlpaka                 otClustersOnDemand: OT hits of the pixel tracks on demand
+         (RecoTracker/PixelTrackFitting, local repo)
+       hltMkFitSiPhase2Hits (MkFitAlpakaPhase2...)     sizeFromClusters: size-only map (build/fit read the size)
+       MkFitOutputTrackConverter (RecoTracker/MkFit)   otClustersOnDemand: OT hits of the output tracks on demand
+       MkFitAlpakaOutputTrackConverter (outconv)       otClustersOnDemand (patch for lane stagec, same pattern)
+       DQM readers (hltRechitValidOT)                  the legacy producer stays unscheduled for them (validation only)
+     On demand = RecoLocalTracker/Phase2TrackerRecHits/interface/Phase2TrackerRecHitOnDemand.h (local repo): the
+     legacy producer's own operations for one cluster key (CPE localParameters on the GeomDetUnit, makeRefTo of the
+     cluster), so each hit equals the legacy one; the key -> GeomDetUnit lookup is one pass over the detsets + a binary
+     search per hit.
+
+3. GATES (customizeOTDevGate / customizeOTDevFullGate; ttbar and QCD PU200 RAW, serial and CUDA) - see REPORT.txt
+  - OTDEV_CMP: every rechit vs the legacy collection: cluster key order, module, DetId, size, local x/y, local error
+    (xx, xy = 0, yy), global x/y/z - bitwise.
+  - OTDEV_CA: the CA OT SoA vs hltPhase2OtRecHitsSoA, every column + hitModuleStart - bitwise.
+  - DEVICE_HITS_EOH (compareHostHits): the device HitSoA with OT rows from the SoA vs the stock mkFit converters.
+  - LSTIN_OT: hltInputLST's OT hits from the SoA vs the legacy rechits, bitwise.
+  - Full mode: hltGeneralTracks / hltInitialStepTracks / hltPhase2PixelTracks (parameters, covariance, chi2, ndof, hit
+    counts) and the LST seed count, per event, target vs target + customizeOTDevFull (trk_compare.py).
+
+4. REPRODUCE
+  L/r8_otdev/gate_job.sh <tag> <cpu|gpu-nvidia> <ttbar|qcd> <nev>     (OTDEV_FUNC=customizeOTDevFullGate for full)
+  L/r8_otdev/full_job.sh <tag> <acc> <sample> <ref|customizeOTDevFull> <nev>; trk_compare.py a/trk.root b/trk.root
+  L/r8_otdev/time_job.sh <tag> <acc> <ref|otdev> <nev> (OTDEV_FUNC selects the arm); timerep.py runs/*/hlt.log
+
+5. RESULTS (round 8; full numbers in L/r8_otdev/REPORT.txt)
+  - Gates: 0 differences in 115M OT rechit and 20.7M CA OT hit comparisons (serial + CUDA, ttbar + QCD); EventOfHits
+    IDENTICAL in every event; LSTIN_OT 0 differences; CPU end-to-end (ttbar 50, QCD 50, ttbar 50 with outconv) 0
+    differing events in hltGeneralTracks / hltInitialStepTracks / hltPhase2PixelTracks / LST seeds.
+  - GPU menu host time of the affected modules 80.3 -> 49.9 box ms per event (-30.4, ~-73 CI; 5 pairs); CPU menu
+    -27.5 (2 pairs). GPU memory peak unchanged within noise (median +24 MiB, +0.8%).

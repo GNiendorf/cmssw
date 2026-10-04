@@ -1,0 +1,553 @@
+diff -ruN a/RecoTracker/MkFitCore/src/KalmanUtilsMPlex.cc b/RecoTracker/MkFitCore/src/KalmanUtilsMPlex.cc
+--- a/RecoTracker/MkFitCore/src/KalmanUtilsMPlex.cc	2026-08-11 10:48:01.000000000 -0400
++++ b/RecoTracker/MkFitCore/src/KalmanUtilsMPlex.cc	2026-10-03 11:19:02.724811289 -0400
+@@ -1,5 +1,6 @@
+ #include "KalmanUtilsMPlex.h"
+ #include "PropagationMPlex.h"
++#include "PropDumpHook.h"
+ 
+ //#define DEBUG
+ #include "Debug.h"
+@@ -914,6 +915,7 @@
+                     MPlexLS& outErr,
+                     MPlexLV& outPar,
+                     const int N_proc) {
++    propdump::countCall("kalmanUpdate", N_proc);
+     kalmanOperation(KFO_Update_Params | KFO_Local_Cov, psErr, psPar, msErr, msPar, outErr, outPar, dummy_chi2, N_proc);
+   }
+ 
+@@ -928,6 +930,7 @@
+                                 const int N_proc,
+                                 const PropagationFlags& propFlags,
+                                 const bool propToHit) {
++    propdump::countCall("kalmanPropagateAndUpdate", N_proc);
+     if (propToHit) {
+       MPlexLS propErr;
+       MPlexLV propPar;
+@@ -962,6 +965,7 @@
+                          const MPlexHV& msPar,
+                          MPlexQF& outChi2,
+                          const int N_proc) {
++    propdump::countCall("kalmanComputeChi2", N_proc);
+     kalmanOperation(KFO_Calculate_Chi2, psErr, psPar, msErr, msPar, dummy_err, dummy_par, outChi2, N_proc);
+   }
+ 
+@@ -976,6 +980,7 @@
+                                      const int N_proc,
+                                      const PropagationFlags& propFlags,
+                                      const bool propToHit) {
++    propdump::countCall("kalmanPropagateAndComputeChi2", N_proc);
+     propPar = psPar;
+     if (propToHit) {
+       MPlexLS propErr;
+@@ -1008,6 +1013,7 @@
+                        MPlexLV& outPar,
+                        MPlexQF& outChi2,
+                        const int N_proc) {
++    propdump::countCall("kalmanOperation", N_proc);
+ #ifdef DEBUG
+     {
+       dmutex_guard;
+@@ -1223,6 +1229,7 @@
+                          MPlexLS& outErr,
+                          MPlexLV& outPar,
+                          const int N_proc) {
++    propdump::countCall("kalmanUpdatePlane", N_proc);
+     kalmanOperationPlaneLocal(KFO_Update_Params | KFO_Local_Cov,
+                               psErr,
+                               psPar,
+@@ -1252,6 +1259,11 @@
+                                      const int N_proc,
+                                      const PropagationFlags& propFlags,
+                                      const bool propToHit) {
++    propdump::countCall("kalmanPropagateAndUpdatePlane", N_proc);
++    const bool pd_rec = propdump::enabled() && !propdump::inWrapper();
++    propdump::Guard pd_guard;
++    MPlexQI pd_chg = Chg;
++
+     if (propToHit) {
+       MPlexLS propErr;
+       MPlexLV propPar;
+@@ -1291,6 +1303,9 @@
+         outPar.At(n, 3, 0) = -outPar.At(n, 3, 0);
+       }
+     }
++    if (pd_rec)
++      propdump::dump(4, &propFlags, propToHit, N_proc, psErr, psPar, pd_chg, nullptr, nullptr, &plPnt, &plNrm, &plDir,
++                     &msErr, &msPar, &outErr, outPar, nullptr, &outFailFlag, &Chg, nullptr, nullptr);
+   }
+ 
+   //------------------------------------------------------------------------------
+@@ -1313,7 +1328,12 @@
+       const bool propToHit,
+       const MPlexQI* noMatEffPtr,
+       const MPlexQI* doCPE,
+-      cpe_func cpe_corr_func) {  //last args are const MkJob*,  const MPlexQI* noMatEffPtr, const MPlexQI* doCPE (?)
++      cpe_func cpe_corr_func) {
++    propdump::countCall("kalmanPropagateAndUpdateAndChi2Plane", N_proc);
++    const bool pd_rec = propdump::enabled() && !propdump::inWrapper();
++    propdump::Guard pd_guard;
++    MPlexQI pd_chg = Chg;
++  //last args are const MkJob*,  const MPlexQI* noMatEffPtr, const MPlexQI* doCPE (?)
+     if (propToHit) {
+       MPlexLS propErr;
+       MPlexLV propPar;
+@@ -1358,6 +1378,10 @@
+         outPar.At(n, 3, 0) = -outPar.At(n, 3, 0);
+       }
+     }
++    if (pd_rec)
++      propdump::dump(5, &propFlags, propToHit, N_proc, psErr, psPar, pd_chg, nullptr, nullptr, &plPnt, &plNrm, &plDir,
++                     &msErr, &msPar, &outErr, outPar, &outChi2, &outFailFlag, &Chg, noMatEffPtr,
++                     (doCPE && cpe_corr_func) ? doCPE : nullptr);
+   }
+ 
+   //------------------------------------------------------------------------------
+@@ -1372,6 +1396,7 @@
+                               const MPlexHV& plPnt,
+                               MPlexQF& outChi2,
+                               const int N_proc) {
++    propdump::countCall("kalmanComputeChi2Plane", N_proc);
+     kalmanOperationPlaneLocal(KFO_Calculate_Chi2,
+                               psErr,
+                               psPar,
+@@ -1401,6 +1426,10 @@
+                                           const int N_proc,
+                                           const PropagationFlags& propFlags,
+                                           const bool propToHit) {
++    propdump::countCall("kalmanPropagateAndComputeChi2Plane", N_proc);
++    const bool pd_rec = propdump::enabled() && !propdump::inWrapper();
++    propdump::Guard pd_guard;
++
+     propPar = psPar;
+     if (propToHit) {
+       MPlexLS propErr;
+@@ -1434,6 +1463,9 @@
+                                 outChi2,
+                                 N_proc);
+     }
++    if (pd_rec)
++      propdump::dump(3, &propFlags, propToHit, N_proc, psErr, psPar, inChg, nullptr, nullptr, &plPnt, &plNrm, &plDir,
++                     &msErr, &msPar, nullptr, propPar, &outChi2, &outFailFlag, nullptr, nullptr, nullptr);
+   }
+ 
+   //------------------------------------------------------------------------------
+@@ -1453,6 +1485,7 @@
+                                  const int N_proc,
+                                  const MPlexQI* doCPE,
+                                  cpe_func cpe_corr_func) {
++    propdump::countCall("kalmanOperationPlaneLocal", N_proc);
+ #ifdef DEBUG
+     {
+       dmutex_guard;
+@@ -2065,6 +2098,11 @@
+ #endif
+     }
+ 
++    if (kfOp == (KFO_Calculate_Chi2 | KFO_Update_Params | KFO_Local_Cov) && propdump::enabled() &&
++        !propdump::inWrapper())
++      propdump::dump(6, nullptr, 0, N_proc, psErr, psPar, inChg, nullptr, nullptr, &plPnt, &plNrm, &plDir, &msErr,
++                     &msPar, &outErr, outPar, &outChi2, nullptr, nullptr, nullptr,
++                     (doCPE && cpe_corr_func) ? doCPE : nullptr);
+     return;
+   }
+ 
+@@ -2083,6 +2121,7 @@
+                             MPlexLV& outPar,
+                             MPlexQF& outChi2,
+                             const int N_proc) {
++    propdump::countCall("kalmanOperationPlane", N_proc);
+ #ifdef DEBUG
+     {
+       dmutex_guard;
+@@ -2296,6 +2335,7 @@
+                           MPlexLS& outErr,
+                           MPlexLV& outPar,
+                           const int N_proc) {
++    propdump::countCall("kalmanUpdateEndcap", N_proc);
+     kalmanOperationEndcap(KFO_Update_Params, psErr, psPar, msErr, msPar, outErr, outPar, dummy_chi2, N_proc);
+   }
+ 
+@@ -2310,6 +2350,7 @@
+                                       const int N_proc,
+                                       const PropagationFlags& propFlags,
+                                       const bool propToHit) {
++    propdump::countCall("kalmanPropagateAndUpdateEndcap", N_proc);
+     if (propToHit) {
+       MPlexLS propErr;
+       MPlexLV propPar;
+@@ -2342,6 +2383,7 @@
+                                const MPlexHV& msPar,
+                                MPlexQF& outChi2,
+                                const int N_proc) {
++    propdump::countCall("kalmanComputeChi2Endcap", N_proc);
+     kalmanOperationEndcap(KFO_Calculate_Chi2, psErr, psPar, msErr, msPar, dummy_err, dummy_par, outChi2, N_proc);
+   }
+ 
+@@ -2356,6 +2398,7 @@
+                                            const int N_proc,
+                                            const PropagationFlags& propFlags,
+                                            const bool propToHit) {
++    propdump::countCall("kalmanPropagateAndComputeChi2Endcap", N_proc);
+     propPar = psPar;
+     if (propToHit) {
+       MPlexLS propErr;
+@@ -2384,6 +2427,7 @@
+                              MPlexLV& outPar,
+                              MPlexQF& outChi2,
+                              const int N_proc) {
++    propdump::countCall("kalmanOperationEndcap", N_proc);
+ #ifdef DEBUG
+     {
+       dmutex_guard;
+diff -ruN a/RecoTracker/MkFitCore/src/PropagationMPlex.cc b/RecoTracker/MkFitCore/src/PropagationMPlex.cc
+--- a/RecoTracker/MkFitCore/src/PropagationMPlex.cc	2026-08-11 10:48:01.000000000 -0400
++++ b/RecoTracker/MkFitCore/src/PropagationMPlex.cc	2026-10-03 11:19:02.725811291 -0400
+@@ -4,6 +4,7 @@
+ #include "RecoTracker/MkFitCore/interface/TrackerInfo.h"
+ 
+ #include "PropagationMPlex.h"
++#include "PropDumpHook.h"
+ 
+ //#define DEBUG
+ #include "Debug.h"
+@@ -21,6 +22,7 @@
+                              MPlexLS& outErr,
+                              MPlexLV& outPar,
+                              const int N_proc) {
++    propdump::countCall("propagateLineToRMPlex", N_proc);
+     // XXX Regenerate parts below with a script.
+ 
+     const Matriplex::idx_t N = NN;
+@@ -204,6 +206,7 @@
+                                        MPlexLV& outPar,
+                                        MPlexLL& errorProp,
+                                        const int N_proc) {
++    propdump::countCall("helixAtRFromIterativeCCSFullJac", N_proc);
+     errorProp.setVal(0.f);
+     MPlexLL errorPropTmp(0.f);   //initialize to zero
+     MPlexLL errorPropSwap(0.f);  //initialize to zero
+@@ -923,6 +926,7 @@
+                                 MPlexQI& outFailFlag,
+                                 const int N_proc,
+                                 const PropagationFlags& pflags) {
++    propdump::countCall("helixAtRFromIterativeCCS", N_proc);
+     errorProp.setVal(0.f);
+     outFailFlag.setVal(0.f);
+ 
+@@ -939,6 +943,7 @@
+                               const int N_proc,
+                               const PropagationFlags& pflags,
+                               const MPlexQI* noMatEffPtr) {
++    propdump::countCall("propagateHelixToRMPlex", N_proc);
+     // bool debug = true;
+ 
+     // This is used further down when calculating similarity with errorProp (and before in DEBUG).
+@@ -1078,6 +1083,9 @@
+         outErr.copySlot(i, inErr);
+       }
+     }
++    if (propdump::enabled() && !propdump::inWrapper())
++      propdump::dump(0, &pflags, 0, N_proc, inErr, inPar, inChg, &msRad, nullptr, nullptr, nullptr, nullptr, nullptr,
++                     nullptr, &outErr, outPar, nullptr, &outFailFlag, nullptr, noMatEffPtr, nullptr);
+     // }
+   }
+ 
+diff -ruN a/RecoTracker/MkFitCore/src/PropagationMPlexCommon.cc b/RecoTracker/MkFitCore/src/PropagationMPlexCommon.cc
+--- a/RecoTracker/MkFitCore/src/PropagationMPlexCommon.cc	2026-08-11 10:48:01.000000000 -0400
++++ b/RecoTracker/MkFitCore/src/PropagationMPlexCommon.cc	2026-10-03 11:19:02.726811292 -0400
+@@ -4,6 +4,7 @@
+ #include "RecoTracker/MkFitCore/interface/TrackerInfo.h"
+ 
+ #include "PropagationMPlex.h"
++#include "PropDumpHook.h"
+ 
+ #include <vdt/log.h>
+ #include <vdt/sincos.h>
+@@ -84,6 +85,7 @@
+                             MPlexLS& outErr,
+                             MPlexLV& outPar,
+                             const int N_proc) {
++    propdump::countCall("applyMaterialEffects", N_proc);
+ #pragma omp simd
+     for (int n = 0; n < NN; ++n) {
+       if (n >= N_proc)
+diff -ruN a/RecoTracker/MkFitCore/src/PropagationMPlexEndcap.cc b/RecoTracker/MkFitCore/src/PropagationMPlexEndcap.cc
+--- a/RecoTracker/MkFitCore/src/PropagationMPlexEndcap.cc	2026-08-11 10:48:01.000000000 -0400
++++ b/RecoTracker/MkFitCore/src/PropagationMPlexEndcap.cc	2026-10-03 11:19:02.725811291 -0400
+@@ -4,6 +4,7 @@
+ #include "RecoTracker/MkFitCore/interface/TrackerInfo.h"
+ 
+ #include "PropagationMPlex.h"
++#include "PropDumpHook.h"
+ 
+ //#define DEBUG
+ #include "Debug.h"
+@@ -64,6 +65,7 @@
+                               const int N_proc,
+                               const PropagationFlags& pflags,
+                               const MPlexQI* noMatEffPtr) {
++    propdump::countCall("propagateHelixToZMPlex", N_proc);
+     // debug = true;
+ 
+     outErr = inErr;
+@@ -192,6 +194,9 @@
+         outErr.copySlot(i, inErr);
+       }
+     }
++    if (propdump::enabled() && !propdump::inWrapper())
++      propdump::dump(1, &pflags, 0, N_proc, inErr, inPar, inChg, nullptr, &msZ, nullptr, nullptr, nullptr, nullptr,
++                     nullptr, &outErr, outPar, nullptr, &outFailFlag, nullptr, noMatEffPtr, nullptr);
+     // }
+   }
+ 
+@@ -203,6 +208,7 @@
+                 MPlexQI& outFailFlag,
+                 const int N_proc,
+                 const PropagationFlags& pflags) {
++    propdump::countCall("helixAtZ", N_proc);
+     errorProp.setVal(0.f);
+     outFailFlag.setVal(0.f);
+ 
+diff -ruN a/RecoTracker/MkFitCore/src/PropagationMPlexPlane.cc b/RecoTracker/MkFitCore/src/PropagationMPlexPlane.cc
+--- a/RecoTracker/MkFitCore/src/PropagationMPlexPlane.cc	2026-08-11 10:48:01.000000000 -0400
++++ b/RecoTracker/MkFitCore/src/PropagationMPlexPlane.cc	2026-10-03 11:19:02.726811292 -0400
+@@ -5,6 +5,7 @@
+ #include "RecoTracker/MkFitCore/interface/cms_common_macros.h"
+ 
+ #include "PropagationMPlex.h"
++#include "PropDumpHook.h"
+ 
+ //#define DEBUG
+ #include "Debug.h"
+@@ -515,6 +516,7 @@
+                     MPlexQI& outFailFlag,
+                     const int N_proc,
+                     const PropagationFlags& pflags) {
++    propdump::countCall("helixAtPlane", N_proc);
+     errorProp.setVal(0.f);
+     outFailFlag.setVal(0.f);
+ 
+@@ -532,6 +534,7 @@
+                                   const int N_proc,
+                                   const PropagationFlags& pflags,
+                                   const MPlexQI* noMatEffPtr) {
++    propdump::countCall("propagateHelixToPlaneMPlex", N_proc);
+     // debug = true;
+ 
+     outErr = inErr;
+@@ -702,6 +705,9 @@
+         outErr.copySlot(i, inErr);
+       }
+     }
++    if (propdump::enabled() && !propdump::inWrapper())
++      propdump::dump(2, &pflags, 0, N_proc, inErr, inPar, inChg, nullptr, nullptr, &plPnt, &plNrm, nullptr, nullptr,
++                     nullptr, &outErr, outPar, nullptr, &outFailFlag, nullptr, noMatEffPtr, nullptr);
+     // }
+   }
+ 
+diff -ruN a/RecoTracker/MkFitCore/src/PropDumpHook.cc b/RecoTracker/MkFitCore/src/PropDumpHook.cc
+--- a/RecoTracker/MkFitCore/src/PropDumpHook.cc	1969-12-31 19:00:00.000000000 -0500
++++ b/RecoTracker/MkFitCore/src/PropDumpHook.cc	2026-10-03 11:19:41.580882526 -0400
+@@ -0,0 +1,149 @@
++#include "PropDumpHook.h"
++
++#include <cstdio>
++#include <cstdlib>
++#include <map>
++#include <mutex>
++#include <string>
++#include <tuple>
++
++#include "RecoTracker/MkFitCore/interface/PropagationConfig.h"
++#include "RecoTracker/MkFitCore/interface/TrackerInfo.h"
++// angle brackets: test-only cross-package include (scram's private-header check greps quoted includes)
++#include <RecoTracker/MkFitAlpaka/test/propTestIO.h>
++
++namespace mkfit {
++  namespace propdump {
++    namespace {
++      using namespace ::mkfitdev::proptest;
++      constexpr size_t kMaxPerBlock = 150000;
++
++      struct Store {
++        std::mutex mtx;
++        std::string fn;
++        bool on = false;
++        bool haveMat = false;
++        MaterialBlock mb;
++        std::map<std::tuple<int, int, int>, OpBlock> blocks;
++        std::map<std::string, std::pair<long, long>> census;
++        Store() {
++          const char* e = std::getenv("MKFIT_PROP_DUMP");
++          if (e && *e) {
++            fn = e;
++            on = true;
++          }
++        }
++        ~Store() {
++          if (!on)
++            return;
++          std::vector<OpBlock> v;
++          for (auto& kv : blocks)
++            v.push_back(std::move(kv.second));
++          writeFile(fn, mb, v);
++          for (auto const& kv : census)
++            std::fprintf(stderr, "PROPDUMP census: %-40s calls %10ld  slots %12ld\n", kv.first.c_str(), kv.second.first, kv.second.second);
++        }
++      };
++      Store& store() {
++        static Store s;
++        return s;
++      }
++      thread_local int t_depth = 0;
++    }  // namespace
++
++    bool enabled() { return store().on; }
++    Guard::Guard() { ++t_depth; }
++    Guard::~Guard() { --t_depth; }
++    bool inWrapper() { return t_depth > 0; }
++    void countCall(const char* name, int N_proc) {
++      Store& s = store();
++      if (!s.on)
++        return;
++      std::lock_guard<std::mutex> lk(s.mtx);
++      auto& e = s.census[std::string(name) + (t_depth > 0 ? " (in wrapper)" : "")];
++      e.first += 1;
++      e.second += N_proc;
++    }
++
++    void dump(int op,
++              const PropagationFlags* pf,
++              int propToHit,
++              int N_proc,
++              const MPlexLS& inErr,
++              const MPlexLV& inPar,
++              const MPlexQI& inChg,
++              const MPlexQF* msRad,
++              const MPlexQF* msZ,
++              const MPlexHV* plPnt,
++              const MPlexHV* plNrm,
++              const MPlexHV* plDir,
++              const MPlexHS* msErr,
++              const MPlexHV* msPar,
++              const MPlexLS* outErr,
++              const MPlexLV& outPar,
++              const MPlexQF* chi2,
++              const MPlexQI* fail,
++              const MPlexQI* chgOut,
++              const MPlexQI* noMatEff,
++              const MPlexQI* skipIfGeZero) {
++      Store& s = store();
++      if (!s.on)
++        return;
++      const int pfl = pf ? ((pf->use_param_b_field ? 1 : 0) | (pf->apply_material ? 2 : 0) |
++                            (pf->copy_input_state_on_fail ? 4 : 0))
++                         : 0;
++      std::lock_guard<std::mutex> lk(s.mtx);
++      if (!s.haveMat && pf && pf->tracker_info) {
++        const TrackerInfo& ti = *pf->tracker_info;
++        s.mb.nBinsZ = ti.mat_nbins_z();
++        s.mb.nBinsR = ti.mat_nbins_r();
++        s.mb.rngZ = ti.mat_range_z();
++        s.mb.rngR = ti.mat_range_r();
++        s.mb.bbxi.resize(s.mb.nBinsZ * s.mb.nBinsR);
++        s.mb.radl.resize(s.mb.nBinsZ * s.mb.nBinsR);
++        for (int bz = 0; bz < s.mb.nBinsZ; ++bz)
++          for (int br = 0; br < s.mb.nBinsR; ++br) {
++            s.mb.bbxi[bz * s.mb.nBinsR + br] = ti.material_bbxi(bz, br);
++            s.mb.radl[bz * s.mb.nBinsR + br] = ti.material_radl(bz, br);
++          }
++        s.haveMat = true;
++      }
++      OpBlock& b = s.blocks[std::make_tuple(op, pfl, propToHit)];
++      b.op = op;
++      b.pflags = pfl;
++      b.propToHit = propToHit;
++      for (int n = 0; n < N_proc; ++n) {
++        if (b.recs.size() >= kMaxPerBlock)
++          return;
++        if (skipIfGeZero && skipIfGeZero->constAt(n, 0, 0) >= 0)
++          continue;
++        Rec r{};
++        for (int i = 0; i < 6; ++i) {
++          r.inPar[i] = inPar.constAt(n, i, 0);
++          r.outPar[i] = outPar.constAt(n, i, 0);
++          for (int j = 0; j <= i; ++j) {
++            r.inErr[symIdx(i, j)] = inErr.constAt(n, i, j);
++            if (outErr)
++              r.outErr[symIdx(i, j)] = outErr->constAt(n, i, j);
++          }
++        }
++        r.chg = inChg.constAt(n, 0, 0);
++        r.msRad = msRad ? msRad->constAt(n, 0, 0) : 0.f;
++        r.msZ = msZ ? msZ->constAt(n, 0, 0) : 0.f;
++        for (int i = 0; i < 3; ++i) {
++          r.plPnt[i] = plPnt ? plPnt->constAt(n, i, 0) : 0.f;
++          r.plNrm[i] = plNrm ? plNrm->constAt(n, i, 0) : 0.f;
++          r.plDir[i] = plDir ? plDir->constAt(n, i, 0) : 0.f;
++          r.msPar[i] = msPar ? msPar->constAt(n, i, 0) : 0.f;
++          for (int j = 0; j <= i; ++j)
++            r.msErr[i * (i + 1) / 2 + j] = msErr ? msErr->constAt(n, i, j) : 0.f;
++        }
++        r.noMatEff = noMatEff ? noMatEff->constAt(n, 0, 0) : 0;
++        r.chi2 = chi2 ? chi2->constAt(n, 0, 0) : 0.f;
++        r.fail = fail ? fail->constAt(n, 0, 0) : 0;
++        r.chgOut = chgOut ? chgOut->constAt(n, 0, 0) : r.chg;
++        b.recs.push_back(r);
++      }
++    }
++  }  // namespace propdump
++}  // namespace mkfit
+diff -ruN a/RecoTracker/MkFitCore/src/PropDumpHook.h b/RecoTracker/MkFitCore/src/PropDumpHook.h
+--- a/RecoTracker/MkFitCore/src/PropDumpHook.h	1969-12-31 19:00:00.000000000 -0500
++++ b/RecoTracker/MkFitCore/src/PropDumpHook.h	2026-10-03 11:19:02.722811285 -0400
+@@ -0,0 +1,48 @@
++#ifndef RecoTracker_MkFitCore_src_PropDumpHook_h
++#define RecoTracker_MkFitCore_src_PropDumpHook_h
++
++// MkFitAlpaka prop lane, PRIVATE instrumentation of a local MkFitCore copy (never for production):
++// with MKFIT_PROP_DUMP=<file> set, the stock propagation / Kalman entry points record their inputs and outputs
++// in the format of RecoTracker/MkFitAlpaka/test/propTestIO.h; the file is written at program exit.
++
++#include "Matrix.h"
++
++namespace mkfit {
++  class PropagationFlags;
++
++  namespace propdump {
++    bool enabled();
++    // depth guard: calls made from inside an instrumented wrapper are not recorded separately
++    struct Guard {
++      Guard();
++      ~Guard();
++    };
++    bool inWrapper();
++    // call census of the stock entry points (printed to stderr at exit when enabled)
++    void countCall(const char* name, int N_proc);
++
++    void dump(int op,
++              const PropagationFlags* pf,
++              int propToHit,
++              int N_proc,
++              const MPlexLS& inErr,
++              const MPlexLV& inPar,
++              const MPlexQI& inChg,
++              const MPlexQF* msRad,
++              const MPlexQF* msZ,
++              const MPlexHV* plPnt,
++              const MPlexHV* plNrm,
++              const MPlexHV* plDir,
++              const MPlexHS* msErr,
++              const MPlexHV* msPar,
++              const MPlexLS* outErr,
++              const MPlexLV& outPar,
++              const MPlexQF* chi2,
++              const MPlexQI* fail,
++              const MPlexQI* chgOut,
++              const MPlexQI* noMatEff,
++              const MPlexQI* skipIfGeZero);  // doCPE: slots with CPE correction are skipped
++  }  // namespace propdump
++}  // namespace mkfit
++
++#endif

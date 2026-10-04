@@ -1,0 +1,256 @@
+MkFitAlpaka: integration notes (lane integ, round 3, 2026-10-03)
+==================================================================
+
+1. BUILD LAYOUT RULE (D-layout; review C2; verify_int 4.1)  -- binding for every lane
+  - scram compiles ONLY the top level of src/alpaka/ (*.dev.cc for device code, *.cc for per-backend host code).
+    A .dev.cc in src/alpaka/<subdir>/ is silently NOT built. <flags ADD_SUBDIR="1"/> does not help.
+  - One top-level translation unit per component: src/alpaka/<Component>.dev.cc. It includes that component's
+    kernel headers (src/alpaka/<component>/*.h) and is the ONLY place where those kernels are launched
+    (alpaka::exec / createTaskKernel). Today:
+        src/alpaka/Cands.dev.cc        cands kernels   -> interface/cands/alpaka/CandSelect.h, CandSeedOpsLaunch.h
+        src/alpaka/Clean.dev.cc        clean kernels   -> src/alpaka/clean/CleanAlgo.h (class declaration only)
+        src/alpaka/EventOfHits.dev.cc  hits kernels    -> interface/hits/alpaka/EventOfHitsBuild.h
+    New components follow the same pattern (round-3 ownership: Seeds*.dev.cc, Select*.dev.cc, Cands*.dev.cc,
+    Prop*.dev.cc / BkFit*.dev.cc, Fit*.dev.cc).
+  - Exported entry points are plain (non-inline, non-template) host functions or class members in
+    ALPAKA_ACCELERATOR_NAMESPACE::mkfitdev[::<component>], declared in a header (interface/<component>/alpaka/*.h or
+    src/alpaka/<component>/<Name>.h) and DEFINED in the component .dev.cc. They are real symbols of
+    libRecoTrackerMkFitAlpaka{SerialSync,CudaAsync,ROCmAsync}.so.
+  - Tests, plugins and other components call the exported entry points. They NEVER launch a kernel class that the
+    library also launches: two instantiations of the same RDC kernel in the library and in a test break the CUDA
+    device link (nvlink "Internal error: unexpected reloc", seen in round 1). Including a kernel header for its
+    constants or device helpers is fine; launching its kernels is not. Test-only kernels (defined in the test) are fine.
+  - Device FUNCTIONS (ALPAKA_FN_ACC inline, templates) may be included anywhere; only kernels (alpaka::exec'd
+    classes) are subject to the one-TU rule.
+  - EventSetup typelookups (TYPELOOKUP_ALPAKA_TEMPLATED_DATA_REG for ESDeviceProduct<ESData<Device>>) live in the
+    PORTABLE PLUGIN library (plugins/alpaka/esTypelookup.cc), where every ES producer/consumer lives. Reason: once
+    the ROCm core library holds device code, its typelookup symbols were not exported any more (verify_int 4.1 b).
+    The host typelookup (ESData<DevHost>) stays in the host core library (src/esTypelookup.cc, no device code).
+    If an ES consumer is ever needed outside plugins/alpaka, move the typelookups into a separate package without
+    device code (the RecoTracker/LST vs LSTCore pattern) instead of back into the core library.
+  - Placeholders: a directory that has a real source does not need its Placeholder file.
+  - BuildFiles: integ owns their structure; lanes append <use> lines / <bin> entries only.
+  - After removing or moving a source, scram may keep stale objects: run 'scram b clean' for the package.
+  - After ADDING files (new .dev.cc, classes_def.xml), scram may not notice: touch the package BuildFile.xml.
+
+2. EVENT PRODUCTS AND DICTIONARIES (C1 f)
+  All products are PortableCollections, so the framework copies a device product to the host automatically for a
+  host consumer (generic CopyToHost of PortableCollection), and on host backends the device type IS the host type.
+  Multi-table products use SoABlocks (GENERATE_SOA_BLOCKS), as LSTCore does: one product, one token, per-block sizes.
+  A block view has exactly the type of the standalone layout view, so existing kernels take product.view().<block>().
+    product                 host type (interface/)                       device type (interface/alpaka/)
+    device EventOfHits      mkfitdev::EventOfHitsHostCollection          EventOfHitsDeviceCollection
+                            EventOfHitsProduct.h; blocks hits (HitSoA, nHits), layers (LayerSoA, nLayers),
+                            binnedHits (BinnedHitSoA, nHits), bins (BinSoA, nBinsTotal)
+    candidate storage       mkfitdev::CandStoreHostCollection            CandStoreDeviceCollection
+                            CandStoreProduct.h; blocks seeds, slots, hots, opts, extras, upds; sizes from
+                            candStoreSizes(nSeeds, hotsPerSeed)
+    tracks                  mkfitdev::TrackSoAHostCollection             TrackSoADeviceCollection
+                            TrackProduct.h (TrackSoA, one row per track; nTracks scalar)
+    seed table              contract with lane seeds: when interface/seeds/<...>SoA.h exists, integ adds
+                            interface/SeedsProduct.h + interface/alpaka/SeedsProduct.h and the dictionary lines.
+  Dictionaries:
+    host types  : src/classes.h + src/classes_def.xml of THIS package (host library, no device code), transient.
+    device types: package RecoTracker/MkFitAlpakaFormats (src/alpaka/classes_{cuda,rocm}{.h,_def.xml}; no device
+                  code), its own git repository next to this one (branch r3/integ). Every CMSSW area that runs a GPU
+                  job with these products needs it:
+                    git clone $L/r3_integ/CMSSW/src/RecoTracker/MkFitAlpakaFormats $CMSSW_BASE/src/RecoTracker/MkFitAlpakaFormats
+                  (later: git -C $CMSSW_BASE/src/RecoTracker/MkFitAlpakaFormats pull). Serial-only jobs do not need it.
+    WHY: with the CUDA dictionary inside libRecoTrackerMkFitAlpakaCudaAsync.so (the kernel library, as LSTCore does it)
+    every kernel compiled in the portable PLUGIN library failed to launch (cudaErrorInvalidResourceHandle at
+    cudaLaunchKernel; the ES CUDA test silently compared zeros: 3,424,147 mismatches). Kernels of the core library
+    still worked. Bisected: products commit 286be21 fails; same tree minus the CUDA dictionary passes; same tree with
+    the dictionary in the separate package passes. Root cause (ROOT/dictionary loading vs the CUDA fatbin
+    registration of a library whose device link pulls the core _nv.a) not traced further.
+    A new product needs its host lines here (src/classes_def.xml) and its device lines in MkFitAlpakaFormats.
+
+3. SHARED ADAPTERS
+  src/alpaka/Packers.h (namespace mkfitdev::pack, ALPAKA_FN_HOST_ACC, templated on the Matriplex width N):
+    loadCandState / storeCandState   CandState <-> MPlexLS/LV/QI slot n  (stock MkFinder::copy_in/out(TrackCand))
+    loadTrack / storeTrack           TrackSoA row <-> MPlexLS/LV/QI/QF   (copy_in/out(Track): err, par, chg, chi2)
+    loadHit                          HitSoA row -> MPlexHS/HV            (m_msErr/m_msPar.copyIn(n, hit.err/posArray()))
+    loadModulePlane / zeroModulePlane  ES ModuleInfo row of (layer, detIDinLayer(packed)) -> norm/dir/pnt
+                                     (MkFinder::packModuleNormDirPnt: norm = zdir, dir = xdir, pnt = pos; zeros if unused)
+    Test: test/alpaka/testIntegPackers.cpp (bin testMkFitAlpakaIntegPackers): stock Hit/Track objects copied into the
+    STOCK Matriplex (vendored, width NN = 8) vs the packers on the port SoAs: 495,694 element checks, 0 differences;
+    round trips are identities; plane packer and flags adapter checked. Device instantiation (N = kNN) is exercised by
+    plugins/alpaka/MkFitProductsTestKernels.dev.cc.
+  src/alpaka/PropagationFlagsAdapter.h (namespace mkfitdev::prop):
+    propagationFlags(ESView const&, PropStage)  ->  prop::PropagationFlags built from ESConfig::prop_config.<stage>
+    plus ESView::material. PropStage = FindingInterLayer, FindingIntraLayer, BackwardFit, ForwardFit, SeedFit, PcaProp.
+    The prop struct itself is unchanged (owned by bkfit); there is exactly one source of the flag values (the ES).
+
+4. MATH UNIFICATION (review M2, D-dup): one copy of each helper, in interface/math
+    fast_atan2f        mkfitdev::vdt::fast_atan2f (vdtMath.h), the stock vdt transliteration. hits' select-form
+                       copy is gone (hits output unchanged with the stock form). The select form was tried as the
+                       single copy; the serial QCD prop hash changed in that build, but the build also had the
+                       isFinite inlining change below, so the comparison was confounded. Stock form kept (safe);
+                       re-trying the select form for CPU speed is an open item (gate: prop hashes + hits exact).
+    isFinite           mkfitdev::isFinite (MathUtils.h), bit test via __builtin_bit_cast (no union pun, no memcpy),
+                       ALPAKA_FN_INLINE (forced inline) as prop had it: with plain 'inline' the serial QCD hash of
+                       prop's kalmanPropagateAndUpdateAndChi2Plane changed (d6361e01b1a6df8e -> 8d76597c793bd68e;
+                       agreement counts vs stock unchanged) - an inlining/vectorization change at rounding level.
+                       With ALPAKA_FN_INLINE the hash is round 1's again. prop::isFinite and clean::isFiniteBits
+                       forward to it. Lesson: keep ALPAKA_FN_INLINE where stock-faithful CPU codegen matters.
+    squashPhiMinimal   mkfitdev::squashPhiMinimal (MathUtils.h); clean uses it.
+    PI constants       mkfitdev::Const::PI / TwoPI (Config.h); clean's kPI/kTwoPI and LayerAxes' kPI alias them.
+                       vdt's internal PIF/PIO2F/PIO4F/ONEOPIO4F stay inside vdt (vdt's own constant set; ONEOPIO4F =
+                       float(4/pi) is not 4.f/Const::PI).
+    cleaner Config     clean::kMaxd* alias mkfitdev::Config::maxd1pt/maxdphi/maxdcth/maxcth_ob/maxcth_fw.
+    hit-index codes    interface/math/HitConstants.h (kHitMissIdx ... kHitCCCFilterIdx); cands and tracks include it
+                       (they each defined kHitCCCFilterIdx: a redefinition error as soon as both are in one TU).
+  Evidence (all on the final integ build, logs r3_integ/run/): mplex 6 runs, prop 5 real-capture runs + chain, hits 7
+  dump runs + 2 in-job, clean 12 runs: output identical to the round-1 logs (verify_int/run) except timing lines.
+
+5. REGISTER CI (review H5)
+  - Build time: CUDA_FLAGS="-Xptxas=-warn-spills,-Werror" on the core library and the portable plugins: a register
+    spill in any CUDA kernel is a ptxas error, so 'scram b' fails. Verified with a deliberately spilling kernel
+    (ptxas error: "Registers are spilled to local memory in function ..."). Test binaries are not covered (test
+    kernels may be heavy on purpose). ROCm: no equivalent flag.
+  - Runtests: test testMkFitAlpakaKernelRegisters runs test/integ_check_registers.sh = harness'
+    test/replay_kernel_registers.sh on the package CUDA libraries, prints the full report and fails on LOCAL > 0.
+    Final build: 390 kernel entries (6 archs), LOCAL > 0: none.
+
+6. ATOMICS CONVENTION (review M1; DESIGN D-M1 already states it)
+  alpaka 2.1.1: hierarchy::Threads = block-scope (atomicAdd_block); hierarchy::Blocks and hierarchy::Grids = device
+  scope on CUDA. Use Blocks for device-global counters, as the rest of CMSSW does. lane_clean/REPORT.txt:101 ("Blocks
+  is block-scope on CUDA") is wrong; clean's switch to Grids is harmless. Do not "fix" Blocks atomics.
+
+7. PRODUCT FRAMEWORK TEST
+  plugins/alpaka/MkFitAlpakaProductsTest.cc (+ MkFitProductsTestKernels.dev.cc) fills the three products on the
+  device, runs the packers there, and plugins/MkFitAlpakaProductsCheck.cc checks the host copies the framework makes:
+    cmsRun test/integ_products_cfg.py backend=serial_sync | cuda_async [maxEvents=20 streams=4]
+
+=====================================================================================================================
+ROUND 4 (lane integ, 2026-10-03 afternoon). Supersedes sections 1-2 and 5 where they differ.
+
+8. LAYOUT RULES (binding; review M1, M4, M5; DESIGN D-layout, D4-M4)
+  a) Kernels: only top-level src/alpaka/<Component>.dev.cc are compiled; one TU per component, it alone launches its
+     kernels; other code calls its exported entry points (section 1 still holds).
+  b) PUBLIC HEADERS NEVER INCLUDE src/ HEADERS. scram fails the build with "****ERROR:Private Header: File ... via
+     it's public headers in .../interface includes .../src/...". It is NOT an 'error:' line: grep build logs for
+     both 'error:' and '****ERROR'. Example hit this round: interface/cands/alpaka/CandsEngine.h tried to include
+     src/alpaka/prop/PropagationFlags.h; the fix keeps ES-level types (interface/es/ESConfig.h PropFlags) in the
+     interface and converts in the .dev.cc with src/alpaka/PropagationFlagsAdapter.h.
+  c) NO NEW KERNELS IN plugins/alpaka (the LST pattern; root cause in section 11). Plugins call core-library entry
+     points. The two existing test kernels (MkFitProductsTestKernels.dev.cc, MkFitESDataTestKernels.dev.cc) are the
+     only exceptions and must move to the core library (or a test-only library) before any PR.
+  d) Device dictionaries live in RecoTracker/MkFitAlpakaFormats (no device code), never in the kernel library.
+  e) Product layout: one device product per stock module boundary (D4-M4: EventOfHits, TrackSoA, fit output, + the
+     per-event status). Candidate storage is module-internal scratch; CandStoreProduct.h is legacy (round-1 test only).
+  f) nvlink "unexpected reloc" (sm_100) when one component's kernels are split over two TUs: keep ONE TU per component.
+  g) Registers (M5): ptxas -warn-spills only (no -Werror in the BuildFiles); the gate is runtests
+     testMkFitAlpakaKernelRegisters (fails on LOCAL > 0). Block size <= 128 for heavy kernels.
+  h) Explicit fma (stock -Ofast v3 contraction, M5 policy) becomes a libm call in the x86-64-v2 multi-arch build:
+     correct, slower on v2 only (review L1).
+  i) After adding files (new .dev.cc / classes_def.xml) touch the package BuildFile.xml; after removing/moving
+     sources run 'scram b clean' for the package.
+
+9. TWO REPOSITORIES (both on branch r4/<lane>)
+  RecoTracker/MkFitAlpaka         code, tests, configs, docs           $L/r4_<lane>/CMSSW/src/RecoTracker/MkFitAlpaka
+  RecoTracker/MkFitAlpakaFormats  CUDA/ROCm dictionaries only (integ)  $L/r4_<lane>/CMSSW/src/RecoTracker/MkFitAlpakaFormats
+  Take integ's state (both repos; merge MkFitAlpakaFormats too, or GPU jobs miss the new device types):
+    for p in MkFitAlpaka MkFitAlpakaFormats; do
+      git -C $CMSSW_BASE/src/RecoTracker/$p fetch $L/r4_integ/CMSSW/src/RecoTracker/$p r4/integ && \
+      git -C $CMSSW_BASE/src/RecoTracker/$p merge --no-edit FETCH_HEAD; done
+  A new area: git clone both repos from main (MkFitAlpakaFormats branch r3/integ until main exists there).
+  Serial-only jobs do not need MkFitAlpakaFormats; any cuda/rocm job with a device product does.
+
+10. HOW A LANE ADDS AN EVENT PRODUCT
+  1. Host type: interface/<Name>Product.h (PortableHostCollection<Layout> or PortableHostObject<Struct>).
+  2. Device alias: interface/alpaka/<Name>Product.h in ALPAKA_ACCELERATOR_NAMESPACE::mkfitdev (PortableCollection /
+     PortableObject of the same layout or struct) + ASSERT_DEVICE_MATCHES_HOST_COLLECTION.
+  3. Host dictionary (this repo): src/classes.h include + src/classes_def.xml lines, all persistent="false":
+       collection: the type, ::Layout, every <Layout><128,false>, edm::Wrapper<type>
+       object:     the struct, the PortableHostObject type, edm::Wrapper<type>
+  4. Device dictionary (MkFitAlpakaFormats repo, ask integ or commit there on your branch): classes_{cuda,rocm}.h
+     include + classes_{cuda,rocm}_def.xml: the device type, edm::DeviceProduct<...>, edm::Wrapper<edm::DeviceProduct<...>>
+     (namespaces alpaka_cuda_async / alpaka_rocm_async).
+  5. touch BuildFile.xml in both packages; build serial + cuda; run a cuda job that reads the host copy.
+  Example this round: the status product (interface/StatusProduct.h, interface/alpaka/StatusProduct.h, the
+  MkFitStatus lines in src/classes_def.xml and in MkFitAlpakaFormats).
+
+11. ROOT CAUSE OF THE PLUGIN-KERNEL LAUNCH FAILURE (review M1 a/c; time box used: about 10 min, 2:58-3:08 pm)
+  Mechanism (CUDA relocatable device code + one device link per library):
+  - The portable plugin library <use>s the core library, so scram device-links the core's static device archive
+    into the plugin. The plugin's linked fatbin therefore holds the core kernels too (harness' observation c) and its
+    link stub counts NUM_PRELINKED_OBJECTS = 7 core TUs + 2 own TUs = 9 (nm -D: the plugin exports the 7 core
+    __cudaRegisterLinkedBinary_<module> symbols plus its own 2; stock RecoTracker/LST plugins export 0).
+  - nvcc's crt/link.stub registers a linked fatbin only when ALL its prelinked modules have called
+    __cudaRegisterLinkedBinary_<module> (static counter, link.stub:138-157); each TU calls the symbol of its own
+    module from its static initializer, resolved by the dynamic linker.
+  - Normal job (products test, LD_DEBUG=bindings, main area): the plugin is dlopen'ed first, the core library comes
+    in as its dependency, and the core TUs' 7 calls BIND TO THE PLUGIN's copies ("binding file
+    libRecoTrackerMkFitAlpakaCudaAsync.so to pluginRecoTrackerMkFitAlpakaPluginsPortableCudaAsync.so ... 7x").
+    The plugin's count reaches 9, its fatbin is registered, and core kernels run from the plugin's copy. The core
+    library's own linked fatbin is never registered in that job. It works by accident of load order.
+  - With the CUDA dictionary inside the core library, ROOT autoloads the core library (rootmap) BEFORE the plugin
+    library. Its TUs then bind to the core's own stubs, the core fatbin registers (core kernels work), and the
+    plugin's counter later stops at 2/9: the plugin fatbin is never registered, so every plugin kernel launch fails
+    (cudaErrorInvalidResourceHandle). That is exactly the bisected symptom.
+  Consequences: the same failure returns whenever anything loads the core CUDA library before the plugin (another
+  plugin package with its own kernels that uses this library, a dictionary, a test library). Note that
+  libRecoTrackerMkFitAlpakaFormatsCudaAsync.so itself has the core CUDA library as a NEEDED dependency (readelf), so a
+  ROOT autoload of the Formats dictionary before the portable plugin is loaded would reproduce the failure; today
+  the device types are first looked up from produces() inside the plugin's own modules, i.e. after the plugin load. Fix: rule 8c (no
+  kernels in plugins/alpaka: no plugin device link, no duplicate registration), as RecoTracker/LST does.
+  Evidence files: $L/r4_integ/m1/ (products_cuda.log; the LD_DEBUG binding lines are quoted above).
+  Canary: runtests testMkFitAlpakaCudaCanary (test/integ_cuda_canary.sh): the products test on serial (control) and
+  on CUDA; a plugin kernel writes known values, MkFitAlpakaProductsCheck throws on any mismatch.
+
+12. CONFIGURATION ENVELOPE (review H3; interface/SupportedConfig.h, src/SupportedConfig.cc)
+  checkSupportedConfig(ESConfig, layers, nLayers)  MkFitAlpakaESProducer::produce (per IOV)
+  checkSupportedBuildConfig(ESConfig, BuildModuleConfig)  build module, every event (allocation-free when it passes)
+  checkSupportedFitConfig(ESConfig)                MkFitAlpakaFitProducer::produce
+  All throw cms::Exception("MkFitAlpakaUnsupportedConfig") listing every violation. Checklist (D4-H3):
+    (a) names: pre/post_bkfit_filter = qfilter_n_hits_pixseed; duplicate cleaner = sharedhits_pixelseed or empty
+        (and = sharedhits_pixelseed when removeDuplicates); seed partitioner = phase2:1; scorers = default; no seed
+        cleaner when seedCleaning
+    (b) params.maxCandsPerSeed and backward_params.maxCandsPerSeed in [1, kMaxCandsPerSeed = 5]
+    (c) clustersToSkip empty (no hit mask)          (d) has_charge() false on every STRIP layer (no strip charge PCM;
+        pixel layers keep stock's default true, never read: the PCM call sits under !is_pixel(), MkFinder.cc:1742)
+    (e) params.minHitsQF == backward_params.minHitsQF (one value for the pre and the post filter)
+    (f) requires_seed_hit_sorting = false, backward_drop_seed_hits = false, usePropToPlane and usePtMultScat equal
+        the device constexprs (Phase-2), backward_fit_to_pca = false, finding_requires_propagation_to_hit_pos = true
+    plus: backward_search = true, useHitSelectionV2 = true, buildingRoutine = cloneEngine, backwardFitInCMSSW = false.
+  The build module takes the stock MkFitProducer parameter names (clustersToSkip, buildingRoutine, seedCleaning,
+  removeDuplicates, backwardFitInCMSSW) so the menu swap keeps them; today wired in MkFitAlpakaChainProducer.
+
+13. PER-EVENT STATUS PRODUCT (review H4; DESIGN D4-H4)
+  interface/StatusProduct.h       mkfitdev::MkFitStatus {uint32 counter[32]}, named slots (enum StatusCounter),
+                                  MkFitStatusHostObject; interface/alpaka/StatusProduct.h MkFitStatusDeviceObject
+  interface/alpaka/StatusCollect.h + src/alpaka/Status.dev.cc   zeroStatus, collectStatus(StatusSources: device
+                                  scalar counters -> slots, one thread, fixed order), addStatus(slot, value)
+  interface/StatusReport.h        isClean, describeStatus, warnIfNotClean (LogWarning "MkFitAlpakaStatus"),
+                                  assertClean (throws)
+  plugins/MkFitAlpakaStatusCheck.cc   harness/menu assert helper: src, requireClean (throw), summaryFile (JSON)
+  Converter: MkFitAlpakaOutputWrapperFromTrackSoA has 'status' (InputTag, empty = off): LogWarning on non-zero.
+  Chain producer: produces the status (same label, type MkFitStatusDeviceObject) with seedHitsTruncated, EOH
+  overflowFirst/Count, hotOverflowSeeds/opts/extras (engine result buffer), trackOverflow/trackHitsOverflow (final
+  TrackSoA). Not yet filled: eventSkipped (M7: the EventOfHits producer puts NO product on a skip, and
+  device::Event::getHandle(device::EDGetToken) does not compile in CMSSW_20_1_0_pre2 (AlpakaCore Event.h:106-109),
+  so the consumer cannot test for it; the EventOfHits producer should put an empty product instead and the build
+  module set kEventSkipped: io + build), candHitsOverflow
+  (EngineCounters is not wired by the engine), fit counters (fit module), repackErrors (build, D4-C2).
+  Adding a counter: a new enum entry + name, nothing else (fixed 32-slot layout, no dictionary change).
+
+14. SHARED ADAPTERS AFTER H5
+  - Loaders: src/alpaka/Packers.h is the implementation of state/track/hit/module-plane copy-in/out, in two input
+    forms (HitSoAConstView + ESView; EngineHitInputs) plus hitRow(). Engine (K3a/K3b/K5) and bkfit call it; the
+    engine keeps thin N = 1 forwarding names (engineHitRow, loadCandState, loadHit).
+    Bit identity (the H5 test): a first version with copyIn from local arrays gave the same stored values but moved
+    results at rounding level (engine CUDA step test: states bitwise 97.95% -> 98.03%; serial final fit summaries),
+    i.e. it changed the codegen (FMA contraction / vectorization) of the inlined Kalman code, the same effect as the
+    isFinite inlining in round 3. Bisected (b5): reverting only the call sites restored bit identity. Packers now
+    stores element by element in the lanes' former order; engine + bkfit are then bit-identical on serial and CUDA.
+    The final fit (N = 8 on CPU) still moved with that form, so FitKernels.h keeps its inline loader (same stores as
+    Packers' HitSoA form, marked in the code). The real fix is prop's (explicit fma where stock contracts, review
+    verify3_int 4a), after which the fit can take Packers too.
+  - Flags: src/alpaka/PropagationFlagsAdapter.h is the only ES -> prop::PropagationFlags conversion
+    (makePropagationFlags, propagationFlags(ESView, stage), propagationFlags(ESConfig, MaterialView, stage)).
+    EnginePropConfig carries the ES PropFlags (interface types) and Cands.dev.cc converts; select's
+    interLayerFlags forwards; bkfit's local backwardFitFlags and enginePFBits are gone. The final fit keeps stock's
+    hard-coded PF_use_param_b_field | PF_apply_material (MkBuilder.cc:1440 does the same).
+  - find_tracks_handle_missed_layers: ONE implementation, the engine's (K3b/K4 from SelHits.wsrRaw). Select's
+    handleMissedLayer runs only with diagnostics on (diag != nullptr: the select stock check), else extra = 0 and
+    wsr = wsrRaw.

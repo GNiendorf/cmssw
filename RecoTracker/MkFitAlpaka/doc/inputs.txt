@@ -1,0 +1,65 @@
+MkFitAlpaka lane "inputs": device-resident inputs (round 5, 2026-10-03; DESIGN D5-b, review section 6 lane 3)
+=============================================================================================================
+Owner files: interface/seeds/*, src/alpaka/Seeds.dev.cc, src/alpaka/seeds/*, src/alpaka/EventOfHits.dev.cc,
+src/alpaka/inputs/* (new), interface/hits/DeviceHit* (new), interface/hits/alpaka/DeviceHitsBuild.h (new),
+plugins/*OutputWrapper*, plugins/alpaka/*EventOfHits*, plugins/alpaka/*Seed*, plugins/MkFitAlpakaClusterIndexToHit.cc,
+plugins/MkFitAlpakaDeviceHitsCheck.cc. Earlier notes: doc/io.txt (round 4), doc/seeds.txt, doc/hits.txt.
+
+1. DEVICE HIT INPUT (MkFitAlpakaEventOfHitsProducer deviceHits = True; default False = host input, unchanged)
+  What the stock converters compute per hit (RecoTracker/MkFit/plugins/convertHits.h + the two traits):
+    pos    = surface.toGlobal(LocalPoint(x, y))   (float; ext-vector TkRotation rotateBack + position)
+    err    = ErrorFrameTransformer::transform(LocalError, surface)   (a FLOAT expression; GlobalError stores it as
+             double and convertHits converts back with float(): exact. The "double transform" risk of io 2c does not
+             exist: the whole transform is float.)
+    packed = pixel setupAsPixel(uniqueIdInLayer, sizeX, sizeY); OT setupAsStrip(uniqueIdInLayer, 255, size)
+             (255 < kMinChargePerCM, so the OT charge field is 0)
+    layer  = mkFitLayerNumber(detid); row = cluster key (holes = default Hit, layer -1); size = max(last key + 1,
+             dataSize()).
+  Bitwise rule (interface/hits/DeviceHitInput.h): the result depends on where the host compiler contracted a*b + c*d.
+    MkFitAlpakaDeviceHitsCheck tries three variants against the stock HitVec; only "fuse first" (fma(a, b, c*d)) is
+    exact: 0 differences in position and error over 37,772,451 pixel + 50,628,884 OT hits (100 ttbar + 100 qcd); the
+    other two differ in 7-80% of the hits. The kernel uses explicit fmaf in that pattern, so the result is the same
+    on every backend (fmaf is correctly rounded everywhere): CUDA needs no contraction luck.
+  Pixel row order: the legacy cluster order inside a module is NOT the SoA order (legacy clusters are re-ordered by
+    minPixelRow): only 14% of the keys have SoA row == cluster key. The HitSoA row k (cluster key, as stock) takes SoA
+    row moduleStart[det] + originalId(k). Persisted clusters (replay files) have no originalId: then the SoA row of
+    the module with the bitwise-equal local (x, y) is used (the legacy rechit position is a copy of the SoA one).
+  Pixel sizes: the SoA clusterSizeX/Y are 8 * span - unbalance, negated at edges, capped; ceil(|s| / 8) gives the
+    legacy span in all but 246 of 37.8M hits (clusters longer than 255 rows, where the legacy cluster is truncated).
+    So the legacy cluster sizes are taken on the host, in the same pass as originalId.
+  Host work that remains (DeviceHitRawSoA, one pinned buffer, one copy on GPU):
+    pixel: per legacy cluster: SoA row + (sizeX, sizeY); OT: per rechit: local x, y, xx, xy, yy, GeomDet index, size.
+    Per-module table (rotation, position, layer, uniqueIdInLayer; 56 B x GeomDet index) built once per IOV, shared
+    by the streams through a shared_ptr. On GPU it is copied per event (1.7 MB): it should become an ES product with
+    a device copy (as R4-H2 asks for the CPE tables).
+  Pixel SoA source: the HOST product reco::TrackingRecHitHost (on CPU backends = the module's own product, zero copy;
+    on GPU the framework's device->host copy, which the legacy rechits need anyway, then 5 columns back to the
+    device). Next step: consume the device product directly on GPU backends (device::EDGetToken) - not testable on
+    the replay files (they hold only the host product), so it needs a menu test.
+  Validation (r5_inputs/cfg/inputs_cfg.py mode=devhits: compareHostHits = True compares the device-made HitSoA with
+    the host-input HitSoA column by column, and the whole chain runs twice in the job, on the host-input and on the
+    device-input EventOfHits, compared at paramTolerance 0 with requireIdentical):
+                                  ttbar serial   ttbar L40   qcd serial   qcd L4
+      HitSoA identical (events)      100/100      100/100      100/100     100/100
+      chain mkFit tracks bit-identical 100/100 in all four columns, TrackCandidates bit-identical 100/100
+    HLT menu (exact job.sh command line + production customise + cfg/customizeInputs.py compare=True, live clusters,
+    originalId path): ttbar 100 ev CPU and GPU 70/70 tracked events IDENTICAL; qcd 100 ev CPU 100/100, GPU with
+    pixelSoAOnDevice 100/100 IDENTICAL.
+  R4-M1 skip contract (testSkipModulo, untracked, validation only): a skipped event puts an EMPTY EventOfHits
+    (nLayers == 0); the build module (patch for gpu, r5_inputs/patches/0001) sets eventSkipped and puts empty
+    TrackSoAs (now zero-filled); the wrapper puts an empty MkFitOutputWrapper. Tested serial + L40, 12 events,
+    5 skipped: status eventSkipped = 5, no exception, the 7 other events identical to stock.
+
+2. INDEX-ONLY MkFitClusterIndexToHit (plugins/MkFitAlpakaClusterIndexToHit.cc)
+  MkFitAlpakaPixelClusterIndexToHit / MkFitAlpakaPhase2ClusterIndexToHit: the stock convertHits map (cluster key ->
+  const TrackingRecHit*), same size rule, same many-collections check; no HitVec, no transforms. The stock
+  MkFitOutputConverter reads only this product of the converters; the build module reads only its size (patch 0001
+  switches its token from MkFitHitWrapper to MkFitClusterIndexToHit: both products exist under the stock label).
+  compareTo = the stock converter's product: pointer-equal, same size, 100 ttbar + 100 qcd replay events, both maps.
+  TrackCandidates of the stock converter fed by the index-only maps: bit-identical 100/100 + 100/100.
+
+3. SEEDS (D5-b): see doc/seeds_d5b.txt (decision note).
+
+4. MENU (r5_inputs/cfg/customizeInputs.py, proposed for python/customizeHLTforMkFitAlpaka.py, menu lane):
+  after the production swap: hltMkFitEventOfHits.deviceHits = True (+ pixelSoA, pixelRecHits, otRecHits), the two
+  stock hit converters replaced by the index-only producers under the same labels. Results in r5_inputs/REPORT.txt.

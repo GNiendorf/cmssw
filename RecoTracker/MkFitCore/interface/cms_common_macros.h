@@ -23,6 +23,15 @@ namespace mkfit {
 #endif
   }
 
+  // NaN test that survives -Ofast: -ffinite-math-only lets the compiler fold x != x and std::isnan(x) to false.
+  inline bool isNaN(float x) {
+    union {
+      unsigned int l;
+      float d;
+    } v = {.d = x};
+    return (v.l & 0x7fffffffu) > 0x7f800000u;
+  }
+
 }  // namespace mkfit
 
 #endif

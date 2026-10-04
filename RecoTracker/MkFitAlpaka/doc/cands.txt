@@ -1,0 +1,97 @@
+MkFitAlpaka lane "cands": candidate bookkeeping and the per-seed selection of the clone engine (round 1)
+=========================================================================================================
+Branch lane/cands. Reference: stock MkFitCore/MkFitCMS of CMSSW_20_1_0_pre2 (CandCloner.cc, TrackStructures.h/.cc,
+MkBuilder.cc, MkFinder.cc, MkStdSeqs.cc). Design of the whole device clone engine: doc/clone_engine_design.txt.
+
+1. What is here
+  interface/cands/CandTypes.h      PODs mirroring stock: HoTNode, HitMatch/HitMatchPair (considerHitForOverlap,
+                                   findOverlap), CandBook (TrackCand bookkeeping: score, chi2, lastHitIdx, hit/hole/
+                                   overlap counters, origin index, overlap pair; addHitCounters = TrackCand::addHitIdx),
+                                   CandState (6 par, 21 err, charge, label, status, nSeedHits), CandOption (= IdxChi2List),
+                                   CandUpdate (= UpdateIndices), CandExtra (held-back cand), hit codes, SeedState,
+                                   overflow bits, capacities; scorer trackScoreDefault ("phase1:default"),
+                                   getScoreStruct, getScoreCand, scoreWorstPossible.
+  interface/cands/CandsSoA.h       SoA layouts (GENERATE_SOA_LAYOUT): SeedCandsSoA (row per seed: nCands, curBuf, state,
+                                   pickupLayer, layer, region, seedOriginIdx, nHots, nExtras, nUpdates, nOverlapUpdates,
+                                   bestShort(+Valid), *_before_bkwsearch, overflowBits; scalars hotsPerSeed and
+                                   nOverflowHots/Opts/Extras), CandSlotsSoA (book + state, 11 rows per seed: 2 x 5
+                                   double-buffered slots + best-short state), CandHotsSoA, CandOptionsSoA (35/seed),
+                                   CandExtrasSoA (5/seed), CandUpdatesSoA (5/seed, upd + ovl). Row helpers candSlotRow,
+                                   bestShortRow, hotRow, optRow, optSlot(ic, ih), extraRow, updRow.
+  interface/cands/CandsHostCollection.h, interface/cands/alpaka/CandsDeviceCollection.h   collection aliases.
+  interface/cands/CandSelection.h  selectSeedCandidates(params, SeedSelIO&): device CandCloner::processSeedRange for one
+                                   seed (top-K insertion + replay of the stock walk; exact libstdc++ order for > 16
+                                   options with exact ties via CandStdSort.h, switch kExactStdSortTies).
+  interface/cands/CandStdSort.h    transliteration of libstdc++ (GCC 13.4) std::sort on <= 35 option indices (tie
+                                   fallback only; flagged: it is a sort).
+  interface/cands/CandOptions.h    option builders of MkFinder::findCandidatesCloneEngine: makeHitOption,
+                                   invalidHitCode (-1/-2/-3/-5/-7 rules), makeInvalidOption, optionPt.
+  interface/cands/CandSeedOps.h    per-seed ops on a SeedCandsRef: activateSeedCands (find_tracks_unroll_candidates),
+                                   mergeCandsAndBestShortOne, compactifyHitStorageForBestCand, beginBkwSearch,
+                                   repackCandPostBkwSearch, filterSeedCands (filter_comb_cands body with the LST-step
+                                   filters qfilter_n_hits_pixseed && qfilter_nan_n_silly).
+  interface/cands/alpaka/CandSelect.h   host entry: selectCandidates(queue, seeds, slots, hots, opts, extras, upds,
+                                   params, nSeeds), one thread per seed (K4 of the design).
+  src/alpaka/cands/CandSelectKernel.h   KernelSelectCandidates + inline launcher selectCandidatesImpl.
+  src/alpaka/cands/CandSeedOpsKernels.h SoA kernels + inline launchers: activateSeedsImpl (K1, per-region step
+                                   layer tables, option-slot reset, activeMask/nActive), mergeSeedsImpl (K6),
+                                   compactifyBeginBkwImpl, filterSeedsImpl (pass flag per seed; the
+                                   caller compacts survivors keeping stock order).
+  src/alpaka/cands/CandSelect.dev.cc    exported selectCandidates (NOTE: scram does not compile src/alpaka/<subdir>/,
+                                   so this TU is not built yet; the tests include CandSelectKernel.h directly).
+  test/cands_dump_format.h         binary format of the stock CandCloner dump (CCD1 records).
+  test/alpaka/cands_selection_t.dev.cc  testMkFitAlpakaCandsSelection{SerialSync,CudaAsync}: selection kernel + option
+                                   rebuild vs stock CandCloner dumps.
+  test/alpaka/cands_seedops_t.dev.cc    testMkFitAlpakaCandsSeedOps*: the five per-seed ops vs stock snapshots (CCS1).
+  test/alpaka/cands_ties_t.dev.cc       testMkFitAlpakaCandsTies*: selection vs a std::sort transliteration of stock
+                                   CandCloner on synthetic lists with forced exact score ties.
+
+2. Interface for the other lanes / round 3
+  - Seed rows are in stock import order (region-major). Per seed: candidates of the current buffer at
+    candSlotRow(s, curBuf(s), ic), ic < nCands(s); state (par/err) in CandSlotsSoA::state, bookkeeping in ::book.
+  - Chi2/option kernel (K3) writes CandOption at optRow(s, optSlot(ic, ih)), ih = position of the hit in the cand's
+    selected-hit list (0..5), the invalid option at ih = 6; all 35 slots of a listed seed must be reset to
+    hitIdx = kOptEmpty first (K1). Use makeHitOption / invalidHitCode / makeInvalidOption. considerHitForOverlap
+    must run on the cand's CandBook in hit order (it is order dependent).
+  - Held-back cands (WSR Outside / barrel Failed) go to CandExtrasSoA in ic order with stateSrc = ic, nExtras(s).
+  - selectCandidates() then fills the other buffer, flips curBuf, copies parent states, appends HoT nodes, fills
+    CandUpdatesSoA upd rows (cand_idx = new slot, hit_idx, ovlp_idx = -1) with count nUpdates(s); the Kalman update
+    kernel (prop lane) updates candSlotRow(s, curBuf(s), cand_idx) in place with hit hit_idx.
+  - Per-seed layer of the step: seeds.layer(s) (set by K1). params: maxCandsPerSeed 5, pTCutOverlap 0, recheck false.
+  - HoT pool: hotsPerSeed rows per seed (scalar), single writer per seed; overflow sets kOverflowHotsBit in
+    overflowBits(s) and increments nOverflowHots: such a seed must be treated as failed.
+  - Export of a track: walk CandHotsSoA from book.lastHitIdx via prev (as TrackCand::exportTrack).
+
+3. How the tests were made and how to run them
+  Stock dumps (private instrumented copy of MkFitCore, never in our package):
+    area lane_cands/stockdump/CMSSW_20_1_0_pre2, src/RecoTracker/MkFitCore = release copy + dump code marked
+    "CANDS-LANE DUMP" (CandCloner.cc: per seed, inputs before / outputs after processSeedRange; CandsSnapDump.h used in
+    MkBuilder.cc find_tracks_unroll_candidates and TrackStructures.cc merge/compactify/beginBkw/repack; two dump-only
+    accessors in TrackStructures.h). Active only if MKFIT_CC_DUMP_DIR is set; one file per thread.
+    Job: lane_cands/run/stockdump_cfg.py = the stock CMSSW_20_1_0_pre2 HLT 75e33 CPU menu (pre2_4way cfg/dump_v1cur.py,
+    = release), schedule reduced to hltInitialStepTrackCandidatesMkFit + its 21 upstream producers (InputTag closure,
+    unscheduled), 8 threads.
+      lane_cands/run/run_dump2.sh <outdir> <nevents> <skip> [input file]
+    Samples: /mnt/data1/gsn27/here/ttbar_raw/0033230b...root (ttbar PU200), qcd_raw/03b794c3...root (QCD PU200).
+    Dumps made: run/dump_ttbar (3 ev), dump_ttbar20 (20 ev), dump_qcd10 (10 ev), dump2_ttbar (4 ev), dump2_qcd (4 ev),
+    dump3_ttbar (4 ev), dump3_qcd (4 ev); dump2/dump3 also hold the per-seed snapshots (ccsnap_*.bin, dump3 with the
+    filter records, kind 6).
+  Run (lane area, cmsenv as in DESIGN.txt; binaries in CMSSW/test/el9_amd64_gcc13/):
+    testMkFitAlpakaCandsSelectionSerialSync run/dump_ttbar run/dump_ttbar20 run/dump_qcd10 run/dump2_ttbar run/dump2_qcd \
+                                            run/dump3_ttbar run/dump3_qcd
+    testMkFitAlpakaCandsSelectionCudaAsync  (same arguments)
+    testMkFitAlpakaCandsSeedOps{SerialSync,CudaAsync} run/dump2_ttbar run/dump2_qcd run/dump3_ttbar run/dump3_qcd
+    testMkFitAlpakaCandsTies{SerialSync,CudaAsync} 300000 7
+  Without arguments the dump-driven tests print usage and exit 0. Exit code 1 on any mismatch.
+  Comparison rules: candidate bookkeeping bitwise (score, chi2, counters, overlap pair), hit chains compared node by
+  node (hit, layer, chi2) down to the first pre-existing node, which must be the same node; update/overlap lists
+  entry by entry; best-short validity, bookkeeping and chain. Seed ops: everything bitwise incl. node indices and
+  the full HoT vector (they are deterministic in-place transforms).
+
+4. Results (round 1, full numbers in lane_cands/REPORT.txt and run/test_results.txt)
+  selection: 508,072 seed-layer records from 49 events (1.22 M kept cands, 362k update entries, 30k best-short
+    changes, 123k backward-search records) identical on serial, cuda L40 and L4; 1,072,511 options rebuilt bitwise
+    identical.
+  seed ops: 359,157 records (activate 179,173, merge 65,694, compactify 32,802, beginBkw 32,802, repack 16,952,
+    filter 31,734) identical on serial, L40, L4, both through the test kernel and through the SoA kernels.
+  ties: 300k synthetic lists (80k with > 16 options, heavy exact ties) identical to std::sort-based stock code.

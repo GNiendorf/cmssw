@@ -1,0 +1,196 @@
+Lane mem (round 8, 2026-10-04): GPU memory budget (D7-f / D8-f) and the CPU EventOfHits page faults (R7-H1)
+=====================================================================================================================
+Branch r8/mem (RecoTracker/MkFitAlpaka). Scripts and logs: L/r8_mem/{scripts,logs,memattr,menu/runs}.
+
+1. WHAT HOLDS THE MEMORY (R7-H1 step 1)
+  The device EventOfHits product (hits 48 B/hit + binnedHits 20 B/hit + bin table 5 B/bin, ~31 MB per ttbar PU200
+  event, one caching-allocator block rounded up to a power of two) is read by exactly two modules, the device building
+  and the device fit, but as an event product it lived until the end of the event: with 16 EDM streams in flight that
+  is up to 16 blocks at any time, although each event needs it only between the EventOfHits kernels and the end of the
+  fit kernels. The engine scratch (EngineBuffers x2 + K2 list/props/sels) is already freed at the end of the build's
+  produce(); the build and fit TrackSoAs are a few MB.
+  On the CPU backends the same product is one fresh 31 MB allocation per event; jemalloc serves allocations >= 8 MiB
+  from an arena that purges them on free, so every event re-faults all of its pages (doc/cpu.txt 5 and 9: ~9 ms/event).
+
+2. GPU: THE DEVICE EVENTOFHITS IS DELETED RIGHT AFTER THE DEVICE FIT
+  - python/customizeMemory.py customizeMkFitAlpakaEarlyDelete (called by customizeHLTforMkFitAlpakaTarget when
+    EOH_EARLY_DELETE = True, the default): lists the product in process.options.canDeleteEarly (the framework's early
+    deletion, as customiseEarlyDelete does for the stock mkFit products), so it is deleted after its last consumer, the
+    device fit, and its block goes back to the caching allocator. Branch names = edm friendly names per backend
+    (cuda / rocm DeviceProduct of the PortableDeviceCollection, serial: the pooled host type of section 3); names
+    absent in the job are ignored by the framework. Applied only if the device building and the device fit are the
+    product's only consumers (validation customisations with more readers keep the old lifetime).
+  - Queue safety. The caching allocator orders the reuse of a freed block after a marker on the queue the block was
+    ALLOCATED on (the EventOfHits producer's queue). A block read by kernels on another queue could be handed to a third
+    queue while still read. So:
+    - the building gets the EventOfHits before calling iEvent.queue(), and the fit gets the building's TrackSoA before
+      iEvent.queue(): both take over the producer's queue (EDMetadata queue reuse) and the chain EventOfHits -> build
+      -> fit runs on one queue;
+    - the EventOfHits producer puts a host product "queue" (the native queue handle; 0 on CPU backends); the fit
+      (eventOfHitsQueue set by the customise) compares it with its own queue and, if different, waits for its work
+      before returning (EOH_RELEASE sameQueue / waited at endJob; LogWarning on the first wait).
+  - Output identical by construction (same kernels, same order on the device; only the lifetime changes).
+
+3. CPU: THE EVENTOFHITS PRODUCT IN PER-STREAM POOLED MEMORY
+  - CPU backends: EventOfHitsDeviceCollection = mkfitdev::EventOfHitsPooledHostCollection (interface/EventOfHitsProduct.h):
+    the PortableHostCollection interface (view, const_view, buffer() of exact size), but its buffer can be an
+    alpaka::BufCpu into a block of the producer's per-stream pool, whose deleter only drops a reference to the block.
+    The block (grow-only, +25%, 64 KiB granularity) stays resident between the events of the stream: no re-faulting.
+    GPU backends keep the PortableCollection.
+  - Safety: an EDM stream starts its next event only after the current event's products are gone (and the CPU queue is
+    blocking), so a block is never used by two events. Every row a consumer reads is rewritten every event (HitSoA: all
+    rows by the device-hit kernel or fillHits; layers: fillLayers + the CPU build kernel; bins: the whole table;
+    binnedHits: the registered rows, the only ones read through the bin table).
+  - scratchReuse = 0 on the EventOfHits producer restores the per-event allocation.
+  - Dictionary: mkfitdev::EventOfHitsPooledHostCollection and its edm::Wrapper (src/classes_def.xml, transient).
+  - Known limit: a HOST module that consumes mkfitdev::EventOfHitsHostCollection from a serial_sync EventOfHits
+    producer (test plugin MkFitAlpakaProductsCheck of integ_products_cfg.py) no longer finds it on the CPU backend
+    (the product type differs there); the menus have no such consumer (the customise refuses host consumers).
+
+4. RESULTS (2026-10-04, 5:05-6:30 am; box loaded by the other lanes: load 25-50; all numbers INDICATIVE)
+  4a. GPU memory, ONE job 16 threads x 16 streams, 250 ttbar PU200 events, L40, peak device MiB of the process
+      (scripts/memattr.sh = r7_menu memattr.sh; arms alternated over five reps; rep 4 ran next to one of my 8-thread
+      CPU jobs, the others alone):
+                                rep1    rep2    rep3    rep4    rep5    mean    vs stockfit (mean of paired ratios)
+        stockfit (r6_base, stock trackingMkFitFit + #186)   3032    3062    3038    3224    3040    3079    -
+        target before (main6)   3560    3636    3488    4044    3508    3647    +18.4%
+        target after (r8/mem)   3300    3314    3100    3616    3304    3327    +8.0%  (per rep +8.8 +8.2 +2.0 +12.2 +8.7)
+      Saved: -320 MiB per job (-8.8%). D7-f (stock + 10%) met on the mean; one rep of five (the loaded one) is above.
+      Throughput of these jobs (events 51-201, ev/s): before 7.15 / 7.17, after 7.05 / 7.15, stockfit 6.98 / 6.94: the
+      host-blocking EDMetadata wait of the early deletion costs nothing visible.
+      EOH_RELEASE: sameQueue = every tracked event, waited 0 in every GPU job (174/174, 139/139): build and fit always
+      ran on the EventOfHits queue, the guard's wait path was never needed.
+  4b. GPU correctness. Cross-job byte identity cannot be shown on GPU (the upstream GPU chain is not reproducible:
+      two jobs of the SAME main6 build differ in 139/139 tracked events (hltInitialStepTracks: 139 with other bytes,
+      59 with another size), pre vs post in 139/139 (69): the same pattern). In-job instead,
+      TargetValidation GPU (L4) ttbar 200, main6 vs r8/mem + customizeMkFitAlpakaEarlyDelete (active: EOH_RELEASE
+      printed), device chain vs the stock chain on the same inputs in the same job:
+                                              before (main6)        after (early delete)
+        building identical hit lists          0.999935              0.999935
+        fit (isolated) identical hit lists    0.999959              0.999962
+        fit (chained) identical hit lists     0.999872              0.999868
+        final tracks identical hit lists      0.999932              0.999936
+        paired truth (tgt - ref) efficiency   -0.00000 +- 0.00000   +0.00000 +- 0.00000
+        device HitSoA vs stock hit converters 139/139 IDENTICAL     139/139 IDENTICAL
+      i.e. the same agreement as before (a block reused while read would corrupt hits and show here).
+  4c. CPU (serial_sync, target menu, 8 threads, outputs of every recoTracks / TrackCandidates collection of HLTX,
+      scripts/cmp_tracks.py): ttbar 200 events and QCD 100 events: ALL IDENTICAL (8 collections each, incl.
+      hltInitialStepTracks, ...TorchClassifierOutput, ...SelectionHighPurity, hltGeneralTracks).
+      Page faults (time -v, whole job): ttbar 200 28.67M -> 26.42M, QCD 100 14.95M -> 14.10M.
+      EOH_POOL: 11-12 block allocations per job (8 streams + regrowth), largest product 39.6 MB (ttbar) / 38.9 MB (QCD).
+      hltMkFitEventOfHits (TimeReport, ttbar 200, ms per execution): 29.9 -> 19.7 (pre and post not run at the same
+      time; see 4d for the paired measurement).
+      The early deletion is active on CPU too (the serial branch name is not in the framework's "not available" list).
+  4d. CPU paired timing (pre = main6 and post = r8/mem started at the same moment, ttbar 200, 8 threads each,
+      TimeReport ms per execution of the module; load 42-47):
+                                   pair t1 pre / post      pair t2 pre / post
+        hltMkFitEventOfHits        29.0 / 21.0             29.1 / 19.9
+        device build               48.8 / 49.1             48.2 / 48.6
+        device fit                 28.4 / 28.0             27.8 / 27.4
+        job minor page faults      27.83M / 25.65M         28.55M / 27.73M
+        event loop real s/event    0.979 / 0.974           0.921 / 0.934
+      Per input event (200 events, 139 tracked): EventOfHits -5.6 ms (t1), -6.4 ms (t2). Build and fit unchanged (already
+      per-stream on CPU, round 7).
+  4e. GPU memory, TWO concurrent jobs of the same arm on the L40 (16 x 16 each: the lane limit; CI = 4 jobs), 200
+      ttbar events per job, peak of the summed device memory of the two processes (scripts/memattr2.sh), MiB:
+                                rep a   rep b   rep c   mean    vs stockfit
+        stockfit                6316    6048    5824    6063    -
+        target before (main6)   7266    7270    7182    7239    +19.4%
+        target after (r8/mem)   6270    6680    6328    6426    +6.0%  (worst rep +10.2% vs the stockfit mean)
+      Saved: -813 MiB per two jobs (-11.2%). The peaks of the same arm spread by up to 490 MiB (stockfit): single reps
+      are not resolved at the +-4% level; the means are.
+  4f. Products test (test/integ_products_cfg.py, 20 events, 4 streams): serial_sync and cuda_async 0 mismatches
+      (MkFitAlpakaProductsCheck reads the pooled product on CPU backends).
+
+5. NOT DONE / NEXT
+  - The CI shape (4 jobs x 16 x 16) was not run (lane limit 2 jobs); menu lane: rerun gpumem2.sh on the merged head.
+  - The largest ttbar EventOfHits product is 39.6 MB, above 32 MiB: on GPU the caching allocator serves it from a
+    64 MiB block (power-of-two bins). Shrinking it below 32 MiB, or splitting it into a hits product (the fit's only
+    input, deleted after the fit) and a binning product (deleted after the build), would cut the block held in the
+    EventOfHits -> fit window by up to half.
+  - The build's TrackSoA (read by the fit) is not deleted early: the menu still schedules the host wrapper of the
+    building (hltInitialStepTrackCandidates.tracks consumes hltInitialStepTrackCandidatesMkFit), whose host copy reads
+    the same device product.
+  - The default (KF) menu (customizeHLTforMkFitAlpaka): the build is the last consumer there; the same early deletion
+    needs the queue guard in the build module (not done).
+  - EventOfHits rows per ttbar event (139 tracked events): median 436k, p90 497k, max 560k hits; product = 68 B/hit +
+    ~1.5 MB, so events above ~470k hits (~25-30% of ttbar) take a 64 MiB caching block instead of 32 MiB.
+  - Any NEW device consumer of the EventOfHits (e.g. a stage-C module) makes customizeMkFitAlpakaEarlyDelete refuse
+    (consumer check, printed): it must run before the fit, or be allowed explicitly with the same queue guard.
+  - R7-H1 (3), one arena for the engine scratch: not done. The scratch is transient (freed when the build's work is
+    done) and one 42 MB arena would round up to a 64 MiB block; the separate buffers round less in total.
+
+=====================================================================================================================
+Lane mem (round 9, 2026-10-04): GPU memory of full stage D (D9-f), R8-M4 lever 1. Branch r9/mem.
+
+6. THE OT RECHIT SoA IS DELETED RIGHT AFTER THE EVENTOFHITS (customizeOTSoAEarlyDelete, OT_EARLY_DELETE)
+  - What held the memory: full stage D's device OT rechit SoA (MkFitAlpakaOTRecHitsProducer, hltMkFitAlpakaOTRecHits;
+    module, detId, size, strip, local position / errors, global position = ~46 B per OT cluster, ~11 MB per ttbar PU200
+    event, a 16 MiB caching block) was an event product, so every event in flight held one (+1.1 GB peak at the CI shape,
+    verify8_int 6c). Its device reader is hltMkFitEventOfHits (the hit fill kernel); hltInputLST reads the framework's
+    host copy (made by the producer's transform). The CA OT layers read the producer's OTHER products (CA hit SoA,
+    hitModuleStart), which are unchanged.
+  - customizeOTSoAEarlyDelete (python/customizeMemory.py; called by customizeHLTforMkFitAlpakaTarget after
+    customizeOTDevFull when OT_DEVICE and OT_EARLY_DELETE are set) lists the SoA's branches (cuda / rocm device product,
+    the host collection = serial product and host copy on GPU backends) in process.options.canDeleteEarly. Applied only
+    if every reader of the producer's label is known: the EventOfHits (otSoA), an LSTInputProducer (otSoA, host copy),
+    the CA OT layer parameters (trackerRecHitsSoA, outerTrackerRecHitSoAConverterSrc). Any other reader: nothing changed
+    (printed).
+  - Two hazards, two guards:
+    (a) the transform is not a consumer the early deletion knows about. If hltInputLST asked for the host copy after
+        the EventOfHits had run, the device SoA would be gone. So the EventOfHits consumes the host copy (otSoAHost, not
+        read): the framework makes the copy before the EventOfHits runs, i.e. before the deletion.
+    (b) the caching allocator orders the reuse of a freed block after a marker on the queue it was ALLOCATED on (the OT
+        producer's queue). The EventOfHits usually runs on another queue (the transform or the CA consumer takes the
+        producer's queue first). The OT producer now puts a host product "queue" (native handle, as the EventOfHits
+        does since round 8); the EventOfHits (otSoAQueue) records an event on its queue right after the fill kernel
+        (the last read of the SoA) and makes the producer's queue wait for it on the device (cudaStreamWaitEvent /
+        hipStreamWaitEvent). The free's marker comes later on that queue, so no other queue can reuse the block before
+        the fill kernel is done. No host wait. Counters at endJob: OT_RELEASE sameQueue N ordered M.
+  - Output identical by construction (same kernels in the same order; only the lifetime and a device-side queue order
+    change). Checks: section 8.
+
+7. THE BUILD'S HOST WRAPPER LEAVES THE MENU (customizeDropBuildWrapper, DROP_BUILD_WRAPPER; R8-M4 lever 1)
+  - hltInitialStepTrackCandidatesMkFit (MkFitAlpakaOutputWrapperFromTrackSoA on the build's TrackSoA) was scheduled in
+    HLTInitialStepSequence (14 paths) though its only reader (hltInitialStepTrackCandidates) is not scheduled: a
+    device->host copy of the build TrackSoA, its host conversion, and the build TrackSoA alive to the end of the event.
+  - Replaced (in the sequences that hold it directly) by MkFitAlpakaStatusCheck on the build's status
+    (hltInitialStepTrackCandidatesMkFitStatus, requireClean False): the same per-event LogWarning on a non-zero counter
+    (review H4) + one summary line at the end of the job. Refused (printed) if any reader of the wrapper is in a
+    sequence, path or task.
+  - Then the build TrackSoA's only reader is the device fit: when the fit's EventOfHits queue guard is on
+    (eventOfHitsQueue, customizeMkFitAlpakaEarlyDelete), the TrackSoA is deleted after the fit too. The guard covers it:
+    the fit runs on the EventOfHits queue, which the build took over and allocated the TrackSoA on, or it waits for its
+    own work before returning.
+  - Path module lists, target+D menu: 14 paths differ, each only by wrapper -> status check; nothing else.
+
+8. RESULTS (round 9, 10:00-10:28 am; box shared with other lanes, load 20-40: indicative)
+  8a. Correctness
+    - GPU in-job bitwise gate with the SoA deleted early (target + customizeOTDevFullGate + customizeOTSoAEarlyDelete,
+      L40, ttbar 100, 70 tracked events): OTDEV_CMP 17,644,711 rows 0 mismatches; DEVICE_HITS_EOH 70/70 IDENTICAL
+      (the EventOfHits read the SoA intact); LSTIN_OT 70 events idMis 0 posMis 0 (the host copy was made before the
+      deletion); OT_RELEASE sameQueue 0 ordered 70 (every event took the device-side order path); EOH_RELEASE sameQueue
+      70 waited 0; build status check clean.
+    - CPU (serial, 8 threads) target+D, both flags on (r9/mem) vs main6 (round start): hltGeneralTracks,
+      hltInitialStepTracks, hltPhase2PixelTracks, LST seed counts IDENTICAL in every event: ttbar 100 (129,498 /
+      133,512 / 123,435 tracks), QCD 60 (114,780 / 118,819 / 108,588).
+    - GPU target+D on vs off (same build, ttbar 100; GPU A/B is statistical only, R8-L7): pixel tracks same count in
+      100/100 events; hltInitialStepTracks 133,519 -> 133,531 (+0.009%), hltGeneralTracks 129,521 -> 129,515
+      (-0.005%), mean pt / valid hits equal to 4 digits.
+  8b. GPU memory: 2 concurrent jobs (lane limit) x 8 threads (box rule) x 16 streams, the same 450 ttbar events (skip
+      50) in both jobs, L40, peak / median (while both jobs hold memory) of the summed device MiB, sampled every 1 s;
+      arms alternated (scripts/memrun.sh). Half the CI shape: the 16 streams per job are the same, the threads are not.
+                                  peaks                       mean    vs stockfit   medians                  mean
+      stockfit (r6_base)          6834 7158 7388 6792         7043    -             6122 6332 5804 6338      6149
+      target+D before             7386 7544 7128 7008         7267    +3.2%         6752 6632 6958 6780      6781 (+10.3%)
+      target+D after (r9/mem)     6958 6446 7358 6546         6827    -3.1%         6002 6168 6550 5950      6168 (+0.3%)
+      target before (main6)       7738 7570                   7654    +8.7%         6968 6620                6794
+      target after                6696                        6696    -4.9%         6376
+      target+D+MLP after          6394                        6394    -9.2%         6086
+      ("before" = main6 x2 and r9/mem with OT_EARLY_DELETE / DROP_BUILD_WRAPPER False x2.)
+    - target+D after vs before: peak -440 MiB (-6.0%, t = -1.8), median -613 MiB (-9.0%, t = -4.0). Expected: one 16 MiB
+      block per event in flight (16 per job) less the OT -> EventOfHits window, ~0.4-0.5 GB for two jobs.
+    - At this shape target+D is inside D7-f both before (+3.2%) and after (-3.1%) on the peaks; verify8 measured +14.3%
+      at the CI shape (4 x 16 threads x 16 streams). The CI-shape number (D9-f) is the integrator's.
+  8c. Host time (GPU, ttbar 100, 8 threads, TimeReport ms per input event): the build wrapper 0.121 -> the status check
+      0.002; EventOfHits 1.70 -> 1.72 (the host-copy prefetch is not module time); OT producer 2.29 -> 2.40 (noise).

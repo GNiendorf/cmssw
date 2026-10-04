@@ -1,0 +1,149 @@
+MkFitAlpaka: GPU kernels of the build module (round 5, lane gpu)
+==================================================================
+Scope: the GPU kernels that matter in the HLT GPU menu (K2 hit selection, K4/K5 of the clone engine, the K1 -> K2
+list kernel) and production hygiene of MkFitAlpakaBuildProducer. CPU backends keep their round-4 code paths.
+
+1. K2 on GPU backends: two kernels (src/alpaka/select/SelectKernel.h, launched by select::runSelectHits)
+   Round 4: thread per candidate (KernelSelectHits, block 64): inter-layer propagation + selectHitIndicesV2. 63% of the
+   chain's kernel time; the hit loop is irregular, so a warp waits for its slowest candidate.
+   K2a KernelSelectPrep (block 64, thread per listed candidate): propagation to the layer, Bins + WSR (selectPrepare),
+       engine prop row; hand-off to K2b in SelHitsSoA::scan (q0/q1/q2/p1/p2, dq/dphi cuts, charge). Candidates without
+       a scan (failed / WSR_Outside) are finished in K2a.
+   K2b KernelSelectScan (block 128 = 8 candidates x kSelLanes = 16 lanes): lane l walks a cursor over the stock bin
+       order (q bin outer, phi bin inner with the phi wrap, binned hit order inside a bin) and evaluates the hits at
+       stock scan positions g = l, l + 16, ... with selectHitScore (the stock per-hit body, shared with the serial
+       selectHitIndicesV2). Each lane keeps a sorted best-6 by (ddphi, g) in registers (unrolled insertion, no local
+       memory); lane 0 merges the 16 lists through shared memory. in_gap: lane 0 checks the dead bins of the central q
+       bin over the visited phi range (stock does it inside the loop).
+   Result = the 6 smallest ddphi in ascending order, i.e. stock's std::priority_queue drain, unless two contending ddphi
+   are exactly equal. D5-d: ties do occur (0.04% of scanned candidates in ttbar, 0.09% in QCD), so stock's order is
+   kept: a conservative detector (equal ddphi among the selected, a left-out lane head equal to the 6th score, or a lane
+   that rejected a hit equal to its full list's maximum at or below the 6th score) flags the candidate and lane 0 reruns
+   selectScanHeap (the stock heap loop, the serial path's own code) for it.
+   One kernel with sequential groups was tried first: slower (8.1 vs 6.6 ms on the L4; one-wave grid, parallelism lost).
+   A noinline tie fallback was tried: 1.5 kB stack, 3x slower K2b; kept inline.
+   CPU backends: KernelSelectHits unchanged (kNN batches). k2GroupScan = False runs KernelSelectHits on GPUs (A/B).
+
+2. K4 copy split (src/alpaka/engine/EngineKernels.h KernelEngineSelect / KernelEngineUpdate; GPU backends)
+   K4 (thread per seed, 21 blocks) copied up to 5 candidate states (~112 B each) cur -> nxt serially. On the GPU it now
+   records the source slot of each output candidate in CandUpdatesSoA::outSrc (row (s, k), -1 = no copy) and K5
+   (thread per (seed, k)) reads the parent state from the previous buffer and writes slot k: updated if an update
+   targets slot k (same operands as copy + in-place update), plain copy otherwise. Seeds K4 did not change keep the
+   round-4 path (update in place). CPU backends: unchanged (K4 copies, K5 kNN batches).
+
+3. K1 -> K2 list kernel (KernelEngineBuildList, one block of 1024 threads): decision D5-e satisfied, no split.
+   REG x 1024 <= 65536 on every CUDA arch built: sm_75 32/34, sm_89 34, sm_100 40/41, sm_120 41 registers
+   (r4_build/registers_sm_*.txt, verify4_int/registers_sm89.txt) -> at most 41,984 of 65,536; it ran in the CMSSW GPU
+   menu jobs of verify4_int (ttbar 200 + QCD 100 events) and of this lane's menu benchmark.
+
+4. Production hygiene (plugins/alpaka/MkFitAlpakaBuildProducer.cc)
+   - Seeds are packed with io's packSeedsToDevice (R4-L3): CPU backends pack straight into the device collection.
+   - 'export' (tracks before the duplicate cleaner) is put only with putExport = True (validation); otherwise an empty
+     'export' collection is put and the buffer goes back to the caching allocator with the module's scratch.
+     Validation configs that compare 'export' must set putExport = True.
+   - Stage products stay size-0 unless stages = True (round 4).
+   - New diagnostics: reportMemory (device bytes the module allocates per event, no sync; BUILD_MEM at endJob),
+     countSelTies (one sync per event; SEL_TIES at endJob).
+
+5. Measurements (details: L/r5_gpu/REPORT.txt)
+   Kernel time of the build chain, ttbar, quiet L4, 50 events: 10.48 -> 5.61 ms/event; K2 6.61 -> 1.74 (K2a 0.70 +
+   K2b 1.04); K4 1.31 -> 1.24; K5 0.36 -> 0.41; launches 359 -> 405 per event.
+   Physics: every chained-stage comparator summary byte-identical to round 4 (main 371210e), CUDA and serial, ttbar
+   and QCD (100 events per stage, 500 events final); select stock check serial 182904/182904, CUDA 182903/182904.
+   Registers (sm_75/89/100/120): K2a 170/160/161/162, K2b 183/154/177/177, LOCAL 0 everywhere (final build).
+   Menu (2 x 8 x 8, shared box): stock and port within noise; GPU utilisation 10-20%: not GPU-bound at this shape.
+   Build module device memory per event: 40.8 MB mean, 57.2 MB max (reportMemory).
+
+=====================================================================================================================
+ROUND 6 (lane gpu, 2026-10-03 9:00-11:45 pm): device handoffs and async behaviour (stage A plumbing)
+=====================================================================================================================
+1. Async device fit fed by the device building: MkFitAlpakaFitDeviceProducer@alpaka (plugins/alpaka)
+   Round 5 path (trackingMkFitFit menu):
+     build TrackSoA (device) -> framework D->H copy -> MkFitAlpakaOutputWrapperFromTrackSoA (host TrackVec)
+     -> MkFitAlpakaFitProducer (SynchronizingEDProducer: host candCutSel, host TrackSoA packing, CPE cluster packing
+        for the hits on the tracks, H->D copies, fit, D->H copy; ExternalWork wait; produce() rebuilds the TrackVec)
+   Round 6 path:
+     build TrackSoA (device) -> MkFitAlpakaFitDeviceProducer (global::EDProducer, enqueue only):
+        handoff::selectFitInput  device candCutSel (MkFitFitProducer.cc:139-151), order-preserving compaction into the
+                                 fit's TrackSoA (one-block count + exclusive scan, thread-per-row copy); kept count
+                                 written to out.nTracks() on the device
+        handoff::buildClusterCpe ClusterCpe of every pixel hit on the device (section 2)
+        fit::runFinalFit         lane fit's kernels; NEW optional argument nTracksDev (patch 0001 for lane fit): the
+                                 row count is read on the device, the host value is the capacity (grid, scratch)
+     -> fitted TrackSoA (device product) -> framework D->H copy -> MkFitAlpakaOutputWrapperFromTrackSoA
+        (propagatedToFirstLayer = True) -> stock MkFitOutputTrackConverter (unchanged).
+   No alpaka::wait and no ExternalWork on the event path (reportStats / clusterSource = check are validation-only syncs).
+   Kernels/entry points: src/alpaka/FitHandoff.dev.cc (D-layout top-level TU), src/alpaka/engine/FitHandoff*.h.
+   The menu wiring (DEVICE_FIT_FROM_BUILD) is a patch for the menu lane: r6_gpu/patches/0002 (+ the FitValidation serial
+   clone of the device fit). Lane-local equivalent: r6_gpu/cfg/customizeGpu.py.
+
+2. Device cluster data for the CPE (handoff::buildClusterCpe; clusterSource = device (default) | host | check)
+   The legacy SiPixelCluster of every mkFit pixel row is reproduced from the pixel digi + cluster SoA of
+   hltPhase2SiPixelClustersSoA, i.e. the inputs of SiPixelDigisClustersFromSoAAlpaka:
+     digi selection     rawIdArr != 0, adc != 0, moduleId valid, clus valid (the converter's skips)
+     SoA cluster        g = clusModuleStart[moduleId] + clus (phase-2: uncapped prefix scan of clusInModule)
+     256-pixel cap      AccretionCluster keeps the first 256 digis of a cluster in digi order: for clusters with
+                        > 256 digis each digi's rank is counted backwards over the module's digis (rare: 273 clusters
+                        in 70 ttbar events)
+     255 span cap       SiPixelCluster offsets/spans are capped at 255 (pixel x = minRow + min(x - xmin, 255))
+     edges, charges     integer atomics (min/max, sums): deterministic; ClusterCpe = host clusterCpe() field by field
+   Host work left: per mkFit pixel row (= legacy cluster key) the SoA module index (rawToModule, once per module) and
+   SiPixelCluster::originalId (8 B per row, no pixel loop). The legacy order inside a module (heap sort by
+   minPixelRow) is not reproduced on the device. Persisted clusters without originalId fall back to the host path.
+   Counters (status-style): cluster overflow, ref out of range, big clusters; printed by clusterSource = check.
+
+3. EventOfHits device input: the per-module table is no longer copied per event (1.7 MB in round 5).
+   - ES product: MkFitAlpakaEventOfHitsModuleTableESProducer@alpaka (TrackerRecoGeometryRecord; TrackerGeometry +
+     MkFitGeometry; interface/hits/HitModuleTableESData.h, host product + CopyToDevice; host builder shared with the
+     module, plugins/alpaka/MkFitAlpakaEventOfHitsModuleTable.h). The EventOfHits module reads it when its new parameter
+     moduleTable names the product (customizeGpuModuleTableES in r6_gpu/cfg/customizeGpu.py).
+   - moduleTable empty (default): the module's own per-IOV table, copied once per (device, IOV) (deviceTable()).
+   Both GPU branches (pixelSoAOnDevice True/False) and the CPU branch use either source.
+   clusterSource = auto: device on GPU backends; on CPU backends "tracks" (the digi-level kernels run serially over
+   all ~1-2M digis there, 33.8 vs 19.7-21.1 ms/job-event; "tracks" computes clusterCpe() on the host only for the
+   pixel hits of the selected tracks, which is possible because the serial queue is blocking: 16.1 ms/job-event).
+
+4. Engine: thread-per-seed kernels (K4 KernelEngineSelect, Activate, Merge, Filter, GatherSeeds, Compactify,
+   StageExport) launched with 32-thread blocks on GPU backends (kEngineSeedBlock; 128 before): ~21 -> ~82 blocks for
+   ~2.6k seeds. Replay ttbar 50 ev, 1 thread, L4, A/B/A/B (128/32/128/32): K4 1.350/1.231/1.271/1.236 ms/event,
+   Activate 0.460/0.418/0.462/0.419, GatherSeeds 0.180/0.146/0.180/0.146; chain kernel time 5.83/5.72/5.76/5.74 ms/ev.
+   Stage summaries byte-identical.
+
+5. Validation (menu, exact job.sh command line + customizeHLTforMkFitAlpakaFit + r6_gpu/cfg/customizeGpu.py
+   customizeGpuDeviceFitValidation: the round-5 fit and the device fit side by side, MkFitAlpakaMkFitTrackCompare at
+   paramTolerance 0):
+     ttbar 100 ev (70 tracked), L40 and serial: 70/70 events fully bit-identical (132.5k tracks), fit counters equal
+     QCD 100 ev, L4 and serial: 100/100 bit-identical (194.5k tracks)
+     clusterSource = check: device ClusterCpe == host clusterCpe() bitwise on 13.14M (ttbar) / 18.78M (QCD) rows,
+       273 / 414 clusters > 256 pixels; cluster overflow 0, ref out of range 0
+     clusterSource = tracks (serial): 70/70 bit-identical
+     EventOfHits device input (deviceHits, module table cache): HitSoA IDENTICAL 70/70 (pixelSoAOnDevice True, L40)
+       and 70/70 (False, L4); QCD 100/100 (True, L4) and 100/100 (serial); fit bit-identical in all
+     ES-product table (moduleTable set): HitSoA IDENTICAL 70/70 (L4, pixelSoAOnDevice True) and 70/70 (serial)
+   Registers (cuobjdump, 166 kernels x 6 archs, LOCAL 0): sm_89 KernelCandSelIndex 41 (block 256, one block),
+   KernelCandSelCopy 26, KernelClusInit/Count/MinMax/Edges/Gather 30/24/28/26/28 (block 128); fit stage kernels
+   38-193 (unchanged code + one argument).
+
+6. Timing (INDICATIVE: shared box, load 65-93, other lanes' jobs on both GPUs; arms alternated A/B/A/B; GPU menu
+   trackingMkFitFit, ttbar 100 ev, 8 threads; FastTimer thread ms per job event)
+     fit modules (old = MkFitAlpakaFitProducer; prod = MkFitAlpakaFitDeviceProducer + host converter)
+       GPU (L40)  old 4.62 / 4.84   prod 1.03 / 0.97  (device module 0.89 / 0.82 + converter 0.15)
+       CPU        old 19.69 / 21.07 prod 16.1 (clusterSource tracks; with the device kernels on serial it was 33.8)
+     The old fit's acquire -> produce interval (ExternalWork, device + queueing) was 48-52 ms per tracked event; the
+     async module has no such interval: the next consumer waits on the device event, not a TBB thread.
+   GPU kernel time per tracked event in the menu (CUPTI, L4, 8 threads, 50 ev / 38 tracked, prod wiring):
+     build (engine/select/bkfit) 7.31, fit 1.23 (fit kernels 0.75, CPE clusters 0.40, candCutSel 0.08), seeds/export/
+     clean 0.36, EventOfHits 0.19 ms; mkFit total ~9.1 ms of ~44 ms GPU kernel time per tracked event of the menu.
+
+7. Status (review H4): the device fit puts its own MkFitStatusDeviceObject (fitOverflow, fitHitCountMismatch and two new
+   counters cpeClusterOverflow, cpeClusterRefErrors appended to interface/StatusProduct.h); the fit's host converter
+   (MkFitAlpakaOutputWrapperFromTrackSoA, status = the device fit) warns on non-zero values. 0 in every run.
+
+8. Menu patch (r6_gpu/patches/0002, menu lane's python/customizeHLTforMkFitAlpaka.py): DEVICE_FIT_FROM_BUILD = True
+   makes customizeHLTforMkFitAlpakaFit put MkFitAlpakaFitDeviceProducer@alpaka (label
+   hltInitialStepTrackCandidatesMkFitFitDevice, in hltMkFitAlpakaTask) + the host converter under the menu fit label;
+   customizeHLTforMkFitAlpakaFitValidation clones the device fit to serial on the host copy of the device build output.
+   Tested in this lane's area (patch applied, not committed): FitValidation GPU ttbar 100 and production CPU ttbar 100
+   run clean; status clean. NOTE: vs the new stock MkFitFitProducer (r6 reference = #186 + #187) the device fit is not
+   yet at rounding level (params within 1e-3 sigma: 14 of 132.5k): the #186 fit changes are lane fit's port, not in this
+   branch. CUDA vs serial of the device fit in the same job: same spread as verify5 (per track).

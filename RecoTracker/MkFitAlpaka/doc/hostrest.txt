@@ -1,0 +1,71 @@
+hostrest (round 9, stage E: the host remainder of the GPU tracking menu)
+=======================================================================
+Lane area L/r9_hostrest (L = lanes/mkfit_alpaka). Branch r9/hostrest in RecoTracker/MkFitAlpaka (this file only) and in
+the local package repos RecoTracker/LST, RecoTracker/PixelTrackFitting, RecoLocalTracker/Phase2TrackerRecHits.
+Every change is a local patch (D8-b), bitwise by construction and checked bitwise on real events. No DEVIATIONS, no
+SIMPLIFICATIONS entries (nothing in mkFit changed).
+
+1. CHANGES (all bitwise; numbers in L/r9_hostrest/REPORT.txt)
+  1a. LSTOutputConverter (RecoTracker/LST, local patch): the candidate's hits are pointers (pixel seed hits, LST input OT
+      hits, or on-demand OT hits kept in a per-candidate store reserved to the OT slot count, so it never reallocates).
+      They are cloned only into an output that keeps them (track-candidate mode). Seeds are moved into the outputs.
+      Before: every candidate cloned its hits once into an OwnVector, the seed was copied 2-3 times (each copy clones
+      every hit), and in seed-only mode (the menu's hltInitialStepTrajectorySeedsLST) the pLS hit clones were never used.
+      The hit order is unchanged: std::sort with the same comparator on the same pointer sequence is exactly what
+      OwnVector::sort does (std::sort on its vector<T*>). sharesInput is called on the same objects' contents (a clone
+      has the same detId and cluster refs), so the dedup is unchanged.
+  1b. LSTOutputConverter: TrackerGeometry::getDetectorType is a linear scan of the detid range table. The round-7 memo
+      was per stream, so a short job (CI shape: 16 streams, ~22 events per stream) paid the warm-up in every stream.
+      Now one job-wide memo (edm::GlobalCache holding a tbb::concurrent_unordered_map), tied to the first geometry
+      object; a later geometry IOV falls back to the per-stream memo. Same values.
+  1c. Phase2TrackerRecHitOnDemand (RecoLocalTracker/Phase2TrackerRecHits, local patch; used by LSTOutputConverter,
+      MkFitAlpakaOutputTrackConverter, the stock MkFitOutputTrackConverter and PixelTrackProducerFromSoAAlpaka): the
+      GeomDetUnit of a detset is looked up once (first made hit) and memoised per detset, instead of a TrackerGeometry
+      hash lookup per made hit. Same pointer, same hit. One instance per module and event (single thread).
+  1d. PixelTrackProducerFromSoAAlpaka (RecoTracker/PixelTrackFitting, local patch): the per-event OT detset loops did
+      two std::map finds per detset (detIdIsUsedOTModule_, detIdToOTModuleId_; maps over all detUnits). Now one binary
+      search in a flat vector of the used OT modules (a copy of detIdToOTModuleId_, sorted by detId, made per run).
+      Same otModuleId for every detUnit.
+
+2. PROFILE (perf, user-space dwarf stacks, GPU target + stage D, 1 job x 8 threads, ttbar; L/r9_hostrest/results/perf_*)
+  hltLST (LSTProducer, the 6.3-6.9 box ms of the CI-shape table; 3.7 ms with 1 job): ~90% of its host samples wait for
+    the GPU: alpaka::wait (61%, libcuda spin, which is why thread time = real time) and synchronous D2H copies of single
+    counters into pageable host memory (30%; a pageable cudaMemcpyAsync blocks). Kernel launches and host loops are
+    the remaining ~10%. LST::run has ~16 count read-backs per event (LSTEvent.dev.cc: createMiniDoublets 232/273,
+    createSegmentsWithModuleMap 340/371, createTriplets 436/484, createQuadruplets 1268, createQuintuplets 978,
+    createPixelTriplets 834/916, createPixelQuintuplets 1132/1223, createTrackCandidates 567/599/651/787).
+    The host time grows with GPU contention (3.7 ms at 1 job, 6.3-6.9 at 4 jobs x 16 streams), the signature of waits.
+    Removing one or two syncs does not help: the next one absorbs the wait. What cuts it is an asynchronous LST:
+    one ExternalWork acquire that enqueues the whole chain with upper-bound allocations (LST already sizes most buffers
+    from occupancy estimates) and reads the counts back once, with the TC output. That is an LSTCore restructuring
+    (the owner's team code): proposed, not done this round.
+  LSTOutputConverter (after 1a): SeedFromConsecutiveHitsCreator::makeSeed 67% (stage B: option (a) removes it),
+    Phase2StripCPE::localParameters 4.7% and TrackerGeometry::idToDetUnit 4.7% (on-demand OT hits; 1c removes the
+    lookup), getDetectorType 4.4% (memo warm-up; 1b), the hit sort ~3.4%, sharesInput < 1%. The "O(n^2) sharesInput"
+    of the round-8 estimate is not a cost: its first test is sameDetModule (a detId compare), n <= 14.
+  PixelTrackProducerFromSoAAlpaka and the output converters: the dwarf stacks did not unwind through them (12 kB stack
+  copies); not attributed.
+
+3. ITEMS EXAMINED, NOT DONE
+  OT clusterizer (hltSiPhase2Clusters, 2.6-2.8 ms): CMSSW_20_1_0_pre2 has no portable Phase-2 OT clusterizer
+    (RecoLocalTracker/SiPhase2Clusterizer has only Phase2TrackerClusterizer; the only alpaka clusterizer is the pixel
+    SiPixelPhase2DigiToCluster). The host algorithm is one linear pass over the digis
+    (Phase2TrackerClusterizerSequentialAlgorithm). Its output has 15 consumers in the menu (12 scheduled), 3 of them
+    outside the initial-step chain (the e/gamma and L3-muon cluster removers). A device clusterizer still needs the
+    host digis copied up and the legacy DetSetVector filled back on the host, which is most of the 2.7 ms. Not worth a
+    port while the legacy cluster collection has host consumers.
+  Legacy pixel tracks (hltPhase2PixelTracks, 4.7-5.7 ms): consumers in the target menu are hltInitialStepSeeds (KF pixel
+    seeds; needs the hits) and hltPhase2PixelVertices (parameters only). Both need every track. The conversion stays;
+    1d trims its per-event OT detset pass. With seeds option (a) (stage B) the seeds no longer need the reco::Track
+    hits and a hit-less conversion for the vertices becomes possible.
+  EventOfHits pixel rows from the pixel SoA (~1.3 ms): the host part left is the cluster-key -> SoA-row pass with the
+    R6-M3 position guard. hltSiPixelRecHits (5.3-6.0 ms) stays in the menu for the pixel tracks and hltMkFitSiPixelHits,
+    so removing only the EventOfHits pass saves ~1.3 ms. The larger item is an on-demand SiPixelRecHit helper (the
+    Phase2TrackerRecHitOnDemand pattern: the legacy hit at a cluster key, built from the SoA row) for all three readers,
+    which takes hltSiPixelRecHits out of the menu. Next round, with lane mem (EventOfHits owner).
+
+4. REPRODUCE
+  L/r9_hostrest/scripts/e2e_job.sh <tag> <area> <cpu|gpu-nvidia> <ttbar|qcd> <OT_DEVICE> <nev> (FIRSTCUS=none
+  PROCMOD=trackingLST for the track-candidate mode); seed_compare.py a.root b.root (bitwise LST seeds, both instances);
+  verify8_int/menu/scripts/trk_compare.py (bitwise tracks); modtimes.py (FastTimerService module times);
+  perf_attach.sh + perf_attr.py / perf_grep.py (profiles).

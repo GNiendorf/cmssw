@@ -1,0 +1,200 @@
+MkFitAlpaka - STAGE-D AUDIT (round 7, lane menu, 2026-10-04 1:00-3:30 am ET). Read-only: nothing in the menu was changed.
+=========================================================================================================================
+Question: which legacy (host, CMSSW-format) collections does the Phase-2 HLT tracking chain still produce or read, who reads
+them, what does each reader use, could it read the device SoA instead, what does it cost on the host, and what is the physics
+risk of moving it. Output: one table (section 2) and a ranked plan for round 8 (section 3).
+
+1. METHOD (reproducible: test/menu_stageD_gen.sh, test/menu_stageD_consumers.py, test/menu_stageD_join.py)
+  - Configs: edmConfigDump of the EXACT lanes/pre2_4way/scripts/job.sh cmsDriver line (75e33_timing, aging 1000, the
+    hltSeedsForMkFit customise_commands) in three variants: kf (no procModifier = job.sh as is), stockfit
+    (--procModifiers trackingMkFitFit, #186 reference), target (trackingMkFitFit + customizeHLTforMkFitAlpakaTarget).
+    Dumps: L/r7_menu/menu/stageD/{kf,stockfit,target}_dump.py (239k lines each). Not the cfi files.
+  - Consumers: every EDProducer/EDFilter/EDAnalyzer whose parameters (InputTag, VInputTag, string, recursively through
+    PSets/VPSets) name the collection. Parameter names are listed, so "consumer" = configured reader.
+  - "Runs": joined with the FastTimerService JSON of the CI-shape timing jobs of verify6_int (4 x 16 threads x 16 streams, 300
+    ttbar PU200 events after 50, L40 / serial; menu/timing/out/target_gpu_r3, target_cpu_r2, stockfit_gpu_r1-3, stock_gpu_r1-2).
+    A configured reader that does not appear in the timing JSON does not run in the HLT menu (validation-only, or an
+    unscheduled Task nobody consumes). Host cost = time_real / input events (ms per INPUT event, as the CI 742 ms number;
+    @alpaka modules: host side, including waits). Box = this shared machine, quiet at the time (verify6): INDICATIVE.
+  - Fields read: from the C++ of the reader (release CMSSW_20_1_0_pre2 + the area's local packages), file:line where it matters.
+  Files: menu/stageD/target_gpu_join.txt (the main table's raw data), target_cpu_join.txt, stockfit_gpu_join.txt,
+  kf_gpu_join.txt, target_consumers*.txt (all configured readers incl. validation).
+
+  Group of each producer in the CI "Tracking" number (circles hlt.json): Tracking = hltSiPhase2Clusters, hltSiPhase2RecHits,
+  hltPhase2OtRecHitsSoA, hltInitialStepSeeds, LSTOutputConverter, MkFitSeedConverter, Torch classifier, HP cloner,
+  hltGeneralTracks, our MkFitAlpaka* modules; Tracking|Conversion = hltInputLST, MkFitOutputTrackConverter; Tracking|Portable =
+  hltLST. NOT in "Tracking": hltSiPixelClusters / hltSiPixelRecHits / hltPhase2PixelTracks (Pixels|Conversion),
+  hltSiPixelClusterShapeCache (Pixels), hltPhase2PixelVertices / PV producers (Vertices).
+
+2. THE TABLE (target menu on GPU; host ms per input event, GPU target [CPU target]; RUN = runs in the HLT menu)
+  Legend, "SoA?": YES = every field it reads exists (or is one cheap kernel away) in a device SoA we have; PART = some fields
+  need a new device product or an on-demand host object; NO = needs a non-tracking component ported (out of scope).
+  Risk: none = can be made bitwise; low = rounding-level, checkable by bit/pull dumps; med = changes a tuned input or a
+  downstream physics object; high = touches non-tracking paths (muons, e/gamma, taus, PF, HGCal, vertices).
+
+  2a. hltSiPhase2RecHits (Phase2TrackerRecHits, legacy OT rechits) - producer 25.2 [25.2] ms, group Tracking, runs in 884/1200 ev.
+      CPE: Phase2StripCPE with LorentzAngle_DB = True (per-module LA x local B shift), pitch^2/12 errors.
+      ALL five HLT readers are inside the tracking chain (no muon/e-gamma reader: their CKF uses hltSiPhase2Clusters via
+      hltMeasurementTrackerEvent, not these rechits):
+      reader (type)                               ms     reads                                              SoA?  risk
+      hltInputLST (LSTInputProducer)              7.82   rawId, cluster size, globalPosition x/y/z          YES   none (lane lstin's
+                                                         (LSTInputProducer.cc:99-103)                             device input)
+      hltPhase2OtRecHitsSoA (Phase2OTRecHits-     5.46   P-module barrel hits of the CA OT layers: local x/y,  YES   none
+        SoAConverter, CA OT extension)                   local xx/yy errors, global - beamspot, det index
+      hltPhase2PixelTracks (PixelTrackProducer-   4.81   OT hits of pixel tracks extended into the OT, as     PART  low (on-demand
+        FromSoAAlpaka)                                   TrackingRecHit clones (+ globalPosition z for the          Phase2TrackerRecHit1D
+                                                         layer-skip rule)                                           from SoA + cluster ref)
+      hltMkFitEventOfHits (ours, device hits)     3.89   local pos/err, det, cluster ref -> SoA row (fillRaw;  YES   none
+                                                         host pass of the device-hit input)
+      hltMkFitSiPhase2Hits (ours, index-only map) 0.83   cluster index -> TrackingRecHit* (for the output      PART  none
+                                                         converter)
+      + MkFitOutputTrackConverter (via the map)   (19.9) per hit ON an output track: localPosition, localPositionError.xx,
+                                                         det, firstClusterRef -> a NEW Phase2TrackerRecHit1D
+                                                         (MkFitOutputTrackConverter.cc:556-560): 4 numbers + 2 refs
+      Not run: hltMkFitSiPhase2HitsStock (stock converter kept configured, never consumed in the target), validation.
+
+  2b. hltSiPixelClusters (SiPixelDigisClustersFromSoAAlpakaPhase2, legacy pixel clusters; produceDigis/storeDigis False)
+      producer 22.8 [22.7] ms, group Pixels|Conversion (NOT in the CI Tracking number), 888 ev.
+      reader                                      ms     reads / note                                       SoA?  risk
+      hltSiPixelClusterShapeCache                 12.62  every cluster's pixels (shape) - read ONLY by muon    NO    high
+                                                         CA seeding (see 2c)
+      hltSiPixelRecHits (legacy pixel rechits)    6.00   cluster refs for the rechits                      -     (2d)
+      hltMkFitEventOfHits (ours)                  3.89   cluster.originalId() -> SoA row map (fillRaw)        YES   none
+      hltMeasurementTrackerEvent                  0.13   all clusters: CKF of muon L3 / e-gamma GSF, + the     NO    high
+                                                         output converter's missing-hit pattern (2i)
+      cluster removers (muon iter2, e/gamma,      0.08   cluster refs of used hits                         NO    high
+        muon high-pT), multiplicity, cluster checks
+      => The collection itself cannot leave the menu without porting the muon and e/gamma CKF steps. Our chain's reads
+         (EOH map) can move to the SoA; that saves only the readers' share, not the 22.8 ms.
+
+  2c. hltSiPixelClusterShapeCache (SiPixelClusterShapeCacheProducer) - 12.6 [12.6] ms, group Pixels, 888 ev.
+      readers: hltPhase2L3MuonHighPtTripletStepHitTriplets 8.35 (216 ev), hltPhase2L3MuonPixelTracksHitQuadruplets 3.28
+      (216 ev), hltPhase2L3FromL1TkMuonPixelTracksHitQuadruplets 0.45 (872 ev). NO tracking-chain reader (the initialStep's
+      CA is Patatrack on the device). Out of the stage-D scope; listed because the round-7 task named it.
+
+  2d. hltSiPixelRecHits (SiPixelRecHitFromSoAAlpaka, legacy pixel rechits) - 6.0 [6.1] ms, Pixels|Conversion, 888 ev.
+      reader                                      ms     reads                                              SoA?  risk
+      hltPhase2PixelTracks                        4.81   TrackingRecHit clones of pixel-track hits          PART  low
+      hltMkFitEventOfHits (ours)                  3.89   det index + cluster ref per hit (row map; fallback  YES   none
+                                                         position search when originalId is invalid, R6-M3)
+      hltMkFitSiPixelHits (ours, index map)       0.63   cluster index -> SiPixelRecHit* for the converter   PART  none
+      + MkFitOutputTrackConverter                 (19.9) clone() of each pixel hit on an output track (CPE     PART  low
+                                                         generic position/error, cluster ref, quality word)
+      muon/e-gamma SeedingLayersEDProducers (5)   1.55   BPix/FPix hits for CA/pair seeding                 NO    high
+      => Stays for muons/e-gamma. Our readers can move to the SoA (on-demand SiPixelRecHit for output-track hits only).
+
+  2e. hltPhase2PixelTracks (PixelTrackProducerFromSoAAlpaka, legacy reco::Track from the CA SoA) - 4.8 [5.2] ms,
+      Pixels|Conversion, 812 ev.
+      reader                                      ms     reads                                              SoA?  risk
+      hltInitialStepSeeds                         16.14  every pixel track: params/cov at the PCA, hits      YES   med (stage B:
+        (SeedGeneratorFromProtoTracks)                   (FastHelix + KF seed creation, region origin)              tuned LST pLS
+                                                                                                                    inputs, R6-M2)
+      hltPhase2PixelVertices (PixelVertexProducer) 0.73  track params, chi2, pt for the pixel vertexer      NO    high (vertices
+                                                                                                                    out of scope;
+                                                                                                                    taus read them)
+      => Once stage B removes hltInitialStepSeeds, the legacy pixel tracks stay ONLY for hltPhase2PixelVertices (-> taus:
+         DeepTau 100 ms, RecoTau 18 ms, ...; and hltInitialStepTrackCutClassifier's vertex input). Not in hltGeneralTracks:
+         in this menu hltGeneralTracks merges ONLY hltInitialStepTrackSelectionHighPurity (TrackProducers, dump).
+
+  2f. hltInitialStepSeeds (SeedGeneratorFromProtoTracksEDProducer, KF pixel seeds) - 16.1 [15.3] ms, Tracking, 812 ev.
+      reader                                      ms     reads                                              SoA?  risk
+      hltInputLST (LSTInputProducer)              7.82   startingState -> transientState at the last hit     YES   med (stage B;
+                                                         (px,py,pz, dxy, dz, ptErr, etaErr), hit cluster           LST tuned on
+                                                         indices; KEEPS a copy of the seeds (lstPixelSeeds)        these pLS
+                                                         (LSTInputProducer.cc:131-249)                             values)
+      + LSTOutputConverter (via lstPixelSeeds)    (28.4) for every pLS/pT3/pT5 TC: the pixel seed's hits as the  PART  med
+                                                         first hits, its state as the pT3/pT5 fallback (R6-M2)
+      => Stage B (lanes lstin + seedfit): a device seed for the pixel tracks (the same creator code as LST TC seeds, D7-b)
+         and lazy host seeds only for the TCs that need them. Saves the 16.1 ms.
+
+  2g. hltInitialStepTrajectorySeedsLST (LSTOutputConverter: TrajectorySeed per LST TC) - 28.4 [27.4] ms, Tracking, 812 ev.
+      reader                                      ms     reads                                              SoA?  risk
+      hltInitialStepMkFitSeeds (MkFitSeedConverter) 1.36 seed state (startingState) + hits -> mkFit seeds  YES   low-med (D7-b
+                                                                                                                    seed state)
+      hltInitialStepTracks (MkFitOutputTrackConverter) (19.9) seeds[label] for the Trajectory/TrackExtra seed ref    PART  none
+      hltSeedsForMkFit (TrackFromSeedProducer)    -      VALIDATION ONLY (job.sh customise_commands); not in the timing job
+      Not run: hltInitialStepTrajectorySeedsLSTTracks, hltInitialStepTracksT4T5TCLST, hltInitialStepTrackCandidates.
+      => In the HLT the seed STATES are read only by MkFitSeedConverter (-> device seeds, lane seedfit). The rest needs only a
+         seed ref per output track (TrackExtra::seedRef). seedRef is only COPIED downstream (TrackCollectionCloner.cc:69,
+         TrackListMerger.cc:804 with makeReKeyedSeeds False); PFTrackProducer.cc:193-195 dereferences the seedRef of the GSF
+         electron tracks, not of these; PV, TICL, the feature extractor do not read it (grep of the release sources). A light seed
+         collection (hits only, or none + a null seed ref) is enough for the HLT; validation (hltSeedsForMkFit) wants the
+         full seeds and can keep the host converter in the validation job only.
+
+  2h. hltInitialStepTracks (MkFitOutputTrackConverter, reco::Track + TrackExtra + hits) - 19.9 [19.1] ms,
+      Tracking|Conversion, 812 ev.
+      Per track it reads the device-fit output (mkFit track via the wrapper), builds the hits (2a, 2d), the PCA state with
+      CMSSW propagation (TrajectoryStateClosestToBeamLine, CMSSW field), the outer state, and the MISSING_INNER/OUTER hit
+      pattern from compatibleDets + hltMeasurementTrackerEvent active-det checks.
+      reader                                      ms     reads                                              SoA?  risk
+      hltFirstStepPrimaryVerticesUnsorted         44.68  ALL tracks: params/cov at the PCA, hitPattern       NO    high (vertices,
+        (PrimaryVertexProducer)                          (pixel/tracker layers), normalizedChi2, pt; no           out of scope;
+                                                         TrackExtra (TransientTrack from the reco::Track)          needs reco::Track)
+      hltInitialStepTrackFeatureExtractor         0.25   dxy/dz wrt beamspot + errors, normalizedChi2, eta,  YES   low (stage C,
+        (serial_sync) + TorchClassifierAlpaka 4.27       ndof, lostInner/lostOuter hits (= the MTE-based          lane hpsel)
+                                                         missing-hit pattern!), layersWithoutMeas, valid
+                                                         pixel/strip hits (TrackFeatureExtractor.cc:53-70)
+      hltInitialStepTrackTorchClassifierOutput    0.09   collection refs for the value maps                 -     -
+      hltInitialStepTrackSelectionHighPurity      1.51   copies HP tracks + extras + hits                   PART  none
+      => reco::Track stays (vertexing needs it). Stage C (lane outconv): one sparse host conversion from the device TrackSoA
+         with the PCA computed on the device using the CMSSW field model; the hits on demand (2a/2d). The missing-hit
+         pattern is a physics input of the HP classifier: it must be reproduced exactly (or the classifier sees new inputs).
+
+  2i. hltMeasurementTrackerEvent (MeasurementTrackerEventProducer) - 0.13 ms, 888 ev: read by the output converter only for the
+      inner/outer missing-hit pattern (active-det test), and by every muon/e-gamma CKF module. Stays (cheap); our use goes
+      away if stage C computes the missing-hit pattern on the device (risk low-med: it feeds the classifier, see 2h).
+
+  2j. HP tracks: hltInitialStepTrackSelectionHighPurity (TrackCollectionFilterCloner) - 1.51 [1.59] ms, 812 ev.
+      reader: hltGeneralTracks (TrackListMerger) 1.59 ms - the ONLY HLT reader. hltHighPtTripletStepClusters (cluster masking,
+      listed in the round-6 plan) is configured but NOT run in this menu (no highPtTripletStep in the LST menu).
+
+  2k. hltGeneralTracks (TrackListMerger of ONE collection) - 1.59 [1.62] ms, 812 ev. With one input it is still not a copy:
+      indivShareFrac 0.1 = in-collection duplicate removal by shared hits, MinFound 3, MinPT 0.8, quality handling.
+      reader                                      ms     reads                                              SoA?  risk
+      hltTiclCandidate (HGCal)                    101.0  tracks + TrackExtra outer state (propagation to HGCal) NO   high
+      hltUnsortedOfflinePrimaryVertices           65.3   all tracks (TransientTracks)                       NO    high (vertices)
+      hltPfTrack (PFTrackProducer)                3.77   tracks + TrackExtra inner/outer states            NO    high
+      hltTrackWithVertexRefSelectorBeforeSorting  0.35   tracks + vertices                                  NO    high
+      hltEgammaEleGsfTrackIsoL1Seeded             0.01   track momenta / vertices for isolation             NO    high
+      => Stays a reco::Track collection with TrackExtras (PF, TICL). Only the producer chain in front of it is ours.
+
+  2l. Other legacy products in the chain, for completeness (GPU target, ms): hltSiPhase2Clusters (Phase2TrackerClusterizer,
+      2.74, Tracking; readers OT rechits, MTE (CKF), our EOH, cluster removers: stays, a device OT clusterizer is not
+      stage D), hltInputLST 7.82 (Tracking|Conversion; legacy inputs, stage B), hltMkFitEventOfHitsHost (light EOH 0.20,
+      is_pixel per layer for the output converter), hltInitialStepMkFitSeeds 1.36.
+
+3. RANKED PLAN FOR ROUND 8 (stage D; host ms are GPU-menu, this box, per input event; CI scale ~1.6-2.4x)
+  1. OT rechits on the device, legacy collection OFF (save ~25 ms producer + ~6 ms of readers' host passes; risk none-low).
+     A device Phase2StripCPE (cluster center x pitch, pitch^2/12, the per-module Lorentz shift from an ES table filled once
+     per IOV from SiPhase2OuterTrackerLorentzAngle x local B) writing ONE OT rechit SoA for all OT modules (local x/y,
+     errors, global x/y/z, det index, cluster key), shared by: LST input (lane lstin's device producer), the CA OT layers
+     (replaces Phase2OTRecHitsSoAConverter: a selection kernel), mkFit's device EventOfHits (no host pass), and on-demand
+     Phase2TrackerRecHit1D creation for hits on output tracks (MkFitOutputTrackConverter already builds a NEW
+     Phase2TrackerRecHit1D from 4 numbers + det + cluster ref) and on pixel tracks (PixelTrackProducerFromSoAAlpaka).
+     Gate: bitwise local position/error and global position vs Phase2TrackerRecHits on every hit (ttbar + QCD), then the
+     chain unchanged (LST input identical, mkFit hits identical). Prerequisite: the trkgpu reserve/emplace patch of
+     Phase2TrackerRecHits (-45% locally) is a release change, so it is the owner's call; the device path makes it moot.
+     Packages touched: RecoLocalTracker (new device producer, local), RecoTracker/LST input, RecoTracker/PixelTrackFitting
+     (on-demand OT hits) - D7-e covers LST; the other two need the owner's OK.
+  2. Seeds (stage B, lanes seedfit + lstin) - remove hltInitialStepSeeds (16.1) and most of LSTOutputConverter (28.4) on
+     the HLT path: device seeds for pLS and LST TCs (one creator, D7-b), LST input from the pixel SoA, and a light
+     TrajectorySeed collection (or none) since the HLT reads seed states only through MkFitSeedConverter. Validation keeps
+     the full host seeds (hltSeedsForMkFit). Risk med: the pLS inputs LST was tuned on (R6-M2), the O6-1 checks.
+  3. Output conversion (stage C, lane outconv) - MkFitOutputTrackConverter 19.9 -> one sparse host module from the device
+     TrackSoA (PCA + outer state on the device with the CMSSW field, missing-hit pattern on the device or from a device
+     active-module mask), hits on demand from items 1 and 4. Then hltMkFitSiPixelHits / hltMkFitSiPhase2Hits /
+     hltMkFitEventOfHitsHost / hltMeasurementTrackerEvent leave the chain's dependency list (MTE stays for CKF).
+     Risk low (pull dumps vs the stock converter), but the missing-hit pattern feeds the HP classifier: exact or retune.
+  4. Our chain off the legacy PIXEL products (save ~4.5 ms of our readers; the 22.8 + 6.0 ms producers stay for muons/
+     e-gamma): EventOfHits from the pixel SoA only (no fillRaw position fallback, R6-M3), SiPixelRecHit on demand for
+     output-track hits. Risk none.
+  5. HP selection + merge (stage C, lane hpsel) - device features + Torch on the device (4.3 + 0.3 ms), then ONE host module
+     that writes hltGeneralTracks directly from the HP mask, reproducing TrackListMerger's single-collection behaviour
+     (indivShareFrac 0.1 duplicate removal, MinFound 3, MinPT 0.8, quality bits): saves the HP cloner copy (~1.5 ms).
+     Risk low; gate = identical hltGeneralTracks content.
+  6. Not stage D, report only: hltSiPixelClusters (22.8) + hltSiPixelClusterShapeCache (12.6) + hltSiPixelRecHits (6.0)
+     = 41 ms of legacy pixel conversion per event that only muon/e-gamma CKF and muon CA seeding read (outside the CI
+     Tracking group). And hltPhase2PixelTracks (4.8) + PixelVertexProducer stay while vertices are out of scope.
+  Expected stage-D total on top of B+C (GPU, this box): items 1 + 4 + 5 ~ 33 ms of the remaining ~125 ms target tracking
+  slice; with B (~44) and C (~20) the target slice would go from ~125-130 toward ~30-50 ms per input event on this box
+  (hltLST host waits, hltInputLST and the 2.7 ms OT clusterizer left).

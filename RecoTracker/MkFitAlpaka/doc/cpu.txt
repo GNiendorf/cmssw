@@ -1,0 +1,304 @@
+MkFitAlpaka: the CPU backends (lane cpu, round 5, 2026-10-03)
+=============================================================
+L = lanes/mkfit_alpaka. Lane area L/r5_cpu (scripts: build.sh, run_tp.sh, gates.sh, chain500.sh, cuda_ab.sh,
+prof/run_perf.sh, bisect/run.sh; outputs gates/, timing/, bisect/). Arm A = main 371210e (L/main/CMSSW, no CPU flags).
+All timings are INDICATIVE: shared box, arms alternated A/B/A/B, load stated with each table.
+
+1. COMPILER FLAGS OF THE CPU BACKENDS (decision D5-a)
+  Final mechanism (BuildFile.xml of the library, and the testMkFitAlpakaProp bin, which instantiates the prop kernels):
+    <flags USE_ALPAKA_SERIAL="ofast-flag&#9;"/>  <flags USE_ALPAKA_TBB="ofast-flag&#9;"/>
+    <flags CXXFLAGS="-fopenmp-simd -fno-associative-math -fno-finite-math-only -fsigned-zeros"/>
+    <flags REM_ROCM_HOST_CXXFLAGS="(the same four)"/>
+  - USE_ALPAKA_<BACKEND> (SCRAM BuildRules.py alpaka_extra_flags) adds a tool to ONE backend product. ofast-flag is
+    stock MkFitCore's tool (-Ofast -fno-reciprocal-math -mrecip=none). Checked on the live compile/link lines: the
+    SerialSync objects get -Ofast -mrecip=none, the hipcc lines get neither -Ofast nor the CXXFLAGS above.
+  - Plain CXXFLAGS reach hipcc (Makefile.rocm AdjustRocmHostFlags) and the nvcc host pass, so -Ofast never goes there.
+    The four CXXFLAGS are the defaults of a non-fast-math compile (no-ops there); REM keeps hipcc's line unchanged.
+    GCC: an explicit -fno-<x> wins over -Ofast whatever the order (checked with -Q --help=optimizers).
+  - CUDA results unchanged: chain on the L40, ttbar 100 events, main vs the -Ofast build: all 9 summary JSONs
+    (4 stages, export, final, candidates, mkfit, status) BYTE-IDENTICAL.
+  - SCRAM bug (V3_00_95): the per-backend tool is written as "ofast-flag$(if ...parent library...)" (use_public + use
+    concatenated without a separator in dumpBuildFileLOC). The trailing &#9; (ElementTree keeps a character reference)
+    puts a tab between them; make splits words on it.
+  - -fopenmp-simd changes nothing today: the port writes "GCC ivdep" (MPLEX_SIMD) and the generated .ah files dropped
+    stock's "omp simd". Kept for flag parity.
+
+  What the flags do (prop real-event test, port vs stock = lane_prop's HLT capture of stock; ttbar; testProp.dev.cc
+  recompiled per variant, bisect/run.sh):
+    q99 of the per-track max relative parameter difference vs stock
+                                  no flags  stock     -assoc   -assoc    -assoc    -assoc    -assoc -finite  -assoc
+                                            flags              +sz       -finite   +trap     +sz (FINAL)    -finite+sz+trap
+    propagateHelixToR             0         6.6e-7    1.9e-7   1.9e-7    0         0         0              0
+    propagateHelixToPlane         1.3e-7    2.5e-3    2.4e-3   2.4e-7    7.2e-7    7.2e-7    1.3e-7         1.3e-7
+    kalmanPropagateAndUpdate      1.2e-6    2.0e-5    1.9e-5   1.9e-6    1.5e-6    1.5e-6    1.2e-6         1.2e-6
+    port kernel ns/slot (N = 8)
+    propagateHelixToR             214       172       172      187       186       201       181            208
+    propagateHelixToPlane         212       73        77       107       106       207       108            212
+    kalmanPropagateAndUpdate      277       148       148      166       178       283       167            277
+    kalmanOperationPlaneLocal     80        84        81       69        84        89        68             81
+    (-assoc = -fno-associative-math, sz = -fsigned-zeros, -finite = -fno-finite-math-only, trap = -ftrapping-math)
+  Reading:
+  - The speed comes from -fno-trapping-math: it lets GCC if-convert and vectorize the per-slot plane/Kalman bodies
+    (the review's "do not vectorize without -Ofast"). With -ftrapping-math the gain is gone.
+  - -fassociative-math re-trees the port's sums differently from stock's (same compiler, different TU/inlining
+    structure); -ffinite-math-only and -fno-signed-zeros each let the vectorized plane propagation drift from stock
+    (to 2e-3 at q99: the cancellation-prone path length amplifies a different negation/FMA form).
+  - FINAL = stock flags minus those three: stock-level fidelity in this test (= the no-flag build) and half of the
+    -Ofast speed-up of the plane/Kalman bodies.
+
+  Gates per flag set (select serial stock check 20 ttbar events; engine step test 24 events; CHAINED D-M4 floors,
+  100 ttbar + 100 QCD, 7 stages each, and 500 ttbar for export/final/candidates):
+                                   A (no flags)  B1 (stock)    B3 (-assoc)   B4 (-assoc+sz) B6 FINAL (-assoc-fin+sz)
+    select par bit-exact           100%          53.8%         91.5%         91.5%          91.5%
+    select err bit-exact           100%          0.2%          64.1%         83.2%          83.2%
+    select max |dpar|/sigma        0             0.039         0.0018        0.0018         0.0018
+    select hit lists identical     182904/182904 182902 (+2*)  182903 (+1*)  182903 (+1*)   182903 (+1*)
+    engine FINAL fwd structural    48749         48742         48748         48746          48750   (of 48754)
+    chain 100 ev, 14 checks        14 PASS       13 (ttbar fwd 13            13 (ttbar      14 PASS
+                                                 FAIL 1/pT)                  final FAIL)
+    ttbar fwd / final hit diffs    52 / 29       129 / 39      81 / 32       88 / 31        60 / 29   (floors 185 / 45)
+    500 ttbar final                PASS (15 unp.) -            FAIL (1/pT)   FAIL (42 unp.) PASS (31 unp., 34.3 allowed)
+    500 ttbar candidates           PASS (56)     -             PASS (70)     PASS (62)      PASS (60)
+    (* = same hits, other order. 500-event export fails for every arm incl. A: the known 100-event-floor artifact,
+     verify4_int section 3.)
+  - The noipa on the host R/Z propagators is STILL needed with these flags: without it (b5, B4 flags) the select check
+    drops to 65.5% / 53% bit-exact (B4: 91.5% / 83%).
+  - Explicit std::fma in select (MiniPropagators.h, SelectHitIndicesV2.h) and the store form in Packers.h were not
+    removed: the select check is no longer 100% bit-exact with any fast-math flag, so it cannot show whether they
+    still help; the store form protects CUDA codegen, which the CPU flags do not touch. Next round: test their
+    removal against the B6 select numbers above.
+
+2. TIMING (replay throughput job = verify4_int's throughput_cfg.py, 1000 events cached, 8 threads / 8 streams; real
+   ms per event from FastTimerService)
+    load 10-19 (quietest window), alternated A / B6 / A / B6 / stock:
+                           EventOfHits (dev)   Build (dev)      EOH + build + wrapper   job rate
+    A  (main, no flags)    26.9  27.4          61.4  62.6       88.4  90.1              44.7  43.8 ev/s
+    B6 (final flags)       26.8  26.5          54.5  53.8       81.4  80.5              46.6  47.1 ev/s
+    stock                  EOH 12.1            MkFitProducer 52.5    64.5               53.2 ev/s
+    load 32-54 (earlier, alternated): build A 65.2 (mean of 6) / B1 55.7 (4) / B3 57.9 (4) / B4 59.9 (2);
+    stock MkFitProducer 54.8-62.0.
+  - The flags take 8 ms (-13%) off the build module: 54.1 vs stock 52.5 ms (+3%; was +18%).
+  - EventOfHits does not move with the flags (memory-bound passes): it is now the whole remaining gap (+14.5 ms).
+  - Acceptance metric (EOH + build <= stock EOH + MkFitProducer): 80.9 vs 64.5 ms: NOT met (A: 89.3).
+
+3. EVENTOFHITS ON CPU (not changed this round)
+  - The serial-backend "atomics" of the binning kernels are already plain RMWs: alpaka 2.1.1 AccCpuSerial maps
+    hierarchy::Blocks to AtomicNoOp (AccCpuSerial.hpp:59-62). No gain there.
+  - HitSoA rows are grouped per WRAPPER (LayerSoA::hitBase = 0 pixel / nPixel strip), not per layer, so a per-layer
+    cache-resident pass (io's plan ii) needs a per-layer row range from the producer (inputs' path). Plan: the
+    producer records [rowBegin, rowEnd) per layer when the wrapper is layer-contiguous (checked on the fly, fallback to
+    today's kernels otherwise); one CPU kernel per layer (block = layer, TBB-parallel): info + key + local histogram ->
+    local scan -> scatter (fine phi, row) -> in-bin rank -> store, all in L2; layer offsets from one small scan.
+    Today: ~100 MB/event through 3 memory-bound passes; target stock-like 12-14 ms at 8 threads.
+
+=====================================================================================================================
+ROUND 6 (lane cpu, 2026-10-03, 9:00-11:45 pm): the CPU backend against the new reference (stock MkFitCore at -Ofast)
+=====================================================================================================================
+Lane area L/r6_cpu (scripts: build.sh, run_tp.sh, build_ref0.sh, menu/run_arm.sh, menu/queue2.sh; outputs timing/,
+menu/runs/, run/, prof/, PROGRESS.txt, REPORT.txt). All timings INDICATIVE: the box ran at load 40-95 (other lanes'
+builds and jobs); arms alternated; numbers normalised where stated.
+
+4. D5-a RE-JUDGED AGAINST AN -Ofast STOCK
+  Set-up: ref0 = a copy of main (0a2bb8b) + the release MkFitCore with the Ofast BuildFile fix (FILE-scoped REM line
+  removed; checked on the compile line: -O3 ... -Ofast -fno-reciprocal-math -mrecip=none -fopenmp-simd). That is the
+  OLD stock physics (no #186/#187) at -Ofast, so the comparison isolates the compiler flags from #186's physics (our
+  port does not contain #186 yet; the r6_cpu area's stock does). Other arms run with a snapshot of that library first in
+  LD_LIBRARY_PATH (menu/scripts/menu_job.sh SNAPLIB; validated: same events and counts as the ref0 build, see REPORT).
+  Metric = verify5_int 6a: CPU default menu, ttbar 200 RAW events (139 tracked), production swap + in-job stock chain
+  (customizeHLTforMkFitAlpakaValidation), status requireClean (clean in every run).
+                                   unpaired candidates   unpaired mkFit level   cand. params within 1e-3 sigma
+    vs NON-Ofast stock (round 5)
+      A  (no CPU flags)            2 + 5  = 7            1 + 2                  99.34%
+      B6 (D5-a final flags)        19 + 18 = 37          19 + 18                99.32%
+    vs -Ofast stock (old physics)
+      A  (no CPU flags)            20 + 21 = 41          17 + 16                98.28%
+      B6 (D5-a final flags)        24 + 27 = 51          22 + 21                98.26%
+      B1 (stock's exact flags)     34 + 33 = 67          31 + 29                98.26%
+  Reading:
+  - The round-5 "failure" is not a port defect that a flag can fix. -Ofast stock (-fassociative-math etc.) moves
+    stock's own rounding: EVERY port build is ~40-70 unpaired from it and only 98.3% of the matched candidates stay
+    within 1e-3 sigma (99.3% against non-Ofast stock). Giving the port stock's exact flags (B1) does not bring it closer
+    (it re-associates differently, the code is not the same code): 67, the largest.
+  - The acceptance must therefore be the NEW floor (stock -Ofast v2 vs v3, lane ref). With -fassociative-math the v2/v3
+    vector widths re-associate differently too, so that floor is expected to grow similarly; until it exists these are
+    raw numbers.
+  - Speed (replay build module, MALLOC_CONF=oversize_threshold:0 to remove page-fault noise, normalised by the stock
+    hit converters of the same job, 2 alternated reps each): A 7.43, B6 6.37 (-14%), B1 6.26 (-16%). B1 buys nothing
+    over B6.
+  Decision proposed: keep B6 (= O6-3: -Ofast with the three safety flags). B1 is not faster and drifts most; A is 14%
+  slower for a drift difference inside the statistical noise (41 vs 51).
+  QCD (100 events, all tracked; 191,255 candidates): A 37 + 41 = 78, B6 42 + 48 = 90 unpaired (round 5, B6 vs non-Ofast
+  stock: 31 + 23). B6/A = 1.2 on both samples.
+  Workarounds (D5-a second half), against the -Ofast stock:
+  - noipa on the host R/Z propagators: removed in ref0 (B6 flags): the production module's in-job outputs are IDENTICAL
+    (ttbar 200: 24 + 27 / 22 + 21, the same 260,662 identical hit lists and 256,207 within 1e-3 sigma) and the build
+    module is not faster (normalised 3.68/3.78 vs 3.60/3.71). It only ever mattered for the select unit test's TU
+    against the non-Ofast stock dump, an obsolete reference. -> can go: patch L/r6_cpu/patches/0001 for the prop owner.
+  - explicit std::fma (select MiniPropagators.h / SelectHitIndicesV2.h) and the Packers store form: they pin the
+    contraction ACROSS backends (CPU = CUDA), which still matters (CUDA vs serial consistency), and cost nothing on
+    x86-64-v3. Keep. Not re-measured this round.
+  Why -Ofast stock moved: it changes stock's own EventOfHits. In-job EOH_COMPARE (hitsEventOfHits_cfg.py, 10 ttbar
+  events) against the -Ofast stock: 23-27k of 380-450k hit infos not bit-identical and 2 bins per event differ (a hit
+  crosses a bin edge), with our NEW kernel and with the OLD kernels alike (main + Ofast-core snapshot: same counts),
+  while the replay test against the non-Ofast stock dump is bit-identical. A probe of the registerHit arithmetic
+  (vdt::fast_atan2f and sqrt(x*x + y*y) over 4M random hits, tmp/ofastprobe): -Ofast vs -O3 differ in 18% (phi) and
+  32% (r) of the inputs (vectorisation changes the FMA contraction and the polynomial association); the B6 set gives 0%.
+  So the -Ofast reference differs from the non-Ofast one at the first step, and no port flag set reproduces GCC's
+  choices on stock's code.
+
+5. THE CPU GAP IS PAGE FAULTS: SERIAL-BACKEND BUFFERS ARE NOT CACHED
+  - HeterogeneousCore/AlpakaInterface CachedBufAlloc<DevCpu, QueueCpuBlocking> is a plain alpaka::allocBuf ("non-cached,
+    synchronous host-only memory"): on the serial backend every make_device_buffer / PortableCollection is a fresh
+    malloc. jemalloc 5.3 serves allocations >= 8 MiB (opt.oversize_threshold) from an arena that purges them on free, so
+    every event re-faults its large buffers. The EventOfHits product alone is one 31 MB allocation; the build module
+    allocates 41.7 MB per event (FastTimer mem_alloc); stock mkFit allocates per layer / reuses pools (EOH 39.9 MB in
+    small vectors, MkFitProducer 12.1 MB).
+  - Evidence (replay throughput job, 8 threads, 600-1000 events; INDICATIVE, load 40-95):
+      page faults per job (perf stat): inputs only 9.2M, stock 11.6M, port 18.4M; page-fault profile (perf -e
+        page-faults): fillHits 14.6% (product hits block), KernelBuildCpu 8.8%, engine GatherSeeds 5.8%, SeedInitCands 5.1%;
+      FastTimer thread time = real time (27.3 ms EOH): the gap is sys time, invisible to a user-only perf profile.
+      MALLOC_CONF=oversize_threshold:0 (no special arena): port job 45 -> 74 ev/s, EOH 27 -> 14 ms, build 57 -> 47 ms.
+  - Experiment (ref0 = main B6 + a local copy of HeterogeneousCore/AlpakaInterface whose CachedBufAlloc for the blocking
+    CPU queue uses the host CachingAllocator, as the GPU backends' pinned host memory does; 8 lines,
+    L/r6_cpu/patches/cachexp_CachedBufAlloc.diff), default malloc, alternated with main:
+                           EventOfHits(dev)   Build(dev)    mem_alloc/event (EOH / build)
+      main (no cache)      27.6  31.5         55.9  63.2    45.4 / 41.7 MB
+      ref0 (cached)        13.2  14.5         46.2  49.9     0.6 /  0.5 MB
+      stock -Ofast (old)   EOH 12.6           MkFitProducer 48.3
+    Physics unchanged: the in-job ttbar 200 arm of the cached build equals r0B6 exactly (24+27 / 22+21, status clean).
+    (ref0 has the OLD EOH kernels; the new CPU kernel is a further -6% on the EOH compute, section 6.)
+  - So with cached CPU buffers the CPU chain (EOH + build) is at stock speed in the replay. The fix is a CMSSW core change
+    (or a job-level MALLOC_CONF), outside our packages: coordinator/owner decision. Inside the package the scratch of
+    the CPU EOH kernel is now per-thread (reused, no allocation); products cannot be pooled (PortableCollection has no
+    constructor from a buffer).
+
+6. CPU EVENTOFHITS KERNEL (src/alpaka/hits/EventOfHitsKernels.h, CPU backends only)
+  KernelBuildCpu: one sequential kernel (1 block x 1 thread; the serial backend runs one event per thread anyway):
+    a) hits per layer -> hitBegin/nHits (layers concatenated in layer order);
+    b) registerHit in chunks of 16: a branch-free loop computes info + (fine phi << 24 | bin in layer) (binHit, shared
+       with the GPU KernelBinHits: one copy of the arithmetic), a scalar loop appends to the hit's layer (increasing
+       original index = stock registration order);
+    c) per layer, in cache: bin histogram + fine-phi histogram; the bin table written once (C_pair, dead = 0, overflow
+       counters); stable counting sort by fine phi, then stable scatter by bin = (bin, fine phi, index) = stock's LSD
+       radix order; outputs written at their final row.
+  No sort, deterministic, no atomics. Scratch: per thread on the serial backend (thread_local, grows to the largest
+  event: ~28 B/hit + 256 KB); TBB (not built) uses queue-ordered device buffers.
+  Validation: testMkFitAlpakaHits{SerialSync,CudaAsync} on hits_dump_ttbar (10 ev) and hits_dump_ttbar_dead (20 ev,
+  313,743 dead bins): order, bin table, hit infos, dead bins bit-identical to stock (non-Ofast dump); lowocc40: the
+  documented 16 std::sort-path ties, as before. GPU path unchanged (KernelBinHits calls the shared binHit; bit-identical;
+  registers sm_89 48 -> 58, sm_80/100/120 64, LOCAL 0 everywhere).
+  Speed: single thread (replay test, quiet moment) 10.3 vs 12.5 ms/event; replay 8 threads with page faults removed
+  (oversize_threshold:0), normalised by the stock hit converters: EOH/conv 1.97 (old kernels) -> 1.85 (new), stock 1.66.
+  In the default configuration the module time is page faults (section 5), so the kernel alone does not move it.
+
+7. bkfit SERIAL UNIT TEST (verify5 6b)
+  test/alpaka/bkfit_replay_t.dev.cc: the production-vs-flat check required bit identity, which the -Ofast CPU flags
+  break (164167/214576). The backward fit amplifies rounding (stock v2 vs v3: 1.3% of candidates beyond 1e-3 relative),
+  so a fixed tolerance is meaningless; the criterion is now the D-M4 rule itself: production vs flat (flat = reference)
+  no worse than stock(v2) vs stock(v3) (BKFIT_FLOOR); without a floor, the absolute rule. Bit identity is still
+  reported (CUDA 214576/214576). Serial ttbar and QCD: PASS (RC 0).
+
+8. FINAL NUMBERS (replay 8 threads, default malloc, alternated; and the CPU HLT menu; INDICATIVE)
+                                 replay EOH   replay build   menu EOH   menu device build
+    round-5 head (main)          28.9 29.0    58.5 58.7      24.98      51.37
+    r6/cpu head (this lane)      24.8 27.1    56.2 59.9      -          -
+    cached CPU buffers + new EOH 13.9 16.7    49.1 59.2      12.56      43.02
+    stock -Ofast (old physics)   12.7 14.8    48.7 56.3      (EOH / MkFitProducer)
+  The per-thread EOH scratch costs up to ~14 MB per TBB thread that runs the module (28 B/hit + 256 KB); with cached CPU
+  buffers it is unnecessary.
+  Context (for fit/menu): head (no #186) vs the r6 reference in-job, CPU ttbar 200: TrackCandidates 264,041 vs 265,923
+  (1,967 stock-only, 85 port-only); with the reference's bFieldParams set to the old constants 264,041 vs 264,036 (45 + 50
+  unpaired). #186's field constants alone add 0.7% TrackCandidates to stock through building.
+
+=====================================================================================================================
+ROUND 7 (lane cpu, 2026-10-04, 1:00-3:30 am): per-stream scratch (D7-c), R5-M1, R6-M3 guard
+=====================================================================================================================
+Commits on r7/cpu (RecoTracker/MkFitAlpaka): 15def62 (code), 77340c8 (clang-format of the new lines), + this doc.
+
+9. PER-STREAM SCRATCH (D7-c: inside the package, no core change)
+  What a CPU event allocates (ttbar PU200, 1.5-4k seeds, ~430k hits), and what jemalloc does with it (>= 8 MiB =
+  oversize arena, purged on free -> re-faulted every event):
+    build module scratch (EngineBuffers x2: seeds/slots/hots/opts/extras/upds/sel/c2; K2 list/props/sels)  ~42 MB/ev
+    EventOfHits device-hit raw host rows (DeviceHitRawSoA, 32 B/hit)                                       ~14 MB/ev
+    EventOfHits PRODUCT (one PortableCollection over hits/layers/binnedHits/bins)                           ~31 MB/ev
+    fit scratch (key/chi2f/chi2b/order per track x kMaxTrkHits; CPE cluster rows)        each buffer < 8 MiB: kept
+    seeds/clean/export TrackSoAs                                                          KB to a few MB: kept
+  Change (15def62):
+  - MkFitAlpakaBuildProducer = global::EDProducer<edm::StreamCache<BuildScratch>>. BuildScratch holds both EngineBuffers
+    and the K2 collections at a grow-only seed capacity (n + 25%, rounded to 1024 seeds); on reuse the seed rows are
+    zeroed and nRowsDev reset, exactly the state the EngineBuffers constructor leaves. Everything the engine runs is
+    bounded by the seed count n passed in and the device row counts; rows past n are initialised as unused by the
+    import kernel (it already loops over the capacity) and never read. scratchReuse: 0 = per event, 1 = CPU backends
+    (default), 2 = every backend.
+  - MkFitAlpakaEventOfHitsProducer (deviceHits): on CPU backends the DeviceHitRaw host rows are a per-stream
+    collection (grow-only, +25%); fillRaw takes the row count explicitly (it used the collection size). GPU backends
+    keep the per-event pinned host buffer (already cached by the CMSSW host allocator).
+  - Safety: an EDM stream starts its next event only after the device work of the current one has completed (the
+    products' EDMetadata synchronises in its destructor), so a stream's scratch is never in use by two events.
+  - Not possible in the package: the EventOfHits PRODUCT (PortableCollection has no constructor from a buffer, and an
+    event product cannot be recycled by its producer). It is the largest remaining fault source on CPU (31 MB/event).
+  Results (target menu, --procModifiers trackingMkFitFit + customizeHLTforMkFitAlpakaTarget, 8 threads, CPU serial):
+  - Byte identity (scripts in L/r7_cpu/scripts: cmp_tracks.py = md5 of every track's parameters, covariance, chi2,
+    ndof, reference point, momentum, hit-pattern counts, algo, quality per event and collection; main6 = before):
+      ttbar 200 events (139 tracked): hltInitialStepTracks, ...TorchClassifierOutput, ...SelectionHighPurity,
+        hltGeneralTracks, hltSeedsForMkFit, hltPhase2PixelTracks: IDENTICAL in 200/200 events. (Only the legacy L3-muon
+        CKF collections differ in 36 events: their PixelTrackProducer input differs too, i.e. run-to-run, not ours.)
+      QCD 100 events: all 12 compared collections IDENTICAL.
+  - Allocation: BUILD_MEM scratch per stream 63.8 MB mean / 81.7 MB max (capacity incl. headroom), 9 allocations in
+    139 events on 8 streams (8 first + 1 regrowth); QCD 68.5 / 82.4 MB, 8 allocations. Job page faults (time -v):
+    30.6M -> 28.7M (ttbar 200, whole job incl. startup). Job max RSS 9.74 -> 10.04 GB (+0.3 GB at 8 streams: the
+    scratch now stays resident between events, ~80 MB per stream).
+  - GPU: scratchReuse = 2 raises the per-job device memory peak from 2128 to 2872 MiB (8 streams, ttbar 200, L4):
+    +35%, over the D7-f budget (stock + 10%) -> the default stays CPU-only; on the GPU the caching allocator already
+    serves the per-event scratch without page faults.
+
+10. R5-M1 (verify5_rev; R6-M4): K2b exact-tie detector completed (src/alpaka/select/SelectKernel.h)
+  A full lane list now feeds every score it evicts on an insert ('cs' after the unrolled insert, when finite) and every
+  score it refuses (not only one equal to its maximum) into 'rej'. All of these are >= v6, so 'rej <= v6' is exactly
+  a contending tie and the in-lane eviction case (stock [99,19,35,51,67,83] vs port [...,3], unflagged) now reruns
+  stock's heap loop. GPU only (K2b is the kNN == 1 group scan); the serial path is unchanged (CPU outputs above are
+  byte-identical). SIMPLIFICATIONS: the [gpu] K2 line's "any contending tie lands in one of the three" is now true.
+
+11. R6-M3: C++ guard of the device-hit input (plugins/alpaka/MkFitAlpakaEventOfHitsProducer.cc, fillRaw)
+  A pixel row found through the cluster's originalId (moduleStart + originalId) is accepted only if the SoA local
+  position is bitwise the legacy rechit's (the legacy one is a copy of the SoA one); otherwise, and for clusters without
+  originalId, the row is found by position (the existing search, which still throws if nothing matches). Both cases
+  are counted: LogWarning on the first event with any, DEVICE_HITS_GUARD totals at endJob; a key mismatch throws under
+  compareHostHits. Menu runs: keyMismatch 0, positionSearch 0 (ttbar 200, QCD 100). With this, DEVICE_HITS (already
+  True in the target customise) is backed by the C++ check D7-d asked for.
+
+12. R6-M5: per-IOV CPE cross-check of both fit producers (MkFitAlpakaFitDeviceProducer, MkFitAlpakaFitProducer)
+  The checked record ids are atomics with a lock-free fast path (no mutex per event); under the mutex the check runs and
+  the ids are stored only AFTER it has passed (or warned). With a failing check under cpeCheck = 'throw' every stream
+  now checks and throws (before: the first stream stored the ids and threw; the others skipped the check).
+
+13. CPU MENU TIMING (round 7; INDICATIVE: box load 70-100 from other lanes in every arm)
+  Shape: patatrack benchmark, 2 jobs x 8 threads x 8 streams (lane limit; CI = 4 x 16 x 16), 300 events after 50, the
+  5 local ttbar PU200 RAW files; ms per job event from the FastTimer JSON. Arms: stockfit = r6_base
+  --procModifiers trackingMkFitFit (stock + #186); tpre / tpost = target menu (customizeHLTforMkFitAlpakaTarget) of
+  main6 / this lane; tpostM = tpost + MALLOC_CONF=oversize_threshold:0 (measurement arm only); dpre / dpost = default
+  KF menu with the production swap (customizeHLTforMkFitAlpaka). Order: r1 stockfit tpre tpost tpostM dpost dpre, r2
+  tpost tpre stockfit (the stock KF arm was dropped: 7-8 min per arm).
+    arm        ev/s  maps(pix+OT)  EOH(+host)  seedConv  build   fit     outConv  chain   total
+    stockfit1  3.20  14.10         14.83       2.20      51.43   36.42   29.63    148.6   5320.6
+    tpre1      2.60   2.05         38.45       2.17      68.63   34.49   31.33    177.1   5518.7
+    tpost1     3.00   2.08         34.73       2.05      54.68   33.56   30.15    157.2   5447.7
+    tpostM1    3.30   1.84         25.78       2.14      54.02   30.56   30.01    144.3   4928.3
+    tpost2     3.20   1.64         27.79       1.72      44.86   27.54   24.96    128.5   4436.7
+    tpre2      3.80   1.75         28.97       1.68      53.60   26.90   24.68    137.6   4418.0
+    dpre1      4.50   9.57         17.69       1.29      41.51   (KF)   147.05    217.1   3613.8
+    dpost1     4.50   9.48         17.78       1.28      35.44   (KF)   146.85    210.8   3573.5
+    stockfit2  5.00   8.73          9.17       1.20      31.29   21.88    17.57     89.8   3271.2  (much lower load)
+  (build and fit include their 0.1-0.4 ms wrappers; EOH includes the 0.13-0.17 ms light host EventOfHits.)
+  Paired deltas (same rep, post - pre): device build -14.0 / -8.7 ms (target), -6.1 (default); EventOfHits -3.7 / -1.2
+  (target; the default menu has no device-hit input: 0); mkFit chain -19.9 / -9.1 (target), -6.3 (default).
+  Throughput (ev/s) moves with the box load by more than these deltas (tpre 2.6 vs 3.8 between reps): not resolved.
+  Load is the dominant variable. Normalised by the stock MkFitOutputTrackConverter (same code in every target-family
+  arm): chain/outConv stockfit 5.02 / 5.11, tpre 5.65 / 5.58, tpost 5.21 / 5.15, tpostM 4.81: the CPU target chain
+  went from +11% to +2% over stock + #186 (-5% without the EventOfHits product faults).
+  Load-normalised CI-style Tracking slice without hltLST (verify6 tracking_table.py: x mean calo / arm calo, all reps):
+    stockfit 240.7, tpre 258.6, tpost 247.8, tpostM 232.4; dpre 405.4, dpost 396.4 ms per input event.
+  Reading: per-stream scratch removes the build module's page faults (tpost build = tpostM build within 0.7 ms: no
+  fault cost left there). What remains of the CPU gap to stock + #186 is the EventOfHits PRODUCT: with the oversize
+  arena off (tpostM) the port's chain is below stock (144.3 vs 148.6; EOH+maps 27.6 vs stock 28.9). That fault cost
+  (~9 ms/event here) cannot be removed inside the package (doc 9).

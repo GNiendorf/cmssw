@@ -1,0 +1,291 @@
+MkFitAlpaka: physics differences vs the reference (stock mkFit), written for the mkFit developers
+===================================================================================================
+Every entry: what stock does (file:line), why it is wrong or worse, what the port does, the evidence, the commit.
+Markers in the port: // DEVIATION D<n>: <short reason>
+Reference since round 6: CMSSW_20_1_0_pre2 + trackreco/cmssw#186 (head 62b616b, without the "seam" commit) + #187 +
+-Ofast for all of MkFitCore (lanes/mkfit_alpaka/r6_base).
+
+D1  NaN guards of the final fit are dead in the -Ofast stock build; the port keeps them (round 6, lane fit)
+    Stock (source):
+      - MkFitter.cc:102  reFitOutputTracks: if (m_Chi2 != m_Chi2) continue;  // "trick for the nan so the track is
+        not dead": a fit pass whose chi2 sum is NaN keeps the track's previous state;
+      - MkBuilder.cc:1545-1548 (fit_tracks outlier block): chi2fwd / chi2bkwd NaN -> 1000000 before the scorer.
+    Stock (binary): MkFitCore is built with -Ofast (ofast-flag, now applied to the whole package as the mkFit developers
+      intend). -Ofast implies -ffinite-math-only, under which GCC folds x != x (and std::isnan) to false. Both guards
+      are removed: the NaN state is written into the track, and NaN per-hit chi2 enter the outlier scorer (NaN keys in
+      the std::map scorerAndIdx).
+    Effect (replay ttbar, 100 events, 193,069 fitted tracks, stock + #186 + -Ofast): 59 tracks come out of the stock
+      final fit with NaN parameters (0 in the port); MkFitOutputTrackConverter drops them (reco::Track level: the port
+      has 60 tracks that stock has not, 4 the other way). Excluding the 59 NaN tracks, port vs stock is at the rounding
+      level (|pull| >= 1: x 12, theta 10, 1/pT 14 tracks; CUDA vs serial of the port: 14 / 12 / 17).
+    Port: the same source checks (FitKernels.h fitDirection / removeOutliers). They work because the device code is
+      compiled without -ffinite-math-only (CUDA strict; CPU backends -Ofast -fno-finite-math-only, D5-a / O6-3).
+      So the port does what the stock source says. No code change in the port; markers at both checks.
+    Proposed stock fix (lanes r6_fit/patches/0001-MkFitCore-NaN-guards-...patch): mkfit::isNaN(float), a bit test
+      that survives -Ofast (cms_common_macros.h), used at both places. With it, stock == port (see doc/fit.txt R6).
+    Other x != x / std::isnan tests in MkFitCore (MkFinder.cc building, debug code) are equally dead under -Ofast;
+      not audited here (building lanes).
+
+
+D2 SWITCH-GATED, ON in the target since round 9 (D9-a, KNOWN REGRESSION): seed state of the LST T5/T4/pT3/pT5 seeds from a device mkFit fit (O6-1 (b))
+  Stock: RecoTracker/LST/plugins/LSTOutputConverter.cc:236-262 (host): SeedFromConsecutiveHitsCreator::makeSeed =
+    FastHelix(hit1, hit0, origin) + the creator's initial errors (default GlobalTrackingRegion: origin r 0.2 cm,
+    half length 22.7 cm) + a KF with PropagatorWithMaterial (volume field, track-angle hit refit) over the seed hits;
+    then RecoTracker/MkFit/plugins/MkFitSeedConverter.cc:107-160 converts the state to mkFit CCS. 47-70 ms per job
+    event on the host in the GPU menu (this box: 32-49 ms per tracked event), the largest host cost of the step.
+  Port (build module lstSeedFit = True; src/alpaka/seeds/LstSeedKernels.h, marker D2): per seed with an OT hit,
+    3-hit helix -> mkFit Kalman (kalmanPropagateAndUpdateAndChi2Plane, param field + material, the device final-fit
+    primitive) over the seed hits, 3 passes (forward, backward, forward; errors x100 between passes), state at the
+    last hit. pLS keep the pixel state. Not "better physics" by construction: it removes a host dependency.
+  Evidence (in-job PAIRED, same LST output, ON vs OFF; r6_seeds/REPORT.txt; GPU L40/L4):
+    passes 3, QCD 500, default menu: paired eff -0.00003 +- 0.00001 (TPs lost 498, gained 412 of 914k found),
+      fake .03096 -> .03087, dup .01103 -> .01103; MTV (signal TPs) eff vs eta .83861 -> .83842, pT > 100 GeV
+      1066 -> 1070 found, vxy 30-100 cm unchanged or better; 0 MTV bins with |z| > 2 (pT, eta, phi, dxy, vxy).
+    passes 3, ttbar 500, default menu: paired -0.00003 +- 0.00001 (237 / 172), fake .02129 -> .02121.
+    passes 3, QCD 500, trackingMkFitFit menu: paired -0.00003 +- 0.00001 (510 / 404), fake .03454 -> .03447, dup equal;
+      MTV pT > 100 GeV 1041 -> 1028 (-13), 30-100 -7, 10-30 -10 (no bin |z| > 2): the high-pT effect is -1..-2% in
+      3 of the 4 QCD runs (+0.4% in one) - small, not clearly gone.
+    passes 1 (first version): the same totals, QCD pT > 100 GeV 1057 -> 1033 (-2.3%); 3 passes: +4 (default menu)
+      and -13 (fit menu).
+    Seed states vs host (dump, 40 events): pT3/pT5 agree (1/pT pull w68 0.27, median +0.19 sigma); T5/T4 1/pT
+      differs by w68 2.7-6 host sigma (median +0.3..+1.7 sigma, +0.3%..+1.4% in 1/pT, growing with |eta|), charge
+      agreement 86% at pT > 100 GeV. Suspects: the pre-#186 field model of the port (1/pT bias grows with |eta|), the
+      CMSSW track-angle refit of the OT hits, the creator's beam-line prior (adding it, lstSeedFitOriginPrior = 1,
+      changes nothing measurable).
+  Verdict: NOT YET regression-free by the owner's rule (-0.00003 +- 0.00001 paired, 3 sigma, on both samples);
+    every MTV bin within statistics; a -1..-2% hint above 100 GeV in QCD. Stays OFF.
+    Commits: r6/seeds 62ad5e1, 26ac1dd, and the round-6 doc commit (default passes 3).
+  Round 7 (lane seedfit, option (b'), lstSeedFitOriginPrior = 3, lstSeedFitPasses = 1; commits 95d27bd, d3c1c66 on
+    r7/seedfit): the host creator's structure (FastHelix through the region origin, its initial errors, ONE forward
+    KF pass with material at every destination, state at the last hit, its rejections), mkFit's propagation with
+    B at the start of each step (as AnalyticalPropagator). Seed states now agree with host to 0.06 sigma (T5/T4 1/pT
+    pull w68; round 6: 1.4-6), but the in-job paired check still loses: ttbar -0.00002 +- 0.00001 (88 lost / 52
+    gained), QCD -0.00002 +- 0.00000 (181 / 97), MTV signal unchanged (0 bins > 2 sigma, QCD > 100 GeV 1163 -> 1160).
+    Verdict: fails the pre-declared D7-b criterion; stays OFF. Remaining suspects: sigma(1/pT) dev/host 0.97-0.98
+    (pion vs muon mass in MS/eloss, float vs double), the pixel track-angle refit (pT3/pT5), high-pT float precision.
+  Round 8 (lane stageb, commits 630ef14 + 80178c4 on r8/stageb; still OFF): (1) the light mode (LSTOutputConverter
+    seedStates False, the host makeSeed skipped) lost 1.28% in round 7 because the host creator FAILS on ~43 pT3/pT5
+    per ttbar event and LSTOutputConverter.cc:422 then keeps the PIXEL seed, while the device dropped them (dropFailed).
+    The device now reproduces each host decision (991/991 fallbacks, 15,251/15,251 successes in 13 CPU events) and on
+    failure refits the leading pixel hits and truncates the seed to them (lstSeedFitPixelFallback, default true);
+    T5/T4 failures are dropped as the host skips those TCs. (2) The 'against the momentum' test tolerates 0.01 cm
+    (lstSeedFitBackwardTol; it rejected 230 host-accepted seeds per 23 events). Light mode, GPU 500 + 500, in-job
+    paired vs the switch OFF: ttbar -0.00013 +- 0.00001 (612 lost / 317 gained), QCD -0.00014 +- 0.00001 (996 / 515),
+    trackingMkFitFit ttbar -0.00014 +- 0.00001 (620 / 308); MTV (signal): 0 bins > 2 sigma, eff vs eta ttbar -0.00075,
+    QCD -0.00029, fake and duplicate rates equal or lower, QCD > 100 GeV 1158 -> 1154. Round 7 light: -0.0128.
+    Verdict: still fails the pre-declared D7-b criterion (|delta| < 1 sigma); the switch stays OFF. Remaining
+    differences: doc/stageb.txt and lanes r8_stageb/REPORT.txt (the input to the owner's option (a) decision).
+  Round 9 (verify9_int): DESIGN D9-a (no option (a); light mode accepted WITH its known regression, to be revisited
+    with (b) methods: the lost-seed tail, |1/pT pull| > 1 seeds) asks for light mode ON in the target. The target now
+    has the switch SEEDS_LIGHT (python/customizeHLTforMkFitAlpaka.py; _lstSeedsLight with the (b') settings of the
+    numbers above: lstSeedFitPasses 1, lstSeedFitOriginPrior 3, pixel fallback, backward tolerance 0.01 cm). It is
+    OFF in verify9_int's head: the integrator could not confirm the default change with the owner in that session.
+    KNOWN REGRESSION TO REVISIT if ON: paired eff -0.00013 (ttbar) / -0.00014 (QCD) +- 0.00001 (above). Merged-head
+    smoke (target + stage D + light, CPU ttbar 50): status clean, hltGeneralTracks 68,985 -> 68,968, LST seeds
+    79,079 -> 79,104 (T5/T4 seeds whose host creator would fail are not skipped, L2 of r8_stageb).
+  STATUS (round 10, D10-a): SEEDS_LIGHT = True in the target since main6 6484768 (owner decision D9-a, coordinator
+    commit 12:05 pm 2026-10-04). Light mode is the DEFAULT, with the KNOWN REGRESSION TO REVISIT above (paired eff
+    -0.00013 ttbar / -0.00014 QCD +- 0.00001; MTV signal bins within 2 sigma; fakes / dups equal or lower; cause: the
+    lost-seed tail, |1/pT pull| > 1 seeds), to be fixed later with (b) methods, never option (a).
+
+
+D3 SWITCH-GATED, ON in the target since 2026-10-04 (owner O10-3, FIT_OUTLIERS_D7): first/last-hit outlier test and iterated outlier removal in the final fit
+   (round 8, lane fitdev; = our closed mkFit-final-fit patch 0001, re-applied on #186 as r7_fitgap d2a08a4)
+  Stock: MkBuilder.cc fit_tracks outlier block (r6_base :1540-1575) and fittracks remap loop (:1660-1680).
+    - A hit is an outlier only when BOTH one-sided chi2 are large (pT > 1: f > 8 && b > 8 && f + b > 20; pT <= 1:
+      7 / 7 / 15). For the first and the last fitted hit one of the two passes starts there from the x100-scaled
+      prior, so its chi2 is ~0: an end hit can never be removed, however bad.
+    - One round: outliers are removed after pass 1, the track is refitted once, and the refit is never checked.
+    The KF final fit (KFFittingSmoother) rejects any hit with an unbiased chi2 > EstimateCut 20, end hits included, and
+    iterates until none is left. The selection (Torch HP) then sees mkFit-fit tracks with outlier end hits: true-track
+    chi2/ndof > 10 in 1.8% (KF 0.1%); the HP selection drops 2.2-2.4x more true mkFit-fit tracks than KF tracks; that is
+    the whole efficiency gap of the mkFit-fit menu (r7_fitgap/REPORT.txt 3, doc/fitgap.txt 3).
+  Port (FitKernels.h removeOutliers / outliersAndRefit / KernelFinalFitStage, FitTracks.dev.cc; markers D3; switches
+    edgeOutliers, edgeChi2Cut = 20, outlierRounds of MkFitAlpakaFitDeviceProducer / MkFitAlpakaFitProducer):
+    - edgeOutliers: the first fitted hit is also an outlier when the BACKWARD chi2 there (predicted from all other hits)
+      is > 20, the last one when the FORWARD chi2 is > 20; the 3-hit minimum and the scorer ranking are unchanged;
+    - outlierRounds = 3: removal + refit repeated; the last refit is not checked (as d2a08a4's remap loop).
+  Evidence (fitgap, stock patch on #186, CPU menu, 500 + 500 events, vs KF): ttbar eff -0.27 pp -> -0.07 pp, fake x1.20
+    -> x1.07; QCD -0.37 -> -0.17 pp, x1.15 -> x1.05 (closes 55-75% of the efficiency gap, 2/3 of the fake excess).
+  Port vs the stock patch (stock + d2a08a4 + 0005 = r7_fitgap floors/libs/fix):
+    - in-job menu (ttbar 500 CPU, TargetValidation): paired truth 40 / 38 one-sided TPs of 602k, difference -0.00000,
+      fake .02223 / .02222, duplicate .01185 / .01185; MTV hltGeneral = fitgap's stock arm (.8875/.0096/.0106 vs .8874/...);
+    - replay chain (100 ttbar + 100 QCD, CPU + L40/L4): candidates / export / final PASS the D7-a floors; the fit level
+      exceeds them 5-7x (hit lists 4.7-5.1e-4 vs 7.6e-5), as much as our own CUDA vs serial with the switch on (5.3e-4;
+      off: 4e-5): the excess is the rounding sensitivity of 0001 itself (note below), not a port difference.
+  Effect vs today's target (switches ON vs OFF, CPU menu, 500 events): paired efficiency +0.00035 +- 0.00002 (ttbar),
+    +0.00043 +- 0.00001 (QCD); hltGeneral ttbar .8854/.0108/.0097 -> .8875/.0096/.0106, QCD .8339/.0176/.0097 ->
+    .8359/.0161/.0106 (KF .8881/.0090/.0103, .8376/.0153/.0103); no efficiency bin worse by > 2 sigma (pT, eta, phi,
+    dxy, vxy); duplicates +0.0009; QCD pT > 100 GeV 1141 -> 1136 found TPs (KF 1170); vertices and track length move
+    toward KF. Details: r8_fitdev/REPORT.txt 1. Commits: MkFitAlpaka r8/fitdev 62598cc (D3), c6a2319 (D4 + customise).
+  Note for the mkFit developers: with 0001 the final fit becomes much more sensitive to rounding than stock: our own
+    device fit, CUDA vs serial on the same inputs, differs in 102 of 193k hit lists (switch off: 8); 29 of them by >= 4
+    hits. Fits with a NaN chi2 sum triple (103 -> 312-339 per 193k tracks); their per-hit chi2 (NaN -> 1e6) would make
+    every remaining hit an outlier in the next round (likely cause of the >= 4-hit differences; not verified per track);
+    the std::map scorer collision (D-H2b) hides 20x more cut-passing hits (6 -> 131). Suggestion: a NaN refit ends the
+    iteration for that track (keep the hits of the round before) instead of stripping it.
+    Round 9 (lane fitdev): tried as D3b below. It removes the NaN cascade but NOT the rounding sensitivity (CUDA vs
+    serial 102 -> 89 hit lists, >= 4-hit differences 29 -> 30): the >= 4-hit differences are not NaN stripping.
+  Round 9 (lane fitdev, R8-M2): the floor FOR 0001 (D7-a recipe on stock + d2a08a4 + 0005: v2 -Ofast and v3 without
+    -Ofast vs v3 -Ofast, chained replay, ttbar 500 + QCD 500; r9_fitdev/floors): stock with 0001 differs from itself in
+    5.5e-4 (ttbar) / 5.0e-4 (QCD) of the fit hit lists, unpaired 3.6e-4, pulls >= 1 3.3-4.6e-4 (the D7-a floor of
+    stock WITHOUT 0001: 7.6e-5 / 7.9e-5). 0001 amplifies rounding in stock itself, 7x. Against this floor the port
+    passes: replay ttbar CPU + L40, QCD CPU + L4, candidates and fit level, 8/8 PASS (r8 runs re-judged; port 4.7-5.1e-4).
+    In-job menu (target + D3 + D4 vs stock + 0001 + 0005, 500 events): 13 of 14 metrics inside the floor incl. truth
+    one-side and transitions; reco::Track hit lists 8.5e-4 (ttbar) / 8.1e-4 (QCD) vs 5.5e-4 / 5.0e-4: the excess is the
+    size of outconv's known hit-ORDER difference to the stock converter (3.5e-4, verify8_int; inferred, the comparator
+    does not separate order from content). Verdict: D3 is rounding-level relative to the stock patch.
+
+D3b REMOVED (round 10, verify10_int, coordinator decision D10-e): the code was reverted (git revert of 90edea9, the
+   D7 call sites kept). Kept here as the record of a refuted hypothesis. Was: CANDIDATE, SWITCH-GATED (OFF by default):
+   a refit with a NaN chi2 sum is undone and ends the outlier iteration
+   (round 9, lane fitdev; refinement of D3 suggested by its round-8 note; not in any stock patch)
+  Stock (and D3): reFitOutputTracks keeps the previous state when the chi2 sum of a pass is NaN, but the removal stays
+    and the per-hit chi2 of the NaN pass are kept; with outlierRounds > 1 they become 1e6 (NaN guard) in the next round,
+    so every remaining hit passes the cut and the track is stripped toward 3 hits.
+  Port (marker D3b; switch nanRefitStops of MkFitAlpakaFitDeviceProducer / MkFitAlpakaFitProducer, default false;
+    customizeFitDev.customizeFitDevOutliersD3b = D3 + D4 + D3b): before each refit the track's parameters, errors, chi2
+    (and the D6 outer state) are saved and removeOutliers records the removed positions and indices; if the forward or
+    the backward refit has a NaN chi2 sum, the removed hits come back (nFoundHits restored), the saved state is
+    restored and the track leaves the iteration. CPU: outliersAndRefit returns after the NaN pass (the backward pass is
+    not run after a NaN forward pass); GPU: stage 4 flags the row, stage 5 skips its backward refit and restores.
+    Scratch only when ON: 56 floats + 64 ints + 12 B per track row. Counter nNaNRefitRestored (reportStats).
+  Evidence (round 9; r9_fitdev/REPORT.txt):
+    replay ttbar 100 (D3 + D3b vs D3): NaN-kept fits 312-339 -> 189-194 per 193k tracks (switch off: 103-109); refits
+      undone 154 (CPU) / 159 (L40); collision-shadowed outliers 131-139 -> 28; CUDA vs serial hit lists 102 -> 89
+      (>= 4 hits 29 -> 30).
+    menu ttbar 500 CPU (TargetValidation, D3 + D4 + D3b vs D3 + D4, same in-job reference): TPs found +15 of 2.23M
+      (paired vs reference +0.00035 both), tracks +57 (in-job truth: ~40 of them fake), hltGeneral .8875/.0096/.0106
+      -> .8876/.0096/.0106, 0 MTV bins with |z| > 2 (eff, fake, dup x pT, eta, phi, dxy, vxy), vertices equal, track
+      length +0.006 hits (initial step).
+  Verdict: physics-neutral at this statistics, a small cleanup of the NaN cascade, not the rounding fix it was meant to
+    be. Not clearly better physics: stays OFF (owner).
+
+D4 SWITCH-GATED, ON in the target since 2026-10-04 (owner O10-3, FIT_OUTLIERS_D7): drop candidates with a negative or non-finite fit chi2 in the output
+   converter (round 8, lane fitdev; = our closed patch 0005, r7_fitgap MkFit 60f1a5a)
+  Stock: MkFitOutputTrackConverter (r6_base) converts every candidate that passes the state quality, posDef and
+    Sylvester checks, whatever its chi2. A negative or NaN chi2 comes from a non-positive-definite covariance during the
+    fit; KFFittingSmoother rejects such trajectories (checkForNans / the estimator).
+  Port: MkFitAlpakaOutputTrackConverter dropNegativeChi2 (marker D4): edm::isNotFinite(chi2) || chi2 < 0 -> skipped, after
+    the posDef check as in 0005 (a bit test: `!(x >= 0) || !std::isfinite(x)` folds away under -ffinite-math-only, R7-L2).
+  Evidence: part of fitgap's arm (b) above (0001 + 0005 together). Its share alone (round 9, menu ttbar 500 CPU,
+    D3 alone vs D3 + D4, same in-job reference): D4 drops 2 tracks in 500 events (639,329 -> 639,327); TPs found
+    602,336 -> 602,337; hltGeneral MTV equal to 1e-4 in every bin. With D3 on, NaN chi2 sums keep the previous state,
+    so a non-finite chi2 almost never reaches the converter: D4's share of the D3 + D4 gain is ~0.
+
+D5 CANDIDATE, SWITCH-GATED (OFF by default): the initial step's HP classifier re-implemented as an Alpaka MLP kernel
+   (round 8, lane stagec; probe self-test round 9)
+  Stock: RecoTracker/FinalTrackSelectors/plugins/alpaka/TrackTorchClassifierAlpaka.cc (the menu runs it as
+    alpaka_serial_sync, i.e. libtorch on the CPU: 4.3-4.5 ms host per input event in the GPU target menu), model
+    RecoTracker/FinalTrackSelectors/data/TrackTorchClassifier/model.pt (TorchScript; 15 normalised inputs, 4 x
+    (Linear + BatchNorm + ELU), fc_in + ELU, 3 residual blocks, Linear, sigmoid). Not a mkFit change: an HP-selection
+    change, documented here because it moves scores at the 1e-6 level.
+  Port (plugins/alpaka/MkFitAlpakaHpClassifier.cc + MkFitAlpakaHpMlpKernels.dev.cc, marker D5; customise
+    customizeHpSel.customizeHpSelMlp): the SAME model.pt, loaded with libtorch on the host at construction; BatchNorm
+    (eval, eps 1e-5) folded into the Linear layers in double and rounded once to float32 (byte-identical to r7_hpsel's
+    exported program: 54,783 floats, 0 differ); the forward pass as float32 dot products in input order (GPU: thread
+    per (track, output), tile of 16 tracks per 128-thread block, activations in shared memory; CPU backends: the same
+    sums with the output loop innermost). Same input/output products as stock (TrackFeaturesDeviceCollection ->
+    TrackScoresDeviceCollection), so TrackTorchClassifierFromSoA and everything downstream are untouched; optional
+    device HP decision (instance hpMask). Why: libtorch on the GPU (step 1, customizeHpSelDevice) costs +1.2 GB device
+    memory (verify7_int, D7-f) and does not save host time (11.4 vs 4.2 ms host); the kernel needs ~215 kB per stream.
+  Not bitwise: libtorch's GEMM summation order and ELU/sigmoid kernels differ from a scalar float dot product.
+  Evidence (in-job, same features, release serial libtorch classifier as the reference; target menu + outconv, GPU):
+    ttbar 200 ev: 265,921 tracks, max |dscore| 1.19e-6 (3 tracks > 1e-6), HP decision flips 0, HP outputs 259,309 =
+      259,309; QCD 100 ev: 195,785 tracks, max 1.25e-6 (7 > 1e-6), flips 0, HP 190,166 = 190,166. Device HP mask vs
+      the host rule on the same scores: 0 differences, mask count = HP collection size in every event.
+    Expected flip rate from the score density at the thresholds (r7_hpsel ana/near_threshold.txt): ~0.4 per million.
+  Verdict: rounding-level in score, 0 decision flips in 461,706 tracks. OFF by default; candidate for default ON in the
+    GPU target after a val5k-scale paired check (the owner's switch rule).
+  Guard (round 9, R8-M5): the fold transcribes a fixed graph (layer names, BN eps 1e-5, ELU alpha 1, skip placement,
+    sigmoid, the input order). At construction (once per job and model file, cached across stream instances) the
+    module now evaluates libtorch's own forward() and the folded program (host, the kernel's float order) on 272 fixed
+    probe vectors (256 stratified over [feature_min, feature_max] per feature, 16 at 10% beyond either end) and throws
+    if any |dscore| >= 1e-5: a retrained model.pt with the same tensor names but a different forward() is refused
+    instead of being folded silently into a different function.
+D6 CANDIDATE, SWITCH-GATED (OFF by default): inner/outer states in the TrackExtras of the mkFit-fit tracks (R7-H3)
+  Stock (trackreco#186, MkFitOutputTrackConverter r6_base :384-398): without per-hit states (MkFitFitProducer
+    storeHitStates = False, the menu setting) every TrackExtra is the default one, innerOk = outerOk = false.
+    TrackListMerger copies them. TICL (GeneralInterpretationAlgo.cc:242-248) then propagates from the PCA state without
+    material, TICLCandidateProducer.cc:462 uses a straight-line path length, PFTrackTransformer.cc:62-73 takes the
+    closest-approach point as the outer point. In the KF menu all three get TrackProducer's inner/outer states.
+  Port (marker D6): MkFitAlpakaFitDeviceProducer storeOuterState puts, per fitted track, the forward pass's updated
+    state at the outermost fitted hit (= stock storeHitStates' state at that hit); MkFitAlpakaOutputTrackConverter
+    outerStates fills the TrackExtra as TrackProducer does: inner = the fitted state on the first hit's surface, outer
+    = the stored state on its hit's module, curvilinear errors, det ids, alongMomentum. Per-hit trajParams stay zero.
+  Evidence (CPU menu, 500 ttbar + 500 QCD; r8_fitdev/REPORT.txt 2): the tracks are unchanged by construction (tracking
+    MTV identical); the vertex collection hltOfflinePrimaryVertices is unchanged too (R8-M3, round 9: on ttbar exactly
+    2 of 860 vertex DQM histograms differ, the same one in two folders, RecoAssoc2GenPVNotMatched_GenPVTracksRemoved_Pt2:
+    PrimaryVertexAnalyzer4PUSlimmed sums the reco vertex pt^2 with track.innerMomentum() - the TrackExtra inner state
+    D6 fills, momentum() when absent - and subtracts the signal tracks' pt()^2, so two ~0 values change sign, bin 1 ->
+    underflow; a validation artefact, no vertex moves; QCD bin-identical);
+    trigger: the paths that change are PF HT b-tag, PF MET, PF tau, as in the stock arm with storeHitStates (ttbar: same
+    paths, same directions). Sum over the 68 paths of |KF - arm|: ttbar 28 -> 21 (stock arm 30 -> 20), QCD 8 -> 14
+    (PF MET 216 -> 220, KF 215): inconclusive at this statistics; stays OFF. Commit: r8/fitdev 9ddbf9b.
+  (Numbered D5 on lane fitdev's branch; renumbered D6 at the round-8 integration because lane stagec's HP MLP is D5.)
+D7 SWITCH-GATED, ON in the target since 2026-10-04 (owner O10-3, FIT_OUTLIERS_D7): propagate to the first hit of a refit (round 9, lane fitdev; R7-M3)
+  Stock (trackreco#186, MkFitter.cc fwdFitFitTracks / bkReFitFitTracks): the first hit of every fit pass is updated
+    WITHOUT propagation (propHit = index != first: "the position is already at the hit"). In the refit after outlier
+    removal that is false when the innermost hit was one of the removed hits: the state is still at the removed hit, the
+    first update is done off-plane (first-step chi2 2.5e4 - 4e5 in the 4 dumped tracks; pass 1: 360 - 1800), and later
+    steps go non-positive-definite (negative chi2). Rounding then picks the result: the CUDA-vs-serial z tail of R7-M3
+    (cm shifts with identical hits). With 0001 (D3), which tests the first hit as an outlier and iterates, this happens
+    far more often: it is the main source of 0001's 7x rounding amplification (section D3, round 9).
+  Port (marker D7; switch firstHitProp of MkFitAlpakaFitDeviceProducer / MkFitAlpakaFitProducer: 0 = stock, 1 = the
+    refits after outlier removal propagate to their first hit, 2 = every pass; fitDirection propFirst;
+    customizeFitDev.customizeFitDevFirstHitProp(process, mode=1), customizeFitDevOutliersD7 = D3 + D4 + D7). The first
+    hit's material is still skipped (noMat), as stock.
+  Evidence (replay ttbar 100, L40 device fit vs its serial clone in the same job, same build; r9_fitdev/accept/d7):
+                                     NaN-kept    CUDA-vs-serial hit lists (>= 4 hits)   z pull >= 1 (same hits; >= 10 sigma)
+    switches off                     100-109     8 (0)                                 19 (17; 8)
+    D7 mode 1                        55-57       8 (0)                                 16 (14; 5)   the 4 dumped tracks fixed
+    D7 mode 2                        55-58       5 (1)                                 16 (14; 6)
+    D3                               311-339     98 (28)                               93 (31; 24)
+    D3 + D7 mode 1                   60-64       16 (2)                                12 (2; 1)    collision-shadowed 123-139 -> 29-30
+    Size vs stock (fit level, 193k tracks; switches off: 12 hit lists / 17 q/p pulls >= 1): mode 1 11 / 107; mode 2
+    575 hit lists. With D3 the change vs stock + 0001 is 1.3e-2 of the hit lists (the refits D3 makes now converge).
+    Menu ttbar 500 CPU (TargetValidation, in-job stock reference): D7 alone paired +0.00000 (7 / 7 one-sided TPs),
+    hltGeneral .8856/.0108/.0098 (target .8854/.0108/.0097); D3 + D4 + D7 paired +0.00040 +- 0.00002 (D3 + D4:
+    +0.00035), hltGeneral .8889/.0097/.0107 (D3 + D4 .8875/.0096/.0106, KF .8881/.0090/.0103), 0 MTV bins |z| > 2.
+  Verdict so far: neutral alone; with D3 it removes most of 0001's rounding sensitivity and recovers the tracks whose
+    refit 0001 made unstable (target at the KF efficiency on ttbar). A stock-level fix (#186 assumption). QCD, GPU and
+    val5k to do. OFF (owner).
+  Round 10 (lane fitphys; doc/fitphys.txt section B):
+    - STOCK reproduces it (validation-only diag build of stock MkFitCore, branch r10/fitphys-diag 01fe691; stock
+      trackingMkFitFit menu, CPU, ttbar 200): 5.0% of the refits (8.1 per event) start off the first hit's plane
+      (median 0.68 cm, q90 32 cm); their first-step chi2 is median 2.2e3 (66% > 1e3; on-plane refits: 8e-4), 4.4% end
+      with a negative / NaN chi2 sum. The same flag in stock (mode 1): first-step chi2 median 0.93 (0.6% > 1e3), 6
+      negative / NaN instead of 71. Stock MkFitter.cc:268 (fwdFitFitTracks) and :462 (bkReFitFitTracks); the refit input
+      is the previous pass's backward state on the (removed) innermost hit (MkBuilder.cc:1500-1513, :1573, :1681-1700).
+    - Stock menu, ttbar 200 paired: tracks +0.07 +- 0.05 / event, PF / HT / MET unchanged within 0.3 sigma.
+    - QCD 100 replay (L40 device fit vs serial clone): D7 alone NaN-kept 120-124 -> 67-68, CUDA-vs-serial hit lists
+      8 -> 8, z pull >= 1 33 -> 29; D3 -> D3 + D7: NaN-kept 310-314 -> 79-80, hit lists 97 -> 17, z pull >= 1 84 -> 10
+      (same as ttbar: 98 -> 16, 93 -> 12).
+    - Related (mode 2): 1.2% of the pass-1 fits start off-plane too (median 0.55 cm; first-step chi2 median 36 with the
+      x100 errors).
+    - Stock MTV, stock vs stock + D7 (500 events, CPU): ttbar hltGeneral eff +0.00024, fake =, 0 bins |z| > 2; QCD eff
+      +0.00004, 2 flagged bins of ~2,900 (chance).
+    - Port menu D3 + D4 -> D3 + D4 + D7 (TargetValidation, in-job stock reference): QCD 500 CPU paired +0.00043 ->
+      +0.00048, tracks vs stock -317 -> -4, hltGeneral .8359 -> .8378 (KF .8376); ttbar 500 L40 paired +0.00034 ->
+      +0.00040, hltGeneral .8874 -> .8888 (KF .8881); MTV hltGeneral 0 bins |z| > 2 on both.
+
+D8 SWITCH-GATED, ON in the target since 2026-10-04 (owner O10-2, TRACK_ALGO): an explicit track algorithm in the output converter (round 10, lane
+   fitphys; R9-H1, the PF gap)
+  Stock (RecoTracker/MkFit/plugins/MkFitOutputTrackConverter.cc:213-214, same rule in MkFitOutputConverter.cc:183):
+    algo = TrackBase::algoByName(<seeds label> without "Seeds"). In the Phase-2 HLT menu the seeds label is
+    hltInitialStepTrajectorySeedsLST -> "hltInitialStepTrajectoryLST" -> undefAlgorithm (TrackBase.cc:140). The KF menu's
+    TrackProducer sets AlgorithmName = 'initialStep'.
+  Why it matters: PFAlgo scales a track's pT error by PFTrackAlgoTools::errorScale(algo) = 1E9 for algorithms outside its
+    list (PFTrackAlgoTools.cc:112-113) before rejectTracks_Bad (PFAlgo.cc:1968, :2297-2345): in every block whose charged
+    momentum exceeds the calo energy by > 1 sigma, undefAlgorithm tracks are dropped (or one is rescaled) until the
+    balance is restored. KF tracks of 1-10 GeV (scale 1, dpt << pt_Error = 1 GeV) never are.
+  Port (marker D8; MkFitAlpakaOutputTrackConverter parameter algorithm, empty = the stock rule;
+    customizeFitDev.customizeFitPhysTrackAlgo(process, algo='initialStep'); customizeFitPhysStockTrackAlgo does the same
+    for the STOCK converter through an EDAlias of the seeds, without code).
+  Evidence (stock trackingMkFitFit menu vs + the algorithm, CPU, ttbar 200, 196 common events, paired; doc/fitphys.txt A):
+    tracks identical; HP pT > 1 tracks not used by PF 11.88 -> 0.27 (KF menu 0.62); PF charged sum pT +53.5 +- 2.0 GeV
+    (KF +47.1); AK4 PUPPI HT +17.5 +- 2.0 (+8.6%; KF +14.6); PUPPI MET |MET - gen| -3.6 +- 1.2 GeV (KF -2.2); HT / MET /
+    b-tag / tau path counts move to the KF counts.
+  Verdict: clearly better physics downstream (PF, jets, MET, HT at the KF level), no tracking change. OFF (owner).
+  Status: the C++ parameter compiles (round 10, 0 errors) but was not run (the lane's area rebuilt ROCm twice); the
+    numbers above use the equivalent EDAlias configuration (same algo_ value). One run before switching ON.

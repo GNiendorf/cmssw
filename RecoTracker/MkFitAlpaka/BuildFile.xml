@@ -1,0 +1,35 @@
+<!-- Portable (Alpaka) mkFit: core library (src/*.cc host, src/alpaka/*.dev.cc per backend). Lanes may only APPEND <use> lines. -->
+<use name="alpaka"/>
+<use name="vdt_headers"/>
+<use name="FWCore/Utilities"/>
+<use name="FWCore/MessageLogger"/>
+<use name="DataFormats/Common"/>
+<use name="DataFormats/Portable"/>
+<use name="DataFormats/SoATemplate"/>
+<use name="HeterogeneousCore/AlpakaInterface"/>
+<use name="RecoTracker/MkFitCore"/>
+<flags ALPAKA_BACKENDS="1"/>
+<!-- register CI (review M5): ptxas WARNS on a spill; the gate is the runtests test testMkFitAlpakaKernelRegisters
+     (LOCAL > 0 fails). No -Werror: a spill on a future arch must not break a release build. -->
+<flags CUDA_FLAGS="-Xptxas=-warn-spills"/>
+<export>
+  <lib name="1"/>
+</export>
+<use name="HeterogeneousCore/AlpakaCore"/>
+<!-- D5-a (lane cpu): CPU backends (serial/TBB) get stock MkFitCore's flags (S/RecoTracker/MkFitCore/BuildFile.xml:
+     ofast-flag = -Ofast -fno-reciprocal-math -mrecip=none, -fopenmp-simd) through USE_ALPAKA_<BACKEND>, which adds the
+     tool to that backend's product only (SCRAM BuildRules.py alpaka_extra_flags). Plain CXXFLAGS also reach hipcc
+     (Makefile.rocm AdjustRocmHostFlags), so -Ofast never goes there; CUDA/ROCm device code stays strict.
+     Three stock -Ofast components are switched back off (doc/cpu.txt, measured against stock): -fassociative-math
+     (stock flags alone fail D-M4 in the ttbar forward stage), -ffinite-math-only and -fno-signed-zeros (each drifts
+     the vectorized plane propagation from stock, to 2e-3 at q99). The speed comes from -fno-trapping-math
+     (if-conversion + vectorization of the per-slot bodies) and stays. The three are no-ops for non-fast-math
+     compilers; REM keeps the hipcc host line unchanged.
+     The trailing &#9; (tab) is needed: SCRAM V3_00_95 writes use_public + use with no separator (BuildRules.py
+     dumpBuildFileLOC), which glues the tool name to the parent-library use; make splits on the tab. -->
+<flags USE_ALPAKA_SERIAL="ofast-flag&#9;"/>
+<flags USE_ALPAKA_TBB="ofast-flag&#9;"/>
+<flags CXXFLAGS="-fopenmp-simd -fno-associative-math -fno-finite-math-only -fsigned-zeros"/>
+<flags REM_ROCM_HOST_CXXFLAGS="-fopenmp-simd -fno-associative-math -fno-finite-math-only -fsigned-zeros"/>
+<use name="DataFormats/SiPixelDigiSoA"/>
+<use name="DataFormats/SiPixelClusterSoA"/>

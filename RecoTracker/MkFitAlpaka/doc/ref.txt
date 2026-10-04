@@ -1,0 +1,150 @@
+MkFitAlpaka lane ref: the round-6 REFERENCE and its acceptance floors                 (round 6, 2026-10-03, branch r6/ref)
+==========================================================================================================================
+L = lanes/mkfit_alpaka; R = L/r6_ref (lane dir). Owner decisions O6-1..O6-6 in L/DESIGN.txt.
+
+0. THE NEW REFERENCE (O6-2, O6-5)
+  Area L/r6_base/CMSSW (copied to R/CMSSW, + our two repos):
+    CMSSW_20_1_0_pre2 + current LST (= pre2_4way/areas/vA) + MagneticField/{ParametrizedEngine,Portable} and
+    RecoTracker/IterativeTracking from the release + trackreco/cmssw#186 (head 62b616b, 13 commits, WITHOUT the "seam"
+    commit; mkFit final-fit fixes switchable with the hltMkFitGeometryESProducer refit* parameters) + #187 (ParabolicMf
+    constants) + the -Ofast fix of RecoTracker/MkFitCore/BuildFile.xml (the FILE-scoped REM_CXXFLAGS line removed).
+    NOT in it: trackreco#184 (fine-grained material map).
+  "plain stock pre2" below = pre2_4way/areas/vA = L/main (stock mkFit, MkFitCore effectively WITHOUT -Ofast).
+
+1. VERIFICATION OF THE REFERENCE
+1a. -Ofast on every MkFitCore TU (verbose compile lines; R/verify/compile_flags.txt, tool R/scripts/check_flags.py <log>)
+    new reference, x86-64-v3 and x86-64-v2 builds: 22/22 TUs  -O3 ... -Ofast -fno-reciprocal-math ... -fopenmp-simd
+      (ofast-flag tool = "-Ofast -fno-reciprocal-math"; it comes after -O3/-fno-math-errno, so the effective set is
+      -Ofast minus reciprocal math: associative math, finite-math-only, no signed zeros, no trapping math; shared
+      libraries do not get crtfastmath, so no flush-to-zero).
+      IterationConfig.cc is -Ofast too (the release's FILE= exception never worked, see 1b).
+    stock BuildFile (r6_base/MkFitCore_BuildFile.xml.orig, rebuilt from the same sources): 0/22 TUs with -Ofast;
+      every TU = -O3 -fno-math-errno -fno-reciprocal-math -fopenmp-simd (REM_CXXFLAGS="-Ofast" FILE="IterationConfig.cc"
+      strips -Ofast from the WHOLE package) = what the release CMSSW_20_1_0_pre2 ships. Confirms O6-5.
+    MkFitCMS and MkFit (CMSSW glue, plugins incl. MkFitFitProducer) have no ofast-flag in stock either: -O3 only.
+    The lane area's libRecoTrackerMkFitCore.so is byte-identical to the v3 build of a second copy (cmp).
+1b. Parsed IterationConfig of the LST step, with and without -Ofast (R/itconf/, tool test/ref_itconf_dump.cpp)
+    The tool parses RecoTracker/MkFit/data/mkfit-phase2-lstStep.json exactly as MkFitIterationConfigESProducer does
+    (ConfigJson::load_File, minPt 0.9 -> minPtCut, maxClusterSize 8, setupStandardFunctionsFromNames) and prints EVERY
+    field (scalars, IterationParams fwd/bkw incl. raw bytes, 5 regions' steering plans, 60 layer configs with
+    selection limits and window parameters, function names and which functions are set) with floats as hexfloat, then
+    the library's own JSON serialisation. One binary, run against three libRecoTrackerMkFitCore.so builds:
+      Ofast x86-64-v3 (the reference) | NO -Ofast x86-64-v3 (stock flags) | Ofast x86-64-v2 (the floor build)
+    -> 1114 lines each, md5 identical (53b96ad2...). The parsed IterationConfig does not depend on -Ofast (nor on v2/v3).
+    So the ESConfig our ES producer flattens from it (field by field, src/esFill.cc) is unchanged too.
+1c. Size of the reference shift (stock + #186 + #187 + Ofast vs plain stock pre2) on the replay chain: section 3.
+
+2. HOW THE x86-64-v2 VARIANT OF THE PATCHED PACKAGES IS BUILT (D-M4 needs v2 of the NEW reference)
+  The release ships lib/<arch>/scram_x86-64-v2 for STOCK only. For the patched packages:
+    cp -a L/r6_base/CMSSW R/v2/CMSSW; scram b ProjectRename; keep only src/RecoTracker/{MkFitCore,MkFitCMS,MkFit}
+    scram b enable-multi-targets          # scram builds every package for the default target AND SCRAM_TARGETS (x86-64-v2)
+    scram b -j 8 -v                       # v2 objects get CXXFLAGS_TARGETS_X86_64_V2=-march=x86-64-v2, -march=x86-64-v3 removed
+  -> R/v2/CMSSW/lib/el9_amd64_gcc13/scram_x86-64-v2/{libRecoTrackerMkFitCore,libRecoTrackerMkFitCMS,libRecoTrackerMkFit,
+     pluginRecoTrackerMkFitPlugins}.so (Matriplex width 4, SSE, no FMA; same -Ofast set as v3).
+  Frozen copies used by every floor job (never rebuilt while jobs run):
+    R/floors/v2mkfit   v2 build of the reference (4 libraries + .edmplugincache line)   <- D-M4 "v2" side
+    R/floors/v3hook, R/floors/v2hook   the same + the isolated-floor dump hook in MkFitFitProducer (patch
+                       R/patches/0001-ref-isolated-floor-dump-hook-...patch, private copy only, inert by default)
+    R/floors/noofast   libRecoTrackerMkFitCore.so of the reference sources with the stock (no -Ofast) BuildFile
+  Use: LD_LIBRARY_PATH=<dir>:$LD_LIBRARY_PATH (the job records the mapped libraries in *.libs), or for the harness
+  scripts env V2LIB=<dir> (test/replay_floor.sh, test/replay_stage_floor.sh).
+
+3. SIZE OF THE REFERENCE SHIFT (new reference vs plain stock pre2, SAME inputs; R/floors/chained/ttbar500)
+  Replay chain (role=tgt jobs reading the new reference's chunk files; "ref" = new reference, "tgt" = the other arm):
+                                       candidates (MkFitProducer)               fit tracks (MkFitFitProducer #186)   paired truth (all in-time TPs, MTV selection)
+   arm (100 ttbar events each)          n new / n arm   hit lists differ         n new / n arm    one-side           TPs only new / only arm    fake / dup (new | arm)
+   plain stock pre2 (main = vA)  c0     193067 / 191595  3537 of 191509 (1.85%)  192997 / 191581   1563 + 147        1392 / 126  (eff +0.0019)  .02443/.01064 | .02433/.01072
+     (plain stock replay == HLTX bit for bit, 100/100 events: sanity of the arm)
+   same sources, MkFitCore WITHOUT -Ofast  c0   193067 / 193067   4 (2e-5)       192997 / 193055   3 + 61            1 / 30
+                                         c1   190484 / 190484   -              190422 / 190469   9 + 56            3 / 28
+   same, -Ofast -fno-finite-math-only    c1   190484 / 190485   6 (3e-5)       190422 / 190473   6 + 57            2 / 28
+   pre-#186 field constants (bFieldParams back to the pre2 constexpr values)   c2: see 3b
+  Reading:
+   - The shift is large and mostly #186 in BUILDING: +0.77% candidates, 1.85% of the paired candidates change their hit
+     list (the material r-z box fix of MkFitGeometryESProducer and/or the new field constants, which building uses
+     through bFieldFromZR), and the final fit moves a lot (q/p pulls 0.1-1 sigma typical). Paired truth: the new
+     reference finds 1392 TPs the old one misses and loses 126 (per 100 ttbar events): efficiency up ~0.19% absolute
+     on all in-time TPs; fake and duplicate rates unchanged within 0.0001.
+   - -Ofast alone is invisible in building (2e-5 of the candidates) but NOT in the final fit: with -Ofast ~50-60 fitted
+     tracks per 100 ttbar events (3e-4) come out non-finite and MkFitOutputTrackConverter drops them (28-30 true TPs
+     lost per 100 events, +4e-5 efficiency without it). -fno-finite-math-only alone restores them (c1: 190473 vs 190469
+     without -Ofast). So restoring -Ofast in MkFitCore (Dan Riley's planned PR) costs fit tracks unless the fit is made
+     NaN-safe or MkFitCore keeps -fno-finite-math-only. Our port's CPU flags (O6-3) already have -fno-finite-math-only:
+     expect the port to KEEP these ~3e-4 tracks, i.e. to show up as "tgt-only" fit tracks against this reference
+     (the chained floorFit has 6+6 unpaired per 100 events).
+  Default (KF) menu, CPU, ttbar 500 events, same RAW events, new reference vs plain vA (R/menu/results/shift_def_cpu_ttbar.txt):
+     hltGeneral 617395 -> 619444 tracks, eff 0.8876 -> 0.8881, fake 0.0089 -> 0.0090, dup 0.0104 -> 0.0103;
+     hltInitialStep 631036 -> 635451, eff 0.8904 -> 0.8909; TriggerResults 2/68 paths (tau 7 -> 6, MET 18 -> 20);
+     17 vertex DQM histograms > 3 sigma (vertex counts +17..73 of 25-37k). So #186 is NOT KF-menu neutral: its building
+     changes reach the KF menu through the candidates. (The plain-vA side = the pre2_4way vA outputs of the same
+     job.sh command line on the same 5 files, harvested by r5_menu: stockcpu_ttbar.)
+  3b. Split of the shift (chunk c4, 100 ttbar events): the new reference with ONLY the field constants set back to the
+     pre2 values (MkFitGeometryESProducer bFieldParams = 3.8114, -3.94991e-06, 7.53701e-06, 2.43878e-11; R/cfg/
+     floor_bfold_cfg.py): candidates 188968 (new) vs 187648, 1.74% of the paired hit lists differ, paired truth
+     -0.00174 (full plain stock on c0: 1.85%, -0.00187). => The reference shift is essentially #186's NEW FIELD
+     CONSTANTS, which building uses (bFieldFromZR, the old ones were low by 1.46% on average); the material r-z box fix
+     and -Ofast are small next to it. MTV (mkFit-fit tracks, the first 200 ttbar events): new 0.8895 / 0.0242 / 0.0112
+     (383419 tracks), plain stock 0.8890 / 0.0242 / 0.0113 (380716), no-Ofast 0.8895 / 0.0243 / 0.0113 (383524).
+  3c. Where the -Ofast fit-track loss is NOT: with refitRadialFieldCorr=False (diagnostic only, R/cfg/floor_rk0_cfg.py,
+     QCD c4) the -Ofast build still loses the tracks (195552 vs 195613 with -fno-finite-math-only, radial on or off;
+     reference 195547). The guards of #186's radial kick are not the cause. Open: locate it (fit lane / mkFit devs).
+
+4. THE FLOORS (files and recipe: doc/harness.txt ROUND 6; summary R/floors/README.txt)
+                                    ttbar500 (500 ev)                         qcd500 (500 ev)
+   CHAINED floorCand  hit lists     23 / 960740 (2.4e-5)  [r3: 1.2e-4]        34 / 987799 (3.4e-5)  [r3: 2.4e-4]
+                      unpaired      15 + 9                [r3: 17 + 21]       14 + 13               [r3: 185 + 163]
+                      |pull|>=1e-2  q/p 2, dxdz 1, dydz 0, x 1, y 1 [r3: 46, 31, 432, 25, 139]
+   CHAINED floorFit   hit lists     54 / 960372 (5.6e-5)  [r3: 3.6e-4]        78 / 987422 (7.9e-5)  [r3: 1.1e-3]
+                      unpaired      42 + 26               [r3: 62 + 43]       36 + 34               [r3: 233 + 201]
+   paired truth (ttbar)             one-side 7 + 4 of 903548 found TPs [r3: 23 + 20]; true->fake 0, fake->true 1
+   MTV (mkFit-fit tracks, ttbar)    v3 0.8893 / 0.0245 / 0.0116, v2 0.8893 / 0.0244 / 0.0115 (36283 TPs, 960k tracks)
+   STAGE (100 ev)  hit lists        fwd 73, bkfit 9, bkwsearch 28, final 10    fwd 79, bkfit 10, bkwsearch 32, final 14
+                                    [r3: 185, 12, 279, 45]                     [r3: 340, 40, 807, 89]
+   ISOLATED fit (100 ev, CPE on)    floorFitIso hit lists 9 / 193069; floorFitIsoTrk 7 / 192993, unpaired 4 + 6
+                                    qcd: 8 / 195755; 5 / 195665, unpaired 7 + 5; ~70-100 tracks/100 ev with |pull| 1e30
+                                    (non-finite on one side: the -Ofast fit, section 3)
+   ISOLATED bkfit (100 ev)          ttbar v2 rerun vs in-situ dump: params <= 1e-5 96.24%, <= 1e-4 99.80%
+                                    qcd: 94.72%, 99.49% [r3: 73.35%, 94.89%]
+                                    NOTE: the v3 re-run (test/bkfit_stock_rerun.cpp) is no longer bit-exact with the
+                                    in-situ -Ofast stock (92.2% bit-identical, 99.91% <= 1e-5); -O2 and -Ofast builds of
+                                    the re-run agree with each other, so the gap is on the library side (open).
+   The new floors are 5-50x TIGHTER than the r3 floors of the old reference (the old floor itself FAILS the new one on
+   11 of 14 candidate metrics: R/floors/chained/ttbar500/new_vs_r3_floor.txt). Even stock compiled WITHOUT -Ofast
+   (same sources) FAILS the new chained floor: candidates 2 tiny pull counts (2 vs 1 allowed), fit unpaired 129 vs 37
+   allowed and truth one-side 62 vs 11 (= the finite-math fit-track loss of section 3; R/floors/chained/ttbar500/
+   noofast_vs_floor.txt). A port that does not use -ffinite-math-only cannot pass the fit-level unpaired/truth metrics
+   against this reference without a decision: either the reference keeps -fno-finite-math-only, or the fit-level
+   floor is judged with the finite-math tracks excluded.
+  3d. Bisection of the -Ofast fit-track loss by MkFitCore TU (#pragma GCC optimize("no-finite-math-only") at the top of
+     the TU, private builds R/bisect/*; qcd500 events 400-499, final-fit reco::Tracks): -Ofast 195547 | no-finite-math in
+     {MkFitter.cc, MkBuilder.cc} 195609 | {KalmanUtilsMPlex.cc} 195549 | {PropagationMPlex*.cc} 195551 | whole library 195613.
+     MkFitter.cc ALONE with the pragma: 195609 (all of it). => the NaN handling of the fit driver. Independently the fit lane found the same cause and wrote
+     the fix: L/r6_fit/patches/0001-MkFitCore-NaN-guards-of-the-final-fit-that-survive-O.patch (x != x and the outlier
+     scorer's NaN test are folded away by -ffinite-math-only; bit-level isNaN). That patch is the natural thing to offer
+     the mkFit developers together with the -Ofast restoration.
+
+5. REFERENCE MENU RUNS (stock + #186 + #187 + Ofast; job.sh command line (75e33_timing, aging 1000, VALIDATION hltMultiTrack +
+   hltMultiPVValidation), --nThreads 8, all local RAW: 5 ttbar x 100 / 10 QCD x 50 = the floor500 events; GPU = L40)
+   Runs R/menu/runs/<tag> (hlt.log incl. TrigReport, DQM, Phase2Timing_resources.json, libs.txt); harvests R/menu/harv;
+   cross-job comparisons R/menu/results/<name>.txt (R/scripts/menu_cmp.sh: MTV, TriggerResults, DQM histograms > 3 sigma);
+   summary table R/menu/results/table.txt (R/scripts/menu_table.py). Plain vA = pre2_4way vA outputs of the same command line
+   on the same files (16 threads; harvested by r5_menu: stockcpu_*, stockgpu1_*).
+                                hltGeneral tracks  eff     fake    dup     | vs                      paths  vertex/MTV hists>3sig
+   ttbar CPU default  new ref   619444             0.8881  0.0090  0.0103  | plain vA 617395 .8876 .0089 .0104   2   17 / 142
+   ttbar GPU default  new ref   619471             0.8882  0.0090  0.0103  | plain vA GPU 617411 .8881 .0089 .0104  3  15 / 145
+   ttbar CPU mkFitFit new ref   619959             0.8854  0.0108  0.0097  | new ref default (CPU) 11  27 / 447
+   ttbar GPU mkFitFit new ref   620021             0.8852  0.0107  0.0097  | new ref default (GPU) 11  30 / 453
+   QCD   CPU default  new ref   953763             0.8376  0.0153  0.0103  | plain vA 950663 .8351 .0154 .0104   5   15 / 157
+   QCD   CPU mkFitFit new ref   954601             0.8338  0.0176  0.0097  | new ref default        3   38 / 471
+   QCD   GPU default  new ref   953881             0.8387  0.0153  0.0103  | plain vA GPU 950822 .8356 .0155 .0104 3  16 / 160
+   QCD   GPU mkFitFit new ref   954744             0.8346  0.0176  0.0097  | new ref default (GPU)  3   41 / 469
+   GPU vs CPU (new ref): ttbar default 0 paths, 4 / 3 hists; ttbar mkFitFit 1 path, 10 / 4; QCD default 5 paths, 8 / 8
+   (eff 0.8387 GPU vs 0.8376 CPU; LST GPU vs CPU, cf. the r5 GPU run-to-run floor).
+   MENU FLOORS (CPU, x86-64-v3 vs the v2 mkFit libraries of the reference, PRELOAD floors/v2mkfit; libs.txt checked):
+   ttbar default   619444 / 619441 tracks, MTV equal to 1e-4, 1/68 paths, 4 vertex + 4 MTV histograms > 3 sigma
+   ttbar mkFitFit  619959 / 619951, eff 0.8854 both, 3/68 paths, 2 + 4 histograms
+   QCD default     953763 / 953759, MTV equal, 0/68 paths, 4 + 4 histograms
+   QCD mkFitFit    954601 / 954593, MTV equal, 0/68 paths, 4 + 4 histograms
+   Reading: the trackingMkFitFit menu with #186 is still below the KF menu (ttbar eff -0.27 pp, fake x1.20; QCD -0.38 pp,
+   x1.15); round 5 measured -0.45 pp / x1.33 without #186. The new reference raises the KF menu's efficiency (+0.05 pp ttbar,
+   +0.25 pp QCD) through building (field constants), with fake and duplicate rates unchanged.

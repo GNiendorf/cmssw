@@ -1,0 +1,216 @@
+MkFitAlpaka: device design of the mkFit clone engine (forward building + backward search), LST step
+=====================================================================================================
+Lane cands, round 1 (2026-10-03). Implemented in round 1 and verified identical to stock on dumped real events
+(doc/cands.txt): the candidate storage (interface/cands/), the per-seed selection (device CandCloner::
+processSeedRange, K4 below), the option builders of K3 (IdxChi2List + invalid-hit code), and the per-seed
+bookkeeping ops (K1 activate = unroll, K6 merge best-short, compactify, beginBkwSearch, repackCandPostBkwSearch).
+Everything else here is the plan for round 3. Reference: stock CMSSW_20_1_0_pre2, RecoTracker/
+MkFitCore + MkFitCMS, JSON mkfit-phase2-lstStep.json (cms-data V00-20-00). "MB.cc" = src/MkBuilder.cc, "MF.cc" =
+src/MkFinder.cc, "TS.h" = interface/TrackStructures.h, "CC.cc" = src/CandCloner.cc.
+
+0. LST-step parameters that shape the design (JSON)
+  m_params == m_backward_params: maxCandsPerSeed 5, maxHolesPerCand 4, maxConsecHoles 2, chi2Cut_min 15,
+  chi2CutOverlap 3.5 (unused by CE: the dynamic cut is used for overlaps, MF.cc:1759), pTCutOverlap 0.0,
+  recheckOverlap false, useHitSelectionV2 true, minPtCut 0.0 in the JSON but 0.9 in the HLT job (ES override
+  MkFitIterationConfigESProducer minPt, applied to forward and backward params; seen in the dumps), maxClusterSize 8.
+  Scorer "phase1:default" = trackScoreDefault (MkStdSeqs.cc:738), all regions (m_track_scorer_name empty).
+  5 regions, plans of 14/34/16/34/14 layers; m_fwd_search_pickup = 2 for all; m_bkw_search_pickup = 5/15/7/15/5.
+  backward_search true, backward_drop_seed_hits false, backward_fit_min_hits 99; seed cleaner off; pre/post bkfit
+  filter phase1:qfilter_n_hits_pixseed; Config::usePropToPlane true (prop to the hit's module plane).
+  Measured on stock (23 ttbar + 10 QCD PU200 events): <= 35 options per seed-layer (= 5 x (6+1), the cap is reached),
+  <= 5 extras, HoT nodes per seed <= 110, 0 exact score ties among a seed's options, 0 overlap re-check entries.
+
+1. Stock control flow (what has to be reproduced)
+  run_OneIteration (MkFitCMS/src/runFunctions.cc:22-116):
+    find_tracks_load_seeds -> import_seeds (MB.cc:241: region partition phase2:1, seeds ranked by a (phi,eta)
+      binnor -> stock seed ORDER is region-major, then binnor rank; this order is the seed row order on device)
+    findTracksCloneEngine(IT_FwdSearch)        (MB.cc:956, per region, TBB over seed chunks)
+    filter_comb_cands(pre filter, attempt_all) (MB.cc:314)
+    compactifyHitStorageForBestCand            (TrackStructures.cc:149) -> backwardFit (other lane)
+    beginBkwSearch -> findTracksCloneEngine(IT_BkwSearch)
+    filter_comb_cands(post filter) with repackCandPostBkwSearch (in-place chain reversal) -> endBkwSearch
+    export_best_comb_cands(remove_missing_hits = true) -> duplicate cleaner (clean lane)
+  find_tracks_in_layers (MB.cc:991-1245), per region, per seed chunk, per plan step after the pickup index:
+    S1 find_tracks_unroll_candidates (MB.cc:641): wake Dormant seeds whose pickup layer == previous plan layer;
+       for Finding seeds: stop cands with pT < minPtCut and (forward only) loopers near max r (pT<1.2, r^2>625,
+       1.371<|posPhi-momPhi|<4.512) by appending hit -2 (NOT best-short candidates); list the others (seed, ic),
+       resetOverlaps(); seed with no listed cand -> Finished.
+    S2 per NN chunk of listed cands: propagate to the layer (R or Z, inter-layer pflags), selectHitIndicesV2
+       (MF.cc:762: mini-propagator per hit, dq/dphi preselection, best NEW_MAX_HIT = 6 by ddphi in a
+       std::priority_queue, WSR result + in_gap), find_tracks_handle_missed_layers (MB.cc:706: WSR_Failed ->
+       Outside; Outside cands and barrel-failed cands are copied to extra_cands, barrel region also gets a -2 stop
+       node on the copy), re-input the cands at their last-hit state (usePropToPlane).
+    S3 findCandidatesCloneEngine (MF.cc:1647): for hit_cnt in 0..maxSize, for each track of the chunk: propagate
+       to the hit's module plane + chi2 (intra-layer pflags); chi2 < dynamic cut (getHitSelDynamicChi2Cut on the
+       layer-propagated state); strip: cluster size < maxClusterSize, isStripQCompatible, passStripChargePCMfromTrack;
+       pixel layers: skip if the seed's first 3 HoT nodes already have this layer; considerHitForOverlap (ORDER
+       DEPENDENT, per candidate, in hit_cnt order); add IdxChi2List option. Then one invalid option per non-Outside
+       track: -1 (miss) or -2 (stop: holes >= maxHolesPerCand or tail holes >= maxConsecHoles), overridden by
+       -3 (Edge), -7 (InGap and no hit added), -5 (too large cluster and no hit added).
+    S4 CandCloner (CC.cc:127): per seed sort options by score, build the new cand list (<= 5) with extras squeezed in,
+       best-short from -2 options, overlap hits, kalman update list.                 [IMPLEMENTED: selectCandidates]
+    S5 update loop (MB.cc:1153): kalmanPropagateAndUpdatePlane of each updated cand (from its copied parent state,
+       inter-layer pflags) -> copyOutParErr; overlap re-check loop (off for LST).
+    After the plan: mergeCandsAndBestShortOne(update_score = true, sort = true) per seed (TrackStructures.cc:72).
+
+2. Data structures: stock container -> fixed-capacity SoA (interface/cands/CandsSoA.h, CandTypes.h)
+  Seed rows are in stock import order (region-major); region r = rows [sep[r-1], sep[r]) (sep from the seed lane /
+  import kernel). All per-seed storage is "seed row x fixed slots", so no atomics and no allocation in the search.
+
+  stock                                            device (row convention)                  capacity / overflow
+  EventOfCombCandidates (vector<CombCandidate>)    SeedCandsSoA, row s                      nSeeds (event)
+  CombCandidate::m_state, m_pickup_layer,          SeedCandsSoA columns state, pickupLayer,
+    m_seed_origin_index, *_before_bkwsearch          seedOriginIdx, lastHitIdxBeforeBkw, ...
+  CombCandidate::m_trk_cands (vector, CcPool,      CandSlotsSoA rows s*11 + buf*5 + ic,      5 per buffer; never more
+    reserve maxCandsPerSeed)                         double buffer (curBuf flips per step)   (stock asserts the same)
+  TrackCand bookkeeping (score, chi2, counters,    CandBook (POD, 40 B)                     -
+    lastHitIdx, HitMatchPair, origin index)
+  TrackBase state (par, err, charge, label,        CandState (POD, 120 B) next to CandBook  -
+    status)
+  m_best_short_cand                                SeedCandsSoA.bestShort(+Valid) + state     1 per seed
+                                                     slot s*11 + 10
+  m_hots (vector<HoTNode>, reserve 128, grows)     CandHotsSoA rows s*hotsPerSeed + n,       hotsPerSeed runtime
+                                                     nHots per seed, single writer/seed       (default 256; stock max
+                                                                                             110 measured). Overflow:
+                                                                                             seed bit + event counter,
+                                                                                             seed treated as failed.
+  CandCloner::m_hits_to_add (vector<vector<       CandOptionsSoA rows s*35 + j,             35 = 5 x (6+1): exact
+    IdxChi2List>>)                                   j = optSlot(ic, ih) = ih*5 + ic,         upper bound (6 hits per
+                                                     ih = 0..5 hits, 6 = invalid option;      cand from V2). Empty slot:
+                                                     empty: hitIdx = kOptEmpty                hitIdx = kOptEmpty.
+  extra_cands (vector<vector<TrackCand>>)          CandExtrasSoA rows s*5 + e: CandBook +     5 (<= live cands)
+                                                     stateSrc (parent slot)
+  seed_cand_idx (vector<pair<seed,cand>>)          no list: grid over (seed, ic) slots, or a  -
+                                                     dense list from a prefix scan of
+                                                     per-seed active counts (S1 kernel)
+  seed_cand_update_idx / _overlap_idx              CandUpdatesSoA rows s*5 + u (upd, ovl)    5 per seed each
+    (vector<UpdateIndices>)                          + nUpdates / nOverlapUpdates per seed
+  MkFinder Matriplex m_Par/m_Err/m_Chg [iC, iP]    PropStateSoA rows s*5 + ic: layer-        5 per seed
+                                                     propagated state (iP) of each listed cand
+  m_XHitArr / m_XHitSize (MPlexHitIdx[16])         SelHitsSoA rows s*5 + ic: hit[6], n,       6 (NEW_MAX_HIT); stock
+    + m_XWsrResult                                   wsr, inGap                               never exceeds it
+  nHitsAdded[], isTooLargeCluster[] (MF.cc:1670)   locals of the S3 per-candidate thread     -
+  std::function scorer / cleaners / filters        compile-time functions (trackScoreDefault  -
+                                                     in CandTypes.h)
+  std::sort in CandCloner (CC.cc:162)              top-K insertion + stable ties             DONE (section 4)
+  std::sort in mergeCandsAndBestShortOne (<= 5)    insertion sort of <= 5 (== libstdc++ for  -
+                                                     n <= 16, which is insertion sort)
+  std::priority_queue in selectHitIndicesV2        fixed 6-entry binary heap, transliterated -
+                                                     libstdc++ push_heap/pop_heap (same tie
+                                                     order), drained in stock order
+  TrackCand::m_comb_candidate back pointer         implicit: the seed row                    -
+
+  Track state copies. Stock copies the whole TrackCand when cloning (CandCloner) and again into ccand. On device the
+  selection writes the new CandBook and a "state source" index; the state (30 words) is copied parent -> new slot in
+  the same thread (implemented), and S5 updates the new slot in place. Round-3 optimisation: let S5 read the parent
+  state directly from the old buffer and write the new slot (saves one copy for updated cands).
+
+3. Kernels per plan step (design A, one launch sequence per step index for all regions at once)
+  Regions advance in lock-step by plan-step index k. Per-region step tables from the ES lane (layer of step k,
+  pickup index, plan length). A seed's step-k layer = plan[region][k] (inactive if k is past its plan). Seeds are
+  region-contiguous, so a warp almost always sees one layer. Forward: k from fwd_pickup+1 = 3 to max plan length-1 = 33
+  (31 steps); backward: k from bkw_pickup-1 down to 0 (<= 15 steps); the stock "pickup only" step is the start index and
+  is never executed inside the loop (MB.cc:1043-1060), only used as prev_layer.
+
+  K1 activate (thread per seed; S1). Per-seed logic implemented: CandSeedOps.h activateSeedCands (takes pT,
+     posRsq, posPhi = vdt fast_atan2f(y,x), momPhi per cand from the caller: use mplex's interface/math getPhi):
+     in: SeedCandsSoA (state, pickupLayer, curBuf, nCands), CandSlots of curBuf, step tables
+     out: state, -2 stop nodes for minPtCut/looper cands (appends HoT nodes: single writer per seed), per-seed active
+          mask (5 bits) and count, resetOverlaps of listed cands, seeds.layer(s), nExtras = 0, option slots cleared
+          (hitIdx = kOptEmpty for the 35 slots, done by K1 so S3 writes only real options).
+     plus a block prefix scan (HeterogeneousCore/AlpakaInterface prefixScan) of the active counts -> dense list of
+          (seed, ic) in stock seed_cand_idx order, used by K2/K3/K5 to avoid idle lanes.
+  K2 propagate + select hits (thread per listed cand; S2):
+     in: cand state (curBuf), layer info + LayerOfHits bins (hits lane), MaterialView (finding inter- AND intra-layer
+         pflags are PF_use_param_b_field | PF_apply_material for phase 2, MkFitGeometryESProducer.cc:627-629;
+         finding_requires_propagation_to_hit_pos = true)
+     out: PropStateSoA (iP), SelHitsSoA (<= 6 hits, heap drained as stock, wsr, inGap); extras for Outside / barrel
+          Failed cands written to CandExtrasSoA slot e = ic with a "needs -2 stop node" flag (the node is created by K4,
+          the single writer of the seed's pool, in ic order before the selection, which gives the same chains).
+     Divergence: bin loop length varies with pT/layer. Start thread-per-candidate; if profiling shows the hit loop
+          dominating, move to a warp per candidate (lanes over the bin x hit range, then a warp reduction into the
+          6-entry heap in stock order: collect (ddphi, hit order) candidates, insert sequentially in the original
+          scan order to keep heap tie behaviour).
+  K3 chi2 + options (thread per listed cand; S3). Option construction is implemented (CandOptions.h:
+     makeHitOption, invalidHitCode, makeInvalidOption; bitwise identical to stock on 900k dumped options):
+     For each selected hit in hit_cnt order: kalmanPropagateAndComputeChi2Plane (prop lane, N = 1 GPU / kNN CPU),
+     cuts, pixel duplicate-layer check (reads HoT nodes 0..2 of the seed), considerHitForOverlap on the cand's
+     CandBook (sequential, order dependent), write option to optSlot(ic, ih) (ih = position in the cand's hit list,
+     so the per-seed slot order is stock's hit_cnt-major order); then the invalid option at optSlot(ic, 6).
+     Option fields exactly as MF.cc:1772-1782 (nhits+1, noverlaps, nholes = inside+tail, pt = |1/par_iP[3]|,
+     chi2 = cand chi2 + hit chi2, score = getScoreStruct). Register budget: this is the heaviest kernel
+     (prop-to-plane + chi2); if > 128 regs, split: K3a thread per (cand, hit) computes chi2/propPar/flags into
+     scratch (30 per seed), K3b thread per cand does the sequential cuts/overlap/option pass.
+  K4 select (thread per seed; S4) = selectCandidates (implemented, src/alpaka/cands/CandSelectKernel.h).
+     Round 3 adds: stop nodes for flagged extras (see K2) before the selection.
+  K5 update (thread per update entry, grid over seeds x 5 with u < nUpdates(s), or dense via prefix scan; S5):
+     kalmanPropagateAndUpdatePlane with the stored hit; overlap re-check variant (ovl list) for completeness
+     (chi2OfLoadedHit + popOverlap logic, MB.cc:1180-1210), not exercised by the LST step.
+  After the last step: K6 merge (thread per seed; implemented: CandSeedOps.h mergeCandsAndBestShortOne):
+     mergeCandsAndBestShortOne with update_score = true (scores
+     recomputed by getScoreCand(pt from state, penalizeTail = false, inFind = false)), insertion sort of <= 5 by score
+     (stable, == std::sort for n <= 16), best-short insertion before the first cand with score <= best's, pop_back if
+     full, then resetShortTrack.
+  Launches: 5 per step x (31 + 15) steps ~ 230 per event (+ scans). Measured cost ~1.7 us per launch on the L40 in the
+  feasibility study -> ~0.4 ms/event, acceptable for round 3.
+
+  Design B (later, if launches matter): one kernel per direction, a block owns a chunk of seeds (32-64 seeds, ~160-320
+  cand slots) and loops over the plan with block barriers between K1..K5 phases; threads are re-mapped per phase
+  (per seed for K1/K4, per cand for K2/K3/K5). Legal because seeds never interact. Needs the per-phase register
+  maximum to fit, so it only makes sense after K3 is split.
+
+  Backward search (same kernels, IT_BkwSearch): before it, per seed (thread per seed):
+     compactify (TrackStructures.cc:149, remove_seed_hits false: copy the best cand's chain to nodes 0..n-1, prev =
+     i-1), beginBkwSearch (Dormant, pickupLayer = node 0's layer, save lastHitIdx/inside/tail holes, cand starts at
+     node 0 with zeroed hole counters). After it: filter + repackCandPostBkwSearch (in-place chain reversal) per seed
+     in stock order: repack(0), filter cand 0, if it fails repack(j)/filter(j) for j = 1.. (stock repacks shared
+     prefixes in place; a single thread per seed reproducing the same sequence gives identical chains), then the
+     survivor compaction keeps stock order (prefix scan over pass flags, no sort).
+  Export: walk the chain of cand 0 (exportTrack, remove_missing_hits) into TrackSoA (clean lane contract).
+
+4. Per-seed selection (implemented) and tie handling
+  Stock std::sort's <= 35 options by score (descending) and walks them. Only the first maxCandsPerSeed non-stop
+  options and the best stop option can matter, so the device keeps a 5-entry top-K by insertion (score descending,
+  input order on equal score) plus the first maximal stop option, and replays the stock walk on that merged short
+  sequence (extras squeezed in when strictly better, break at 5, remaining extras appended, overlap hit from the
+  parent's HitMatchPair with chi2 0 and nOverlap++, update entries (cand_idx, hit, -1), best-short replaced when
+  strictly better). libstdc++ std::sort is insertion sort (stable) for n <= 16; for n > 16 equal scores come out in
+  introsort order. Device = input order. Data: 1 record with an exact score tie in 426k (n <= 16, handled exactly).
+  For n > 16 with an exact tie the selection switches to an exact transliteration of libstdc++ std::sort
+  (CandStdSort.h: __introsort_loop with an explicit range stack, median-of-3 + unguarded partition, heap-sort
+  fallback, final insertion sort) on the <= 35 option indices and replays the full stock walk
+  (kExactStdSortTies = true). It is a sort: flagged for the owner; it never triggered on data. Verified against the
+  real std::sort on 300k synthetic lists with forced ties (80k with n > 16): 100% identical, serial and cuda.
+  The option INPUT order on device is hit-slot major (optSlot) = stock's order for a seed whose cands sit in one NN
+  chunk; stock seeds straddling two NN chunks (chunk boundaries depend on TBB task ranges) order their options
+  chunk by chunk. Only relevant for exact ties (none seen).
+
+5. Divergence, occupancy, per-thread vs per-block
+  per seed (K1, K4, K6, compactify/begin/repack/filter): ~2-5k threads per event, cheap, branchy; 128 threads/block.
+  per candidate (K2, K3, K5): <= 5 x nSeeds (~10-25k) threads per event; dense (seed, ic) list from K1's scan.
+  With one event the GPU is underfilled; the HLT runs 16+ streams (events in flight) per job. Kernels must not
+  assume a full device; block size 128 (<= 256 rule), grid from the dense count.
+  CPU (serial backend): same kernels; the Kalman/propagation kernels process kNN = 8 candidates per element
+  (Matriplex width as stock x86-64-v3), i.e. a "thread" = chunk of 8 consecutive dense entries, as stock's NN chunks.
+  Results do not depend on N because options are written to fixed slots and all decisions are per seed.
+
+6. Determinism
+  No physics decision depends on atomics: per-seed slots, single writer per seed for the HoT pool (K1, K4, K6),
+  options at fixed slots, update lists per seed. Atomics only for overflow counters. HoT node indices therefore are
+  identical on every backend and between runs (they differ from stock's because stock also creates nodes for options
+  it looks at and drops; hit chains are identical).
+
+7. Open points for round 3
+  - scram does not compile sources in src/alpaka/<subdir>/ (verified: only src/alpaka/*.dev.cc is built). Either
+    flatten to src/alpaka/cands_*.dev.cc or keep kernels in headers included by one top-level .dev.cc per component.
+  - HoT pool size: 256/seed x 2.2k seeds x 16 B ~ 9 MB/event; stock max 110 -> 128 would overflow on rare seeds; the
+    device uses fewer nodes than stock (no nodes for dropped options) -> measure the device maximum in round 3.
+  - K2's "needs stop node" extras: to be coded in K4 (node appended by the seed's single writer before the
+    selection, in ic order). The S1 stop nodes are coded (activateSeedCands).
+  - The per-seed op functions (CandSeedOps.h) exist; their SoA kernels (like selectCandidates for K4) are round 3
+    work: K1 needs mplex's portable getPhi, the others are thin wrappers.
+  - FMA: stock is GCC -O3 -march=x86-64-v3, which contracts a*b + c into FMAs; e.g. stock posRsq = fma(x, x, y*y)
+    (100% of 191,605 dumped cands; plain x*x + y*y differs in 16%). Bit-faithful device code must write those FMAs
+    explicitly (nvcc's contraction choice is not guaranteed to be the same, serial builds for x86-64-v2 have none).
+  - The pixel duplicate-layer check reads nodes 0..2: after compactify (backward search) node 0..2 are the innermost
+    hits of the best cand, as in stock; keep the same reading.

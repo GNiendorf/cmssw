@@ -1,0 +1,107 @@
+MkFitAlpaka lane "clean": output TrackSoA, LST-step quality filters and duplicate cleaning on device
+=====================================================================================================
+Reference: stock mkFit of CMSSW_20_1_0_pre2 (MkFitCMS/src/MkStdSeqs.cc, MkFitCMS/src/runFunctions.cc,
+MkFitCore/src/MkBuilder.cc filter_comb_cands, MkFitCore/interface/Track.h) and mkfit-phase2-lstStep.json (cms-data):
+  m_pre_bkfit_filter_name = m_post_bkfit_filter_name = phase1:qfilter_n_hits_pixseed, minHitsQF 4 (fwd and bkw params)
+  m_duplicate_cleaner_name = phase1:clean_duplicates_sharedhits_pixelseed, dc_fracSharedHits 0.24,
+  dc_drth_central 0.002, dc_drth_obarrel 0.004, dc_drth_forward 0.008; Config:: maxdcth 0.37, maxdphi 0.37,
+  maxcth_ob 1.99, maxcth_fw 6.05, maxd1pt 1.8 (globals, not JSON).
+
+FILES
+  interface/tracks/TrackSoA.h                 mkfitdev::TrackSoA (layout TrackLayout), HitOnTrack, kMaxTrkHits, helpers
+  interface/tracks/TrackSoAHostCollection.h   mkfitdev::TrackSoAHostCollection = PortableHostCollection<TrackSoA>
+  interface/alpaka/tracks/TrackSoADeviceCollection.h   ALPAKA_ACCELERATOR_NAMESPACE::mkfitdev::TrackSoADeviceCollection
+  interface/tracks/TrackSoAMkFitConversion.h  HOST-ONLY: mkfit::Track(Vec) <-> TrackSoA rows (trackToSoA, tracksToSoA,
+                                              trackFromSoA, tracksFromSoA); exact round trip (tested on 300k tracks)
+  src/alpaka/clean/CleanFunctions.h           host+device transliterations: filter predicates, pair decision (no Acc)
+  src/alpaka/clean/CleanKernels.h             kernels (binning, pair enumeration, flags, filter, compaction, scans)
+  src/alpaka/clean/CleanAlgo.h                header-only driver class CleanAlgo (include from any .dev.cc)
+  plugins/MkFitCleanDump.cc                   host EDAnalyzer: dumps stock tracks + STOCK cleaner/filter decisions
+  test/clean_dump_cfg.py                      cmsRun config (v1cur HLT dump, = release) producing the dump
+  test/clean_lstStep_noDC.json                LST-step JSON copy, duplicate cleaner disabled
+  test/clean_lstStep_noDCnoFilt.json          ... and both quality filters disabled
+  test/alpaka/cleanCompare.dev.cc             comparison test, binaries cleanCompare{SerialSync,CudaAsync,ROCmAsync}
+  test/cleanStockTiming.cpp                   host test: stock cleaner timing, Track<->SoA round trip, near-threshold scan
+  test/cleanDumpReader.h                      reader of the dump file (shared by both tests)
+  (Why header-only: scram does not compile .dev.cc files in subdirectories of src/alpaka, even with ADD_SUBDIR; the
+   integrator can move a .dev.cc wrapper to src/alpaka/ if a compiled library symbol is preferred.)
+
+1. TrackSoA (contract for building / backward fit / final fit / output converters)
+  One row = one stock mkfit::Track. Columns:
+    params   TrackParams{float v[6]}  = TrackState::parameters (x, y, z, 1/pT, phi, theta)
+    errors   TrackErrors{float v[21]} = SMatrixSym66 packed lower triangle, (i,j) i>=j at i*(i+1)/2+j (Matriplex order;
+             mkfitdev::symIdx6). Copy-in/out from Matriplex works exactly as stock posArray()/errArray().
+    charge int16, chi2 float, score float, label int32 (= seed index, used by the converters as seedIndex)
+    nTotalHits int16 (= lastHitIdx_+1), nFoundHits int16 (stock counting: index >= 0 or kHitCCCFilterIdx -9)
+    nSeedHits, etaRegion, algorithm, nOverlaps, duplicate: int8 copies of the Track::Status fields used downstream
+    hits     TrackHits{HitOnTrack hot[64]}; HitOnTrack = {int index:24; int layer:8} (stock bit layout, 4 bytes,
+             memcpy-compatible with mkfit::HitOnTrack); special negative indices as stock Hit.h.
+  Scalars: nTracks (rows in use), nOverflowTracks (writers: tracks lost because the SoA was full),
+           nOverflowHits (writers: tracks whose hit list exceeded kMaxTrkHits = stock Config::nMaxTrkHits = 64).
+  Writers must fill rows [0, nTracks) in stock order (export order = seed/region order) and set nTracks on device.
+  Observed in the LST step (300 HLT events, 604k tracks): output tracks carry no holes (export removes missing hits),
+  nTotalHits = nFoundHits <= 30, ~2000 tracks/event (max 2804). kMaxTrkHits = 64 is kept as stock.
+  Converters (MkFitOutputConverter / MkFitOutputTrackConverter) use: state (params, errors, charge), chi2, label,
+  nTotalHits, getHitOnTrack(i), pT/eta/phi; all present. Host helpers trkNInsideMinusOneHits/trkNTailMinusOneHits
+  mirror Track:: functions for the score.
+
+2. Quality filters (pre- and post-backward-fit), CleanFunctions.h
+  lstStepCandFilter(nFoundHits, err21, minHitsQF) = qfilter_n_hits_pixseed && !hasNanNSillyValues, exactly as
+  run_OneIteration composes them when the backward fit runs (pre: params().minHitsQF, post: params_bks().minHitsQF).
+  hasNanNSillyValues uses the edm::isFinite bit test (fast-math safe), same loop as TrackBase::hasNanNSillyValues.
+  For the candidate store (lane cands), filter_comb_cands(filter, attempt_all_cands=true) is:
+    per seed: j = firstPassingCand(nCands, nFound(k), err(k), minHitsQF)   (front first, then 1, 2, ... ; -1 = drop)
+      -> the cands lane copies candidate j to the front (stock: eoccs[i][0] = eoccs[i][j]); in the backward
+         representation repack first (stock repackCandPostBkwSearch(j) is called before evaluating candidate j);
+    pass[s] = (j >= 0); CleanAlgo::seedCompactionMap(queue, pass, &nSeeds(device), dest, oldSep, newSep, nRegions)
+      -> dest[s] = new position of seed s (stable, as the stock swap loop), dest[nSeeds] = kept seeds,
+         newSep[r] = stock m_seedEtaSeparators after filtering.
+  For finished tracks: CleanAlgo::filterTracks(queue, in, out, minHitsQF) = decisions + stable compaction.
+
+3. Duplicate cleaner (StdSeq::clean_duplicates_sharedhits_pixelseed + remove_duplicates)
+  Order independence (verified in the stock code, MkStdSeqs.cc:505-641): inside the pair loop stock reads only label,
+  theta (ctheta precomputed), momPhi, invpT, score, nFoundHits, nTotalHits and the hit lists, none of which is written;
+  the only write is setDuplicateValue(true) on the loser, and the duplicate flag is never read inside the loop (a
+  flagged track still flags others). The result is the union of independent per-pair decisions for i < j, then a
+  stable remove_if. So any pair order gives the same flags. The device code keeps the stock orientation (i < j: the
+  lower index supplies ctheta1 for the eta-region dR threshold and loses score ties).
+  Device algorithm (CleanAlgo::flagDuplicates):
+    KernelPrepare     ct = 1/tan(theta) per track, cell in (phi, cot theta): 16 phi cells (0.393 rad) x 64 cot theta
+                      cells (0.375, range [-12, 12), clamped into edge cells). Cell widths >= the stock pre-cuts 0.37,
+                      so every pair stock can flag is in the same or a neighbouring cell. Non-finite ct/phi or
+                      |phi| > 100 -> "wildcard" track paired with every track (stock evaluates those pairs too).
+    KernelScanOneBlock, KernelFill   cell offsets (deterministic one-block scan) and contents.
+    KernelCountPairs + scan          partner slots per track = occupancy of its 3x3 neighbourhood.
+    KernelPairs       ONE THREAD PER CANDIDATE PAIR (grid-stride over the device-side pair count, no host sync):
+                      binary search of the track, walk of the neighbour cells, skip j <= i, stock decision
+                      (dupPairDecision: label, dctheta, dphi, dR2 by eta region, d(1/pT), shared-hit count with the
+                      stock sharedFirst rule), atomicOr of the loser flag.
+    KernelWildcardPairs, KernelWriteDupFlags (duplicate column).
+  The shared-hit loop is the stock double loop (all equal valid (layer, index) pairs counted); it stops once the
+  threshold is met, which is exact because sharedFirst is final after the first outer iteration and sharedCount only
+  grows. CleanAlgo::removeDuplicates(queue, in, out) = stable compaction of duplicate == 0 rows.
+  Interface:
+    ALPAKA_ACCELERATOR_NAMESPACE::mkfitdev::clean::CleanAlgo algo(queue, capacity);
+    algo.flagDuplicates(queue, tracks.view(), {itconf.dc_fracSharedHits, dc_drth_central, dc_drth_obarrel, dc_drth_forward});
+    algo.removeDuplicates(queue, tracks.const_view(), cleaned.view());
+  No sorts; all buffers fixed-capacity (= TrackSoA rows); only cell-content order depends on atomics, and it does not
+  affect any decision.
+
+4. TEST (stock vs device on real HLT events)
+  a) dump (cmsRun, CPU menu of the release; 8 threads):
+     cd $CMSSW_BASE/src && eval $(scramv1 runtime -sh)
+     cmsRun RecoTracker/MkFitAlpaka/test/clean_dump_cfg.py maxEvents=100 skip=0 out=dump.bin input=<RAW file>
+     Runs the production mkFit (stock JSON) plus two clones with the JSON copies (no cleaner; no cleaner and no
+     filters), and MkFitCleanDump writes: dc params and minHitsQF from the ES IterationConfig; per event the
+     no-cleaner tracks with the STOCK cleaner decision per track (stock function run on a copy, survivors marked through
+     chi2, which the cleaner does not read), and the no-filter tracks with the STOCK filter decisions (registered
+     phase1:qfilter_n_hits_pixseed && qfilter_nan_n_silly on TrackCand, forward and backward params). It also checks
+     that the stock cleaner on the no-cleaner tracks reproduces the production collection exactly.
+     (lane script: lane_clean/run/dump.sh N SKIP TAG RAW)
+  b) compare: cleanCompareSerialSync dump.bin [nRepeat]; CUDA_VISIBLE_DEVICES=0 cleanCompareCudaAsync dump.bin [nRepeat]
+     D1 flags, D2 survivors order, D3 host all-pairs transliteration, D4 stress copies with injected NaN / out-of-range
+     values and phi shifts (device binned vs host all-pairs), D5 determinism over repeats, F1/F2 filter decisions,
+     F3 filtered order, S1 seed-compaction map vs a transliteration of filter_comb_cands. Exit code 0 = all exact.
+  c) cleanStockTiming dump.bin [nRepeat]: stock cleaner time in the same standalone conditions, round trip
+     Track -> TrackSoA -> Track exact, stock decisions reproduced, near-threshold decision margins.
+  Registers: lane_clean/run/regs.sh (cuobjdump -res-usage of the CUDA test binary, per kernel and SM target).

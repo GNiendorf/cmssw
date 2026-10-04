@@ -1,0 +1,84 @@
+prstack (round 10, O10-1): the owner's four open PRs as the new reference
+==========================================================================
+Area r10_prstack/CMSSW (= main6 at round start), branch r10/prstack in every touched local repo. Nothing pushed.
+Read-only fetch of the PR heads into r10_prstack/prgit (bare, alternates to the owner's repo objects):
+  SL#280 d09cf84034 (LST memory compaction), cms-sw#52011 183cb50cfc (T5/T4 DNN retrain),
+  cms-sw#52015 90f958f56c (mkFit + HLT LST-step fixes), SL#285 1c7e36b7a3 (LST timing; stacked on the other three).
+  cms-data/RecoTracker-MkFit#22 52db013 (the JSON half of #52015) into r10_prstack/cmsdata.
+
+1. THE FOUR SQUASHES (SL#285's own boundaries; merge-base = aa4c25d50b, cms-sw master 2026-09-26, the parent of #280's
+   first commit)
+  S1 #280     aa4c25d50b..d09cf84034  52 files (LSTCore 43, LST 3, HLTrigger/Configuration 4, IterativeTracking 1,
+                                      Validation/RecoTrack 1)
+  S2 #52011   d09cf84034..b096cd4b4d  26 files (LSTCore)
+  S3 #52015   b096cd4b4d..1c9cd668e8  24 files (MkFitCore 9, MkFitCMS 5, MkFit 1, HLTrigger/Configuration 9)
+  S4 #285     1c9cd668e8..1c7e36b7a3  19 files (LSTCore 18, LST 1)
+  Cross-check against each PR's own head diff (patches compared without index/hunk-header lines):
+  - S1 == #280's own diff (base cfc33e9b, merge-base aa4c25d50b): identical.
+  - S3 == #52015's own diff (544d876105..90f958f56c; its base master is newer, but the only difference of that master
+    in the touched packages is 4 HLTPhoton187 files the PR does not touch): identical.
+  - S2 vs #52011's own diff (9a460fe6d8..183cb50cfc, based on master without #280): same 26 files; 20 identical, 6
+    differ, all 6 also touched by #280 (QuadrupletsSoA.h, QuintupletsSoA.h, LSTEvent.dev.cc, Quadruplet.h,
+    Quintuplet.h, Triplet.h). A plain git merge of #52011 onto #280 conflicts in 5 of them (all but QuadrupletsSoA.h,
+    which auto-merges to the stack's content). The differences are the rebase resolutions: #52011's logic written in
+    #280's compacted signatures and layouts (e.g. Triplet.h: t3MdDirectionFail removed as in #52011, with #280's
+    addTripletToMemory(TripletsBuild ...) signature). End state of the other 16 files of #52011 = #52011's head.
+  - S4: no separate PR; it is SL#285's own head (1c7e36b7a3).
+
+2. APPLYING TO PRE2 (the area is CMSSW_20_1_0_pre2 + local packages)
+  LSTCore: the area's LSTCore = the merge-base's LSTCore (code identical; 7 standalone notebooks / efficiency files are
+    absent in the area). Lane lstin's pT3 tracer (main6 ab31ddb) is reverted first (D10-i). S1, S2, S4 apply exactly;
+    the result = SL#285 head's LSTCore (only the absent standalone files differ; S2's deletion of two absent notebooks
+    is excluded).
+  MkFitCore / MkFitCMS / MkFit: S3 applies cleanly on top of #186 + #187 + the NaN guard (85a2dba).
+  MkFit data: cms-sw#52015 needs cms-data/RecoTracker-MkFit#22 (the PR says so: the new JSON keys are required and the
+    LST-step JSON selects the new cleaner). PR #22's base 366b144 = the pre2 release data byte for byte; its 16 JSONs are
+    committed as RecoTracker/MkFit/data/*.json (FileInPath takes the local copy). Without them the pixel-priority cleaner
+    and the outlier rejection are OFF (and the new code needs the new keys).
+  HLTrigger/Configuration: S1 clean. S3: 4 files do not apply because pre2 has not yet migrated the RECO event-setup
+    modules to hltESP* copies (master has). Minimal pre2 resolution (commit message of 7547062):
+    - the two new ES loads are added after hltESPKFFittingSmootherForL2Muon in HLT_75e33_cff, _timing_cff, NGTScouting;
+    - hltESPKFFittingSmootherForLSTStep: Fitter / Smoother RKFitter / RKSmoother (pre2's names for master's
+      hltESPRKTrajectoryFitter / Smoother, the ones pre2's KFFittingSmootherWithOutliersRejectionAndRK uses); every
+      PR parameter kept (MaxNumberOfOutliers 6, MaxFractionOutliers 0.5, BreakTrajWith2ConsecutiveMissing False);
+    - hltESPFlexibleKFFittingSmootherForLSTStep: looperFitter LooperFittingSmoother (pre2's hltESPKFFittingSmootherForLoopers);
+    - hltInitialStepTracks: LST / legacy fallback = pre2's FlexibleKFFittingSmoother.
+  IterativeTracking: S1 clean.  Validation/RecoTrack (S1, customiseTrackingNtuple only): not applied (not a package of
+    the area, not used by the menu).
+  LST (local patches: light seeds, lazyPixelSeeds, stage-D otSoA / otClustersOnDemand, hostrest's hit pointers, lstin's
+    otKeysOnly): S1 and S4 conflict and were merged by hand, keeping every local feature:
+    - LSTInputProducer: #280's producePixelSeeds + lst::LSTOTHits (nullptr OT pointers in the otSoA / otKeysOnly modes);
+    - LSTOutputConverter: lstPixelSeeds is #280's VInputTag (refs into those collections; not read with lazyPixelSeeds);
+      the OT pointers come from lst::LSTOTHits (not read with otClustersOnDemand);
+    - S4's "getDetectorType only where it decides" with hostrest's job-wide memo (detType).
+  MkFitAlpaka (our repo, 64ff862): lane lstin's device LST input (OFF switches) ported to #280's LSTInput layout
+    (pLS hit keys in the hitsIT block, no hit-pointer column, 3-size collections, otRecHitPtrs = lst::LSTOTHits);
+    customizeLstIn: lstPixelSeeds as a VInputTag.
+
+3. COMMITS (branch r10/prstack; pre-round heads tagged pre_r10)
+  LSTCore      a104a17 tracer revert, 0bb4ded S1, d2bdef4 S2, 44307c3 S4
+  LST          275925f S1 (merged), be0c91b S4 (merged)
+  MkFitCore    ff34893 S3        MkFitCMS 924b5a3 S3        MkFit 737b914 S3, dacdec4 cms-data#22 JSONs
+  HLTrigger/Configuration eae6afc S1, 7547062 S3 (pre2 resolution)        IterativeTracking 1e4900e S1
+  MkFitAlpaka  64ff862 lstin input port
+    a45b02c test JSONs + test/prstack/customizePRS.py (no52015, leave-one-out arms; the lane runs them from its pylib)
+  MkFitAlpaka 61b5365 validation tools (SeedImport, CleanDump, ReplayStockStages, cleanStockTiming) follow #52015's
+    cleaner signature (TrackerInfo argument).
+
+4. BUILD NOTE
+  The area's tool cache (copied from main6) still selected ROCm although config/Self.xml says cuda serial: every
+  MkFitAlpaka header change then rebuilds ROCm. scram setup self + scram b -r fixed it (ALPAKA_SELECTED_BACKENDS
+  cuda serial). Clean build cuda + serial: 0 errors.
+
+5. WHAT THE MENU SHOWS (details and tables in r10_prstack/REPORT.txt section 4)
+  - Configuration of the new default menu checked from the generated process: hltInitialStepTracks fitter
+    hltESPFlexibleKFFittingSmootherForLSTStep (RKFitter / RKSmoother / LooperFittingSmoother, 6 outliers);
+    mkFit ES gate 2 / 2.0 cm; JSON = the local cms-data#22 copy; candMinPtCut 0.85; LST converters read
+    hltInitialStepSeeds (VInputTag), hltInputLST no longer copies the seeds.
+  - Our target with #52015 ON throws in the device ES (unknown cleaner phase2:clean_duplicates_sharedhits_pixelpriority,
+    esFill.cc): the device port of #52015 is lane mkfit52015's. With #52015 OFF by configuration it runs clean.
+  - #52015 on vs off by configuration on the same LST reproduces the PR's QCD gains (high-pT and displaced).
+
+6. FLOORS: r10_prstack/floors/README.txt (chained ttbar500 / qcd500 on the existing replay inputs; libs for lanes).
+  lstin's ported device input: target + #52015 off + customizeLstInDeviceOTDevCheck, ttbar 30, CPU + GPU: LSTIN_FULLCMP
+  sizesEqual 1, badHits 0, badPLS 0 on 23 + 23 events (5.81M hit rows): bitwise to hltInputLST on #280's layout.

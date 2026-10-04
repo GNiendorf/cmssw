@@ -1,0 +1,203 @@
+--- RecoTracker/MkFit/plugins/MkFitFitProducer.cc	2026-10-03 14:55:44.411294077 -0400
++++ RecoTracker/MkFit/plugins/MkFitFitProducer.cc	2026-10-03 14:45:57.872583992 -0400
+@@ -4,6 +4,7 @@
+ #include "FWCore/Framework/interface/ESHandle.h"
+ #include "FWCore/Framework/interface/MakerMacros.h"
+ #include "FWCore/ParameterSet/interface/ParameterSet.h"
++#include "FWCore/Utilities/interface/Exception.h"
+ 
+ #include "DataFormats/Common/interface/ContainerMask.h"
+ #include "DataFormats/Common/interface/DetSetVectorNew.h"
+@@ -34,7 +35,68 @@
+ #include "oneapi/tbb/task_arena.h"
+ 
+ // std includes
++#include <cstdio>
++#include <cstring>
++#include <cstdlib>
+ #include <functional>
++#include <map>
++#include <mutex>
++#include <string>
++
++// MkFitAlpaka lane fit (private copy only): MKFIT_FIT_CPE_DUMP=<file> appends one record per CPE call:
++// header {uint64 event; int32 hitIdx; uint32 rawId; float ltp[6]; float out[5]; uint16 nPix; uint16 minRow;
++// uint16 minCol; uint16 pad; 4 bytes tail padding: 72 bytes} then nPix x {uint16 row; uint16 col; uint16 adc; uint16 pad}.
++namespace {
++  struct CpeDumpRec {
++    uint64_t event;
++    int32_t hitIdx;
++    uint32_t rawId;
++    float ltp[6];
++    float out[5];
++    uint16_t nPix, minRow, minCol, pad;
++  };
++  std::mutex g_cpeDumpMutex;
++  FILE* cpeDumpFile() {
++    static FILE* f = [] {
++      const char* fn = std::getenv("MKFIT_FIT_CPE_DUMP");
++      return fn ? std::fopen(fn, "wb") : nullptr;
++    }();
++    return f;
++  }
++
++  // MkFitAlpaka lane fit (private copy only): isolated floor of the final fit (review H2). fitDumpMode "write"
++  // stores per event the input tracks (before candCutSel) and the output tracks; "readInput" replaces the input
++  // tracks by the stored ones (same fit inputs in a job with other mkFit libraries); "readOutput" skips the fit and
++  // emits the stored output tracks (the reference of the other job). Record: uint64 event, uint32 nIn, uint32 nOut,
++  // then per track: TrackBase bytes, int32 nTot, nTot x HitOnTrack.
++  std::mutex g_fitDumpMutex;
++  void writeTracks(FILE* f, const mkfit::TrackVec& v) {
++    for (auto const& t : v) {
++      std::fwrite(static_cast<const mkfit::TrackBase*>(&t), sizeof(mkfit::TrackBase), 1, f);
++      const int32_t n = t.nTotalHits();
++      std::fwrite(&n, 4, 1, f);
++      std::fwrite(t.getHitsOnTrackArray(), sizeof(mkfit::HitOnTrack), n, f);
++    }
++  }
++  bool readTracks(FILE* f, uint32_t nTrk, mkfit::TrackVec& v) {
++    v.clear();
++    v.reserve(nTrk);
++    std::vector<mkfit::HitOnTrack> hots;
++    for (uint32_t i = 0; i < nTrk; ++i) {
++      mkfit::TrackBase b;
++      int32_t n;
++      if (std::fread(&b, sizeof(b), 1, f) != 1 || std::fread(&n, 4, 1, f) != 1)
++        return false;
++      hots.resize(n);
++      if (std::fread(hots.data(), sizeof(mkfit::HitOnTrack), n, f) != size_t(n))
++        return false;
++      mkfit::Track t(b.state(), b.chi2(), b.label(), n, hots.data());
++      std::memcpy(static_cast<void*>(static_cast<mkfit::TrackBase*>(&t)), &b, sizeof(b));
++      v.push_back(t);
++    }
++    return true;
++  }
++}  // namespace
+ 
+ class MkFitFitProducer : public edm::global::EDProducer<edm::StreamCache<mkfit::MkBuilderWrapper>> {
+ public:
+@@ -62,6 +124,10 @@
+   const edm::EDPutTokenT<MkFitOutputWrapper> putToken_;
+   const bool mkFitSilent_;
+   const bool limitConcurrency_;
++  const bool disableCPE_;  // MkFitAlpaka lane fit: private stock copy, true = run the stock fit without the CPE hook
++  const std::string fitDump_, fitDumpMode_;
++  std::map<uint64_t, std::pair<mkfit::TrackVec, mkfit::TrackVec>> dumped_;
++  FILE* dumpOut_ = nullptr;
+ };
+ 
+ MkFitFitProducer::MkFitFitProducer(edm::ParameterSet const& iConfig)
+@@ -78,7 +144,25 @@
+       algoCandMinAbsEtaForRelaxedCut_{float(iConfig.getParameter<double>("candMinAbsEtaForRelaxedCut"))},
+       putToken_{produces<MkFitOutputWrapper>()},
+       mkFitSilent_{iConfig.getUntrackedParameter<bool>("mkFitSilent")},
+-      limitConcurrency_{iConfig.getUntrackedParameter<bool>("limitConcurrency")} {
++      limitConcurrency_{iConfig.getUntrackedParameter<bool>("limitConcurrency")},
++      disableCPE_{iConfig.getUntrackedParameter<bool>("disableCPE")},
++      fitDump_{iConfig.getUntrackedParameter<std::string>("fitDump")},
++      fitDumpMode_{iConfig.getUntrackedParameter<std::string>("fitDumpMode")} {
++  if (fitDumpMode_ == "write") {
++    dumpOut_ = std::fopen(fitDump_.c_str(), "wb");
++  } else if (fitDumpMode_ == "readInput" || fitDumpMode_ == "readOutput") {
++    FILE* f = std::fopen(fitDump_.c_str(), "rb");
++    if (!f)
++      throw cms::Exception("Configuration") << "cannot open " << fitDump_;
++    uint64_t ev;
++    uint32_t nn[2];
++    while (std::fread(&ev, 8, 1, f) == 1 && std::fread(nn, 4, 2, f) == 2) {
++      auto& e = dumped_[ev];
++      if (!readTracks(f, nn[0], e.first) || !readTracks(f, nn[1], e.second))
++        throw cms::Exception("Configuration") << "truncated " << fitDump_;
++    }
++    std::fclose(f);
++  }
+   // TODO: what to do when we have multiple instances of MkFitFitProducer in a job?
+   mkfit::MkBuilderWrapper::populate();
+ }
+@@ -100,6 +184,9 @@
+           "Use tbb::task_arena to limit the internal concurrency to 1; useful only for timing studies when measuring "
+           "the module time");
+ 
++  desc.addUntracked("disableCPE", false)->setComment("private copy: empty cpe_func (no CPE correction)");
++  desc.addUntracked<std::string>("fitDump", "")->setComment("private copy: isolated-floor track dump file");
++  desc.addUntracked<std::string>("fitDumpMode", "")->setComment("private copy: '' | write | readInput | readOutput");
+   //emulate MkFitOutputConverter
+   desc.add<bool>("candCutSel", false)->setComment("flag used to trigger cut-based selection at cand level");
+   desc.add<double>("candMinPtCut", 0)->setComment("min pt cut at cand level");
+@@ -125,6 +212,19 @@
+ 
+   mkfit::TrackVec tracks;
+   auto intracks = iEvent.get(tracksToken_).tracks();
++  const uint64_t evNum = iEvent.id().event();
++  if (fitDumpMode_ == "readInput" || fitDumpMode_ == "readOutput") {
++    auto it = dumped_.find(evNum);
++    if (it == dumped_.end())
++      throw cms::Exception("Configuration") << "event " << evNum << " not in " << fitDump_;
++    if (fitDumpMode_ == "readOutput") {
++      mkfit::TrackVec out = it->second.second;
++      iEvent.emplace(putToken_, std::move(out), true);
++      return;
++    }
++    intracks = it->second.first;
++  }
++  const mkfit::TrackVec rawInput = dumpOut_ ? intracks : mkfit::TrackVec();
+ 
+   //emulate MkFitOutputConverter
+   if (algoCandCutSelection_) {
+@@ -154,12 +254,38 @@
+     hit_arr[2] = std::get<1>(params).xx();
+     hit_arr[3] = std::get<1>(params).xy();
+     hit_arr[4] = std::get<1>(params).yy();
++    if (FILE* f = cpeDumpFile()) {
++      CpeDumpRec r{};
++      r.event = iEvent.id().event();
++      r.hitIdx = orig_hit_idx;
++      r.rawId = hit.geographicalId().rawId();
++      for (int k = 0; k < 6; ++k)
++        r.ltp[k] = ltp_arr[k];
++      for (int k = 0; k < 5; ++k)
++        r.out[k] = hit_arr[k];
++      r.nPix = clust.size();
++      r.minRow = clust.minPixelRow();
++      r.minCol = clust.minPixelCol();
++      std::lock_guard<std::mutex> lock(g_cpeDumpMutex);
++      std::fwrite(&r, sizeof(r), 1, f);
++      for (int k = 0; k < clust.size(); ++k) {
++        const auto px = clust.pixel(k);
++        const uint16_t p4[4] = {uint16_t(px.x), uint16_t(px.y), uint16_t(px.adc), 0};
++        std::fwrite(p4, sizeof(p4), 1, f);
++      }
++    }
+     return true;
+   };
+ 
+   auto lambda = [&]() {
+     mkfit::run_MkFitFit(
+-        mkFitGeom.trackerInfo(), mkFitIterConfig, eventOfHits.get(), streamCache(iID)->get(), intracks, tracks, cpe);
++        mkFitGeom.trackerInfo(),
++        mkFitIterConfig,
++        eventOfHits.get(),
++        streamCache(iID)->get(),
++        intracks,
++        tracks,
++        disableCPE_ ? mkfit::cpe_func() : mkfit::cpe_func(cpe));
+   };
+ 
+   if (limitConcurrency_) {
+@@ -169,6 +295,15 @@
+     tbb::this_task_arena::isolate(std::move(lambda));
+   }
+ 
++  if (dumpOut_) {
++    std::lock_guard<std::mutex> lock(g_fitDumpMutex);
++    const uint32_t nn[2] = {uint32_t(rawInput.size()), uint32_t(tracks.size())};
++    std::fwrite(&evNum, 8, 1, dumpOut_);
++    std::fwrite(nn, 4, 2, dumpOut_);
++    writeTracks(dumpOut_, rawInput);
++    writeTracks(dumpOut_, tracks);
++    std::fflush(dumpOut_);
++  }
+   iEvent.emplace(putToken_, std::move(tracks), true);
+ }
+ 

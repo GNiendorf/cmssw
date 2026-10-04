@@ -1,0 +1,116 @@
+MkFitAlpaka lane "es": device-resident ES data (round 1, 2026-10-03, branch lane/es)
+=====================================================================================
+
+WHAT IT IS
+  One ES product, mkfitdev::ESData<TDev> (interface/es/ESData.h), LSTESData style: the host product
+  ESData<DevHost> is filled once per IOV from the STOCK host ES objects and the framework copies it to each device
+  (CopyToDevice specialization in ESData.h; on the CPU backend the host collections are shared, no copy).
+  Sources (all stock, release CMSSW_20_1_0_pre2):
+    - MkFitGeometry::trackerInfo()              (MkFitGeometryESProducer, TrackerRecoGeometryRecord, label "")
+    - mkfit::IterationConfig "hltInitialStepTrackCandidatesMkFitConfig"
+                                                (MkFitIterationConfigESProducer, mkfit-phase2-lstStep.json,
+                                                 minPt 0.9, maxClusterSize 8 from the menu's ES PSet)
+    - runtime mkfit::Config values               (usePropToPlane, usePtMultScat set by MkFitGeometryESProducer;
+                                                 maxdPt.. maxcth_fw are extern const in Config.cc)
+  Size on each device: 3.35 MB (Phase-2 D121: 60 layers, 41620 modules, 107 shapes, 300 x 120 material bins).
+
+FILES (all owned by lane es)
+  interface/es/ESConfig.h      POD scalar config (IterationConfig, SteeringParams, PropagationConfig, Config values)
+  interface/es/ESLayouts.h     SoA layouts: LayerInfoSoA, ModuleInfoSoA, ModuleShapeSoA, DetIdMapSoA, MaterialSoA
+  interface/es/ESView.h        ESView: trivially copyable bundle of const views + device helpers (pass to kernels)
+  interface/es/MaterialView.h  the round-1 contract struct (members unchanged) + materialChecked()/binZ()/binR()
+  interface/es/ESData.h        ESData<TDev>, ESDataHost, CopyToDevice, fillESDataHost() declaration
+  src/esFill.cc                fillESDataHost(TrackerInfo, IterationConfig)  (host, core library)
+  src/esTypelookup.cc          TYPELOOKUP_DATA_REG(mkfitdev::ESData<DevHost>)
+  src/alpaka/esTypelookup.cc   TYPELOOKUP_ALPAKA_TEMPLATED_DATA_REG(mkfitdev::ESData)   (see NOTE on file names)
+  plugins/alpaka/MkFitAlpakaESProducer.cc          ESProducer (portable plugin library)
+  plugins/alpaka/MkFitESDataTester.cc              test EDProducer: device copy -> host, kernels, compare to stock
+  plugins/alpaka/MkFitESDataTestKernels.{h,dev.cc} the test's device kernels
+  test/esTest_cfg.py           cmsRun test (HLT menu ES setup), serial_sync and cuda_async
+  test/testESFill.cpp          host unit test of the fill on a synthetic tracker (r-hole layer, error paths)
+  BuildFiles (appended only): core <use HeterogeneousCore/AlpakaCore>; plugins <use FWCore/MessageLogger>,
+    <use CondFormats/DataRecord>, <use CondFormats/SiPixelObjects>; test <bin testMkFitAlpakaESFill>.
+  NOTE: DESIGN.txt gives lane es "src/alpaka/es/*", but SCRAM compiles only the top level of src/alpaka, so the
+    typelookup registration had to be src/alpaka/esTypelookup.cc (no one else owns an es* file there).
+
+INTERFACE FOR OTHER LANES
+  Configuration (python):
+    process.mkFitAlpakaESProducer = cms.ESProducer('MkFitAlpakaESProducer@alpaka',
+        ComponentName = cms.string(''),                     # product label
+        iterationConfig = cms.ESInputTag('', 'hltInitialStepTrackCandidatesMkFitConfig'))
+    (needs the menu's hltMkFitGeometryESProducer + hltInitialStepTrackCandidatesMkFitConfig ES producers, i.e.
+     HLTrigger/Configuration/python/HLT_75e33/eventsetup/hltESPMkFit_cfi.py; the cfi mkFitAlpakaESProducer_cfi is
+     auto-generated)
+  In a portable module (namespace ALPAKA_ACCELERATOR_NAMESPACE):
+    device::ESGetToken<mkfitdev::ESData<Device>, TrackerRecoGeometryRecord> esToken_;   // = esConsumes(tag)
+    auto const& es = iSetup.getData(esToken_);
+    mkfitdev::ESView v = es.view();          // pass v BY VALUE to kernels (~0.5-0.8 KB of kernel parameters)
+    es.sizes                                 // host copies: nLayers, nModules, nShapes, detIdMapCapacity,
+                                             //   nMaterialBins, matNBinsZ/R, matFacZ/R (launch sizing)
+    es.hostConfigValue()                     // host copy of ESConfig (host-side steering: regions, layer plans)
+  In a kernel (all ALPAKA_FN_HOST_ACC, same operations and order as stock TrackerInfo.h):
+    v.layers[l].rin()/rout()/zmin()/zmax()/propagate_to()/q_bin()/is_pixel()/is_stereo()/has_charge()/subdet()
+    v.layers[l].layer_type()  (mkfitdev::LayerType: Barrel 0, EndCapPos 1, EndCapNeg 2), v.isBarrel(l)
+    v.layers[l].q_min()/q_max()/n_q()         LayerOfHits q axis, exactly LayerOfHits::Initializator(LayerInfo)
+                                              (= the hits lane's LayerAxisInput {qmin, qmax, nq}; phi axis is
+                                               the compile-time binnor axis)
+    v.layers[l].select_min_dphi()/select_max_dphi()/select_min_dq()/select_max_dq()   IterationLayerConfig
+    v.isWithinZLimits/isWithinRLimits/isWithinQLimits/isInRHole(l, q)
+    v.isWithinZSensitiveRegion(l, z, dz) / v.isWithinRSensitiveRegion(l, r, dr) -> WSRResult{wsr, in_gap},
+      wsr values = mkfit::WithinSensitiveRegion_e (WSR_Inside 0, WSR_Edge 1, WSR_Outside 2)
+    Modules (stock ModuleInfo, for propagate-to-plane): row = v.moduleRow(layer, sid)
+      = layers[layer].module_begin() + sid, where sid = Hit::detIDinLayer() (stock short id);
+      v.modules[row].pos_x/y/z(), zdir_x/y/z() (plane normal), xdir_x/y/z(), detid(), shapeid(), layer(), sid()
+    Shapes: v.shapes[layers[l].shape_begin() + shapeid].dx1()/dx2()/dy()/dz()
+    detid -> module (replaces LayerInfo::m_detid2sid AND the detid -> layer lookup):
+      int row = v.findModule(detid);   // es::kNoModule (-1) if unknown
+      v.shortId(layer, detid)          // LayerInfo::short_id, -1 if not a module of that layer
+      table: open addressing, linear probing, capacity 131072 (load 0.32), murmur3-finalizer hash,
+      built in module order (deterministic); max probe 10, mean 0.23 on D121.
+    Material: v.material is the MaterialView contract; v.material.materialChecked(z, r, bbxi, radl) is
+      TrackerInfo::material_checked (int(z*facZ), int(r*facR), out of range -> 0, 0).
+    Config: v.config->... (ESConfig, device memory):
+      params / backward_params (IterParams, stock names: maxCandsPerSeed, maxHolesPerCand, maxConsecHoles,
+        chi2Cut_min, chi2CutOverlap, pTCutOverlap, recheckOverlap, useHitSelectionV2, minHitsQF, minPtCut,
+        maxClusterSize, nlayers_per_seed)
+      n_regions, region_order[], steering_params[r] (SteeringRegion: n_plan, layer[], fwd_search_pickup,
+        bkw_fit_last, bkw_search_pickup, has_bksearch_plan(), track_scorer). Iteration as
+        SteeringParams::make_iterator:  fwd search  i = fwd_search_pickup .. n_plan-1, pickup-only at the first;
+                                        bkw fit     i = n_plan-1 .. bkw_fit_last;
+                                        bkw search  i = bkw_search_pickup .. 0, pickup-only at the first.
+        Helpers (checked against the stock iterators by the test): for (int i = s.begin_index(t); i != s.end_index(t);
+        i += s.step(t)) with t = mkfitdev::IT_FwdSearch / IT_BkwFit / IT_BkwSearch; s.is_pickup_only(t, i).
+      seed_cleaner, seed_partitioner, pre_bkfit_filter, post_bkfit_filter, duplicate_cleaner,
+        default_track_scorer: enums of the registered stock names (ESConfig.h); unknown names make the fill throw.
+      backward_search, backward_drop_seed_hits, backward_fit_min_hits, requires_seed_hit_sorting,
+        sc_* (seed cleaning), dc_* (duplicate cleaning = the clean lane's DupCleanParams),
+        prop_config (PropagationConfig flags per stage), usePropToPlane, usePtMultScat, maxdPt..maxcth_fw.
+  LST step values (checked by the test): iteration 200, 5 regions, order [3 1 4 0 2], layer plans of 14/34/16/34/14
+    layers, fwd pickup 2, bkw fit last 0, bkw search pickup 5/15/7/15/5; maxCandsPerSeed 5, maxHolesPerCand 4,
+    maxConsecHoles 2, chi2Cut_min 15, chi2CutOverlap 3.5, useHitSelectionV2 1, minHitsQF 4, minPtCut 0.9,
+    maxClusterSize 8 (fwd = bkw); backward search on; partitioner phase2:1; filters qfilter_n_hits_pixseed;
+    cleaner clean_duplicates_sharedhits_pixelseed (dc 0.24/0.002/0.004/0.008); scorer phase1:default; no seed
+    cleaner; usePropToPlane = usePtMultScat = 1; no r-hole layers; all m_winpars empty.
+  Effective stock chain for the LST step (runFunctions.cc run_OneIteration with the menu's MkFitProducer:
+    seedCleaning True, backwardFitInCMSSW False, removeDuplicates True): no seed cleaning (no cleaner named) ->
+    seed_post_cleaning -> partition (phase2:1) -> clone engine fwd -> pre filter (qfilter_n_hits_pixseed AND
+    nan_n_silly) -> switch to backward params -> compactifyHitStorageForBestCand(drop 0, min 99) -> backward fit
+    -> backward search (clone engine, IT_BkwSearch) -> post filter (same) -> endBkwSearch -> export best ->
+    duplicate cleaner (sharedhits_pixelseed). Dead regions: the menu's hltMkFitEventOfHits uses SiPixelQuality,
+    but phase2_realistic_T35 has 0 bad pixel components (measured by the test), so no dead regions in MC.
+
+HOW TO RUN THE TESTS
+  source /cvmfs/cms.cern.ch/cmsset_default.sh; export SCRAM_ARCH=el9_amd64_gcc13
+  cd <area>/src && eval $(scramv1 runtime -sh)
+  cmsRun RecoTracker/MkFitAlpaka/test/esTest_cfg.py backend=serial_sync
+  cmsRun RecoTracker/MkFitAlpaka/test/esTest_cfg.py backend=cuda_async
+  cmsRun RecoTracker/MkFitAlpaka/test/esTest_cfg.py backend=cuda_async streams=4 maxEvents=8   (both GPUs)
+  testMkFitAlpakaESFill        (host unit test, in $CMSSW_BASE/test/$SCRAM_ARCH)
+  The cmsRun test prints sizes, probe counts and per-category "checked N mismatches M"; it throws on any mismatch.
+  It checks: every LayerInfo field, the Initializator q axis, the IterationLayerConfig limits; every ModuleInfo
+  field + stock short_id(); every shape; the detid table content and device findModule/shortId for all module
+  detids and detid+1 probes; the full material map and device materialChecked on a 0.37 x 0.29 cm (z, r) grid
+  beyond the map range (vs material_checked, and bin_z/bin_r vs mat_bin_z/r); device WSR / q-limit / r-hole
+  predicates on 1.55 M points vs stock LayerInfo; every ESConfig field vs IterationConfig/SteeringParams
+  (including walking the three stock iterators)/PropagationConfig/Config; the device-read config bytes vs the copy;
+  24 ESConfig fields read through the struct on the device vs the same reads on the host (layout/offsets).

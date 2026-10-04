@@ -1,0 +1,94 @@
+MkFitAlpaka - coordinate systems on the LST-step path (side study, lane bkfit, round 3, 2026-10-03)
+====================================================================================================
+Question (Avi via the owner): how many coordinate transformations does mkFit do per hit on the LST-step path, what do
+they cost, are there redundant round trips, and would keeping the state local be as good or better?
+Measurements and operation counts only; nothing was changed (no DEVIATION this round).
+
+1. THE FRAMES
+  CCS    "Cartesian-CCS" track state of mkFit: (x, y, z, 1/pT, phi, theta), 6 params, 6x6 symmetric covariance (21).
+         Every stored state (candidates, TrackSoA, seeds) is CCS. The 6x6 covariance is rank 5 (one direction along
+         the track is not a degree of freedom).
+  curv   curvilinear frame (5 params: q/p, lambda, phi, x_perp, y_perp), used only INSIDE the plane propagation to
+         build the transport Jacobian (helixAtPlane: errorPropCurv 5x5, jacCCS2Curv 5x6, jacCurv2CCS 6x5).
+  local  module-plane frame (5 params: q/p, du/dw, dv/dw, u, v), used only INSIDE kalmanOperationPlaneLocal for the
+         residual, chi2 and update (jacCurv2Loc 5x5, jacLoc2Curv 5x5).
+  Every plane operation (Phase-2: usePropToPlane = true) is therefore CCS -> [curv] -> CCS -> [curv -> local] ->
+  update -> [local -> curv] -> CCS.
+
+2. PER HIT: WHAT IS COMPUTED (covariance part; multiplications per slot counted in the generated .ah code)
+  propagateHelixToPlaneMPlex (PropagationMPlexPlane.cc; port PropagationMPlex.h:969-1000)
+    JacErrPropCurv1   jacCurv2CCS(6x5) * errorPropCurv(5x5)                    123 mul
+    JacErrPropCurv2   tmp(6x5) * jacCCS2Curv(5x6) -> errorProp 6x6 (CCS->CCS)  186 mul
+    MultHelixPlaneProp + Transp   6x6 similarity on the CCS covariance        900 mul
+  kalmanOperationPlaneLocal (KalmanUtilsMPlex.cc; port KalmanUtilsMPlex.h:236-532)
+    JacCCS2Loc        jacCurv2Loc(5x5) * jacCCS2Curv(5x6)                      100 mul
+    PsErrLoc + Transp 5x6 similarity: CCS 6x6 -> local 5x5                    531 mul
+    PsErrLocUpd       (1-KH) on the local covariance                            111 mul
+    JacLoc2CCS        jacCurv2CCS(6x5) * jacLoc2Curv(5x5)                       77 mul
+    OutErrCCS + Transp  6x5 similarity: local 5x5 -> CCS 6x6                  423 mul
+  Total covariance arithmetic of one propagate+update: ~2450 mul, of which ~2340 are frame changes / 6x6 transport
+  and ~110 the Kalman update proper.
+
+3. HOW OFTEN (stock call census on real HLT ttbar PU200 events, lane_prop capture, per event)
+    plane propagate + chi2 (hit tests, forward + backward search)        ~36.9k
+    plane propagate + update (selected hits)                              ~6.6k
+    backward fit: plane propagate + chi2/update                           ~26.8k  (bkfit dump: 2146 cands x 13.6 hits)
+    final fit (fwdFit + bkReFit): plane propagate + update + chi2         ~50.1k
+    propagate to layer R / Z (no plane, CCS only)                         ~7.9k / ~12.1k
+  => ~120k plane operations per event, each one with the frame chain of section 2.
+  Measured cost (stock x86-64-v3, -Ofast, 1 core, ns per slot, lane_prop capture re-run):
+    propagateHelixToPlaneMPlex 229 | + chi2 240 | + update 280 | kalmanOperationPlaneLocal alone 92 |
+    propagateHelixToRMPlex 143 | propagateHelixToZMPlex 98.
+  On the backward fit as a whole (this lane): stock 3987 ns/cand = ~293 ns per hit on 1 core; port L40 4.1 ns/cand.
+
+4. REDUNDANT ROUND TRIPS FOUND
+  R1 curv -> CCS -> curv between propagation and update. The propagation turns its curvilinear transport into a 6x6
+     CCS Jacobian (jacCurv2CCS * errorPropCurv * jacCCS2Curv) and transports the 6x6 CCS covariance with it (900 mul);
+     the update immediately applies jacCCS2Curv again (inside jacCCS2Loc). jacCCS2Curv * jacCurv2CCS, both taken at the propagated state, should be
+     the identity on the curvilinear 5-space (not yet checked numerically), so the 6x6 detour would carry no
+     information: ~1000 mul per plane operation.
+  R2 local -> CCS -> curv between an update and the next propagation (OutErrCCS 423 mul + JacLoc2CCS 77 mul, then the
+     next propagation's jacCCS2Curv): the same detour in the other direction, ~600 mul per update.
+  R3 Same plane propagated twice in the search: the chi2 test of a hit propagates the candidate to the hit's module
+     (with errors), and the update of the selected hit propagates the SAME input state to the SAME plane again
+     (kalmanPropagateAndUpdatePlane). ~6.6k repeated plane propagations per event (15% of the search's plane
+     propagations, ~229 ns each on a stock core). Keeping the propagated state of the chosen option removes them
+     (27 floats per hit option; the engine's CandPropState holds the layer-propagated state, not the plane one).
+  R4 chi2-only calls build the whole 5x5 local covariance (PsErrLoc, 531 mul) although the chi2 needs its 2x2 block;
+     the compiler removes most of it after inlining (chi2 adds only ~12 ns over the propagation in the stock timing),
+     so this is cheap in practice; noted for completeness.
+
+5. WOULD KEEPING THE STATE LOCAL BE AS GOOD OR BETTER?
+  Strictly "local" cannot persist between hits: consecutive hits are on different module planes, and the helix
+  propagation needs a global position/direction. What can persist is a 5-parameter state with a 5x5 covariance
+  (curvilinear, or local to the last plane), with global position/momentum kept alongside for the helix.
+  Covariance cost per propagate+update with a 5x5 state (same Jacobians, same linearisation points):
+    transport  errorPropCurv 5x5 similarity                     ~200 mul   (instead of 309 + 900)
+    to local   jacCurv2Loc 5x5 similarity                       ~200 mul   (instead of 100 + 531)
+    update     unchanged                                         ~110 mul
+    back       jacLoc2Curv 5x5 similarity                       ~200 mul   (instead of 77 + 423)
+    => ~700 mul instead of ~2450 (3.5x less), or ~450 if the three 5x5 Jacobians are multiplied first and applied
+       as one similarity.
+  Physics: the Jacobians are the same matrices at the same points, so the result is the same up to rounding.
+  Numerically it should be BETTER: the 6x6 CCS covariance is rank 5 and is stored in float; transporting it through
+  a 6x6 similarity can make it slightly indefinite, which is part of why this stage is so rounding-sensitive (the
+  stock v2 vs v3 floor of the backward fit has 2-3% of candidates beyond 1e-3, doc/bkfit.txt). A 5x5 state keeps the
+  null direction out of the arithmetic.
+  Speed: on the stock CPU numbers above the covariance chain is the bulk of the ~229 + 51 ns of a propagate+update;
+  with 3.5x fewer multiplications in it, ~1.5-2x per plane operation is a reasonable expectation on CPU. On GPU the
+  same reduction also lowers registers (the 6x6 temporaries are the heavy part of the 200-register bkfit kernel).
+  Cost of the change: the state stored between stages (candidates, TrackSoA) is CCS; a 5x5 state means converting
+  at the stage boundaries only (once per track per stage) instead of twice per hit.
+  Recommendation for a later round: do it as a DEVIATION with the M4 floor + MTV, in this order: R3 (pure caching,
+  bit-identical, no frame change), then R1 (drop the 6x6 detour inside propagate+update pairs: errors leave the
+  propagation in curvilinear form and go straight to jacCurv2Loc), then R2/full 5x5 state.
+
+6. HOW THE NUMBERS WERE OBTAINED
+  - A per-piece GPU/CPU micro-benchmark of the frame changes (run/coord/ in the lane area) was INCONCLUSIVE: with
+    loop-invariant Jacobians the compilers hoist most of the work, and the feedback needed to defeat that costs as
+    much as the pieces. It is not used here; the cost statements rest on the operation counts and the measured
+    per-operation stock timings below. A knock-out timing inside the backward-fit kernel is the right next measure.
+  - Multiplication counts: grep -o '\*' on src/alpaka/prop/*.ah (the generated stock multiplications).
+  - Call census and per-op stock timing: lane_prop capture (run/hlt/real_ttbar.bin, 3 events with tracking) re-run
+    with testMkFitAlpakaPropStockRef --rerun (x86-64-v3 library) in this lane (run/l6/stockref_v3_rerun.txt).
+  - Backward-fit per-hit cost: run/rerun_v3_ttbar.txt (stock) and run/cuda_ttbar_L40.txt (port).

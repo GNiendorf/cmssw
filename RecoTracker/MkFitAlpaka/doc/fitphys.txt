@@ -1,0 +1,217 @@
+fitphys: fit physics notes for the owner and for Mario (round 10, lane fitphys, Sunday 2026-10-04)
+==================================================================================================
+Two stock-level findings of the trackingMkFitFit (#186) menu, both reproduced in STOCK code, not in the port:
+  A. The PF gap (R9-H1): PF throws away ~12 good tracks per ttbar event because the mkFit converter labels every track
+     undefAlgorithm. One configuration line fixes it; PF then matches (slightly exceeds) the KF menu.
+  B. The first-hit update after an innermost-hit outlier removal (R7-M3, DEVIATION D7): a real #186 shortcut that makes
+     5% of the refits start off-plane. The fix is one flag; physics-neutral in stock, a rounding-stability fix for the port.
+Stock = this area's MkFitCore / MkFit (CMSSW_20_1_0_pre2 + trackreco#186 + #187, r6_base e096c73 + the D7-a NaN
+guards 85a2dba). Samples: the local ttbar PU200 RAW (5 x 100) and QCD (10 x 50). Lane dir: L/r10_fitphys (runs/, mtv/,
+accept/d7/, scripts/).
+
+
+A. THE PF GAP OF THE mkFit-FIT MENU (R9-H1)
+--------------------------------------------
+Answer: it is the track ALGORITHM label, not the pT errors and not a PF cut.
+  - RecoTracker/MkFit/plugins/MkFitOutputTrackConverter.cc:213-214 (stock) derives the algorithm from the seeds label:
+      algo_{reco::TrackBase::algoByName(TString(seeds.label()).ReplaceAll("Seeds", "").Data())}
+    In the Phase-2 HLT menu the seeds are "hltInitialStepTrajectorySeedsLST" -> "hltInitialStepTrajectoryLST", which is
+    no algorithm name, so TrackBase::algoByName returns undefAlgorithm (TrackBase.cc:140-141). Offline the label is
+    "initialStepSeeds" -> initialStep, which is why the rule works there. The KF menu's TrackProducer sets
+    AlgorithmName = 'initialStep' explicitly (hltInitialStepTracks_cfi.py). Our converter copies the rule
+    (MkFitAlpakaOutputTrackConverter.cc, customizeOutConv passes the stock seeds label): the target has the same gap.
+  - PF: PFAlgo::createCandidatesHCAL (PFAlgo.cc:1967-1972) orders the block's tracks by dpt x
+    PFTrackAlgoTools::errorScale(algo); errorScale returns 1.0 for initialStep / hltIter* and 1E9 for any algorithm not
+    in its list (PFTrackAlgoTools.cc:86-114, "default: return 1E9"). With rejectTracks_Bad = True and pt_Error = 1 GeV
+    (hltParticleFlowTmpBarrel), every block whose charged momentum exceeds the calo energy by more than nsigma_TRACK
+    (= 1) x calo resolution drops undefAlgorithm tracks ("fabs(trk.first) < ptError_" never stops it: dpt x 1e9 >> 1 GeV)
+    until the balance is restored, or rescales one (PFAlgo.cc:2297-2345). KF tracks (scale 1) qualify only with
+    dpt > 1 GeV (badly measured, mostly high pT); a 1-10 GeV track has dpt ~0.01-0.1 GeV. That is the "~11 HP pT 1-10 GeV tracks per event", barrel only (|eta| < 1.5: the HGCAL side goes through
+    TICL, where the algorithm plays no role).
+  - The ~6% smaller mkFit-fit pT errors play no role (the scale is 1e9); the PF track quality cuts (GeneralTracksImporter
+    goodPtResolution: dPtCut 5 instead of 10 for undefAlgorithm) are far from biting at 1% pT resolution.
+
+Evidence (CPU, ttbar 200 events, same events, HLT 75e33_timing + one Path with the PF / PUPPI chain; FitDevPfStudy;
+runs/pf_ttbar200_stock_algo_kf_d7.txt, 196 common events; paired difference vs stock, mean +- error):
+                                         stock mkFit-fit   + algo fix          KF menu
+    tracks (hltGeneralTracks) / event    1857.6            +0.000 (identical)  -2.0 +- 0.4
+    HP tracks pT > 1 NOT used by PF      11.88             0.27                0.62
+    PF charged candidates                1845.8            +11.6 +- 0.4        +9.2 +- 0.6
+    PF charged sum pT (GeV)              2794.4            +53.5 +- 2.0        +47.1 +- 2.2
+    AK4 PUPPI HT (pT > 30, |eta| < 2.4)  204.4             +17.5 +- 2.0 (+8.6%) +14.6 +- 2.4
+    jets' charged-hadron energy (GeV)    213.1             +21.4 +- 2.2        +18.9 +- 3.1
+    PUPPI MET type-1 |MET - gen| (GeV)   67.3              -3.6 +- 1.2         -2.2 +- 1.5
+    raw PUPPI MET |MET - gen| (GeV)      59.3              -3.1 +- 0.9         -2.0 +- 1.2
+    PF charged |eta| > 1.5               1192.4            +0.03               -3.4 +- 0.4
+  "algo fix" = the stock converter's seeds read through an EDAlias named initialStepSeeds (two customise_commands
+  lines, = customizeFitDev.customizeFitPhysStockTrackAlgo; no code change), so the stock rule yields initialStep. The tracks
+  are bit-identical in content (count, pT sums); only TrackBase::algo() changes. Stock mkFit-fit (11.88) reproduces the
+  round-9 target number (12.0): it is stock behaviour, not the port.
+  With the fix the mkFit-fit menu is at least as good as KF at the PF level (charged sum pT and HT slightly above KF,
+  MET resolution 1.4 GeV better than KF on these 196 events, within ~1 sigma).
+
+Trigger paths (same jobs, ttbar 200; runs/trig_ttbar200.txt; passed events, only paths that differ):
+    path                                                stock   + algo fix   KF
+    HLT_PFHT200PT30_QuadPFPuppiJet_..._TriplePFPuppiBTag   8      12          9
+    HLT_PFHT330PT30_QuadPFPuppiJet_..._TriplePFPuppiBTag  13      16         13
+    HLT_PFPuppiHT1070                                      1       2          2
+    HLT_PFPuppiMETTypeOne140_PFPuppiMHT140                 6       7          8
+    HLT_DoublePFPuppiJets128_DoublePFPuppiBTagDeepFlavour  0       1          1
+    HLT_IsoMu20_..._LooseDeepTauPFTauHPS27                 3       5          5
+    HLT_DoubleMediumDeepTauPFTauHPS35                     10       8          7
+  Every HT / MET / jet path moves from the stock mkFit-fit count toward (or past) the KF count; the tau paths too.
+  QCD: section A3 below.
+
+Fix candidates (judged):
+  1. Algorithm label (RECOMMENDED; the minimal fix): give the converter an explicit algorithm, as TrackProducer has
+     (AlgorithmName). Port: DEVIATION D8, MkFitAlpakaOutputTrackConverter parameter "algorithm" (empty = stock rule),
+     customizeFitDev.customizeFitPhysTrackAlgo (sets 'initialStep'); switch, OFF by default. Stock: the same parameter
+     in MkFitOutputTrackConverter (and MkFitOutputConverter, same rule at :183), or renaming the HLT seeds module
+     to *Seeds of a real algorithm; for Mario. No track changes; PF / jets / MET / HT go to the KF level.
+  2. Error scaling (inflating the mkFit-fit pT errors by ~6% to KF's level): not run. It cannot act on this mechanism:
+     the rejection keys on dpt x errorScale(algo) > pt_Error = 1 GeV, i.e. dpt > 1e-9 GeV for undefAlgorithm, which
+     every track passes with or without +6%; and the algorithm fix alone already brings the lost tracks to 0.27 (KF 0.62)
+     with the mkFit-fit errors unchanged.
+  3. PF configuration (hltParticleFlowTmpBarrel.rejectTracks_Bad = False), ttbar 100, paired vs stock
+     (runs/pf_ttbar100_stock_norej_algo_kf.txt, trig_ttbar100_norej.txt):
+                                        rejectTracks_Bad = False   algorithm = initialStep   KF menu
+       lost tracks / event              0.22                       0.24                      0.40
+       PF charged sum pT (GeV)          +52.6 +- 3.1               +51.9 +- 2.9              +47.3 +- 3.0
+       AK4 PUPPI HT (GeV)               +15.5 +- 2.9               +13.5 +- 2.6              +10.9 +- 3.6
+       PUPPI MET |MET - gen| (GeV)      -5.6 +- 2.3                -3.9 +- 1.6               -3.9 +- 2.0
+       paths, stock -> norej / algo / KF: PFHT200 b-tag 3 -> 6 / 6 / 2, DoublePFPuppiJets128 0 -> 1 / 1 / 1,
+       DoubleDeepTau35 4 -> 3 / 3 / 2, DoubleChargedIsoTau40 1 -> 0 / 0 / 0 (100 events: counts of a few).
+     It gives the same HT / MET-path effect on mkFit-fit tracks, but switches off PF's bad-track protection for every
+     track (KF's dpt > 1 GeV tracks included); wrong place. Not recommended.
+
+A2. Where in the PF chain (test/FitPhysPfTrace.cc: every HP pT > 1 track followed through hltPfTrack ->
+    hltParticleFlowBlock -> hltParticleFlowTmpBarrel / hltPfTICL; ttbar 100, CPU; runs/t_*/pftrace.txt):
+                                              stock mkFit-fit     KF menu
+    HP pT > 1 tracks / event                  1416.1              1411.4
+    no PFRecTrack (PFTrackProducer)           0.00                0.00
+    PFRecTrack, no block element (importer)   0.08                0.26
+    in a block, no PF candidate (PFAlgo)      11.91               0.40
+    track algorithm (all tracks)              0 = undefAlgorithm  4 = initialStep
+    lost tracks: pT 1-3 GeV 80%, |eta| < 1.3 94%, 95% linked to an HCAL cluster (= PFAlgo::createCandidatesHCAL,
+      the rejectTracks_Bad branch), ptErr/pT 0.039 (the largest dpt goes first), 8 layers: good tracks.
+    KF's 0.66 lost tracks are bad ones (ptErr/pT 3.8, 3.8 layers, |eta| 2.6).
+    The step is pinned by two one-line changes on the same 100 events (runs/pftrace_ttbar100.txt):
+                                              stock    rejectTracks_Bad = False   algorithm = initialStep   KF
+    in a block, no PF candidate / event       11.91    0.22                       0.24                      0.40
+    PF charged sum pT vs stock (GeV)          -        +52.6 +- 3.1               +51.9 +- 2.9              +47.3 +- 3.0
+    (rejectTracks_Bad = False is a diagnostic: it would change PF for KF tracks with dpt > 1 GeV too.)
+
+A3. QCD (the local QCD PU200 RAW, qcd_raw, first 200 events, CPU, paired vs stock; runs/pf_qcd200_stock_algo_kf.txt):
+                                         stock        + algo fix        KF menu
+    HP tracks pT > 1 NOT used by PF      12.41        0.26              0.65
+    PF charged candidates                1868.6       +12.2 +- 0.4      +9.8 +- 0.6
+    PF charged sum pT (GeV)              4005.7       +69.7 +- 11.0     +37.7 +- 13.7
+    jets' charged-hadron energy (GeV)    1510.8       +21.5 +- 2.0      +4.3 +- 14.3
+    AK4 PUPPI HT (GeV)                   3484.8       +1.6 +- 10.1      +14.5 +- 7.2
+    PUPPI MET type-1 |MET - gen| (GeV)   191.1        +15.7 +- 10.5     +8.8 +- 7.2
+    paths that differ: MET140 87 / 88 / 89; PFHT200 b-tag 1 / 2 / 2; LooseDeepTau150 49 / 49 / 51.
+  In QCD (fake MET only, |gen| > 50 in 6 events) adding the charged hadrons back moves |MET - gen| up for both the fix
+  and KF, within 1.5 sigma; HT at 3.5 TeV is jet-dominated and moves within its error.
+
+A4. The port: the round-9 target (r9 area, customizeHLTforMkFitAlpakaTarget) is identical to stock at the PF level
+  (PF charged +0.02, HT -0.01 per event) and the same seeds alias gives it the same gain (ttbar 200, paired vs target:
+  PF charged +11.7 +- 0.4, charged sum pT +53.7 +- 2.0, HT +17.7 +- 2.0, PUPPI MET type-1 |MET - gen| -3.7 +- 1.2;
+  runs/pf_ttbar200_tgt9_algo.txt). GPU menu (L40, round-9 target, ttbar 100, paired; runs/pftrace_gpu_tgt_ttbar100.txt,
+  pf_gpu_tgt_ttbar100.txt): lost 11.97 -> 0.25 per event (algo 0 -> 4), PF charged sum pT +51.7 +- 2.8 GeV, HT +13.3 +- 2.6,
+  PUPPI MET type-1 |MET - gen| -3.6 +- 1.7 GeV: the same as on CPU. The CURRENT head target (main6 6484768: stage D +
+  light seeds; read-only run, ttbar 100 CPU, paired; runs/pftrace_main6_tgt_ttbar100.txt, pf_main6_tgt_ttbar100.txt):
+  lost 11.90 -> 0.24 (KF 0.40), tracks identical, PF charged sum pT +52.1 +- 2.9 GeV (KF +48.1), HT +12.9 +- 2.5 (KF
+  +10.7), PUPPI MET type-1 |MET - gen| -3.6 +- 1.6 (KF -3.7). D8 (the converter parameter) does the same without
+  the alias (committed and compiling; not run in round 10, see DEVIATIONS D8 status).
+
+
+B. D7: THE FIRST-HIT UPDATE AFTER AN INNERMOST-HIT OUTLIER REMOVAL (trackreco#186)
+------------------------------------------------------------------------------------
+Mechanism, stock code (RecoTracker/MkFitCore/src, #186 + #187):
+  - MkBuilder::fit_tracks (MkBuilder.cc:1500-1513): one pass = fwdFitInputTracks (packs the candidate's CURRENT
+    parameters, errors x 100, MkFitter.cc:40) -> fwdFitFitTracks -> reFitOutputTracks -> bkReFitInputTracks ->
+    bkReFitFitTracks -> reFitOutputTracks(bkw). After a pass the stored state is the backward state ON THE INNERMOST
+    hit's module (the first hit in reFitIndices order).
+  - Outliers (MkBuilder.cc:1553-1573): hits with fwd + bkw chi2 > 20 (each > 8; pT <= 1: 15 / 7) are removed with
+    Track::removeHit, the innermost one included; such tracks go to remap (:1580) and are refitted (:1681-1700).
+  - MkFitter.cc:268 (fwdFitFitTracks; :462 bkReFitFitTracks):
+        bool propHit = h == 0 ? false : true;  // just update when the position is already at the hit
+    In the refit the comment is false when the innermost hit was one of the removed hits: the input state still sits
+    on the REMOVED hit's module, and the first update of the refit is a Kalman update on the new first hit's plane
+    WITHOUT propagating there. The residual then contains the path between the two modules.
+  - Consequence: first-step chi2 ~1e3 - 1e6, the following steps go non-positive-definite (negative chi2 sums, NaN),
+    and floating-point rounding picks the final state (the port's CUDA-vs-serial z tail of R7-M3: cm shifts with
+    identical hits).
+  - Fix (D7 mode 1): propagate to the first hit in the refits after outlier removal (propHit = true at h == 0 when the
+    pass is a refit). The first hit's material stays skipped (no_mat_effs for index == indices.back(), as stock).
+    Mode 2 = every pass (pass 1 too, see "related" below).
+
+Stock reproduction (validation-only diagnostic: stock MkFitCore + env-gated prints, MkFitCore branch
+r10/fitphys-diag 01fe691, built into L/r10_fitphys/libs/diag and preloaded; MKFIT_FITPHYS_DIAG=1 prints, for every
+refit and every 16th pass-1 track, the signed distance of the input state to the first fit hit's module plane and the
+first-step chi2; MKFIT_FITPHYS_FIRSTHITPROP=1 applies the fix to the refits). Stock trackingMkFitFit menu, CPU, ttbar
+200 (runs/fitphys_stock_vs_d7_ttbar200.txt):
+                                              stock                         stock + D7 (mode 1)
+    refits after outlier removal / event      161 (32,238)                  same
+    ... starting OFF the first hit's plane    5.0% (1,624 = 8.1 / event)    same tracks
+    ... off-plane distance (cm)               median 0.68, q90 32           (propagated)
+    ... first-step chi2                       median 2.2e3, q90 1.1e5,      median 0.93, q90 67,
+                                              66% > 1e3                      0.6% > 1e3
+    ... total chi2                            median 2.4e3, 366 > 1e4,      median 55, 44 > 1e4,
+                                              71 negative / NaN (4.4%)       6 negative / NaN
+    refits on the plane (95%)                 first-step chi2 median 8e-4   identical
+  => stock reproduces the off-plane first update exactly as found in the port (round-9 dump: 2.5e4 - 4e5 on 4 tracks).
+  Related (mode 2): 1.2% of the PASS-1 fits also start off-plane (median 0.55 cm, q90 1.25 cm: the building's final
+  state is on another module than the first hit in reFitIndices order, e.g. double-sensor / overlap hits); with the
+  x100 errors of the first pass the damage is smaller (first-step chi2 median 36, 12% > 1e3).
+
+What the fix changes:
+  Stock menu (ttbar 200, CPU, paired): hltGeneralTracks +0.07 +- 0.05 / event; PF charged sum pT +0.10 +- 0.16 GeV,
+    HT +0.29 +- 0.26, PUPPI MET |MET - gen| -0.10 +- 0.12 GeV; no trigger path changes (runs/trig_ttbar200.txt).
+  Stock MTV (ttbar 500, CPU, same lib with the env switch only; mtv/mtv_stock_vs_stockd7_ttbar500.txt):
+    hltGeneral eff .88541 -> .88565 (+0.00024), fake .01076 -> .01076, dup .00974 -> .00976; hltInitialStep (before
+    the HP selection) eff identical, fake +0.00001; HP selection eff +0.00012, fake -0.00004; 0 bins with |z| > 2 in
+    eff / fake / dup x pT, eta, phi, dxy, vxy for all three collections. QCD 500
+    (mtv/mtv_stock_vs_stockd7_qcd500.txt): hltGeneral eff .83390 -> .83394, fake .01759 -> .01758, dup .00970 -> .00971;
+    HP fake -0.00002; 2 flagged bins of ~2,900 (dup vs dxy, initialStep and HP; chance level).
+  Port, GPU (L40) device fit vs its serial clone in the same job (replay, 100 events each; accept/d7/):
+                                   NaN-kept    CUDA-vs-serial hit lists   z pull >= 1 (same hits; >= 10 sigma)
+    ttbar (r9):  switches off      100-109     8                          19 (17; 8)
+                 D7                55-57       8                          16 (14; 5)
+                 D3                311-339     98                         93 (31; 24)
+                 D3 + D7           60-64       16                         12 (2; 1)
+    QCD (r10):   switches off      120-124     8                          33 (31; 14)
+                 D7                67-68       8                          29 (25; 10)
+                 D3                310-314     97                         84 (37; n/a: parser stopped at a NaN track)
+                 D3 + D7           79-80       17                         10 (2; 2)
+    D3 = 0001 (edge outliers, 3 rounds); collision-shadowed outliers with D3 81-95 -> 36-43 with D7 (QCD).
+  Port menu MTV (r9, ttbar 500 CPU): D7 alone paired +0.00000 (neutral); D3 + D4 + D7 hltGeneral eff .8889 vs D3 + D4
+    .8875 (KF .8881, equal within statistics); 0 MTV bins |z| > 2.
+  Port menu, QCD 500 CPU (r10; TargetValidation in the r9 area, in-job stock reference; mtv/runs/tvq_*, mtv/
+    mtv_portqcd_d34_vs_d34d7.txt):          D3 + D4               D3 + D4 + D7
+    paired eff vs in-job stock               +0.00043 +- 0.00001   +0.00048 +- 0.00001
+    tracks (stock 987,748)                   987,431 (-317)        987,744 (-4)
+    stock-only tracks (true / fake)          386 (181 / 205)       84 (37 / 47)
+    hltGeneral eff / fake / dup              .8359 / .0161 / .0106  .8378 / .0163 / .0108   (KF r8: .8376 / .0153 / .0103)
+    MTV bins |z| > 2 (hltGeneral; HP)        -                     0 of ~600; 5 of ~600 (fake / dup vs pT, dup vs dxy)
+  So on QCD too, D7 recovers the tracks D3 makes unstable (stock-only 386 -> 84) and D3 + D4 + D7 reaches the KF
+  efficiency (.8378 vs .8376, equal within statistics); fakes +7% vs KF, as on ttbar.
+  Port menu, GPU (L40), ttbar 500 (r10; same recipe, gpu-nvidia; mtv/mtv_portgpu_ttbar_d34_vs_d34d7.txt):
+                                             D3 + D4               D3 + D4 + D7
+    paired eff vs in-job stock               +0.00034 +- 0.00002   +0.00040 +- 0.00002   (CPU r8 / r9: +0.00035 / +0.00040)
+    tracks vs stock; stock-only tracks       -229; 264             -1; 54
+    hltGeneral eff / fake / dup              .8874 / .0095 / .0106  .8888 / .0096 / .0107   (KF .8881 / .0090 / .0103)
+    MTV bins |z| > 2 (hltGeneral; HP)        -                     0 of ~600; 3 of ~600
+  GPU = CPU within statistics: D7's gain on top of D3 is backend-independent.
+Reading: a real #186 bug. Alone it is physics-neutral at the MTV level (it touches 8 refits per ttbar event), but it is what makes any change of the outlier logic (0001 / D3)
+  rounding-sensitive: with D7 the GPU-vs-serial differences fall 6x on both samples. Recommendation: fix in stock
+  (Mario: one flag, mode 1; mode 2 optional), D3 + D7 in the target after val5k (D10-d).
+
+C. R9-M5: ORDER VS CONTENT OF THE IN-JOB reco::Track HIT-LIST EXCESS (D3 + D4 vs stock + 0001 + 0005)
+  Same job, ttbar 100, CPU (TargetValidation, r9 area, stock libs r7_fitgap libs/fix; mtv/runs/ord_fix_d34*):
+                                        outconv order            validateStockOrder = True (stock std::sort)
+    menuCmpTracks identical hit lists   133,352 of 133,453       133,392 of 133,453
+    differences (same length / longer / shorter)  101 (53 / 18 / 30)   61 (13 / 18 / 30)
+  40 of the 101 are the same hits in another order; the content differences (61 = 4.6e-4) are inside the 0001 floor
+  (5.5e-4 on 500 events). The excess over the floor quoted in round 9 (8.5e-4 vs 5.5e-4) is outconv's hit ORDER.
+

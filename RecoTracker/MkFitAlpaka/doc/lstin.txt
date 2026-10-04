@@ -1,0 +1,203 @@
+lstin: stage-B prototype, LST's input built on the device (round 6, lane lstin)
+================================================================================
+WHAT
+  plugins/alpaka/MkFitAlpakaLstInputProducer.cc (+ MkFitAlpakaLstInputKernels.{h,dev.cc}) produces
+  lst::LSTInputDeviceCollection (the product hltLST consumes) on the device, instead of the host chain
+    hltPhase2PixelTracks (legacy reco::Track) -> hltInitialStepSeeds (host KF refit = SeedFromConsecutiveHitsCreator)
+    -> hltInputLST (host packing: LSTInputProducer + lst::prepareInput).
+  It is OFF by default: nothing in the menu changes unless the lane customise is applied
+  ($L/r6_lstin/cfg/customizeLstIn.py, customizeLstInDevice(process, mode=...), modes compare / timing / replace).
+
+INPUTS
+  hltSiPhase2RecHits (host, legacy OT rechits)  -> staged LOCAL quantities only (local x/y, GeomDet index, cluster size,
+                                                   raw detId), no toGlobal on the host
+  hltSiPixelRecHits (+ its hit-module-start)    -> pixel SoA row -> legacy cluster key map (inverse of the hitmap of
+                                                   PixelTrackProducerFromSoAAlpaka: row = moduleStart[det] + originalId)
+  hltPhase2OtRecHitsSoA (hit-module-start)      -> OT-SoA row -> legacy OT hit index map (the SoA holds only the P
+                                                   sensors of the TOB PS modules, in detUnit order)
+  hltPhase2PixelTrackTorchHighPuritySelector    -> Patatrack device tracks (state at the beam-spot PCA + covariance)
+  hltPhase2PixelRecHitsExtendedSoA (device)     -> hit global positions (beam-spot frame) for the outermost hit
+  per IOV: a module table (Surface rotation rows + position + raw detId per GeomDet index), copied to the device.
+  NOTE: the OT rechit SoA (hltPhase2OtRecHitsSoA) is NOT usable for the LST OT hits: it holds only the PS P-sensor hits
+  of the OT barrel (Phase2OTRecHitsSoAConverter), while LST needs every OT hit. The legacy OT rechits are host-made
+  (Phase2TrackerRecHits); the device transform uses r5's mkfitdev::localToGlobal (fma pattern fma(a,b,c*d)).
+
+OT HITS: bitwise equal to hltInputLST (x, y, z, detid, clustsize, idxs) on every hit, CPU and GPU (see REPORT).
+
+pLS, OPTION (i) = Patatrack's own fit (what the kernels compute per tight track; formulas as LSTInputProducer):
+  PCA: position bs + (tip sin(phi0), -tip cos(phi0), zip), momentum pt (cos phi0, sin phi0, cot theta), q = sign(q/pt);
+       dxy = -tip, dz = zip (relative to the beam spot, as the host's TSCBL values)
+  last hit: the outermost hit of the track (Patatrack order is inside-out; the host seed sorts by radius - the hit keys
+       of all host pLS are found in this order, so the order agrees); position = the hit (host: the KF state on it);
+       momentum = tangent of the uniform-field helix (Patatrack's field, fieldInInvGev at the origin) at that hit
+  ptErr / etaErr: the host formulas of LSTInputProducer applied to the perigee (rho, theta) errors derived from the
+       Patatrack covariance: var(rho) = k^2 c(q/pt), cov(rho,theta) = k sin^2(theta) c(q/pt,cot), var(theta) =
+       sin^4(theta) c(cot) (k = Bz in GeV^-1 cm^-1). The host "ptErr" is pt*p*sigma(rho)-like, not sigma(pt): kept as
+       the host defines it (LST's cuts are tuned on it).
+  selection: quality >= tight and finite state (as hltPhase2PixelTracks), then LST's ptIn > ptCut - 2 ptErr and the
+       pixelType rule; superbin with the host's mixed float/double expressions; pseudo-hits as lst::prepareInput.
+  ordering: Patatrack SoA order (the host orders by pT through PixelTrackProducerFromSoAAlpaka's std::sort), made
+       deterministic by a chunked serial scan (no atomics in the indices). seedIdx = Patatrack SoA track index.
+OPTION (ii) (device refit with our mkFit fit code): NOT implemented this round (see REPORT, next steps).
+
+MODES (validation)
+  compare : the device collection is copied back and compared with hltInputLST per event (LSTIN_CMP lines; OT hits
+            bitwise; pLS matched by their stored hit keys = first three + last hit); per-pair values go to dumpFile;
+            a second LST (hltLSTDevIn) runs on the device input and MkFitAlpakaLstInputTCCompare prints LSTIN_TC
+            (TC counts per type host input vs device input, and identical OT-hit lists per type).
+  replace : physics-test arm for O6-1: hltLST runs on hltInputLST's collection in which every pLS matched by hit keys
+            gets the device (option i) parameters and pseudo-hits; OT hits, the pLS set, order, seedIdx and hit keys
+            stay the host ones, so LSTOutputConverter (which still reads hltInputLST's OT rechit pointers and the
+            hltInitialStepSeeds copy) and the mkFit chain are unchanged. LSTIN_REPLACE lines count replaced/kept pLS.
+  timing  : the producer only (nothing consumes it), for its own host cost.
+  on      : the switch ON form: hltInputLST leaves the menu. seedsFromHost = True: pLS only for pixel tracks that have a
+            host seed (SoA row -> hltPhase2PixelTracks' SoA->edm map -> hltInitialStepSeeds index, identity when the
+            counts agree, else matched in order by the first seed hit), seedIdx = that seed index, and a host product
+            'otRecHitPtrs' (an LSTInputHostCollection holding only the OT rechit pointers) for LSTOutputConverter, which
+            reads lstInput = hltInputLSTDevice:otRecHitPtrs and lstPixelSeeds = hltInitialStepSeeds.
+
+PRODUCER FORM
+  stream::SynchronizingEDProducer: acquire() = host staging into pinned buffers, H2D copies, the per-track pLS kernels and
+  the D2H copy of the counts (LST needs exact collection sizes); produce() = allocation of the collection + fill kernels.
+  The module table is copied to the device once per IOV and stream. Clusters are read by key (no Ref deref per hit).
+
+BUILD NOTES
+  - Do not <use> RecoTracker/LSTCore in plugins/BuildFile.xml: linking LSTCore's CUDA library into our plugin library
+    made every kernel launch of the plugin fail (cudaErrorInvalidResourceHandle). Only header-only LST types are used
+    (LSTInputSoA, TrackCandidatesSoA, Common.h), reachable through the include path.
+  - Eigen/Core must be included before any SoA header (TracksSoA has Eigen columns).
+  - Never rebuild a plugin library while cmsRun jobs use it (both running jobs segfaulted at the relink).
+
+RESULTS (round 6; details and numbers in $L/r6_lstin/REPORT.txt, summaries in $L/r6_lstin/menu/results/)
+  - OT hits bitwise equal to hltInputLST on 13.5M (CPU) + 42.9M (GPU) hits; every host pLS found on the device by its hit
+    keys (99.99-100%); ~0.3% device-only pLS (no host seed / below the host pT cut).
+  - Option (i) vs the host KF seeds: pT +0.47% median, 1.6% width; eta 0.0036; phi 0.8 mrad; dz/dxy widths 2.0 mm / 300 um
+    dominated by pT < 1.5 GeV (multiple scattering; 41 um / 26 um above 10 GeV).
+  - LST TCs (device input vs host input): total +0.09%, T5 -1%, pT3 -9%, pT5 +2%, pLS +0.05%.
+  - O6-1 "replace" arm (option (i) parameters only): final-track eff/fake unchanged within statistics (ttbar 200 CPU+GPU,
+    QCD 100 CPU), duplicates down (seeds -6%, final -3 to -5%), trigger paths +-1-2 events, vertices +-5 of 15.6k.
+  - O6-1 "on" arm (switch ON form, hltInputLST removed): the same numbers as "replace" (the pLS order does not matter).
+  - Host time (GPU menu): steady state ~2.3 ms per tracked event (~1.7 ms per job event) vs hltInputLST 7.5 ms per job
+    event; plus ~0.46 s once per job (module table + per-stream upload with a blocking wait) -> an ES product next.
+  - timers = True prints LSTIN_T lines (host time of the acquire steps).
+  - QCD 400 events (CPU, on vs off): final eff 0.8383 -> 0.8378, fake equal, dup 0.0102 -> 0.0097; above 25 GeV the
+    efficiency is 0.3-0.9% (abs) lower (<= 0.8 sigma unpaired, same sign as in 100 events): the switch stays OFF until a
+    val5k-scale check with paired truth.
+
+ROUND 7 (lane lstin, 2026-10-04 1:00 - 3:30 am): stage B without host pixel seeds
+================================================================================
+SWITCH: python/customizeLstIn.py, --customise RecoTracker/MkFitAlpaka/customizeLstIn.customizeLstInDeviceLazy (OFF unless
+applied; works on the default KF menu and on the target trackingMkFitFit menu). Validation form: customizeLstInDeviceLazyCheck.
+  - hltInputLST AND hltInitialStepSeeds leave the menu (their only consumers in the exact job.sh menu, edmConfigDump:
+    hltInputLST and hltInitialStepTrajectorySeedsLST read hltInitialStepSeeds; hltInputLSTSerialSync /
+    hltInitialStepSeedsSerialSync are not scheduled).
+  - hltInputLSTDevice (seedIdxFromTracks = True): pLS = option (i) for every tight Patatrack track that has an edm track in
+    hltPhase2PixelTracks (its SoA->edm map); seedIdx = that edm index. No host seed collection is read.
+  - LSTOutputConverter (RecoTracker/LST local repo, branch r7/lstin; lazyPixelSeeds = True): pixelSeedIndex = edm index in
+    hltPhase2PixelTracks; the pixel seed of a pLS / pT3 / pT5 TC (R6-M2: pT3/pT5 need the seed's hits always and its state as
+    fallback) is made on first use, once per pixel track and event, with SeedGeneratorFromProtoTracksEDProducer's exact recipe
+    for the menu configuration (valid hits ordered by radius; GlobalTrackingRegion(pT of the proto track, its vertex, 0.2,
+    0.2); SeedFromConsecutiveHitsCreator with hltInitialStepSeeds' SeedCreatorPSet; includeFourthHit) -> the same seed
+    bitwise (check: lazyCheckSeeds). The customise refuses other hltInitialStepSeeds configurations (useProtoTrackKinematics,
+    usePV, a vertex collection, removeOTRechits, produceComplement). TCs whose pixel track has no seed (the creator fails;
+    stock would have had no pLS for that track) are skipped and counted. lazyPixelSeeds requires produceTrackCandidates =
+    False (the menu's setting; there is no pixel-seed collection for the TC seed refs).
+  - Hit order by radius: stable insertion (= libstdc++ std::sort for <= 16 elements; distinct hits never tie) - no sort added.
+  - OT module table: the shared ES product of MkFitAlpakaEventOfHitsModuleTableESProducer (moduleTable =
+    'MkFitAlpakaHitModuleTable'; the customise adds the ES producer if missing and points the device EventOfHits
+    (deviceHits) at the same product): one per-IOV table for mkFit's device hits and the LST input (same float values as
+    the module's own table; detid now per hit from the staged rawId). Without moduleTable the module keeps its own table.
+VALIDATION TOOLS (host analyzers, plugins/)
+  MkFitAlpakaLstInputTruthDump : per selected TP (loose + MTV flag) found/not found by hltGeneralTracks, hltInitialStepTracks,
+                                 hltSeedsForMkFit -> menu/scripts/paired.py joins two jobs (cross-job paired truth, McNemar)
+  MkFitAlpakaLstInputPLSTruth  : device pLS (option i) and the host-seed pLS values (LSTInputProducer formulas on
+                                 hltInitialStepSeeds) vs the TP of the pixel track (tpToHLTpixelTrackAssociation) ->
+                                 menu/scripts/pls_truth.py (bias / 68% width per pT bin)
+ASYNCHRONOUS PRODUCER (task item 1): NOT done, by analysis. The producer is an ExternalWork (SynchronizingEDProducer) module:
+  the counts readback does not block a thread. LST itself (LSTProducer, global::EDProducer) blocks its thread in 46
+  alpaka::wait calls (LSTEvent.dev.cc) and reads the input sizes on the host first (pixelSize_ = size()[1], nHits =
+  size()[0]: hit and pixel-segment allocation, the pixel MD slot 2*pixelSize_, the superbin/pixelType copies). Without a
+  readback the input must be allocated at capacity with device-side counts, and LST must read them back itself (one
+  blocking wait at its start): the sync moves into LST and costs a blocked thread instead of an ExternalWork callback.
+  It pays only together with an asynchronous LST. Needed LST changes, for the record: LSTInputSoA scalars nPixelSeeds /
+  nHitsTotal; LSTEvent::addInputToEvent reads them (or LST keeps capacity sizes and every kernel loops to the device count:
+  HitLoopKernel, AddPixelSegmentToEventKernel, the pixel MD slot set by a kernel).
+SHARED OT STAGING (task item 1, second half): NOT done (lane cpu is changing MkFitAlpakaEventOfHitsProducer's fillRaw this
+  round). Design: one producer of the OT hits' local quantities in legacy order (local x/y + errors, GeomDet index, rawId,
+  cluster size/key) as a host product + device copy, read by the device EventOfHits (deviceHits) and by hltInputLSTDevice
+  (+ the OT rechit pointer product for LSTOutputConverter). Saves the second host loop over ~250k OT hits (~1.2 ms per
+  tracked event in round 6).
+RESULTS (round 7; details L/r7_lstin/REPORT.txt, menu/results/)
+  - Lazy pixel seeds are bitwise hltInitialStepSeeds' seeds (lazycheck, ttbar 70 tracked events: 121,455 seeds, 0 differ;
+    141 creator failures = the host's failures).
+  - 98.4% of the pixel tracks become a pLS/pT3/pT5 TC, so the converter makes almost every seed: the seed creation cost
+    moves from hltInitialStepSeeds into LSTOutputConverter (CPU, ttbar 500, ms/job event: seeds 16.9 + hltInputLST 10.0
+    + converter 30.1 = 57.0 -> hltInputLSTDevice 7.8 (serial kernels) + converter 46.5 = 54.3). Removing the 19.6 ms
+    needs the pixel seed state from the device (D7-b creator port, or the option (i) state for pLS seeds = physics).
+  - pLS (option i) vs truth (MkFitAlpakaLstInputPLSTruth, ttbar 100 events, 19.4k pLS with a TP): eta, dxy, dz of the
+    Patatrack fit are 1.8x / 3.8x / 3.7x closer to the TP than the host seed's (the host KF seed is propagated back from
+    the last hit without material); pT at the last hit: 4.3% vs 4.2% width, bias +0.3% vs -0.2%. (The dump's device phi is
+    the LST 'phi' field = phi at the last hit, not comparable to the PCA phi; next version: pseudo-hit 1.)
+  - O6-1 of the 'lazy' switch (ON vs OFF, CPU, cross-job paired truth on signal TPs; L/r7_lstin/REPORT.txt 3c): small
+    efficiency loss (~0.05-0.11%, z -1.0 to -2.2 per pair), significant at |eta| >= 1.6 (-3.1 sigma pooled, target menu)
+    and QCD pT > 100 GeV (-1.3% abs, z -2.5, KF menu); duplicates -4..-6%, fake equal, displaced eff up a little. FAILS
+    the O6-1 rule: OFF. Host time removed on the GPU target menu ~5.3 ms/job event (~6 CI-scaled).
+
+ROUND 9 (lane lstin, 2026-10-04 8:30 - 10:45 am): stage-D input, creator-failure emulation, pT3 tracer
+================================================================================
+All switch-gated, OFF by default (nothing changes unless a customise below is applied).
+1. OT hits from the device OT rechit SoA (otSoA). With stage D (customizeOTDev / customizeOTDevFull, or the target's
+   OT_DEVICE) hltInputLSTDevice reads otdev's mkfitdev::OTRecHitDeviceCollection (row = cluster key = legacy rechit index)
+   directly on the device: x/y/z = the SoA's gx/gy/gz (Surface::toGlobal with contractGlobal = CONTRACT_LST, the same
+   variant hltInputLST's otSoA path copies from the host copy), detid = detId, clustsize = clustSize, idxs = row. No host
+   pass over OT rechits, no OT staging buffers or H2D copies, no module table for the OT hits. The CA OT row -> key map
+   (pixel tracks' OT extension hits) comes from the cluster detset sizes (one pass over detsets, P modules only).
+   The 'otRecHitPtrs' product has no OT rows in this mode: LSTOutputConverter must make its OT hits on demand
+   (otClustersOnDemand = full stage D); the customise refuses lazy/on modes otherwise. Apply customizeLstIn AFTER the
+   stage-D customise (customizeOTDevFull refuses a menu where hltInputLSTDevice still reads hltSiPhase2RecHits).
+2. Creator-failure emulation (R7-H2 change (ii)): RecoTracker/LST local patch LSTPixelSeedFailMask (host EDProducer,
+   label hltPixelSeedFailMask) lists the hltPhase2PixelTracks whose hltInitialStepSeeds seed the host creator would
+   reject; hltInputLSTDevice (seedFailMask) gives them no pLS, as stock (no seed -> no pLS). The recipe is the shared
+   RecoTracker/LST/interface/LSTProtoTrackSeed.h (also used by LSTOutputConverter's lazy seeds, so the two cannot drift).
+   Pre-filter: the creator runs only on tracks with two consecutive radius-ordered seed hits closer than maxDr = 0.05 cm in
+   radius (round 8: every rejection is such a near-degenerate pair; FastHelix + the first KF steps fail there);
+   maxDr < 0 runs it on every track (exact by construction). validate = True also runs it outside the pre-filter and
+   counts misses (LSTMASK_MISS).
+   Customises: customizeLstInDeviceLazyMask (lazy + mask, maxDr 0.05), ...LazyMaskAll (maxDr -1), ...LazyMaskCheck
+   (lazycheck + validate).
+3. pT3 tracer (RecoTracker/LSTCore local patch, validation only): LST_PT3_TRACE=1 in the environment of a CPU (serial)
+   job prints at exit one LSTPT3TRACE line with the per-cut counts of CreatePixelTripletsFromMap ->
+   runPixelTripletDefaultAlgo (pLS considered / isDup / partOfPT5, pairs tried, fails at radius, inner tracklet, outer
+   tracklet, rz chi2, DNN, pass). Compiled out on GPU backends; a cached flag test per call when unset. Change (i) is
+   traced by two CPU jobs on the same events: OFF (host pLS) vs 'replace' (host pLS set, option-(i) parameters).
+4. 'otdev' (customizeLstInDeviceOTDev, NO physics change, needs full stage D): hltInputLST stays (pLS from the host seeds
+   exactly as stock) but with otKeysOnly (RecoTracker/LST local patch: OT rows carry only detId + cluster size per cluster
+   key, which the pixel seeds' OT hits read; x/y/z left 0; no OT SoA host copy, no legacy rechits); hltInputLSTDevice
+   (fromHostInput) copies that host collection to the device and fills the OT rows (x/y/z/detid/clustsize/idxs) from the
+   device OT rechit SoA; hltLST reads hltInputLSTDevice. The converter still reads hltInputLST's host product (seeds, OT
+   pointers = nullptr, OT hits on demand under full stage D). Validation: customizeLstInDeviceOTDevCheck runs an
+   unpatched clone (hltInputLSTRef) and compares every column (LSTIN_FULLCMP).
+RESULTS (round 9; numbers and files in L/r9_lstin/REPORT.txt, menu/results/)
+  - otSoA input: OT hits bitwise vs hltInputLST under full stage D, CPU and CUDA (4.09M hits each, ttbar 17 tracked events).
+  - Mask: 145 of 145 host creator failures found (= pixel tracks 123,435 - host seeds 123,290, ttbar 100), 0 misses with
+    validate (creator on every track), all 145 at minDr <= 0.022 cm (pre-filter 0.05: 2.3x margin); lazy seeds 121,314
+    bitwise, 0 lazy failures, 0 TCs skipped. Cost: the creator on 18.7% of the tracks (CPU 3.8 ms/job event ttbar).
+  - O6-1 lazy + mask (CPU, target + full stage D, cross-job paired truth): the endcap loss of 'lazy' is GONE (QCD
+    |eta| >= 1.6: +0.2 sigma, was -1.9 / -2.5); what remains is change (i): ttbar hltGeneral -0.00075 +- 0.00047 (z -1.6),
+    pT 3-10 GeV z -2.5 / -2.3; QCD -0.00041 +- 0.00052, > 100 GeV -1.4 / -1.8 sigma. Still FAILS "nothing regresses": OFF.
+  - otdev: every column bitwise (CPU and CUDA, 4.20M hit rows + 27,977 pLS); host time see REPORT.
+  - pT3 tracer, change (i) (ttbar 100 CPU, OFF vs 'replace'): pT3 made -8.3%; pairs tried -5.0% (more pLS absorbed by
+    pT5, superbin map); the inner pLS-segment compatibility (runPixelTrackletDefaultAlgopT3 on the T3's inner segment)
+    passes 3.63% -> 3.41% of the pairs (-6% relative), rz chi2 87.6% -> 85.7%, the DNN passes MORE (74.5% -> 79.6%).
+  - pT3 tracer level 2 (inner pLS-segment tracklet sub-cuts; same jobs, same pair counts): pLS absorbed by pT5 before the
+    pT3 loop 51,691 -> 52,711 (+1,020 = +2.0% of 123k pLS). Inner fails OFF -> (i): PPBB z 465,263 -> 439,802, z pointed
+    516,403 -> 491,950, betaOut 185,902 -> 169,582; PPEE rt 154,818 -> 152,316, rt pointed 532 -> 572, betaOut 33,987 ->
+    33,900; final dBeta (BB+EE, sub-code 15) 125,683 -> 123,022. Scaled by the pair ratio after the radius cut (0.950),
+    the excess fails of (i) sit in the ENDCAP rt window (+5.3k), the final dBeta (+3.7k) and the endcap betaOut (+1.6k);
+    the barrel betaOut fails LESS (-7.0k). Reading: the pLS pseudo-hit position/direction of (i) (the hit itself, not the
+    KF state on it) narrows the endcap rt extrapolation; the next test is (i) with the host-like pseudo-hits.
+  - Split (replaceHits False = option-(i) fields with the host pseudo-hits, same events): pT5 absorption 51,738 (OFF
+    51,691), pairs 2,273,432 (OFF 2,277,469), inner pass 55,815 (OFF 55,769), DNN pass 81.0% (OFF 74.5%), pT3 29,336
+    (+8.3%; full (i): 24,838, -8.3%). The whole pT3 loss of (i) is its pseudo-hits (PCA point/momentum, last hit = the
+    hit itself instead of the host's KF state on it); next: KF-state-like device pseudo-hits (helix point at the last
+    hit's radius), then the tracer and O6-1 again.

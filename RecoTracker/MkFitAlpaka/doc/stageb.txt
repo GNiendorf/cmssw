@@ -1,0 +1,219 @@
+stageb: stage B of the GPU-menu plan (LST seeds + LST input on the device), round 8 (2026-10-04, lane stageb)
+==================================================================================================================
+Area L/r8_stageb/CMSSW (copy of main6), branch r8/stageb. Everything here is SWITCH-GATED and OFF by default.
+
+1. SHARED FIELD (R7-M1): interface/math/TkBfield.h
+   mkfitdev::field::tkBfield(x, y, z [cm], bx, by, bz [T]) / tkBz(...) / tkBfieldValid(...): a transliteration of
+   OAEParametrizedMagneticField::inTeslaUnchecked -> magfieldparam::TkBfield("3_8T")::getBxyz -> BCycl<float> with
+   unsafe_expf<3>, float as the release. The menu's field is this closed form for r < 115 cm, |z| < 280 cm
+   (r7_seedfit/mf/mfcheck.log). Check: bitwise equal to the release library on 773,690 grid points (r 0-115 cm,
+   |z| < 280 cm, 3 phi) with the x86-64-v3 flags of the release (-O2 without FMA: 1-ulp differences, max 9.5e-7 T);
+   lanes r8_stageb/field/check_tkbfield.cc. Device: function-local constants (a namespace constexpr array is host-only
+   in CUDA). Bz/Bz(0) along a track: 0.998 at z 60 cm, 0.988 at z 150 cm, 0.967 at z 250 cm.
+   Consumers now: lstin ptFieldCorrection. Intended: stagec device PCA, the OT Lorentz shift, seeds option (a).
+
+2. SEEDS (b') LIGHT MODE (R7-M2), src/alpaka/seeds/LstSeedKernels.h
+   Light mode = LSTOutputConverter seedStates False (seed hits + a placeholder state; the host makeSeed KF is skipped)
+   + the device seed fit (lstSeedFit, originPrior 3 = host-creator structure, passes 1) + dropFailed.
+   R7-M2 diagnosis (CPU, ttbar 30 events, per-seed dumps of a full-host job and a light job, rows aligned):
+   - the host creator FAILS on ~43 pT3/pT5 per event (991 in 13 events) and LSTOutputConverter.cc:422 keeps the PIXEL
+     seed for them (pixel-track hits incl. the CA-extension OT hits, pixel-creator state). In full mode these rows
+     are pixel seeds (e.g. 7 hits); in light mode they are the full pT3/pT5 hit list (e.g. 17 hits);
+   - the device fit fails on exactly those seeds (rejBackward: the host order puts the IT hits first, so an endcap IT
+     hit beyond an OT barrel hit is a backward step for both) and dropFailed DROPPED them: that is the round-7 light
+     loss (-1.28%; the reviewer's estimate counted the full-mode rejection rate, where these seeds never reach the fit).
+   Round-8 changes (commit 630ef14):
+   - pixel fallback (lstSeedFitPixelFallback, default true): a failed seed with leading pixel hits and OT hits is
+     refitted on its leading pixel hits with the same creator structure and truncated to them (nHits, last-hit
+     position); OT-only (T5/T4) failures are still dropped (the host skips those TCs);
+   - tolerant 'against the momentum' test (lstSeedFitBackwardTol, 0.01 cm; round 7 = 0): removes the 230 per 23
+     events false rejections of host-accepted seeds (same or nearly the same plane);
+   - per-seed status in the dump (st, nHitsDev) and counters fallback / fallbackFailed.
+   Emulation check (13 events with equal seed counts): every host fallback -> device fallback (991/991), every host
+   success -> device success (15,251/15,251, one seed failing in both). Full mode: rejBackward 230 -> 0.
+   Remaining light-mode differences (exact list in REPORT.txt):
+   (L1) the fallback seed = leading IT hits + a device fit with the default-region prior, while the host fallback is
+        the pixel seed (IT + its CA-extension OT hits: 7 -> 4 hits typically; prior of the pixel region (pT, vtx,
+        0.2, 0.2));
+   (L2) T5/T4 whose host creator fails (16 per 23 events): the host skips the TC; the device drops 13, keeps 3; the
+        kept seeds shift the seed labels (seed-label comparators are not usable in light mode, truth pairing is);
+   plus every full-mode difference (state model: propagator/field/material, pixel track-angle refit, float).
+
+3. LST INPUT (lstin)
+   R7-H2 decomposition (CPU 500 ttbar + 500 QCD target menu, deterministic, cross-job paired truth; the replace/on arms
+   run from the r7_lstin area, i.e. the same code as the r7 OFF/lazy dumps):
+     replace vs on: identical within 0-1 TP: the device OT hits, the SoA order and the host-seed set change nothing;
+     OFF -> replace = (i) alone: ttbar -0.00080 +- 0.00047 (z -1.7; pT 3-10 z -2.5), QCD -0.00039 +- 0.00052
+       (z -0.8; pT > 100 z -1.4); NOT endcap (QCD |eta| >= 1.6 z +0.5);
+     replace -> lazy = (ii)+(iii): QCD 12 TPs lost / 0 gained (z -3.5), ttbar 9 / 3, ALL at |eta| >= 1.6.
+   So the endcap loss of 'lazy' is change (ii) (pixel tracks whose host creator fails get a pLS; their TCs are skipped),
+   not the pT bias; (i)'s loss sits at pT 3-10 / > 100 GeV (r6: pT3 -9% at LST level with option (i)).
+   ptFieldCorrection (commit 4a386a1, default false): pLS momentum x <Bz>_hits / Bz(0) with the shared field (the
+   radius R = pt/k stays Patatrack's). replace -> replace+corr: 1-3 TPs flip (ttbar): no effect on the (i) loss.
+
+4. CRITERION RUNS (D7-b), light mode = what removes the host time (GPU, in-job paired vs the switch OFF, all-TP selection)
+   run                          paired eff (lost / gained)          MTV signal eff (vs eta)   fake          dup
+   ttbar 500 default (bl8)      -0.00013 +- 0.00001 (612 / 317)     .89124 -> .89048          .02127->.02124 .01109->.01108
+   QCD 500 default (bl8)        -0.00014 +- 0.00001 (996 / 515)     .84044 -> .84015          .03073->.03068 .01108->.01106
+   ttbar 500 fit menu (bl8fit)  -0.00014 +- 0.00001 (620 / 308)     .89167 -> .89096          .02457->.02459 .01126->.01122
+   QCD 500 fit menu (bl8fit)    -0.00014 +- 0.00001 (1010 / 526)    .83973 -> .83927          .03441->.03433 .01130->.01129
+   0 MTV bins beyond 2 sigma in every run (eff/fake/dup vs pT, eta, phi, dxy, vxy); QCD > 100 GeV 1158 -> 1154
+   (default), 1134 -> 1132 (fit menu).
+   Round 7 light: -0.0128. Verdict: FAILS |delta| < 1 sigma; OFF.
+   Host time (FastTimerService thread time, same job, per tracked event): LSTOutputConverter full 31.7 -> light 10.0 ms
+   (ttbar), 34.9 -> 10.4 ms (QCD); the build module's host time is unchanged (1.59 vs 1.58 ms).
+
+5. LOST-SEED DUMP (full mode = the (b') state model alone; plugins/LostSeedDump.cc joined with the seed-fit dump)
+   GPU, 300 events, seeds dumped for 150: ttbar paired -0.00002 (53 / 30), QCD -0.00003 (116 / 60).
+   In the dumped events: ttbar 45 lost / 24 gained TPs, QCD 64 / 35. The seeds of the lost TPs:
+   - all fitted without rejection; charge flips 1 (ttbar) / 3 (QCD) = 2-5% (all seeds: 0.025% / 0.079%);
+   - |1/pT pull| > 1 (dev - host over the host sigma): 31% (ttbar) / 42% (QCD) vs 3.2% / 7.6% of all fitted seeds;
+     several catastrophic (pulls 10-4000: e.g. device pT 0.02 vs host 1.0 GeV; z pulls 50-90 on T5 seeds);
+   - classes as the population (T5/T4 56%, pT3/pT5 44%); 73% have no ON track from the same seed;
+   - TPs mostly pT < 2 GeV, all |eta|; QCD: 10 of 64 above 10 GeV.
+   Tails in the whole population (any parameter |pull| > 1): T5/T4 4.5% (pT < 1), 11% (1-2), 18% (2-10), 34% (> 10);
+   pT3/pT5 1.8%, 2.0%, 4.0%, 26%. The net loss is the tail of the state model, not the rejection logic.
+
+6. LSTIN: WHY THE HOST PIXEL-SEED CREATOR FAILS (lazycheck, CPU ttbar 100; LST r8/stageb 33e0406 + fbca80c log lines)
+   141 failures (= round 7's count), 140 of them at |eta| >= 1.6. All 141 have their first two radius-ordered hits
+   within 0.05 cm in radius: the two faces of one disk, or a barrel overlap, so FastHelix(hit1, hit0, origin) is
+   near-degenerate. 47 of them also have a step backward along the track.
+   But 13,492 successful seeds share the near-radius first pair, so it is necessary, not sufficient (~1% of such
+   seeds fail). No cheap device rule: an exact emulation needs FastHelix + the first KF steps (the pixel half of
+   option (a)).
+
+=====================================================================================================================
+ROUND 10 (2026-10-04, lane stageb, area L/r10_stageb/CMSSW = main6 at 12:05 pm incl. SEEDS_LIGHT ON, branch r10/stageb)
+=====================================================================================================================
+Everything below is SWITCH-GATED and OFF by default (MkFitAlpakaLstInputProducer parameters, default = rounds 7-9).
+
+7. (a) pLS PSEUDO-HITS OF OPTION (i) (D9-a / D10-h: (b) methods only)
+   Code (RecoTracker/MkFitAlpaka r10/stageb 211d2d9, b70f38f): MkFitAlpakaLstInputKernels KernelPLSCompute
+   - pseudoLastHit 1: r3LH = the Patatrack helix point at the outermost hit's transverse radius (circle-circle
+     intersection nearest to the hit; z from the helix arc length), p3LH = the helix tangent there;
+   - pcaAnchor 1: the PCA quantities (pseudo-hit 0 = calculateR3FromPCA, pseudo-hit 1 = PCA momentum, dxy / dz of
+     pseudo-hit 3, superbin) from the Patatrack helix RE-ANCHORED on the outermost hit (same curvature, the tangent at
+     the hit; the host takes TSCBLBuilderNoMaterial of the KF seed state on the last hit);
+   - replaceHitSlots (the 'replace' validation arm): which device pseudo-hits replace the host ones (bit 0 PCA point +
+     dxy/dz, bit 1 PCA momentum, bit 2 last hit + its x in pseudo-hit 3); customizeLstInDeviceReplaceHelix /
+     ...ReplaceAnchor / ...LazyMaskHelix / ...LazyMaskAnchor.
+   7a. Where the pseudo-hits differ from the host (compare mode dump, CPU ttbar 20 events, 27,975 matched pLS, all quads):
+                                 rounds 7-9 (hit)     helix (pseudoLastHit 1)   anchor (pcaAnchor 1)
+       r3LH |dev - host| 3D       q50 33 um q90 0.46 mm  q50 1.5 mm q90 6.1 mm    = rounds 7-9
+       r3LH |dz|                  q50 7 um  q90 0.26 mm  q50 1.4 mm q90 6.1 mm
+       dz (pseudo-hit 3)          q50 1.07 mm q90 5.9 mm  = rounds 7-9             q50 2.6 mm q90 11.5 mm
+       dxy                        q50 0.16 mm q90 0.73 mm = rounds 7-9             q50 0.17 mm q90 0.67 mm
+       r3PCA 3D                   q50 0.38 mm q90 1.3 mm  = rounds 7-9             q50 0.69 mm q90 2.8 mm
+       ptPCA relative             q50 0.9% q90 4.2% (endcap q50 1.6%: Patatrack's field at the origin vs the KF's field)
+     |dz| device vs host by region (rounds 7-9): pT < 1 GeV barrel q50 0.7 mm, endcap q50 2.2 mm q90 9.8 mm; pT > 5 GeV
+     barrel q50 30 um. The device last hit is already within 33 um of the host KF state ON the last hit: the helix point
+     moves it AWAY (it inherits the Patatrack z0 / cot difference to the KF).
+   7b. pT3 tracer (LST_PT3_TRACE, serial, ttbar 100, 'replace' arm = host pLS set with device fields + the pseudo-hits
+       named; OFF = 27,086 pT3 = round 9's):
+       arm                                    pT3     vs OFF   pLS in pT5   pairs tried
+       OFF                                    27,086  -        51,691       2,277,469
+       fields only (r9 split, host pseudo-hits)  29,336  +8.3%   51,738       2,273,432
+       (i) all device pseudo-hits (r9)        24,838  -8.3%    52,711       2,162,585
+       slot 4: device r3LH (hit) only         29,299  +8.2%    51,732       2,272,446
+       slot 2: device PCA momentum only       29,258  +8.0%    51,732       2,273,841
+       slot 1: device PCA point + dxy/dz only 24,965  -7.8%    52,695       2,165,066
+       slot 3: PCA point + PCA momentum       24,870  -8.2%    52,698       2,164,684
+       helix r3LH (all slots)                 24,014  -11.3%   50,239       2,462,330  (outer pLS-segment fails 14.2k -> 23.3k)
+       anchor PCA (all slots)                 25,483  -5.9%    52,534       2,183,493
+     => The whole (i) pT3 change is the PCA POINT pseudo-hit (pseudo-hit 0 = calculateR3FromPCA(p, dxy, dz) and dxy / dz
+        in pseudo-hit 3): ~1,000 more pLS are absorbed by pT5 (-5% pairs tried for pT3) and the pT3 pass rate per pair
+        drops ~3%. NOT the last-hit pseudo-hit (the hypothesis of r9_lstin 5b): the device r3LH alone gives the fields-only
+        +8%. Re-anchoring the PCA on the last hit recovers 2.4 of the 8.3 points; the helix last hit is worse than the hit.
+     LST's pLS r-z slope (z_LH - vz)/(rt_LH - rt_PCA), device - host, rounds 7-9: barrel q50 0.0006, endcap q50 0.010 q90
+     0.048 (vz = dz sin^2(theta) carries the dz difference); anchor: endcap q50 0.018. A pT3 count closer to OFF does not
+     come with pseudo-hits closer to the host: the KF and Patatrack fits differ in z0 / cot at the 1-mm level in the
+     endcap, and LST's pLS cuts were tuned on the KF values.
+     Interpretation, with round 7's truth check (doc/lstin.txt: Patatrack's eta / dxy / dz are 1.8x / 3.8x / 3.7x CLOSER to
+     the TrackingParticle than the host KF seed's, which is propagated back from the last hit without material): the
+     (i) loss is not worse inputs, it is LST's pLS pT3 / pT5 windows tuned on the KF seed's PCA. Two (b)-style ways out:
+     emulate the KF on the device (section 8), or retune the LST pLS cuts on the Patatrack PCA (LSTCore: the owner's team).
+   7c. O6-1 of the best pseudo-hits of the round (anchor; chosen on the tracer before any O6-1 number): ON =
+       customizeLstInDeviceLazyMaskAnchor (lazy pixel seeds + LSTPixelSeedFailMask + pcaAnchor 1) vs OFF = the target
+       defaults (stage D, SEEDS_LIGHT), CPU, 8 threads, cross-job paired truth (menu/scripts/paired.py), same events.
+       Rule pre-declared 12:15 pm (PROGRESS.txt): paired hltGeneral AND hltInitialStep z > -1 on both samples, no
+       paired region below z -2, no MTV eff bin below -2.5 sigma, QCD pT > 100 GeV z > -2.
+                                     ttbar 500 (332 tracked)            QCD 500
+       hltGeneralTracks paired       -0.00065 +- 0.00048 (z -1.36)      -0.00035 +- 0.00052 (z -0.67)
+       hltInitialStepTracks paired   -0.00035 +- 0.00044 (z -0.79)      -0.00056 +- 0.00051 (z -1.10)
+       pT 3-10 (gen / init)          z -2.18 / -2.14                    z -0.44 / -0.73
+       pT > 100 (gen / init)         (33 TPs) 0 / 0                     z -1.83 / -2.21
+       |eta| >= 1.6 (gen / init)     z -0.90 / -0.19                    z +0.94 / 0.00
+       pooled ttbar + QCD            hltGeneral -0.00044 +- 0.00039 (z -1.13), hltInitialStep -0.00050 +- 0.00038 (z -1.31)
+       MTV (o61.py, coarse bins)     0 adverse bins beyond 2 sigma in 186 (ttbar) / 192 (QCD) tests; duplicates DOWN 2-5
+                                     sigma (initialStep / general, pT 0.4-1.6, |eta| 1.5-3)
+       triggers (68 paths)           ttbar 4288 -> 4282 (4 paths: MET -1, b-tag -2/-2/-1); QCD 12195 -> 12197
+       r9 (i) for reference          ttbar -0.00075 (z -1.6), pT 3-10 z -2.5 / -2.3; QCD -0.00041 (z -0.8), > 100 GeV -1.4 / -1.8
+       VERDICT: FAILS (ttbar hltGeneral z -1.36, pT 3-10 z -2.2; QCD initialStep z -1.10, > 100 GeV z -2.2). Slightly better
+       than (i) on ttbar, slightly worse on QCD high pT: within the noise of each other. OFF.
+       Host time (CPU, FastTimerService, ms per job event, stage-B modules): ttbar 26.8 -> 29.7, QCD 41.8 -> 48.0 (the lazy
+       creator moves into LSTOutputConverter: 7.7 -> 21.2 / 14.2 -> 36.3; mask 4.1 / 5.7). No host time is saved until
+       the pLS state comes from the device (section 8).
+   7d. CUDA (L4, 20 ttbar events, compare mode): the anchor and helix modes give the serial quantiles of 7a to 3
+       digits (27,975 matched pLS in both; OT rows bitwise, badX/Y/Z 0). KernelPLSCompute: REG 90-104, STACK 32-64,
+       LOCAL 0 on every arch, block 128.
+
+8. (b) DESIGN: THE pLS DEVICE SEED STATE (not implemented this round)
+   What 7 shows: Patatrack's fit and the KF seed differ by ~1 mm in z0 (endcap, low pT) and the LST pLS cuts were tuned on
+   the KF values. Moving Patatrack points around (helix, anchor) cannot reproduce a KF. The (b)-method answer is to RUN
+   the D2 device fit on the pixel-track hits BEFORE LST, inside hltInputLSTDevice, and to build every pLS field and
+   pseudo-hit from its result:
+   - input: per tight pixel track its hits (Patatrack SoA rows -> legacy cluster keys, already mapped: pixKey / otKey)
+     in the creator's order (radius order, includeFourthHit as hltInitialStepSeeds); hit positions + global
+     covariances from the device EventOfHits hits (the same rows mkFit uses; DEVICE_HITS is ON in the target);
+   - fit: LstSeedFit.h host-structure mode (originPrior 3 = FastHelix through the region origin, the creator's initial
+     errors, ONE forward KF pass, the creator's rejections rejDPhi / rejBackward), the PIXEL region of
+     SeedGeneratorFromProtoTracksEDProducer (origin = the proto track's vertex, its pT; R8 L1 notes);
+   - outputs: the KF state on the last hit = r3LH / p3LH / ptIn / ptErr / eta / phi / deltaPhi; then TSCBL with the
+     menu field (stagec's device PCA kernel of the output converter does exactly TSCBLBuilderNoMaterial on the device:
+     reuse it) = dxy, dz, p3PCA, r3PCA, superbin. This makes the pLS fields KF-like by construction (the D2 known
+     regression level, not Patatrack-vs-KF);
+   - creator-failure rule: a pixel track whose device fit is rejected gets NO pLS (as stock: no seed, no pLS). Measured
+     against LSTPixelSeedFailMask with maxDr < 0 (the host creator on every pixel track = exact): a confusion table
+     (device reject / host fail) per event; r8 counted 141-145 host failures per 100 ttbar events, 140 at |eta| >= 1.6,
+     all with the first two radius-ordered hits within 0.05 cm (FastHelix near-degenerate), so the rejection logic
+     must reproduce the creator's FastHelix degeneracy handling. The host mask (3.7 ms) then goes;
+   - the pLS seed state for mkFit: the light pLS seed in LSTOutputConverter (hits only, placeholder state) and the
+     device fit replaces it in the build module, as T5/T4/pT3/pT5 today (D2); hltInitialStepSeeds (15.9 box ms) and
+     hltInputLST (3.5) leave the menu; the lazy creator in the converter goes too.
+   Cost: one forward KF over 3-5 hits for ~1,200 tight pixel tracks per event: small next to LST.
+   Order of work: (1) the kernel in hltInputLSTDevice + the compare dump of 7a (device KF vs host KF state per pLS:
+   expect the D2 pull tails, |1/pT pull| > 1 in ~3%); (2) the confusion table vs the mask; (3) the pT3 tracer (target:
+   OFF's 27,086 within ~1%); (4) O6-1 (ttbar + QCD 500).
+
+9. (c) DESIGN: THE DEVICE SEED HAND-OFF (LST TC -> mkFit device seeds, no host TrajectorySeeds)
+   Who reads the LST seed collection hltInitialStepTrajectorySeedsLST in the menu (config scan of the CI-shape target +
+   stage D + light cfg, design/consumers_*.txt):
+     scheduled: hltInitialStepMkFitSeeds (MkFitSeedConverter: host conversion to mkFit seeds, the thing (c) replaces) and
+     hltInitialStepTracks (MkFitAlpakaOutputTrackConverter: ONLY TrackExtra::setSeedRef(RefToBase(handle, label)) and
+     the SeedStopInfo vector size). Validation only: hltSeedsForMkFit (TrackFromSeedProducer) / MTV (doSeedPlots False
+     in every MultiTrackValidator of the O6-1 config).
+   Who reads the TrackExtra seedRef downstream: hltInitialStepTracks -> hltInitialStepTrackSelectionHighPurity
+     (TrackCollectionFilterCloner, copyExtras) -> hltGeneralTracks (TrackListMerger, copyExtras = True: copies the ref,
+     never dereferences it) -> PF (PFTrackProducer), egamma isolation, TICL, vertices, MTD (unscheduled): none of them
+     dereferences the seed. So a null seedRef is safe at the config level (to be confirmed by a run with the seed
+     product absent: any getter of the seed would throw ProductNotFound).
+   Design:
+   - mapping, no host objects: mkFit seed hit = (mkFit layer, hit index), and the mkFit hit index of a layer IS the
+     legacy cluster key (stock MkFitHitWrapper layout; the device EventOfHits keeps getOriginalHitIndex = the key).
+     LST OT hit row = cluster key (stage D) and carries its detId; pLS hits carry the pixel cluster keys (idxs) and the
+     Patatrack SoA row (detectorIndex). Layer = the EventOfHits module table (detId / pixel module -> mkFit layer),
+     already on the device (MkFitAlpakaEventOfHitsModuleTableESProducer, shared by lstin and the device hits);
+   - kernel K1 (one thread per TC, block 128): read hitIndices[TC][layer slot][hit] + the pLS of pT3/pT5/pLS, drop
+     duplicates by (layer, key), order the hits as LSTOutputConverter's hitLess (barrel by rSpan, endcap by |zSpan|:
+     per-layer constants in the module table; a <= 20-element insertion order inside the thread, no general sort),
+     apply the T5 "first two hits on PS-P" and T4 "skip a PS-S hit on the first layer" selections, write a SeedSoA row
+     (hits, nHits, lastX/Y/Z from the device hit table, label = TC index, charge from the LST TC or the fit);
+   - the device seed fit (D2) fills params/errors exactly as now (it already ignores the host state in light mode);
+     pLS rows need section 8 first (their state comes from the pixel fit before LST);
+   - capacity: nTC <= LST's TC capacity; seed rows fixed, overflow counter (status product), deterministic order
+     (TC order of LST output);
+   - host products left: SeedStopInfo (one per seed; size from the device count read-back that the build already does),
+     the TrackExtra seedRef = null (or an empty seed collection with the old label for the validation-only readers).
+   Saves: LSTOutputConverter light (~8.8 box ms) + MkFitSeedConverter (1.4) + the seed H2D copy; ~-7..-9 box ms.
+   First kernel: not written this round (time went to 7). Validation plan: bitwise seed hit lists vs MkFitSeedConverter
+   on the light seeds (same TC order), then the in-job paired truth with the build module reading the device rows.

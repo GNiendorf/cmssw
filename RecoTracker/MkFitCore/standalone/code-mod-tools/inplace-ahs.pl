@@ -1,4 +1,4 @@
-#!/usr/bin/perl
+#!/usr/bin/env perl
 
 open (F, $ARGV[0]) or die "can not open $ARGV[0]";
 

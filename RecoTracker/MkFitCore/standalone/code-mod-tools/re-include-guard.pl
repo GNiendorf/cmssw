@@ -1,4 +1,4 @@
-#!/usr/bin/perl
+#!/usr/bin/env perl
 
 # all files: `find RecoTracker -name \*.h -or -name \*.cc -or -name \*.icc -or -name \*.acc`;
 

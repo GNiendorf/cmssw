@@ -1,0 +1,5 @@
+Verbatim, unmodified copies of STOCK mkFit Matriplex headers from CMSSW_20_1_0_pre2
+(/cvmfs/cms.cern.ch/el9_amd64_gcc13/cms/cmssw/CMSSW_20_1_0_pre2/src/RecoTracker/MkFitCore/src/{Matrix.h,Matriplex/*}),
+used only as the reference of test_mplex_stockref.cc. They are vendored because SCRAM's private-header check forbids
+including RecoTracker/MkFitCore/src/* from another package. Verify with:
+  diff -r <this dir> against the release paths above (no differences expected).

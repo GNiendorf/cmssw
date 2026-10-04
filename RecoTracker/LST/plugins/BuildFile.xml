@@ -1,5 +1,9 @@
 <!-- host-only plugins -->
 <library file="*.cc" name="RecoTrackerLSTPlugins">
+  <!-- local patch (MkFitAlpaka round 8, lane otdev): on-demand OT rechits in LSTOutputConverter -->
+  <use name="RecoLocalTracker/Phase2TrackerRecHits"/>
+  <use name="RecoLocalTracker/Records"/>
+  <use name="DataFormats/Phase2TrackerCluster"/>
   <use name="DataFormats/TrackCandidate"/>
   <use name="DataFormats/TrackReco"/>
   <use name="DataFormats/TrackerRecHit2D"/>
@@ -20,11 +24,17 @@
   <use name="TrackingTools/Records"/>
   <use name="TrackingTools/TrajectoryState"/>
   <use name="TrackingTools/TransientTrackingRecHit"/>
+  <!-- local patch (round 9, lane hostrest): job-wide getDetectorType memo -->
+  <use name="tbb"/>
   <flags EDM_PLUGIN="1"/>
 </library>
 
 <!-- alpaka-based portable plugins -->
 <library file="alpaka/*.cc" name="RecoTrackerLSTPluginsPortable">
+  <!-- local patch (MkFitAlpaka round 8, lane otdev): OT SoA header + host dictionary only (no link to its device libs) -->
+  <use name="RecoTracker/MkFitAlpaka" source_only="1"/>
+  <!-- local patch (MkFitAlpaka round 9, lane lstin): LSTInputProducer otKeysOnly reads the OT clusters -->
+  <use name="DataFormats/Phase2TrackerCluster"/>
   <use name="alpaka"/>
   <use name="DataFormats/TrajectorySeed"/>
   <use name="DataFormats/TrackReco"/>

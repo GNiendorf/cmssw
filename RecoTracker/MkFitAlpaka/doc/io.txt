@@ -1,0 +1,116 @@
+MkFitAlpaka lane "io": both ends of the device chain and their host-side cost (round 4, 2026-10-03)
+====================================================================================================
+Owner files: interface/seeds/*, src/alpaka/Seeds.dev.cc, src/alpaka/seeds/*, src/alpaka/hits/*,
+src/alpaka/EventOfHits.dev.cc, plugins/*OutputWrapper*, plugins/alpaka/*EventOfHits*, plugins/alpaka/*Seed*,
+plugins/MkFitAlpakaLightEventOfHits.cc. Earlier notes: doc/seeds.txt (round 3), doc/hits.txt (round 1).
+
+1. PRODUCTION CHAIN TAIL (D4-C2): seeds::exportAndClean
+  interface/seeds/alpaka/SeedsAlgo.h
+    exportAndClean(queue, seedCands, slots, hots, hotsPerSeed, nSeedsDev, capacity, removeDuplicates, dc[4],
+                   exported, out, brokenChains = nullptr)
+  = stock export_best_comb_cands(remove_missing_hits = true) -> clean_duplicates_sharedhits_pixelseed -> export_tracks.
+  - NO filter and NO repack. The engine (lane build) owns the post-backward-search filter + repack + compaction;
+    stock repackCandPostBkwSearch "should only be called once" (TrackStructures.cc:231).
+  - nSeedsDev: device pointer to the survivor count of the engine's last compaction. Nothing is read on the host.
+    Rows s >= *nSeedsDev are never read. The count is clamped to the store rows in the kernels (defensive only).
+  - brokenChains (optional device uint32): the export walks each front candidate's HoT chain. It counts the tracks
+    where the walk does not find exactly nFound valid hits in nFound + nMissing nodes. Example cause: a second
+    repack, which reverses the forward part of the chain again. This is an independent check that the repack ran
+    once. It must stay 0. Build's MkFitAlpakaBuildProducer passes its own status word; a status-product slot is
+    suggested to integ (kExportBrokenChains).
+  - runChainTail (with the filter) is kept for the validation producers only (MkFitAlpakaSeedImportProducer on
+    freshly imported rows). It must never run after engineRunChain.
+  Edge case reported to build (r4_io/NOTES_for_build.txt): engineFilterCompact returned early for nSeeds = 0
+  without writing src.nSurvivors.
+
+2. HOST -> DEVICE INPUTS
+  2a. EventOfHits on CPU (serial). Measured, not assumed. 1 thread, 20 ttbar replay events of 400-500k hits and
+      310,784 bins, ms/event:
+        host HitVec -> HitSoA fill 4.6 | KernelBinHits 5.1-6.2 | KernelFillMembers 3.6-4.5 | KernelRankAndStore 4.3-5.2
+        | KernelFinalizeBins 1.5-1.9 | scans 0.1-0.2 | buffers + memsets 0.2-0.5 | dead regions 0
+      Total 19-24 vs stock hltMkFitEventOfHits 12.9 in the same job.
+      (Temporary per-kernel timers, not committed: r4_io/tmp/*.instr.)
+      Review H6 said the host fill dominates. It does not: the fill is about 20% of the cost. The rest is three
+      memory-bound per-hit passes:
+        - bin: reads 28 B/hit, writes 24 B/hit;
+        - fill members: scatter of 24 B/hit through a random bin cursor;
+        - rank and store: reads 24 B/hit, writes 20 B/hit.
+      The fill itself is 40 B read + 48 B written per hit, about 11 ns/hit on this loaded box. Stock writes about
+      16 B/hit of hit infos plus a per-layer radix sort that stays in cache.
+      Committed, bit-identical (EOH_COMPARE vs stock 0 mismatches):
+        - fillHits through raw column pointers: one pass, no per-element SoA proxy;
+        - KernelFinalizeBins through raw column pointers;
+        - KernelRankAndStore fast path for single-member bins.
+      Effect: within the box noise (load average about 40). Not a real speed-up on its own.
+      Then, also bit-identical:
+        - FillMembers stages only the (fine phi, row) word; RankAndStore reads origIdx/info by row;
+        - BinHits takes one sqrt of the selected half-length argument;
+        - bin index + fine phi in one per-hit word.
+      Final head, A/B/A/B, 1 thread, 40 ttbar events: main 21.2 / 21.4 vs io 18.7 / 18.5 ms/event (-13%); stock 12.2-12.4.
+      The port is still about 1.5x stock on serial.
+      Next, for CPU:
+        (i)   (done: staging of (fine phi, row) only, one per-hit word)
+        (ii)  Fuse BinHits + FillMembers per layer on CPU backends, where hits of one layer are contiguous in the
+              wrappers.
+        (iii) Skip the HitSoA copy on CPU completely: device input straight from products (2c).
+      No per-event allocation is visible on CPU: every buffer comes from the caching allocator.
+  2b. Seeds. seeds::packSeedsToDevice(queue, seeds) (interface/seeds/alpaka/SeedsPackDevice.h, host-only):
+      - CPU backends pack straight into the device collection: no host staging, no copy;
+      - GPU backends use one pinned staging buffer and one copy.
+      Last-hit positions come from the device EventOfHits (importSeeds DeviceHitPositions), so the packer does no
+      per-seed hit lookup.
+      Used by MkFitAlpakaSeedImportProducer (useDeviceHits); offered to build's producer.
+      Cost of the pack: about 2k seeds x (27 floats + <= 32 HitOnTrack): well below 1 ms.
+  2c. DESIGN (not implemented): hits straight from device products, no host converters (review option (c)).
+      What stock MkFitSiPixelHitConverter / MkFitPhase2HitConverter compute per hit (MkFit/plugins/convertHits.h):
+        - row index = cluster index in the legacy cluster collection (holes allowed);
+        - pos = surface.toGlobal(localPosition);
+        - err = ErrorFrameTransformer::transform(localError, surface) as SMatrixSym33;
+        - layer = mkFitLayerNumber(detid);
+        - detIDinLayer = uniqueIdInLayer(layer, detid);
+        - pixel: setupAsPixel(shortId, sizeX, sizeY); OT: setupAsStrip(shortId, 255, size).
+      Device sources:
+        - pixel: hltPhase2SiPixelRecHitsSoA, with xLocal/yLocal, xerrLocal/yerrLocal, clusterSizeX/Y and
+          detectorIndex per row, rows in module order;
+        - OT: the LST input SoA (xs/ys/zs/detid/clustsize/idxs), or better the OT rechits before LST packs them.
+      Needed:
+        - ES (per IOV, device): per-module rotation + translation (float, as Surface), layer, uniqueIdInLayer, pitch /
+          strip length for the OT local errors. The es lane's module table already holds position and axes; it
+          needs the inverse map and the error parameters.
+        - The row <-> cluster-index map. Pixel: the legacy clusters are made from the SoA in the same order, so the
+          index is moduleStart + in-module position. Validate it, because the harness had to recover originalId for
+          persisted clusters. OT: idxs.
+        - One kernel per hit: toGlobal + the error transform, with the SAME float/double operation order as Surface
+          / ErrorFrameTransformer. Stock computes in double for the rotation of the error.
+        - Pixel edge clusters: the SoA sizes are signed (negative at module edges); stock uses the legacy cluster
+          sizeX/sizeY.
+      Validation: the HitSoA from device products vs the HitSoA from the host converters, hit by hit, bitwise
+      (pos, err, packed, layer, origIdx); then EOH_COMPARE; then the chain.
+      Risks:
+        - bit-identity of the error transform (GlobalError is built in double);
+        - pixel CPE local errors in the SoA may be stored in a different precision than the legacy rechit error;
+        - OT errors are not in the LST SoA.
+
+3. LIGHT HOST EVENTOFHITS (D4-H6): MkFitAlpakaLightEventOfHits (host EDProducer, plugins/)
+  It puts MkFitEventOfHits(std::make_unique<mkfit::EventOfHits>(trackerInfo)): layers only, no hits, no deads, no
+  beam spot.
+  The stock MkFitOutputConverter and MkFitOutputTrackConverter read only eventOfHits[layer].is_pixel()
+  (MkFitOutputConverter.cc:406, MkFitOutputTrackConverter.cc:424).
+  Cost: 0.11 ms/event (serial job, 30 events) vs the full stock hltMkFitEventOfHits at 12.9 ms.
+  Verified identical: TrackCandidates from the stock converter with the light product vs with the full product, on
+  the same chain tracks, paramTolerance 0 (r4_io/REPORT.txt).
+  Never feed it to MkFitProducer or MkFitFitProducer: they need the hits.
+
+4. TrackSoA -> MkFitOutputWrapper (MkFitAlpakaOutputWrapperFromTrackSoA)
+  Cost: 0.09 ms/event serial (round 3), so no speed work is needed.
+  It now sends a LogWarning when the TrackSoA writers' overflow counters (nOverflowTracks, nOverflowHits) are
+  non-zero. The full per-event status product (integ, D4-H4) is reported by integ's warnIfNotClean in the build
+  module / status check.
+
+5. TESTS
+  r4_io/cfg/eoh_cfg.py: replay + the device EventOfHits (compare=1: EOH_COMPARE vs stock) + the light EOH; timing.
+  r4_io/cfg/accept_cfg.py: the round-3 chain on serial AND cuda in one job.
+    Run A uses main's binaries and writes the inputs + candidates.
+    Run B uses io's binaries, reads A's file, and compares its candidates with A's (paramTolerance 0,
+    requireIdentical). It also checks the light EOH (io=1).
+  r4_io/run_accept.sh A|B <sample> <gpu>.

@@ -1,0 +1,87 @@
+MkFitAlpaka lane fitdev (round 8, 2026-10-04): switch-gated physics DEVIATIONS of the device fit (D8-d, D8-e)
+=====================================================================================================================
+L = lanes/mkfit_alpaka, F = L/r8_fitdev (lane dir: PROGRESS.txt, REPORT.txt, accept/, menu/, tests/, scripts/, cfg/).
+All switches are OFF by default; with them off the target is byte-for-byte the round-7 code path (checked: replay
+D-M4 PASS 4/4 with the switches off, ttbar CPU). The owner sets the defaults.
+
+1. THE SWITCHES
+  D3  mkfitfit 0001 in the device fit (doc/DEVIATIONS.txt D3). MkFitAlpakaFitDeviceProducer / MkFitAlpakaFitProducer:
+        edgeOutliers (bool, false = stock), edgeChi2Cut (double, 20), outlierRounds (int, 1 = stock).
+      Code: src/alpaka/fit/FitTracks.h FitOptions (runFinalFit argument, carried in FitHitAccess::opt);
+        FitKernels.h removeOutliers: cut |= (j == 0 && chi2b > cut) || (j == nFH - 1 && chi2f > cut), j = fit order
+        index, chi2b / chi2f = the pass that predicts that hit from all the others (the other pass's chi2 at an end hit
+        comes from the x100 prior and says nothing);
+        CPU (grouped kernel, fitTrackSingle): outliersAndRefit loops removal + refit outlierRounds times; the last refit
+        is not checked again (stock d2a08a4's remap loop with nextRemap = nullptr in the last round);
+        GPU (split kernels): stages 3 (removal + reFitIndices), 4, 5 (refit) launched once per round; stage 3 with
+        round > 0 only looks at the rows refitted in the previous round (meta refit flag). Extra kernels: 3 per round,
+        each a no-op for rows that were not refitted.
+      Python: customizeFitDev.customizeFitDevOutliers(process, edge=True, rounds=3, dropBadChi2=True) (= fitgap arm b,
+        0001 + 0005); customizeFitDevOutliersFitOnly = D3 alone. It switches every device-fit module, including the
+        serial clones of customizeHLTforMkFitAlpakaTargetValidation.
+  D4  mkfitfit 0005 in outconv's converter (R7-L2). MkFitAlpakaOutputTrackConverter dropNegativeChi2 (false = stock):
+        a candidate whose fit chi2 is negative or not finite is dropped, edm::isNotFinite (bit test, -Ofast safe) ||
+        chi2 < 0, placed where stock 0005 puts it (after the posDef check, before Sylvester). Needs customizeOutConv.
+  D6  TrackExtra inner/outer states (R7-H3). MkFitAlpakaFitDeviceProducer storeOuterState (false = stock) puts a
+        FitOuterState collection (interface/fit/FitOuterStateSoA.h: per fitted row the CCS state + errors at the
+        outermost fitted hit = the forward pass's updated state there, pos = its HitOnTrack position, -1 = none);
+        MkFitAlpakaOutputTrackConverter outerStates (InputTag, empty = stock) then builds the TrackExtra with
+        innerOk/outerOk = true, inner = the fitted state on the first hit's surface (the same TSOS the PCA starts from;
+        = stock storeHitStates' innermost state), outer = that state on its hit's module, curvilinear errors and det ids
+        - what TrackProducer gives TICL / PF in the KF menu. The per-hit trajParams stay zero (no reader in the menu).
+        Cost: one 112 B row per track (device + the framework's host copy); the forward-pass kernels copy the state
+        once per fit. Python: customizeFitDev.customizeFitDevStates (after customizeOutConv).
+        Product dictionaries: src/classes_def.xml (host) and MkFitAlpakaFormats classes_{cuda,rocm}_def.xml (device).
+  Registers: the register gate (test/integ_check_registers.sh) on the D3 build: 214 kernels x 6 archs, LOCAL 0 (PASS).
+
+2. RESULTS (tables in F/REPORT.txt; raw: F/accept, F/menu/results)
+  D3+D4 vs the stock patch (stock + d2a08a4 + 0005): in-job menu paired truth 40 / 38 one-sided TPs of 602k (difference
+    0.00000), fake / duplicate equal; replay fit level 5-7x the D7-a floor = the size of our own CUDA vs serial difference
+    with the switch on (0001 amplifies rounding; the D7-a floor was made without 0001).
+  D3+D4 vs today's target: paired +0.00035 (ttbar) / +0.00043 (QCD); hltGeneral eff +0.21 / +0.20 pp, fake x0.89 / x0.91,
+    duplicates +0.0009; = fitgap's stock arm to 4 digits. QCD > 100 GeV not recovered (1141 -> 1136, KF 1170).
+  D6: tracking unchanged; the PF / PF MET / tau / b-tag paths react (as with stock storeHitStates on ttbar); toward KF on
+    ttbar 500 (sum |KF - arm| 28 -> 21), away on QCD 500 (8 -> 14): inconclusive, needs val5k + object-level checks.
+  Sensitivity of 0001 (for the mkFit developers): fits with NaN chi2 sums x3 (103 -> 312-339 per 193k), collision-shadowed
+    outliers 6 -> 131; a NaN refit should end the iteration for that track. Not implemented (would be a D3 refinement).
+
+  R7-M3 (default target, L40 vs the serial clone, ttbar 500 menu events): 87 tracks with a z pull >= 1 of 640k; 80 with
+    identical hit lists; 66 at |eta| 1-2, 46 with the state (innermost hit) in PXB layer 1; same-hit-list shifts up to
+    cm (e.g. ev 256 #1475 z 14.008 -> 12.094 cm, sigma 1.4 um): a branch flip in one step, not rounding. The port vs the
+    in-job stock isolated fit shows the same tracks. Next: per-step states of those tracks on both backends.
+
+3. HOW TO RUN
+  Replay acceptance: F/scripts/accept_job.sh <ref|fix> <edge 0|1> <rounds> <ttbar500|qcd500> <cpu|L40|L4> <nev>
+    (cfg F/cfg/fit_d3_cfg.py: verify5_int build_cfg + FITDEV_EDGE / FITDEV_ROUNDS; stock side by LD_LIBRARY_PATH);
+    F/cfg/fit_d3_ser_cfg.py adds the device-vs-serial comparator.
+  Menu: F/scripts/tv_job.sh <tag> <cpu|gpu-nvidia> <ttbar|qcd> with CUS="<customise list>" PRELOAD=<stock libs>;
+    summaries F/scripts/summ.sh, per-bin MTV r7_seedfit/ana/mtv_bins.py, F/scripts/{vtx_counts,trk_len,pt_regions}.py.
+
+ROUND 9 (2026-10-04, 8:32 am -, F = L/r9_fitdev; tables in F/REPORT.txt)
+=====================================================================================================================
+4. THE 0001 FLOOR (R8-M2)
+  The D7-a recipe on the stock patch: reference = stock + d2a08a4 + 0005 built x86-64-v3 -Ofast (r7_fitgap libs/fix);
+  arms = the same sources x86-64-v2 -Ofast (r7_fitgap var_fix scram_x86-64-v2 libraries: MkFitCore, MkFitCMS, MkFit,
+  plugin) and x86-64-v3 WITHOUT -Ofast (F/var_noffix: var_fix + the stock .orig BuildFile, i.e. the scram quirk that
+  strips -Ofast from the package; compile lines checked: -O3, no -Ofast). Chained replay (main6 replay_floor_cfg.py,
+  role ref / tgt), 100-event chunks, ttbar 500 (with truth) + QCD 500; floor = per metric max over the two arms
+  (r7_fitgap floor_max.py). Files: F/floors/chained/<s>/floor_<s>_chained.log (labels floorCand, floorFit, [paired max]),
+  the per-arm table next to it (.txt). Libraries: F/floors/libs/{fixv3 -> r7 libs/fix, fixv2, fixnof}.
+  Result: fit hit lists 5.5e-4 (ttbar) / 5.0e-4 (QCD), 7x the floor of stock without 0001 (7.6e-5); candidates
+  unchanged (2.4e-5). Re-judged against it, the round-8 port runs (D3 on vs stock + 0001) PASS 8/8.
+5. D3b (switch nanRefitStops, doc/DEVIATIONS.txt D3b)
+  FitKernels.h: removeOutliers records the removed positions + original indices (d3bIdx, d3bMask); d3bSaveState /
+  d3bRestore (params, errors, chi2, D6 outer state); outliersAndRefit (CPU) returns after a NaN pass; KernelFinalFitStage
+  stage 3 saves, stage 4 flags (d3bNaN), stage 5 skips the backward refit of a flagged row and restores, refit[t] = 0
+  ends the iteration. FitTracks.dev.cc allocates the scratch only when the switch is on. Python:
+  customizeFitDev.customizeFitDevOutliersD3b (D3 + D4 + D3b), ...D3bFitOnly.
+6. D6 OBJECT-LEVEL CHECK (D9-d): test/FitDevPfStudy.cc (test library testMkFitAlpakaFitDevPfStudy): one [pfstudy]
+  line per event (gen MET from the neutrinos, PUPPI MET type-1 / raw, tracks with inner+outer states, PF charged
+  candidates, TICL candidates with a track, AK4 PUPPI HT). F/scripts/pf_job.sh adds a Path that runs the PF / MET / jets
+  chain on every event (no effect on other paths: modules run once per event); F/scripts/pf_ana.py makes the table.
+7. R7-M3 per-step dump: F/scripts/m3_dump_patch.py (validation-only code under -DMKFITDEV_FIT_STEP_DUMP), F/cfg/
+  m3_find_cfg.py (devser replay + a comparator dump clone), F/scripts/m3_steps.py (step alignment CUDA vs serial).
+8. D7 (switch firstHitProp, doc/DEVIATIONS.txt D7): fitDirection(..., propFirst) makes the first step of a pass a
+  propagation + update (propHit = h != 0 || propFirst); refits (outliersAndRefit, stages 4/5) pass firstHitProp >= 1,
+  pass 1 (fitTrackSingle, grouped, stages 1/2) firstHitProp >= 2. customizeFitDev.customizeFitDevFirstHitProp(mode),
+  customizeFitDevOutliersD7 (D3 + D4 + D7). Replay test: F/scripts/d7_job.sh <tag> <edge> <rounds> <firstprop>.

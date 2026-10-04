@@ -1,4 +1,4 @@
-#!/usr/bin/perl -n
+#!/usr/bin/env perl -n
 
 if (m/^(class|struct)\s(\w+)/)
 {

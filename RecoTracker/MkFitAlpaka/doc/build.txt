@@ -1,0 +1,59 @@
+MkFitAlpaka: the device building module (round 4, lane build)
+=============================================================
+plugins/alpaka/MkFitAlpakaBuildProducer.cc = the device MkFitProducer of the LST step (hltInitialStepTrackCandidatesMkFit):
+  host seeds (MkFitSeedWrapper) -> SeedsHostPack -> seeds::importSeeds (io) into EngineBuffers b
+  -> engineRunChainAsync (src/alpaka/Cands.dev.cc): forward search (K1, K2 = select, K3a, K3b, K4, K5 per plan step;
+     K6 merge) -> pre-filter + compaction b -> work -> compactify -> backward fit (bkfit hook) -> beginBkwSearch
+     -> backward search -> post-filter (the ONE repackCandPostBkwSearch, D4-C2) + compaction work -> b
+  -> seeds::exportAndClean (io: export_best_comb_cands + clean_duplicates_sharedhits_pixelseed, NO filter)
+  -> TrackSoA products '' (final) and 'export' (before the cleaner).
+Parameters: seeds, pixelHits (only nPixel = strip hit row base), eventOfHits (device EventOfHits product), esData
+(MkFitAlpakaESProducer ComponentName), hotsPerSeed (256), removeDuplicates, backwardFit, stages, checkStatus.
+
+Design points
+- Candidate storage is module-internal scratch (D4-M4): two EngineBuffers sets + the K2 list/outputs per event, from
+  the caching allocator. No CandStore / seed-table event product.
+- Engine tables once per IOV (review C1 c, M2): BuildTables = the region layer plans (fwd/bkw step tables), the per-layer
+  and module-plane tables, EngineIterParams fwd/bkw, propagation flags (finding inter/intra, backward fit), the filter
+  minHitsQF (pre = params, post = backward_params: stock params_cur()), backward_fit_min_hits, the cleaner cuts and
+  the seed partition limits. Cached per (device, TrackerRecoGeometryRecord cacheIdentifier) under a mutex; one upload +
+  wait per IOV; old IOVs are kept until the end of the job (events of other streams may still use them).
+  The log line "BUILD_TABLES ... regions R fwd steps F bkw steps B" is printed once per IOV.
+- No host synchronization on the event path (was 3 per event: the nKept copy and 2 survivor counts):
+  EngineBuffers::nRowsDev = device count of the rows in use. Every engine kernel takes (capacity, nDev): the grid is
+  sized from the capacity (the seed count of the event), the kernel reads *nDev and skips rows past it.
+  b.nRowsDev = &SeedSoA nKept after the import; engineFilterCompactAsync(src, dst) writes src.nSurvivors and sets
+  dst.nRowsDev to it; the gather kernel clears nCands/nActive/activeMask/state/... of dst rows [survivors, capacity),
+  so capacity-wide kernels (the bkfit hook, K2 list) never see stale seeds (review C2 "related contract trap").
+  K2 (select::runSelectHits) already reads its list size from the device (SelListSoA::n()).
+  The round-3 host-count API (engineRunChain, engineFilterCompact returning int) is kept for the tests.
+- D4-C2: SeedCandsSoA::bkwRepacked is cleared by beginBkwSearch (and by the EngineBuffers memset) and set by the
+  post-filter repack. A second post-filter on the same rows only filters (no second repack) and counts
+  SeedCandsSoA::nRepackRepeat. io's exportAndClean has no filter and counts broken HoT chains (brokenChains).
+- Launches: per plan step K1, K2-list (scan + fill fused into one single-block kernel), K2, K3a, K3b, K4, K5 = 7
+  (round 3: 9: separate scan and fill, and the K2 -> engine scatter kernel; K2 now writes the engine's CandSelHits
+  rows itself, same values). K2 already runs all eta regions of a step in one launch (regions in lock step).
+- stages = True (validation): snapshots in the stock form of the harness stockStages references, 1:1 pairing:
+    'fwd'        every candidate after the forward search (+ K6), TrackCand::exportTrack(false) (holes included)
+    'bkfit'      front candidate after the backward fit, exportTrack(false)
+    'bkwsearch'  every candidate after the backward search, the backward chain only (stock snapshotBkw)
+    'postFilter' front candidate after the post-filter (repacked), exportTrack(false)
+  engineExportStage(queue, b, bkwChain, frontOnly, out, capacity) does the export (one-block scan of nCands + fill).
+- checkStatus = True (validation): reads, once per event (one sync), the overflow counters (HoT / options / extras),
+  nRepackRepeat, brokenChains and the export overflow counters; LogWarning on non-zero values and a BUILD_STATUS line
+  with the totals at endJob. Production: integ's status product (D4-H4) should take these device scalars
+  (SeedCandsSoA nOverflowHots/Opts/Extras, nRepackRepeat of the result buffers; brokenChains) without a sync.
+
+- CPU backends (perf patches 0001/0002, applied by build): K2's propagation and K3a/K5 run kNN = 8 rows per Matriplex
+  (stock NN) and walk the seeds instead of the fixed (seed, cand, hit) grid. GPU paths unchanged (N = 1).
+
+Validation (lane runs in r4_build/runs; configs r4_build/cfg/build_cfg.py = test/chain_cfg.py with the chain module
+replaced by the build module and 1:1 stage comparators; floors CHAINED: r3_harness/stagefloor (100 ev) and floor500)
+  Every stage (fwd, bkfit, bkwsearch, postFilter, export, final, TrackCandidates) passes D-M4 on 100 ttbar + 100 QCD
+  events, serial and CUDA (L40 / L4); final candidates pass on ttbar500 / qcd500 (serial and CUDA). Overflow / C2
+  counters are 0 everywhere. Numbers: r4_build/REPORT.txt.
+
+For the menu lane (test/chain_cfg.py is menu-owned): MkFitAlpakaBuildProducer@alpaka is a drop-in for
+MkFitAlpakaChainProducer@alpaka (same '' and 'export' products, same parameters minus 'verbose', plus 'checkStatus').
+Its 'fwd' / 'bkfit' stage products are in the stock snapshot form (all candidates / front, exportTrack(false)):
+compare them with validHitsOnly = False; 'bkwsearch' and 'postFilter' are new (stockStages:bkwsearch|postFilter).

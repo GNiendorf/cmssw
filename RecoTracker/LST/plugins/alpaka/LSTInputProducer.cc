@@ -23,6 +23,13 @@
 #include "TrackingTools/TrajectoryState/interface/PerigeeConversions.h"
 
 #include "RecoTracker/LSTCore/interface/LSTInputHostCollection.h"
+// local patch (MkFitAlpaka round 8, lane otdev, stage D): OT hits from the device OT rechit SoA (host copy)
+#include "FWCore/MessageLogger/interface/MessageLogger.h"
+#include "RecoTracker/MkFitAlpaka/interface/othits/OTRecHitSoA.h"
+// local patch (MkFitAlpaka round 9, lane lstin): otKeysOnly (OT values filled on the device by hltInputLSTDevice)
+#include "DataFormats/Phase2TrackerCluster/interface/Phase2TrackerCluster1D.h"
+#include <cstring>
+#include "RecoTracker/LSTCore/interface/LSTOTHits.h"
 #include "RecoTracker/LSTCore/interface/LSTPrepareInput.h"
 
 namespace ALPAKA_ACCELERATOR_NAMESPACE {
@@ -39,27 +46,58 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
 
     const double ptCut_;
 
-    const edm::EDGetTokenT<Phase2TrackerRecHit1DCollectionNew> phase2OTRecHitToken_;
+    edm::EDGetTokenT<Phase2TrackerRecHit1DCollectionNew> phase2OTRecHitToken_;
+    // local patch (stage D): otSoA set = OT detId / size / global position from the OT rechit SoA, no hit pointers
+    // (the LST output converter then makes the OT hits on demand); compareOTTo = the legacy rechits, bitwise check
+    edm::EDGetTokenT<mkfitdev::OTRecHitHostCollection> otSoAToken_;
+    bool otSoA_ = false;
+    bool compareOT_ = false;
+    // local patch (round 9, lane lstin): otKeysOnly set = the OT clusters; the OT rows keep only what the pixel seeds
+    // read (detId, cluster size, per cluster key); x/y/z are left 0 and no OT SoA host copy or legacy rechit is read:
+    // MkFitAlpakaLstInputProducer (fromHostInput) copies this collection to the device and fills the OT rows from the
+    // device OT rechit SoA (the same values bitwise). Validation: compare with an unpatched clone.
+    edm::EDGetTokenT<Phase2TrackerCluster1DCollectionNew> otKeysOnlyToken_;
+    bool otKeysOnly_ = false;
 
     const edm::ESGetToken<MagneticField, IdealMagneticFieldRecord> mfToken_;
     const edm::EDGetTokenT<reco::BeamSpot> beamSpotToken_;
     const std::vector<edm::EDGetTokenT<TrajectorySeedCollection>> seedTokens_;
+    const bool producePixelSeeds_;
     const edm::EDPutTokenT<TrajectorySeedCollection> lstPixelSeedsPutToken_;
 
     const edm::EDPutTokenT<lst::LSTInputHostCollection> lstInputPutToken_;
+    // OT hit pointers stay on the host (read only by LSTOutputConverter), same order as the OT hits of lstInput
+    const edm::EDPutTokenT<lst::LSTOTHits> lstOTHitsPutToken_;
   };
 
   LSTInputProducer::LSTInputProducer(edm::ParameterSet const& iConfig)
       : EDProducer<>(iConfig),
         ptCut_(iConfig.getParameter<double>("ptCut")),
-        phase2OTRecHitToken_(consumes(iConfig.getParameter<edm::InputTag>("phase2OTRecHits"))),
+
         mfToken_(esConsumes()),
         beamSpotToken_(consumes(iConfig.getParameter<edm::InputTag>("beamSpot"))),
         seedTokens_(
             edm::vector_transform(iConfig.getParameter<std::vector<edm::InputTag>>("pixelSeeds"),
                                   [&](const edm::InputTag& tag) { return consumes<TrajectorySeedCollection>(tag); })),
-        lstPixelSeedsPutToken_(produces()),
-        lstInputPutToken_(produces()) {}
+        producePixelSeeds_(iConfig.getParameter<bool>("producePixelSeeds")),
+        lstPixelSeedsPutToken_(producePixelSeeds_ ? edm::EDPutTokenT<TrajectorySeedCollection>(produces())
+                                                  : edm::EDPutTokenT<TrajectorySeedCollection>{}),
+        lstInputPutToken_(produces()),
+        lstOTHitsPutToken_(produces()) {
+    otKeysOnly_ = !iConfig.getParameter<edm::InputTag>("otKeysOnly").label().empty();
+    if (otKeysOnly_) {
+      otKeysOnlyToken_ = consumes(iConfig.getParameter<edm::InputTag>("otKeysOnly"));
+      return;
+    }
+    otSoA_ = !iConfig.getParameter<edm::InputTag>("otSoA").label().empty();
+    compareOT_ = otSoA_ && !iConfig.getParameter<edm::InputTag>("compareOTTo").label().empty();
+    if (otSoA_)
+      otSoAToken_ = consumes(iConfig.getParameter<edm::InputTag>("otSoA"));
+    if (!otSoA_)
+      phase2OTRecHitToken_ = consumes(iConfig.getParameter<edm::InputTag>("phase2OTRecHits"));
+    else if (compareOT_)
+      phase2OTRecHitToken_ = consumes(iConfig.getParameter<edm::InputTag>("compareOTTo"));
+  }
 
   void LSTInputProducer::fillDescriptions(edm::ConfigurationDescriptions& descriptions) {
     edm::ParameterSetDescription desc;
@@ -67,30 +105,91 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     desc.add<double>("ptCut", 0.8);
 
     desc.add<edm::InputTag>("phase2OTRecHits", edm::InputTag("siPhase2RecHits"));
+    desc.add<edm::InputTag>("otSoA", edm::InputTag(""))
+        ->setComment("local patch (stage D): OT rechit SoA (MkFitAlpakaOTRecHitsProducer, host copy) instead of "
+                     "phase2OTRecHits; needs the LST output converter's otClustersOnDemand");
+    desc.add<edm::InputTag>("compareOTTo", edm::InputTag(""))
+        ->setComment("validation with otSoA: legacy OT rechits to compare the OT hits with bitwise (LSTIN_OT lines)");
+    desc.add<edm::InputTag>("otKeysOnly", edm::InputTag(""))
+        ->setComment("local patch (round 9): the OT clusters; OT rows with detId/size only (x/y/z = 0), filled on the "
+                     "device by MkFitAlpakaLstInputProducer fromHostInput; otSoA and phase2OTRecHits are not read");
 
     desc.add<edm::InputTag>("beamSpot", edm::InputTag("offlineBeamSpot"));
     desc.add<std::vector<edm::InputTag>>(
         "pixelSeeds",
         std::vector<edm::InputTag>{edm::InputTag("initialStepSeeds"), edm::InputTag("highPtTripletStepSeeds")});
+    desc.add<bool>("producePixelSeeds", true)
+        ->setComment("put a copy of all pixelSeeds in the event, for consumers that need them as one collection");
 
     descriptions.addWithDefaultLabel(desc);
   }
 
   void LSTInputProducer::produce(edm::StreamID iID, device::Event& iEvent, const device::EventSetup& iSetup) const {
-    // Get the phase2OTRecHits
-    auto const& phase2OTHits = iEvent.get(phase2OTRecHitToken_);
-
     std::vector<unsigned int> ph2_detId;
-    ph2_detId.reserve(phase2OTHits.dataSize());
     std::vector<uint16_t> ph2_clustSize;
-    ph2_clustSize.reserve(phase2OTHits.dataSize());
     std::vector<float> ph2_x;
-    ph2_x.reserve(phase2OTHits.dataSize());
     std::vector<float> ph2_y;
-    ph2_y.reserve(phase2OTHits.dataSize());
     std::vector<float> ph2_z;
-    ph2_z.reserve(phase2OTHits.dataSize());
     std::vector<TrackingRecHit const*> ph2_hits;
+    if (otKeysOnly_) {
+      // per cluster key: the detset's DetId and the cluster size (all the pixel seeds' OT hits read); x/y/z/pointer
+      // rows exist (the hit block layout) but are filled on the device
+      auto const& clu = iEvent.get(otKeysOnlyToken_);
+      const uint32_t n = clu.dataSize();
+      ph2_detId.resize(n);
+      ph2_clustSize.resize(n);
+      ph2_x.assign(n, 0.f);
+      ph2_y.assign(n, 0.f);
+      ph2_z.assign(n, 0.f);
+      ph2_hits.assign(n, nullptr);
+      uint32_t k = 0;
+      for (auto const& ds : clu) {
+        const uint32_t id = ds.detId();
+        for (auto const& c : ds) {
+          ph2_detId[k] = id;
+          ph2_clustSize[k++] = c.size();
+        }
+      }
+    } else if (otSoA_) {
+      auto const v = iEvent.get(otSoAToken_).const_view();
+      const uint32_t n = v.nHits();
+      ph2_detId.assign(v.metadata().addressOf_detId(), v.metadata().addressOf_detId() + n);
+      ph2_clustSize.assign(v.metadata().addressOf_clustSize(), v.metadata().addressOf_clustSize() + n);
+      ph2_x.assign(v.metadata().addressOf_gx(), v.metadata().addressOf_gx() + n);
+      ph2_y.assign(v.metadata().addressOf_gy(), v.metadata().addressOf_gy() + n);
+      ph2_z.assign(v.metadata().addressOf_gz(), v.metadata().addressOf_gz() + n);
+      ph2_hits.assign(n, nullptr);
+      if (compareOT_) {
+        uint64_t rows = 0, mis = 0, misPos = 0;
+        auto bits = [](float x) {
+          uint32_t u;
+          std::memcpy(&u, &x, 4);
+          return u;
+        };
+        for (auto const& it : iEvent.get(phase2OTRecHitToken_)) {
+          for (auto const& hit : it) {
+            const uint32_t k = rows++;
+            if (k >= n || ph2_detId[k] != it.detId() || ph2_clustSize[k] != hit.cluster()->size()) {
+              ++mis;
+              continue;
+            }
+            misPos += bits(ph2_x[k]) != bits(hit.globalPosition().x()) ||
+                      bits(ph2_y[k]) != bits(hit.globalPosition().y()) ||
+                      bits(ph2_z[k]) != bits(hit.globalPosition().z());
+          }
+        }
+        edm::LogPrint("LSTInputProducer") << "LSTIN_OT event " << iEvent.id().event() << " rows " << rows << " soa " << n
+                                          << " idMis " << mis << " posMis " << misPos;
+      }
+    }
+    // Get the phase2OTRecHits
+    static const Phase2TrackerRecHit1DCollectionNew kNoHits;
+    auto const& phase2OTHits = (otSoA_ || otKeysOnly_) ? kNoHits : iEvent.get(phase2OTRecHitToken_);
+    ph2_detId.reserve(phase2OTHits.dataSize());
+    ph2_clustSize.reserve(phase2OTHits.dataSize());
+    ph2_x.reserve(phase2OTHits.dataSize());
+    ph2_y.reserve(phase2OTHits.dataSize());
+    ph2_z.reserve(phase2OTHits.dataSize());
     ph2_hits.reserve(phase2OTHits.dataSize());
 
     for (auto const& it : phase2OTHits) {
@@ -215,7 +314,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
         see_q.push_back(charge);
         see_hitIdx.emplace_back(std::move(hitIdx));
         see_hitType.emplace_back(std::move(hitType));
-        see_seeds.push_back(seed);
+        if (producePixelSeeds_)
+          see_seeds.push_back(seed);
       }
     }
 
@@ -241,12 +341,13 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
                                         ph2_x,
                                         ph2_y,
                                         ph2_z,
-                                        ph2_hits,
                                         ptCut_,
                                         iEvent.queue());
 
     iEvent.emplace(lstInputPutToken_, std::move(lstInputHC));
-    iEvent.emplace(lstPixelSeedsPutToken_, std::move(see_seeds));
+    if (producePixelSeeds_)
+      iEvent.emplace(lstPixelSeedsPutToken_, std::move(see_seeds));
+    iEvent.emplace(lstOTHitsPutToken_, lst::LSTOTHits{std::move(ph2_hits)});
   }
 
 }  // namespace ALPAKA_ACCELERATOR_NAMESPACE

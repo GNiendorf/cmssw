@@ -1,0 +1,542 @@
+MkFitAlpaka lane "fit": mkFit's final fit on device (MkFitFitProducer path, procModifier trackingMkFitFit)
+==========================================================================================================
+Round 3, 2026-10-03, branch r3/fit. Stock reference: CMSSW_20_1_0_pre2 RecoTracker/{MkFit,MkFitCore}.
+
+STATUS
+  Done: the STOCK final fit WITHOUT the CPE hook (DESIGN D-H1 step 1), serial_sync and cuda_async, validated against
+        stock MkFitFitProducer run with its CPE callback disabled (private stock copy, see TEST).
+  Not done: the device PixelCPEGeneric with track angles (D-H1 step 2), see CPE PLAN below.
+
+FILES
+  src/alpaka/fit/FitKernels.h      device functions; KernelFinalFit (GPU: one thread per track, Matriplex N = 1);
+                                   KernelGroupTracks + KernelFinalFitGrouped (CPU: tracks grouped by nFoundHits as
+                                   stock, counting + stable scatter, groups of kNN = 8 slots; pass 2 per track)
+  src/alpaka/fit/FitTracks.h       exported entry point runFinalFit(queue, ESView, HitSoA view, nPixel, TrackSoA view,
+                                   nTracks, FitCounters*) + FitCounters
+  src/alpaka/FitTracks.dev.cc      the one TU that launches KernelFinalFit (D-layout)
+  plugins/alpaka/MkFitAlpakaFitProducer.cc   drop-in for MkFitFitProducer in replay jobs: consumes the stock
+                                   MkFitOutputWrapper (building output) + MkFitHitWrapper pixel/strip hits + device ES,
+                                   applies candCutSel, packs HitSoA/TrackSoA on the host (round-3 stand-in for the
+                                   device hit input and the device building output), runs runFinalFit, returns an
+                                   MkFitOutputWrapper (states at the first hit) for the stock MkFitOutputTrackConverter.
+  test/fitCompare_cfg.py           replay comparison (see TEST); test/fitMtv_cfg.py  MTV of the fit variants.
+  RecoTracker/MkFit (area only, NOT in the package): private copy of stock RecoTracker/MkFit whose MkFitFitProducer
+                                   has an untracked bool disableCPE (default false = stock): true passes an empty
+                                   cpe_func, i.e. stock runs its no-CPE branch (KalmanUtilsMPlex.cc:1552 tests it).
+                                   Also an inert CPE-call dump (MKFIT_FIT_CPE_DUMP=<file>): per call event, mkFit
+                                   pixel hit index, rawId, ltp[6], stock result (x, y, exx, exy, eyy), cluster pixels.
+                                   Recreate: cp -r $CMSSW_RELEASE_BASE/src/RecoTracker/MkFit into the area, then
+                                   patch -p0 < RecoTracker/MkFitAlpaka/test/fitStockNoCPEDump.patch (from src/).
+                                   Reference set for D-H1 step 2: r3_fit/run/cpe_dump_ttbar5.bin (5 ttbar events,
+                                   124716 calls on 58482 pixel hits, 2.1 calls per hit, 2.0 pixels per cluster,
+                                   median sigma 6.0 um (x) / 23.9 um (y); record 72 B + 8 B per pixel).
+
+WHAT THE KERNEL REPRODUCES (stock file:line)
+  candCutSel                MkFitFitProducer.cc:128-142 (host, in the producer; momEta/pT/nTotalHits of the input)
+  per track, pass 1         MkBuilder::fit_tracks with remap (MkBuilder.cc:1432-1545):
+    reFitIndices            MkFitter.cc:131-200. Hits with index >= 0 visited from the last position down; z_minR =
+                            z of the first strictly smallest R2 in that visit order; key -r2 - (z - z_minR)^2.
+                            std::map<float, vector<int>> order = ascending key, equal keys in insertion order:
+                            reproduced by a stable fixed-size insertion into per-track global scratch (D-H2a,
+                            sort-like, accepted). Stock is -Ofast x86-64-v3: R2 and the key are written as the
+                            contracted fma(x, x, y*y) and fma(-z, z, -r2) on every backend (review M5).
+    fwd fit                 fwdFitInputTracks (errors x100, chi2 0) + fwdFitFitTracks (MkFitter.cc:15-37, 204-386):
+                            hits order[n-1-h] (innermost first), material skipped on the first hit,
+                            kalmanPropagateAndUpdateAndChi2Plane (lane prop) with PF_use_param_b_field |
+                            PF_apply_material, propToHit = true; per-step chi2 kept (chi2fwd).
+    output                  reFitOutputTracks (MkFitter.cc:74-128): params/errors/chi2 written unless the chi2 SUM
+                            is NaN (then the previous state stays). The charge is never written back: a charge
+                            flip inside a pass changes the charge for the rest of that pass only (stock behaviour).
+    bkw fit                 bkReFitInputTracks (state of the fwd output, errors x100, chi2 0, the ORIGINAL charge)
+                            + bkReFitFitTracks: hits order[h] (outermost first), material skipped on the first hit.
+    outlier removal         MkBuilder.cc:1490-1535: NaN chi2 -> 1e6 (written back), scorer = fwd + bkw chi2 of the
+                            same hit, std::map<float,int>[-scorer] = j (D-H2b: equal scorers COLLIDE, only the last j
+                            survives - reproduced), walk in descending scorer, cut (pT>1: s>20, f>8, b>8; pT<=1: s>15,
+                            f>7, b>7) with pT of the refitted state, at most nFH-3 removals; removeHit(sortedIdxs[
+                            nFH-1-j]) = index -1, nFoundHits-1. Sort-free: a bit mask of passing survivors and the
+                            walk position = number of passing survivors with a smaller key.
+  pass 2 (remap)            tracks that lost hits: reFitIndices again on the reduced list (z_minR can change), fwd +
+                            bkw from the pass-1 output, no outlier step (fit_tracks without remap).
+  Stock's nFoundHits vs indices.size(): stock loops nFoundHits steps over indices[]; the kernel uses the same
+  formulas (fwd order[n-1-h], bkw order[h], sortedIdxs[nFH-1-j]) and counts mismatches (0 seen on 200 events).
+
+RESULTS (100 events each, replay files, menu candCutSel; tracks after candCutSel: ttbar 191595, qcd 194436;
+         final code = r3/fit after the merge of integ 9bc54c9; logs r3_fit/run/m_*.log (cuda + serial clone),
+         s_*.log (serial with converter), MTV r3_fit/mtv)
+  mkFit level (MkFitAlpakaMkFitTrackCompare, paired by seed label, hit lists incl. removed outliers = index -1):
+                                         identical hit lists           params within 1e-3 sigma
+    ttbar  serial_sync (kNN = 8 groups)  191579 / 191595 (99.992%)     60.7%
+           cuda_async (L40)              191581 / 191595 (99.993%)     60.5%
+           cuda vs serial                191580 / 191595 (99.992%)     60.3%
+    qcd    serial_sync                   194360 / 194436 (99.961%)     59.4%
+           cuda_async (L4)               194369 / 194436 (99.966%)     59.3%
+           cuda vs serial                194358 / 194436 (99.960%)     59.2%
+    The port differs from stock as much as its own two backends differ from each other.
+  D-M4 acceptance (harness test/replay_floor_check.py, reco::Track level after the stock MkFitOutputTrackConverter,
+  floor = stock v2 vs v3 fit tracks of ttbar500 / qcd500): PASS on every metric, cuda and serial, both samples.
+    hit-list differences  ttbar cuda 7.3e-5, serial 7.8e-5 (floor 3.65e-4); qcd cuda 3.2e-4, serial 3.7e-4 (1.08e-3)
+    |pull| >= 1 per parameter: 0.3-0.5 x the floor rate. Caveat: the floor also contains the (small) building noise
+    and was made with the CPE on; this comparison has identical building inputs and the CPE off on both sides.
+  Determinism: cuda run twice in one job: 100% bit-identical (both samples).
+  Counters (ttbar 100 ev): 14181 tracks refitted in pass 2 (7.4%), 18596 outlier hits removed, 14 fit directions
+  with NaN chi2 kept their state, 0 hit-count mismatches, 0 overflows. D-H2b: hits that pass the outlier cut but are
+  hidden by the std::map scorer collision: 0 in 200 events (ttbar + qcd): the stock bug is latent on these samples.
+  MTV (HLT validator; ttbar 100 ev / qcd first 50 ev):     eff              fake             dup
+    stock fit, CPE on (menu)                       0.8858 / 0.8354   0.0243 / 0.0347   0.0107 / 0.0106
+    stock fit, CPE off (private copy)              0.8858 / 0.8350   0.0243 / 0.0348   0.0108 / 0.0106
+    device fit, no CPE                             0.8858 / 0.8350   0.0243 / 0.0348   0.0108 / 0.0106
+  Resolution (MTV residuals over all eta, half-width of the central 68%; ttbar):
+                         dxy [cm]   dz [cm]    pT (rel)   phi        cot(theta)   dxy pull
+    stock, CPE on        0.00849    0.01588    0.02545    0.002737   0.006137     1.055
+    stock, CPE off       0.00907    0.01602    0.02499    0.002831   0.006166     0.977
+    device, no CPE       0.00907    0.01601    0.02499    0.002831   0.006168     0.977
+    (qcd: dxy 0.00837 CPE on vs 0.00903 off / device). The CPE is worth ~7% in dxy and ~3% in phi resolution;
+    eff/fake/dup do not move. Script: r3_fit/mtv/resolution.py.
+  Registers (cuobjdump, KernelFinalFit, sm_75..sm_120, 64 threads/block): REG 250-255, STACK 32-48 B, LOCAL 0.
+    The SASS has ~100 STL / 60 LDL: ABI saves around the math-library calls (326 CALL.ABS), the same STACK:32 as
+    lane prop's kernels; no register spills reported (LOCAL 0).
+  Timing, ttbar 50 ev, 1 thread, ms/event (FastTimerService, devFit split by the producer's own timers):
+    stock MkFitFitProducer (CPE on)                29.3
+    stock MkFitFitProducer (CPE off)               19.0
+    devFit serial, kNN = 8 groups                  28.8 = host packing 6.2 + kernel 21.6 + unpacking 0.1
+      (N = 1 per thread before the grouping: 33.6)
+    devFit cuda (L40)                               5.0 (8-thread job, 100 ev: packing ~3-10, copies + kernel 1.7-2.6)
+    The host packing (all pixel + strip hits and the tracks from the stock products) disappears in the chain.
+
+CPE PLAN below.
+
+FILES
+  src/alpaka/fit/FitKernels.h      device functions; KernelFinalFit (GPU: one thread per track, Matriplex N = 1);
+                                   KernelGroupTracks + KernelFinalFitGrouped (CPU: tracks grouped by nFoundHits as
+                                   stock, counting + stable scatter, groups of kNN = 8 slots; pass 2 per track)
+  src/alpaka/fit/FitTracks.h       exported entry point runFinalFit(queue, ESView, HitSoA view, nPixel, TrackSoA view,
+                                   nTracks, FitCounters*) + FitCounters
+  src/alpaka/FitTracks.dev.cc      the one TU that launches KernelFinalFit (D-layout)
+  plugins/alpaka/MkFitAlpakaFitProducer.cc   drop-in for MkFitFitProducer in replay jobs: consumes the stock
+                                   MkFitOutputWrapper (building output) + MkFitHitWrapper pixel/strip hits + device ES,
+                                   applies candCutSel, packs HitSoA/TrackSoA on the host (round-3 stand-in for the
+                                   device hit input and the device building output), runs runFinalFit, returns an
+                                   MkFitOutputWrapper (states at the first hit) for the stock MkFitOutputTrackConverter.
+  test/fitCompare_cfg.py           replay comparison (see TEST); test/fitMtv_cfg.py  MTV of the fit variants.
+  RecoTracker/MkFit (area only, NOT in the package): private copy of stock RecoTracker/MkFit whose MkFitFitProducer
+                                   has an untracked bool disableCPE (default false = stock): true passes an empty
+                                   cpe_func, i.e. stock runs its no-CPE branch (KalmanUtilsMPlex.cc:1552 tests it).
+                                   Also an inert CPE-call dump (MKFIT_FIT_CPE_DUMP=<file>): per call event, mkFit
+                                   pixel hit index, rawId, ltp[6], stock result (x, y, exx, exy, eyy), cluster pixels.
+                                   Recreate: cp -r $CMSSW_RELEASE_BASE/src/RecoTracker/MkFit into the area, then
+                                   patch -p0 < RecoTracker/MkFitAlpaka/test/fitStockNoCPEDump.patch (from src/).
+                                   Reference set for D-H1 step 2: r3_fit/run/cpe_dump_ttbar5.bin (5 ttbar events,
+                                   124716 calls on 58482 pixel hits, 2.1 calls per hit, 2.0 pixels per cluster,
+                                   median sigma 6.0 um (x) / 23.9 um (y); record 72 B + 8 B per pixel).
+
+WHAT THE KERNEL REPRODUCES (stock file:line)
+  candCutSel                MkFitFitProducer.cc:128-142 (host, in the producer; momEta/pT/nTotalHits of the input)
+  per track, pass 1         MkBuilder::fit_tracks with remap (MkBuilder.cc:1432-1545):
+    reFitIndices            MkFitter.cc:131-200. Hits with index >= 0 visited from the last position down; z_minR =
+                            z of the first strictly smallest R2 in that visit order; key -r2 - (z - z_minR)^2.
+                            std::map<float, vector<int>> order = ascending key, equal keys in insertion order:
+                            reproduced by a stable fixed-size insertion into per-track global scratch (D-H2a,
+                            sort-like, accepted). Stock is -Ofast x86-64-v3: R2 and the key are written as the
+                            contracted fma(x, x, y*y) and fma(-z, z, -r2) on every backend (review M5).
+    fwd fit                 fwdFitInputTracks (errors x100, chi2 0) + fwdFitFitTracks (MkFitter.cc:15-37, 204-386):
+                            hits order[n-1-h] (innermost first), material skipped on the first hit,
+                            kalmanPropagateAndUpdateAndChi2Plane (lane prop) with PF_use_param_b_field |
+                            PF_apply_material, propToHit = true; per-step chi2 kept (chi2fwd).
+    output                  reFitOutputTracks (MkFitter.cc:74-128): params/errors/chi2 written unless the chi2 SUM
+                            is NaN (then the previous state stays). The charge is never written back: a charge
+                            flip inside a pass changes the charge for the rest of that pass only (stock behaviour).
+    bkw fit                 bkReFitInputTracks (state of the fwd output, errors x100, chi2 0, the ORIGINAL charge)
+                            + bkReFitFitTracks: hits order[h] (outermost first), material skipped on the first hit.
+    outlier removal         MkBuilder.cc:1490-1535: NaN chi2 -> 1e6 (written back), scorer = fwd + bkw chi2 of the
+                            same hit, std::map<float,int>[-scorer] = j (D-H2b: equal scorers COLLIDE, only the last j
+                            survives - reproduced), walk in descending scorer, cut (pT>1: s>20, f>8, b>8; pT<=1: s>15,
+                            f>7, b>7) with pT of the refitted state, at most nFH-3 removals; removeHit(sortedIdxs[
+                            nFH-1-j]) = index -1, nFoundHits-1. Sort-free: a bit mask of passing survivors and the
+                            walk position = number of passing survivors with a smaller key.
+  pass 2 (remap)            tracks that lost hits: reFitIndices again on the reduced list (z_minR can change), fwd +
+                            bkw from the pass-1 output, no outlier step (fit_tracks without remap).
+  Stock's nFoundHits vs indices.size(): stock loops nFoundHits steps over indices[]; the kernel uses the same
+  formulas (fwd order[n-1-h], bkw order[h], sortedIdxs[nFH-1-j]) and counts mismatches (0 seen on 200 events).
+
+RESULTS (100 events each, replay files, menu candCutSel; tracks after candCutSel: ttbar 191595, qcd 194436)
+  Device vs stock MkFitFitProducer with disableCPE (cmpDevVsStockNoCPE, mkFit level, paired by seed label):
+                                identical hit lists (incl. removed outliers)   params within 1e-3 sigma
+    ttbar  serial_sync          191584 / 191595 (99.9943%)                      61.3%
+           cuda_async (L40)     191581 / 191595 (99.9927%)                      60.5%
+           cuda vs serial       191582 / 191595 (99.9932%)                      60.6%
+    qcd    serial_sync          194375 / 194436 (99.9686%)                      59.9%
+           cuda_async (L4)      194369 / 194436 (99.9655%)                      59.3%
+           cuda vs serial       194355 / 194436 (99.9583%)                      59.2%
+    Per-parameter |pull| tails (>= 1 sigma, z) ttbar: serial-stock 217, cuda-stock 232, cuda-serial 245: the port
+    differs from stock as much as its own two backends differ from each other (FMA contraction, -Ofast).
+    Harness floor pilot (stock v2 vs v3, 5 ev, CPE on): 8949/8949 identical hit lists, params within 1e-3: 42%.
+  Determinism: cuda run twice in one job, 100 + 100 events: 100% bit-identical.
+  Track counts: equal on every event (5524 / 5524 on the first 3 ttbar events: 409 tracks refitted in pass 2,
+  545 outlier hits removed, 0 NaN-kept, 0 hit-count mismatches, 0 overflows).
+  Stock converter: MkFitOutputTrackConverter on device vs stock-noCPE output (reco::Track, valid hits): identical
+  hit lists ttbar 191571 / 191595, qcd 194356 / 194436; the converter accepts the device output unchanged.
+  Registers (cuobjdump, KernelFinalFit, 64 threads/block): REG 223-255 depending on sm, STACK 32-48 B, LOCAL 0.
+  Timing, ttbar 50 ev, 1 thread, ms/event (FastTimerService): stock fit with CPE 29.3, stock fit no-CPE 19.0,
+    device fit serial 33.6, device fit cuda (L40) 5.0. Both device numbers include the host packing of all hits
+    and tracks from the stock products and the copies (round-3 stand-in); serial uses N = 1 per thread.
+  MTV: see REPORT.txt of the lane (stock CPE vs stock no-CPE vs device no-CPE).
+
+CPE PLAN (D-H1 step 2; the POSITION part is done and validated per hit, see 3.)
+  What stock does: for every PIXEL hit (do_cpe = hit index) kalmanOperationPlaneLocal (KalmanUtilsMPlex.cc:1548-1566,
+  1686-1716) builds local track parameters ltp = (q/p, dxdz, dydz, x, y, pz sign) on the module plane and calls
+  PixelCPEGeneric::getParameters(cluster, det, ltp): position from the generic formula with the TRACK's cot(alpha) =
+  dxdz and cot(beta) = dydz, errors from the GenError templates (menu: UseErrorsFromTemplates = True,
+  LoadTemplatesFromDB = True, NoTemplateErrorsWhenNoTrkAngles = True). The local hit (x, y) and its 2x2 error then
+  replace the projected global hit in the update.
+  Device pieces:
+    1. Hook: kalmanOperationPlaneLocal (lane bkfit owns src/alpaka/prop) needs a template CPE functor argument,
+       called per slot after lp/pzSign, returning bool and (x, y, exx, exy, eyy). Default = no-op (bkfit/building
+       unchanged). Review H2c: msPar_local/msErr_local must be initialised to the projected hit, so a false return
+       falls back to the stock no-CPE values (SIMPLIFICATION, no physics change: the HLT lambda always returns true).
+    2. Per-hit cluster parameters on device: minRow/maxRow/minCol/maxCol, q_f/q_l X/Y, charge, edge flags =
+       pixelCPEforDevice::ClusParams, filled by the Alpaka rechit producer and today thrown away. Either keep them in a
+       side SoA of the rechit step (RecoLocalTracker change) or recompute them from the digi SoA + cluster index.
+       Mapping mkFit pixel hit index -> rechit SoA row: MkFitClusterIndexToHit order (= the hit wrapper order).
+    3. DONE (position): interface/fit/CpeGeneric.h, portable localPositionTrackAngles() = PixelCPEGeneric::localPosition
+       with the track's cot(alpha)/cot(beta) (generic_position_formula, eff_charge_cut 0/1, size_cut 3, no
+       irradiation correction, no big pixels), module constants from PixelCPEFastParamsPhase2 detParams (shiftX/Y,
+       chargeWidthX/Y, pitch, nRows/nCols, thickness), edge charges as collect_edge_charges (no truncation).
+       Per-hit check vs stock (plugins/alpaka/MkFitAlpakaFitCpeCheck.cc, test/fitCpeCheck_cfg.py, run/cpecheck.log):
+       124716 stock CPE calls (5 ttbar events, every call of the final fit with its ltp): |dx| max 0.0024 um,
+       |dy| max 0.0048 um (float rounding of ~1 cm positions); x bit-identical 47%, y 45%; no module missing.
+    4. Errors: the device fast CPE uses errorFromSize for Phase-2 (fixed tables, no templates). Stock uses
+       SiPixelGenError::qbin(ID, cotalpha, cotbeta, ...) with the track angles: the GenError tables (per template ID)
+       must be flattened into a device ES product and qbin ported (~250 lines). This is the largest piece.
+    5. Validation: per hit, device (position, error) vs host PixelCPEGeneric::getParameters with the SAME ltp
+       (capture ltp + hit index in the private stock copy), then the full fit vs stock with the CPE.
+  Estimate: 1-2 lane rounds; 2 and 4 are the work. Cost on CPU stock: the CPE is 10 of the 29 ms of MkFitFitProducer.
+
+OPEN ISSUES / NEXT
+  - CPU throughput: kernel 21.6 ms vs stock no-CPE 19.0 ms (whole module). Next: group the pass-2 refits by hit count
+    too (now N = 1), check vectorisation of the per-slot gathers; stock is -Ofast with intrinsics Matriplex ops.
+  - Inputs: replace the host packing by the device EventOfHits product (integ 286be21, hits block = HitSoA) and the
+    device building output (TrackSoA product); then the producer becomes a pure device module + a host converter.
+  - Registers ~250 at 64 threads: occupancy-limited; LOCAL 0. Try splitting fwd/bkw passes if GPU time matters.
+  - D-H2b fix (multimap semantics for equal scorers) as a DEVIATION with MTV, after the CPE.
+
+=====================================================================================================================
+ROUND 4 (2026-10-03, 2:41 pm - , branch r4/fit on main 6f294d1): isolated floor (review H2), register plan
+(D4-H1), device PixelCPEGeneric errors + hook (D-H1 step 2), device hit input.
+
+1. ISOLATED FIT FLOOR (review H2, DESIGN D4-floor). The fit is tested on identical building inputs, so its floor must
+   be the isolated one: stock MkFitFitProducer with the production x86-64-v3 mkFit libraries vs the release's
+   x86-64-v2 mkFit libraries (libRecoTrackerMkFit{Core,CMS,}.so of lib/<arch>/scram_x86-64-v2) on the SAME input
+   tracks. The building outputs (MkFitOutputWrapper) are not persistable, so the private stock copy got a dump:
+     fitDumpMode=write      (job A, v3) writes per event the fit's input tracks (before candCutSel) and output tracks;
+     fitDumpMode=readInput  (job B, v2) replaces the input tracks by job A's (building in job B is ignored);
+     fitDumpMode=readOutput (job B) emits job A's output tracks (the reference).
+   Recipe: lanes r4_fit/floor/run_floor.sh <sample> <nev> <cpe 0|1> (= test/fitFloor_cfg.py role=write, then role=read
+   with the v2 libraries first in LD_LIBRARY_PATH; the job records the mapped mkFit libraries, 3 of 5 are v2: Core,
+   CMS, RecoTrackerMkFit; the area's plugin library with the dump stays v3, it holds no fit arithmetic).
+   Comparators: [compare floorFitIso] (mkFit level, MkFitOutputWrapper) and [compare floorFitIsoTrk] (reco::Track after
+   the stock converter, both sides through job B's converter). Files r4_fit/floor/floor_<sample>_100_cpe<c>_fitiso.json
+   are ISOLATED floors (label them so; the harness floor500 files are CHAINED).
+                                 hit lists differ / paired    unpaired   |pull|>=1 x / y / z / 1/pT / phi / theta
+     ttbar100 no-CPE (isolated)  22 / 191595 (1.15e-4)        0          18 / 18 / 294 / 32 / 26 / 92
+     ttbar100 CPE on (isolated)  40 / 191595 (2.09e-4)        0          22 / 21 / 477 / 39 / 29 / 114
+     qcd100   no-CPE (isolated)  99 / 194436 (5.09e-4)        0
+     qcd100   CPE on (isolated)  152 / 194436 (7.82e-4)       0
+   The CPE-on floor is larger: the CPE moves with the track angles, which carry the rounding of the previous steps.
+
+2. REGISTER PLAN (D4-H1): on GPU backends the fit is 5 kernels KernelFinalFitStage<stage, kCpe>, one thread per track,
+   64 threads per block: 0 = pass-1 reFitIndices + forward fit, 1 = pass-1 backward fit, 2 = outlier removal + pass-2
+   reFitIndices (flag), 3 / 4 = pass-2 forward / backward fit of the flagged tracks. The state between kernels is the
+   track row (params, errors, chi2, hit list) + FitScratch (keys/order/chi2 per hit, meta = n, nFH, pass-2 flag per
+   track). Per track the same calls in the same order as the round-3 single kernel: no-CPE output is unchanged
+   (ttbar100 L40 vs stock no-CPE: 191581 / 191595 identical hit lists, params within 1e-3 sigma 60.5%, as round 3).
+   CPU backends keep the round-3 grouped kernel (kNN = 8 groups by nFoundHits), now templated on kCpe.
+   cuobjdump (r4_fit/registers_fit.txt), REG/STACK/LOCAL:
+     stage cpe  sm_75       sm_80       sm_89 (L40/L4)  sm_90       sm_100      sm_120
+       0    0   250/32/0    250/32/0    200/32/0        201/32/0    223/48/0    255/32/0
+       0    1   250/32/0    250/32/0    216/32/0        216/32/0    250/48/0    255/32/0
+       1    1   218/32/0    210/32/0    184/32/0        185/32/0    199/48/0    194/32/0
+       2    *    63/16/0     43/16/0     40/16/0         50/16/0     42/32/0     48/16/0
+       3    1   218/32/0    216/32/0    193/32/0        191/32/0    194/48/0    199/32/0
+       4    1   218/32/0    210/32/0    184/32/0        185/32/0    199/48/0    194/32/0
+   LOCAL = 0 everywhere (round 3 single kernel: 250-255, sm_89 255). Stage 0 is the largest (reFitIndices + fit);
+   moving reFitIndices into its own stage is the next lever if occupancy matters.
+
+3. DEVICE PixelCPEGeneric WITH TRACK ANGLES (D-H1 step 2), interface/fit/CpeGeneric.h:
+   - position: round 3 (localPositionTrackAngles);
+   - errors: qbinErrors = SiPixelGenError::qbin (SiPixelGenError.cc:538-872) with IrradiationBiasCorrection = False:
+     Dtype flips of cot(alpha)/cot(beta) with the local Bx/Bz, lower_bound interpolation in cot(beta) (y entries,
+     |cot beta| for the x slices) and cot(alpha), charge bin from qscale * Q / (qavg * qcorrect) vs fbin[0..2];
+     then PixelCPEGeneric::localError + PixelCPEGenericBase::initializeLocalErrorVariables/setXYErrors with
+     UseErrorsFromTemplates and a track angle: edge clusters (first/last row/col) 50/85 um, size 1 -> sx1/sy1 (sx2/sy2
+     with a big pixel), else x/yrmsgen of the charge bin, in cm; output (x, y, x^2, 0, y^2).
+   - tables (plugins/alpaka/MkFitAlpakaFitCpeTables.h, round-4 stand-in for an ES product): per CPE module of
+     PixelCPEFastParamsPhase2 (4000) the position constants, the GenError template index (getGenErrorID), the local B
+     (surface().toLocal(inTesla(position)), PixelCPEBase.cc:182) and the big-pixel count; the GenError stores of the DB
+     object (SiPixelGenError::pushfile) flattened into a float pool (3 templates, 2672 floats). Built per IOV in the
+     producer (mutex + cacheIdentifiers), copied with the event (small).
+   - per pixel hit: ClusterCpe = (min/max row/col, edge charges q_f/q_l X/Y without truncation (TruncatePixelCharge =
+     False in the Phase-2 menu), cluster charge, CPE module index), filled on the host from the SiPixelCluster of
+     MkFitClusterIndexToHit (index = mkFit pixel hit index = HitSoA row). This is the least invasive route: the Alpaka
+     rechit step's ClusParams are not touched (RecoLocalTracker unchanged). Device-side: a kernel over the pixel
+     cluster/digi SoA that writes the same 11 numbers is the next step (needs the digi SoA in the event).
+   - per-hit check vs stock (plugins/alpaka/MkFitAlpakaFitCpeCheck.cc on r3_fit/run/cpe_dump_ttbar5.bin: 124716 stock
+     CPE calls of the final fit, each with its own ltp, 3 GenError templates, 0 modules without template):
+       x |port - stock|: 58324 identical, max 0.0024 um     y: 55846 identical, max 0.0048 um
+       exx: 97099 bit-identical, 27617 < 1e-6 relative (max 5.8e-7)   exy: all 0 = stock   eyy: 124716 bit-identical
+   - hook: src/alpaka/prop/KalmanUtilsMPlex.h kalmanOperationPlaneLocal / kalmanPropagateAndUpdateAndChi2Plane take
+     a functor template argument (default NoCpe: compiled out, other callers unchanged). Called per slot after
+     lp/pzSign with ltp = (q/p, dxdz, dydz, x, y, pz sign) like stock (KalmanUtilsMPlex.cc:1548-1566); a true return
+     replaces the local hit position and the 2x2 local error (1686-1716). Review H2 c: a false return keeps the
+     projected hit (stock would copy uninitialised msPar_local/msErr_local); SIMPLIFICATIONS line, no physics change.
+     FitCpe<N>: slot with a pixel hit (stock do_cpe = hit index when L.is_pixel(), MkFitter.cc:270-275) -> cpeTrackAngles.
+   - producer: MkFitAlpakaFitProducer cpe = true by DEFAULT (the menu behaviour); cpe = False is the validation-only
+     no-CPE variant and must be asked for explicitly (review H1: no silent no-CPE fit in a menu).
+
+4. INPUTS: MkFitAlpakaFitProducer eventOfHits = <device EventOfHits product> (MkFitAlpakaEventOfHitsProducer) takes
+   the hits block on the device instead of packing all pixel + strip hits on the host (rows are the wrapper rows, as
+   everywhere: pixel index, nPixel + strip index). fitCompare_cfg.py deviceHits=1. Validated on qcd100 serial + L4
+   with the CPE (table below). The building output still enters as MkFitOutputWrapper (tracks packed on the host);
+   the build module's TrackSoA product as input is open.
+   The CPE cluster data are packed only for the pixel hits on the fit's input tracks (stock calls the CPE only for
+   them), with one module lookup per module and the clusters read by index from the cluster collection (parameter
+   pixelClusters, default hltSiPixelClusters; falls back to the rechit's Ref if the product differs).
+
+5. ACCEPTANCE (100 events; D-M4 = test/replay_floor_check.py vs the ISOLATED floor of section 1, same sample + CPE
+   mode; logs/JSONs in lanes r4_fit/run, floors in r4_fit/floor)
+                                     mkFit level diff / N   floor   D-M4     reco::Track diff (floor)   D-M4
+     ttbar CPE on   CUDA L40         36 / 191595            40      PASS     34 (38)                    PASS
+     ttbar CPE on   serial           32 / 191595            40      PASS     27 (38)                    PASS
+     ttbar no-CPE   CUDA L40         14 / 191595            22      PASS     14 (22)                    PASS
+     ttbar no-CPE   serial           17 / 191595            22      PASS
+     qcd   CPE on   CUDA L4, dev hits  109 / 194436         152     PASS     103 (147)                  PASS
+     qcd   CPE on   serial, dev hits   112 / 194436         152     PASS     109 (147)                  PASS
+     qcd   no-CPE   CUDA L4          67 / 194436            99      PASS     63 (96)                    PASS
+     qcd   no-CPE   serial           79 / 194436            99      PASS
+   Unpaired 0 at mkFit level everywhere; every pull metric passes. Device CPE vs device no-CPE changes 2.1% of the hit
+   lists, as stock CPE vs stock no-CPE (187500 / 191595 identical).
+   MTV (HLT validator; mtv/numbers_*.txt, resolution_*.txt):
+     replay ttbar100, L40 job       eff               fake              dup               dxy68     dz68      phi68
+       stock menu fit (CPE on)      0.8858 +- 0.0039  0.0243 +- 0.0004  0.0107 +- 0.0002  0.00849   0.01588   0.002737
+       device fit, CPE on           0.8858 +- 0.0039  0.0243 +- 0.0004  0.0107 +- 0.0002  0.00849   0.01588   0.002737
+       device fit, no CPE           0.8858            0.0243            0.0108            0.009074  0.01601   0.002831
+     device CHAIN + device fit with the CPE (test/chain_mtv_cfg.py, ttbar500, 300 events, L40):
+       chain (build + fit + CPE)    0.8894 +- 0.0021  0.0242 +- 0.0002  0.0114 +- 0.0001  0.00846   0.01578   0.002732
+       stock menu fit (CPE on)      0.8894 +- 0.0021  0.0242 +- 0.0002  0.0114 +- 0.0001  0.00846   0.01577   0.002731
+       stock fit, no CPE            0.8893 +- 0.0021  0.0241 +- 0.0002  0.0114 +- 0.0001  0.009058  0.01583   0.002824
+     The device CPE recovers the menu's resolution (dxy -7%, phi -3% vs no CPE); the chain now equals the menu.
+
+6. TIMING (INDICATIVE: shared box with 5 other lanes; ttbar 50 events, 1 thread, FastTimerService; arms alternated
+   serial / cuda / serial / cuda; device fit with the CPE and device hits; ms/event; lanes r4_fit/timing)
+                                         serial r1 / r2 / head    cuda L40 r1 / r2 / head
+     stock MkFitFitProducer CPE on        30.6 / 31.3 / 30.4       29.7 / 32.3 / 30.1
+     stock MkFitFitProducer CPE off       19.3 / 19.3 / 19.2       19.1 / 19.7 / 19.0
+     devFit with CPE                      33.8 / 34.7 / 32.9       8.8 / 9.2 / 5.8
+       host packing (tracks + CPE data)   7.5 / 7.6 / 6.5          7.1 / 7.3 / 4.6
+       device (copies + 5 kernels)        25.4 / 26.0 / 25.4       1.1 / 1.2 / 1.0
+     device EventOfHits                   22.7 / 23.1 / 23.1       3.8 / 4.1 / 4.3   (shared with building in the chain)
+   r1/r2 = 96cc57e..9197ff4; head = 5a81670 (CPE data only for hits on tracks, clusters by index, pinned buffer):
+   identical results (comparator outputs equal). The remaining host cost is the round-4 stand-in (cluster data and
+   track packing on the host); the device fit itself is ~1 ms on the L40.
+
+7. OPEN / NEXT
+   - CPE tables as an ES product (now: built per IOV in the producer under a mutex, copied with every event, ~260 kB).
+   - Cluster data on the device (now: host, from the SiPixelClusters); a kernel over the cluster/digi SoA.
+   - Build's TrackSoA product as the fit input (now: MkFitOutputWrapper, host packing of ~2000 tracks/event).
+   - test/chain_cfg.py fit=1 (menu-owned) compares chainFit with stockFitNoCPE; chainFit now has the CPE by default.
+   - Stage 0 (pass-1 reFitIndices + forward fit) is at 250-255 registers on sm_75/80/120 (LOCAL 0).
+   - D-H2b: 0 collision-shadowed outliers in every run of this round.
+
+8. UPDATE (d1d0f80): the GPU split has 6 stages: 0 pass-1 reFitIndices, 1/2 pass-1 forward/backward fit, 3 outliers +
+   pass-2 reFitIndices, 4/5 pass-2 forward/backward fit of the flagged tracks. Results identical to the 5-stage
+   version (ttbar100 L40, CPE on and off: same hit lists, same params). Registers (r4_fit/registers_fit.txt),
+   REG/STACK/LOCAL with the CPE:
+     stage            sm_75      sm_80      sm_89      sm_90      sm_100     sm_120
+     0 idx 1           40/16/0    36/16/0    36/16/0    35/16/0    42/16/0    45/16/0
+     1 fwd 1          218/32/0   216/32/0   193/32/0   191/32/0   199/32/0   199/32/0
+     2 bkw 1          218/32/0   210/32/0   184/32/0   185/32/0   194/32/0   194/32/0
+     3 outliers+idx    63/16/0    43/16/0    40/16/0    50/16/0    48/16/0    48/16/0
+     4 / 5            = 1 / 2
+   (no CPE: stages 1/4 208/208/191/191/192/192, 2/5 202/202/185/185/192/192). Max 218 on every arch, LOCAL 0.
+   Chain MTV with the CPE also on serial (ttbar500, 300 events, 8 threads): chain 0.8894 / 0.0242 / 0.0114,
+   dxy68 0.00846, phi68 0.002731 = menu (mtv/numbers_chain_ttbar500_cpu_300.txt).
+   Timing of the 6-stage head (cuda L40, ttbar50, 1 thread, indicative): devFit 5.6 ms = host 4.4 + device 1.0
+   (5-stage: 5.8 = 4.6 + 1.0); stock fit with the CPE 27.1 ms in the same job.
+
+=====================================================================================================================
+ROUND 5 (lane r5_fit, 2026-10-03 5:39 pm - 7:50 pm ET; branch r5/fit on main 371210e / Formats af3da8c, untouched)
+1. CPE ES PRODUCT (review R4-H2)
+   - interface/fit/CpeESData.h: CpeESData<TDev> = three alpaka buffers (ModuleCpe[4000], GenErrTemplate[3], float pool
+     [2672]) + a shared_ptr to the host tables (CpeTablesHost: the same arrays as vectors, rawId per module, rawId ->
+     module map for the host cluster packing). CopyToDevice<CpeESDataHost> (LSTESData / mkfitdev::ESData style).
+     Typelookups: src/fitCpeTypelookup.cc (host), plugins/alpaka/MkFitAlpakaFitCpeTypelookup.cc (backends).
+   - plugins/alpaka/MkFitAlpakaFitCpeESProducer.cc (MkFitAlpakaFitCpeESProducer@alpaka, record PixelCPEFastParamsRecord,
+     ComponentName default MkFitAlpakaFitCpe, cpeFastParams default PixelCPEFastParamsPhase2): buildCpeTables once per
+     IOV; the framework makes one device copy per device. The producer reads it (parameter cpeTables).
+   - Gone from MkFitAlpakaFitProducer: the mutex-guarded mutable tables (IOV race) and the 3 per-event table copies.
+     Per event only the ClusterCpe entries of the pixel hits on the input tracks move to the device.
+   - buildCpeTables throws if any module has big pixels (the position formula assumes none; 0 in D121).
+   Configs: every config that runs MkFitAlpakaFitProducer with cpe = True needs the ES producer
+     process.x = cms.ESProducer('MkFitAlpakaFitCpeESProducer@alpaka')
+   The customise adds it (hltMkFitAlpakaFitCpeESProducer). Menu-owned test configs: patch in
+   lanes/mkfit_alpaka/r5_fit/patches/0001-menu-test-cfgs-fit-cpe-es-producer.patch (chain_cfg, fitCompare, fitMtv).
+2. CPE CONFIGURATION GUARD (review R4-H1)
+   C++ (MkFitAlpakaFitProducer, cpeCheck = throw | warn | off, default throw): once per IOV of TkPixelCPERecord +
+   PixelCPEFastParamsRecord, the device CPE function (cpeTrackAngles, host instance, tables of the ES product) is
+   compared with the stock CPE object the menu fit uses (pixelCPE, default 'PixelCPEGeneric',
+   PixelClusterParameterEstimator::getParameters(cluster, det, ltp) exactly as MkFitFitProducer.cc:144-158 calls it)
+   on synthetic clusters: every 8th module + the first module of each GenError template (500 modules), 9 clusters
+   per module (1x1 .. 3x4 at the centre, one pixel at 35k electrons to expose a charge truncation, edge clusters on
+   all four edges) x 9 track-angle pairs (cot alpha -0.2/0.05/0.3, cot beta -3/0/1.2) = 40,500 calls (~0.1 s/IOV).
+   Tolerance: position 1e-6 cm (0.01 um), errors 1e-5 relative, exy exactly 0 on both sides. This covers the
+   module constants of the OTHER ES product (PixelCPEFastParamsPhase2), the hard-coded menu settings in
+   CpeGeneric.h, topology/deformations (stock uses theTopol->localPosition with the track prediction) and the
+   Lorentz angle. Result on the D121 geometry (every run): 40500 calls, 0 beyond tolerance; max |dx| 0.0004 um,
+   |dy| 0.0024 um, rel exx 3.2e-7, rel eyy 0.
+   Validation option cpeCheckHitEvents = N: every pixel hit on the input tracks in the first N events (real
+   clusters), angles of a straight line from the origin, same comparison. 100 events, CUDA and serial instances
+   (identical): ttbar 1,257,792 calls, QCD 1,247,129 calls, 0 beyond tolerance in both; max |dx| 0.0024 um,
+   |dy| 0.0048 um, rel exx 6.2e-7, eyy and exy exact (= the round-4 dump check with the stock ltp: 124,716 calls).
+   Python (customize _checkCpeConfig): the menu fit's pixelCPE must be 'PixelCPEGeneric'; that ES producer's
+   UseErrorsFromTemplates, TruncatePixelCharge, IrradiationBiasCorrection, DoCosmics, inflate_errors,
+   eff_charge_cut_*, size_cut*, EdgeClusterError*, useLAWidthFromDB, LoadTemplatesFromDB must have the validated
+   values (C++ defaults used when unset); the Lorentz settings (useLAFromDB, lAOffset, lAWidthBPix/FPix,
+   doLorentzFromAlignment, useLAWidthFromDB) must agree between PixelCPEGeneric and PixelCPEFastParamsPhase2.
+   Negative tests (python, on the generated menu): TruncatePixelCharge = True, lAOffset 0.1 on the FastParams
+   producer only, pixelCPE = PixelCPETemplateReco: all three refused with the reason.
+3. FIT PRODUCER: NO WAIT, CUSTOMISE (review R4-M2)
+   - MkFitAlpakaFitProducer is a stream::SynchronizingEDProducer<GlobalCache>: acquire() packs (tracks, CPE cluster
+     data of the hits on the input tracks) and enqueues copies + 6 fit kernels + the copy back; the framework waits
+     for the queue asynchronously (ExternalWork); produce() rebuilds the mkfit::Tracks on the host. No alpaka::wait.
+     Job statistics and the per-IOV check state live in the GlobalCache ([fit] line at the end of the job).
+   - customizeHLTforMkFitAlpaka.py: DEVICE_FIT_HAS_CPE = True; _customizeFit passes cpe explicitly (Fit: True,
+     FitNoCPE: False), takes pixelCPE from the menu module and checks it (section 2), adds the CPE ES producer with
+     the menu's FastParams ComponentName, reads the hits from the device EventOfHits (eventOfHits = hltMkFitEventOfHits:
+     no host hit packing; strip hits label from the stock EventOfHits module, no hard-coded label).
+   - New customizeHLTforMkFitAlpakaFitValidation: the Fit swap + the stock MkFitFitProducer on the SAME input
+     (device building output) on its own full stock EventOfHits + its MkFitOutputTrackConverter, comparators
+     [compare menuCmpFit] (MkFitOutputWrapper) and [compare menuCmpFitTracks] (reco::Track).
+   NOT DONE: TrackSoA in from the build module / TrackSoA out + host converter (the input is still the host
+   MkFitOutputWrapper of the build module, packed on the host); device cluster data (still host SiPixelClusters).
+4. VALIDATION (round 5; logs in lanes/mkfit_alpaka/r5_fit/{run,menu,timing})
+   Replay, 100 events, CPE on, same job (lane cfg/fitcmp_cfg.py), D-M4 vs the ISOLATED floors of section 1 (round 4):
+     ttbar CUDA L40 36 / serial 32 of 191595 hit lists differ (floor 40); QCD (device hits) CUDA L4 109 / serial 112 of
+     194436 (floor 152); mkFit and reco::Track level, all 8 checks PASS. Identical to round 4 (ES product + no-wait
+     split are result-neutral).
+   Menu, procModifier trackingMkFitFit, customizeHLTforMkFitAlpakaFitValidation (stock MkFitFitProducer on the same
+   input in the same job + a serial_sync clone of the device fit as the same-job rounding reference):
+     ttbar GPU: stock vs CUDA 41-45 / 260776 hit lists, stock vs serial 37, CUDA vs serial 30; theta |pull| >= 1:
+     219 / 206 / 205. ttbar CPU: stock vs serial 41 / 260760, theta 210. The replay-sample floor allows 193.5 for
+     theta (lambda, dsz at reco::Track level similar): this sample has ~1.3-1.5x the replay sample's rounding-noise rate
+     (CUDA vs serial of the same port code = port vs stock); D-M4 vs the same-job reference PASS. MTV hltGeneral
+     equal (GPU 0.8812/0.0110/0.0081 vs 0.8813/0.0110/0.0081; CPU 0.8810 vs 0.8812). Status clean.
+   Note: the trackingMkFitFit menu itself differs from the default menu (KF fit): hltGeneral eff 0.8812 vs 0.8860,
+   fake 0.0110 vs 0.0082 on the same 200 ttbar events (stock both).
+5. HOST TIME (menu FastTimer, ms per job event, ttbar 200 / 139 tracked, indicative): default menu KF fit 139.9 (GPU) /
+   138.2 (CPU) + TrackCandidates converter 6.9; trackingMkFitFit stock: MkFitFitProducer 21.5 / 22.2 +
+   MkFitOutputTrackConverter 16.6; port: device fit 3.1-3.4 (GPU; acquire = host packing, 3.7 ms of it the CPE
+   cluster data) / 24.3 (serial).
+6. CPU BACKENDS IN PLACE (7576b52): on serial/TBB (device memory = host memory) the fit runs on the host track SoA and
+   the host ClusterCpe array directly (no host-to-host copies). Serial outputs identical (comparator JSONs equal).
+   Replay timing (ttbar 50 ev, 1 thread, same job as the stock fit, indicative, shared box): serial device fit
+   33.3-34.3 -> 29.2-29.8 ms vs stock 27.8-29.3; CUDA device fit host time 3.8-4.5 ms (of which CPE cluster packing
+   3.0-3.6). Menu (8 threads, ttbar 200): serial device fit 21.9 ms per job event vs stock 22.2-22.8.
+7. OPEN (round 5 end): TrackSoA input/output (blocked on device cluster data: the host CPE packing needs the hit list
+   of the input tracks); device ClusterCpe; same-sample v2/v3 menu floor; the L4 saturated-GPU thread time (section
+   4 of lanes r5_fit/REPORT.txt); patch 0001 for the menu-owned test configs.
+   Menu QCD (100 events, trackingMkFitFit): GPU (L4) stock vs CUDA 137 / 191299 hit lists, CPU stock vs serial 148 /
+   191264; D-M4 PASS vs the replay QCD isolated floor at both levels on both; MTV hltGeneral GPU 0.8263 vs 0.8264,
+   CPU 0.8268 vs 0.8269. Serial device fit 32.2 ms vs stock 31.9-34.6 ms per job event.
+
+=====================================================================================================================
+ROUND 6 (lane fit, 2026-10-03 9:00 pm - 11:45 pm ET): trackreco/cmssw#186 in the device code
+=====================================================================================================================
+Reference: stock CMSSW_20_1_0_pre2 + #186 (62b616b, no "seam" commit) + #187 + -Ofast for all of MkFitCore (r6_base).
+1. WHAT #186 CHANGES AND WHERE IT IS IN THE PORT (patch mario_prs/pr186.patch, 13 commits squashed)
+   Shared propagation (building, backward fit of building, final fit; src/alpaka/prop/PropagationMPlex.h):
+   - field constants (commit 6): stock Config::mag_* are runtime (MkFitGeometryESProducer bFieldParams, default
+     {3.81036, -2.03767e-06, 7.34495e-06, 3.01291e-07}). Port: Config::BFieldParams in MaterialView::bField (every
+     PropagationFlags carries the view), filled by esFill from mkfit::Config::mag_* after the stock geometry ES
+     producer ran (ESSizes::bField; ESConfig::mag_* for the checker). Every bFieldFromZR of the port (R, Z, plane
+     propagation, Kalman local Jacobians) reads it. The constexpr Config::mag_* are the new stock defaults.
+   - plane propagation (commit 11, "vectorised path-length solve and shared trigonometry"): getS returns the root
+     closest to zero in the cancellation-free form 2A / (-B - sign(B) sqrt(B^2 - 4AC)); StartTrig (sin/cos of the
+     start state computed once, fast_sin for the turning angle as before); the Jacobian takes u/v directly from
+     sin/cos phi (no fast_isqrt normalisation), v13 = v23 = sin(theta), temp4 without the -cosT*v23 term, and the
+     field of the step (bFld) passed in. These change building too (stock and port alike).
+   - applyMaterialEffects (commit 1): energy-loss straggling variance (xi / beta^2) wmax (1 - beta^2/2) / (beta^2 p^2
+     pT^2) instead of dP^2 (stock's double literal 0.5 kept); optional msRefP (commit 8).
+   - material map with the r-z box fix (commit 3): comes through the stock MkFitGeometry that esFill reads; the ES
+     tester compares every bin (3,008,356 values, 0 mismatches) and the stock zero-material warning is silent.
+   Final fit only (src/alpaka/fit/FitKernels.h; switches = ESConfig::refit = stock mkfit::Config::refit*, i.e. the
+   refit* parameters of hltMkFitGeometryESProducer drive the device fit exactly as they drive stock):
+   - refitBFieldAtMid: B re-sampled at the chord midpoint inside the getS iteration; the Jacobian uses that field;
+   - refitRadialFieldCorr: brDeltaRPphi + applyDpPhi half-kicks around the helix step (helixAtPlaneSel); the
+     vectorised atan2V of stock is bit-identical to vdt::fast_atan2f, which the port uses per slot;
+   - refitElossSignFromPass: eloss_by_pass / eloss_outward per pass;
+   - refitBkwMsFixedMomentum: msRefP = 1/(ipt sin(theta)) of the backward pass's start state (std::sin, as stock);
+   - refitBkwSubSteps: propagateHelixToPlaneSubStepMPlex (firstPathEstimate, fixedLengthSubStep, whole-step
+     Jacobian, finishPlanePropagation) for the lanes off the plane (d != 0), then the update without propagation;
+   - refitMaterialPerModule: ModuleInfoSoA radl / bbxi columns (stock ModuleInfo, MediumProperties), passed to the
+     propagation only when the switch is on (stock: Config::refitMaterialPerModule && pointers);
+   - first hit of each pass: update without propagation (propHit = h != 0); the CPE hook runs there too;
+   - kalmanOperationPlaneLocal: the local Jacobians use the parametrised field at the state when the caller passes
+     use_param_b_field (only kalmanPropagateAndUpdateAndChi2Plane, i.e. the final fit, as stock).
+   - commit 5 cleanups (r2z sign, reversed index copy) are no-ops for the port (it already used |R2| and direct
+     indexing). Commit 2 (pT calibration removal) and 4 (ParabolicMf factory) are outside mkFit's fit code.
+   - fitDirection takes the pass as a template parameter (kBkw) so the forward kernels do not carry the sub-step code.
+   - commits 12-13, per-hit smoothed states (storeHitStates, MkFitAlpakaFitProducer parameter, default False as the
+     menu): kalmanOperationPlaneLocal fills LocalStatesOut (predicted / updated local state, pz sign);
+     smoothLocalStatesPlane (Cholesky two-filter smoother, per slot, same operation order); the forward pass keeps its
+     updated local state per step in scratch (sc.hsFwd), the backward pass writes mkfit::HitStateOnTrack-equivalent
+     HitStateDev per HitOnTrack position (outermost = forward updated, innermost = backward updated, else combined);
+     reset per fit of a track (pass 1 and the refit). The producer emits MkFitOutputWrapper(tracks, true, hitStates),
+     so the stock MkFitOutputTrackConverter's full-TrackExtra / Trajectory path takes the device states.
+     Instantiated as separate kernels (kStore) only when the switch is on. NOT PORTED: validateHitStates (the fwd/bwd
+     validation copies) and Trajectories themselves (they are built by the stock converter from the states).
+2. -Ofast AND THE NaN GUARDS (doc/DEVIATIONS.txt D1): the reference's -Ofast folds the two x != x tests of the stock
+   final fit away (reFitOutputTracks keeps the previous state on a NaN chi2; the outlier scorer maps NaN to 1e6).
+   Stock then writes NaN states (59 of 193,069 ttbar tracks in 100 replay events), which the converter drops. The
+   port's checks work (no finite-math on any backend). Lane patch r6_fit/patches/0001 (mkfit::isNaN, a bit test)
+   restores the guards in stock; all comparisons below marked "stock+0001" use it.
+3. VALIDATION (replay, 100 events, CPE on, same job; lanes r6_fit/run; D-M4 vs the round-4 isolated floors
+   r4_fit/floor as a PROXY: they were made for the old reference; lane ref's new floors were not out)
+   Isolated fit, stock+0001 vs port (b2):            hit lists differ   |pull|>=1 x/1/pT/theta   reco::Track unpaired
+     ttbar CUDA L40   13 / 193069                     17 / 20 / 16             5 + 9
+     ttbar serial      9 / 193069                     17 / 23 / 19             10 + 6
+     QCD   CUDA L4     9 / 195755                     25 / 26 / 24             8 + 5
+     QCD   serial      8 / 195755                     27 / 22 / 22             6 + 6
+     (CUDA vs serial of the port: ttbar 6, QCD 4 hit lists; |pull| >= 1 at the same level.) 20/20 D-M4 PASS.
+     Against the unpatched reference (r6_base, NaN guards dead): 59 stock NaN tracks per 100 ttbar events, otherwise
+     the same (hit lists 38 CUDA / 34 serial including the NaN ones).
+   Round 5 for comparison (old reference): ttbar 36 / 32, QCD 109 / 112, theta |pull| >= 1: 112 / 552. The #186 plane
+   code (stable getS root, sin/cos-based Jacobian) makes stock and port agree much better.
+   Switches (hltMkFitGeometryESProducer refit* overrides, 50 ttbar events, both backends): off, noMid, noRad, noEloss,
+   noMs, noSub, noMod and the pre-#186 field constants (oldB): port vs stock 2-10 hit lists of 93,699, the same as
+   CUDA vs serial in every configuration (run/cmp_ttbar_both_50_sw_*).
+   Chained (device EOH + build + fit vs the stock chain, verify5_int/cfg/build_cfg.py fit=1, 100 events): final
+   candidates ttbar 12/211335 (cpu, L40), QCD 17 (cpu) / 21 (L4); TrackCandidates 3-7; reco::Track unpaired 6-10 per
+   side; status clean; 16/16 D-M4 PASS vs the old chained floors (proxy). Building with the #186 propagation (field
+   constants, getS, Jacobian, energy-loss variance) follows stock #186 building.
+   Per-hit states (storeHitStates on both sides, ttbar 30 events): 736,931 states valid on both sides, validity
+   differs 6 + 5 (CUDA vs serial 7 + 4), kind and pz sign identical; |pull| >= 1 q/p 34, dxdz 22, dydz 19, x 13, y 16
+   (CUDA vs serial 34 / 19 / 16 / 10 / 16).
+   Menu (procModifier trackingMkFitFit + customizeHLTforMkFitAlpakaFitValidation, ttbar 200 RAW events, 139 tracked;
+   stock arm = r6_base): MTV hltGeneral GPU 0.8864/0.0106/0.0096 stock vs 0.8864/0.0105/0.0095 port; CPU
+   0.8862/0.0105/0.0096 both. initialStep tracks +44 (GPU) / +65 (CPU) in the port = the stock NaN tracks (D1).
+   In-job vs stock+0001: 10 / 265940 (CUDA), 13 / 265924 (serial) hit lists; theta |pull| >= 1 28 / 24 (round 5:
+   219-222); D-M4 PASS at both levels; status clean; TriggerResults 1 path +-1 event.
+4. TIMING (INDICATIVE, shared box at load 40-90). Replay ttbar 50 events, 1 thread, L40, stock and port in the same
+   job, A = #186 switches on, B = all off, run A/B/A/B: stock MkFitFitProducer 27.9 / 30.1 (A) vs 24.1 / 24.4 (B) ms
+   per event; serial device fit 29.6 / 30.2 vs 23.6 / 24.7; CUDA device fit host time 4.0 / 4.5 vs 4.5 / 4.3, its
+   device part (acquire -> produce) 1.6 / 1.4 vs 1.1 / 1.3 ms. Menu (8 threads, ttbar 200): device fit 4.4 ms (GPU)
+   vs stock 27.8; serial 28.8 vs stock 29.7 ms per job event.
+5. REGISTERS (cuobjdump, every arch, LOCAL 0): default fit stage kernels sm_89 36-225 (round 5: max 193); BkFitKernel
+   218, KernelEngineUpdate 215, KernelEngineChi2 167. storeHitStates kernels (off by default): 255 with STACK
+   176-208 B (local arrays of the smoother), LOCAL 0.
+   QCD menu (GPU L4, 100 events), hltGeneral eff/fake/dup (tracks): stock r6_base 0.8316/0.0178/0.0093 (189147);
+   stock + patch 0001 0.8322/0.0179/0.0093 (189183); port 0.8340/0.0178/0.0093 (189181). The track counts of the port
+   equal stock+0001 (D1: ~35 hltGeneral / ~110 initialStep tracks that stock -Ofast writes as NaN); efficiencies agree
+   within cross-job GPU noise; in-job device fit vs stock+0001 11 / 195795 hit lists. Device fit 6.4 ms vs stock
+   37.7 ms per job event (menu, indicative).
+   QCD menu (CPU, 100 events): hltGeneral stock r6_base 0.8337/0.0178/0.0093 (189147) vs port 0.8339/0.0178/0.0093
+   (189168); initialStep +69 tracks (D1); TriggerResults identical; in-job vs stock+0001 11 / 195755 hit lists.

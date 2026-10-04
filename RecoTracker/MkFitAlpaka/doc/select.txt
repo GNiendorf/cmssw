@@ -1,0 +1,69 @@
+MkFitAlpaka select lane: K2 = propagate to layer + hit selection V2 + missed-layer handling     (round 3, 2026-10-03)
+======================================================================================================================
+Stock reference (CMSSW_20_1_0_pre2, RecoTracker/MkFitCore):
+  MkBuilder.cc:1104-1121  clearFailFlag, m_propagate_foo (MkBase::propagateTracksToR / ToZ with
+                          prop_config.finding_inter_layer_pflags, target LayerInfo::propagate_to()), selectHitIndicesV2,
+                          find_tracks_handle_missed_layers
+  MkFinder.cc:762-1150    selectHitIndicesV2 (LST JSON: useHitSelectionV2 = true)
+  MiniPropagators.{h,cc}  mini propagators
+  MkBuilder.cc:706-757    find_tracks_handle_missed_layers
+
+1. FILES (all new, owned by select)
+  src/alpaka/select/MiniPropagators.h     State/InitialState (scalar flavour: std::cos/sin/tan in State(par), vdt
+                                          fast_sincosf in the stepping) and StateV/InitialStateV = one slot of the
+                                          stock StatePlex/InitialStatePlex (vdt fast_sincos/fast_tan). Algorithms
+                                          ported: to_r PA_Exact, to_z PA_Exact, to_plane PA_Line (the only ones reached).
+  src/alpaka/select/SelectHitIndicesV2.h  Bins (prop_to_limits + find_bin_ranges), WSR from ESView, in_gap from the
+                                          central-q-bin dead flags, per-hit mini propagation, dq/dphi preselection,
+                                          SelHeap = fixed 6-entry transliteration of std::priority_queue (libstdc++
+                                          __push_heap / __pop_heap / __adjust_heap element moves), drained as stock;
+                                          handleMissedLayer() = find_tracks_handle_missed_layers decision.
+  src/alpaka/select/SelectSoA.h           SelListSoA (in), PropStateSoA, SelHitsSoA (out), SelExtraFlags.
+  src/alpaka/select/SelectKernel.h        KernelSelectHits (K2), thread per listed candidate.
+  src/alpaka/select/SelectEntry.h         host entry point runSelectHits (block 64).
+  src/alpaka/Select.dev.cc                the one TU that instantiates K2 (D-layout).
+  plugins/alpaka/MkFitAlpakaSelectStockCheck.cc + test/select_stock_cfg.py + test/select_dump_format.h: stock check.
+
+2. K2 INTERFACE (for the engine)
+  in   CandSlotsSoA::ConstView (engine): state of the candidate = par[6], err[21], charge (CandState).
+       SelListSoA: row = CandSlotsSoA row of the listed candidate (dense (seed, ic) list from K1, stock seed_cand_idx
+       order), layer = layer of the plan step, region = TrackerInfo::EtaRegion of the seed; scalar n = list length.
+       ESView (es), device EventOfHits views (hits: LayerSoA, BinnedHitSoA, BinSoA, HitSoA).
+  out  PropStateSoA[i]: state at the layer (stock m_Par/m_Err[iP]) + fail flag. K3 needs ps.err: stock
+       isStripQCompatible mixes m_Err[iP] with the plane-propagated parameters (usePropToPlane: K3 propagates from the
+       candidate state again, MkBuilder.cc:1127).
+       SelHitsSoA[i]: hits[0..nHits) = original hit index within the layer (stock m_XHitArr order, best ddphi first);
+       wsr = stock m_XWsrResult.m_wsr AFTER handle_missed_layers (WSR_Failed rewritten to WSR_Outside), wsrRaw = before,
+       inGap, extra flags:
+         kSelExtraHeldBack  push a copy of the INPUT candidate (state + HoT chain) into the seed's extras
+                            (stock tmp_cands[seed].push_back(cand)): WSR_Outside, or WSR_Failed on a barrel layer;
+         kSelExtraStopNode  that copy also gets addHitIdx(-2, layer, 0) (barrel Failed in Reg_Barrel).
+       The engine (K4, single writer per seed) appends the extras in ic order, as stock does.
+  A cand with wsr == WSR_Outside is skipped by K3 (stock MkFinder.cc:1823); in_gap is only read for Inside/Edge.
+
+3. STOCK CHECK (how to run)
+  The lane area has a PRIVATE instrumented copy of stock MkFitCore (r3_select/CMSSW/src/RecoTracker/MkFitCore, not in
+  the package; built for x86-64-v3 -Ofast like the release, vfmadd count identical to the release library). With
+  MKFA_SEL_DUMP_DIR set, selectHitIndicesV2 writes one record per candidate (input state iC, propagated state iP, fail
+  flag, Bins, wsr, in_gap, hit list) and MkBuilder begin/end_event open/close sel_<seq>.bin; end_event prints the
+  dead-path counters (MKFA_SEL_COUNTERS). The check module runs K2 on the same inputs (device EventOfHits built from
+  the same hit wrappers, device ES product) and compares.
+    MKFA_SEL_DUMP_DIR=<dir> cmsRun test/select_stock_cfg.py sample=ttbar|qcd maxEvents=N backend=serial_sync|cuda_async
+  (ONE stream; the stock chain stays on CPU; r3_select/run/run_check.sh wraps it.) The replayed candidates stay
+  bit-identical to the HLT (compareCandidatesHLTvsReplay), so the instrumentation does not change stock.
+
+4. RESULTS (100 ttbar + 100 QCD PU200 replay events, 4,801,040 candidate slots; details in r3_select/REPORT.txt)
+  serial_sync: everything bit-identical to stock except the mini-propagator limit states (99.3-99.6% bit-exact, 1 ulp);
+    selected hit lists identical in 2,066,339 / 2,066,339 candidates with hits (order included), propagated states,
+    fail flags, Bins (q_c, dq_track, dphi_track, bin ranges; 1 phi-bin difference in QCD), WSR, in_gap, extras 0 diffs.
+  cuda_async (L40): hit lists identical in 2,066,321 / 2,066,340; 14 same set in another order (ddphi near-ties), 5 differ
+    (a hit at the dq/dphi preselection edge). WSR/in_gap/extras/fail flags 0 diffs. Source: GPU rounding of the
+    inter-layer propagation (prop code): 73% of propagated states bit-exact, max |dpar|/sigma 0.32.
+  FMA: stock is -Ofast x86-64-v3; GCC contracts the Bins Matriplex expressions a*b + c*d into fma(c, d, a*b). Found
+    offline (r3_select/ana/fma_probe.cc on dumped Bins values) and written as explicit std::fma in computeBins and in
+    the vectorized mini propagator; the plain forms matched stock in 54-93% only. Note: CMSSW C++ is built with GCC's
+    default -ffp-contract=fast, so plain expressions get contracted at the compiler's choice and that choice moves with
+    inlining (seen: a plain-form change in hypotV changed the bitwise result of prop's inlined propagateHelixToR).
+
+5. KERNEL RESOURCES (cuobjdump, KernelSelectHits, block 64): REG 177 (sm_89 = L40/L4), 199 (sm_75/80/90), 240-242
+  (sm_100/120); LOCAL 0 (no spills); STACK 128-144 B = the dynamically indexed 6-entry heap and the hit array.
