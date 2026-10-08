@@ -19,18 +19,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     LST();
     ~LST();
 
-    // Synchronous: the whole event, blocking on the queue at each host read of a device count.
-    void run(Queue& queue,
-             bool verbose,
-             const float ptCut,
-             const uint16_t clustSizeCut,
-             LSTESData<Device> const* deviceESData,
-             LSTInputDeviceCollection const* lstInputDC,
-             bool no_pls_dupclean,
-             bool tc_pls_triplets,
-             bool reduce_mem_by_full_precompute);
-    // Same work in the same order, without blocking: start() enqueues up to the first host read of a device count and
-    // resume() continues once the queue has reached it. Both return true when the whole event is enqueued.
+    // start() enqueues the event up to the first host read of a device count and resume() continues once the queue has
+    // reached it; both return true when the whole event is enqueued. With async false, start() blocks at those reads.
     bool start(Queue& queue,
                bool verbose,
                const float ptCut,

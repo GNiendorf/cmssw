@@ -141,27 +141,6 @@ namespace {
 LST::LST() = default;
 LST::~LST() = default;
 
-void LST::run(Queue& queue,
-              bool verbose,
-              float const ptCut,
-              uint16_t const clustSizeCut,
-              LSTESData<Device> const* deviceESData,
-              LSTInputDeviceCollection const* lstInputDC,
-              bool no_pls_dupclean,
-              bool tc_pls_triplets,
-              bool reduce_mem_by_full_precompute) {
-  start(queue,
-        verbose,
-        ptCut,
-        clustSizeCut,
-        deviceESData,
-        lstInputDC,
-        no_pls_dupclean,
-        tc_pls_triplets,
-        reduce_mem_by_full_precompute,
-        false);
-}
-
 bool LST::start(Queue& queue,
                 bool verbose,
                 float const ptCut,
