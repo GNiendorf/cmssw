@@ -1442,7 +1442,7 @@ namespace mkfit {
     PropagationFlags my_flags = PropagationFlags(PF_use_param_b_field | PF_apply_material |
                                                  (Config::refitBFieldAtMid ? PF_b_field_at_mid : PF_none) |
                                                  (Config::refitRadialFieldCorr ? PF_radial_field_corr : PF_none));
-    my_flags.tracker_info = &ti;
+    my_flags.env = ti.propagation_env();
     // Energy-loss sign from the pass (Config::refitElossSignFromPass): the forward pass loses energy on every
     // step, the backward pass gains it, whatever order the refit visits the modules in.
     PropagationFlags my_flags_bk = my_flags;
