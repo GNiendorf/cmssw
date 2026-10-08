@@ -8,3 +8,12 @@
 
 <test name="testDumpMkFitGeometry" command="testDumpMkFitGeometry.sh"/>
 
+<bin name="testMkFitPortablePhysics" file="alpaka/testPortablePhysics.dev.cc">
+  <use name="alpaka"/>
+  <use name="catch2"/>
+  <use name="FWCore/Utilities"/>
+  <use name="HeterogeneousCore/AlpakaInterface"/>
+  <use name="RecoTracker/MkFitCore"/>
+  <flags ALPAKA_BACKENDS="1"/>
+  <flags CXXFLAGS="-fopenmp-simd"/>
+</bin>
