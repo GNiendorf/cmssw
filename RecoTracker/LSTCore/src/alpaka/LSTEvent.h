@@ -35,8 +35,11 @@
 #include "RecoTracker/LSTCore/interface/alpaka/EndcapGeometryDevDeviceCollection.h"
 
 #include "HeterogeneousCore/AlpakaInterface/interface/host.h"
+#include "RecoTracker/LSTCore/interface/LSTTask.h"
 
 namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
+
+  using ::lst::LSTTask;
 
   class LSTEvent {
   private:
@@ -102,6 +105,23 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     bool objectsStatistics_ = false;
     double memoryAllocatedMB_ = 0;
 
+    // Host reads of device counts: alpaka::wait in the synchronous mode, a suspension of the stage in the asynchronous
+    // mode (the caller resumes it with resumeSuspended() once the queue has reached this point).
+    bool asyncSync_ = false;
+    std::coroutine_handle<> suspended_;
+    struct QueueSync {
+      LSTEvent& event;
+      bool await_ready() const {
+        if (event.asyncSync_)
+          return false;
+        alpaka::wait(event.queue_);
+        return true;
+      }
+      void await_suspend(std::coroutine_handle<> stage) noexcept { event.suspended_ = stage; }
+      void await_resume() const noexcept {}
+    };
+    QueueSync queueSync() { return QueueSync{*this}; }
+
   public:
     // Constructor used for CMSSW integration. Uses an external queue.
     LSTEvent(bool verbose,
@@ -130,22 +150,26 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     void initSync();        // synchronizes, for standalone usage
     void resetEventSync();  // synchronizes, for standalone usage
     void wait() const { alpaka::wait(queue_); }
+    // Asynchronous mode: the stages suspend at their count read-backs instead of blocking (see QueueSync).
+    void setAsyncSync(bool async) { asyncSync_ = async; }
+    // Resumes the stage suspended at the last sync point; the queue must have completed the work enqueued before it.
+    void resumeSuspended() { std::exchange(suspended_, {}).resume(); }
 
     void addInputToEvent(LSTInputDeviceCollection const* lstInputDC);
     // Calls the appropriate hit function, then increments the counter
     void addHitToEvent();
     void addPixelSegmentToEventStart();
 
-    void createMiniDoublets();
+    LSTTask createMiniDoublets();
     void addPixelSegmentToEventFinalize();
-    void createSegmentsWithModuleMap();
-    void createTriplets();
-    void createTrackCandidates(bool no_pls_dupclean, bool tc_pls_triplets);
-    void createPixelTriplets();
-    void createQuintuplets();
+    LSTTask createSegmentsWithModuleMap();
+    LSTTask createTriplets();
+    LSTTask createTrackCandidates(bool no_pls_dupclean, bool tc_pls_triplets);
+    LSTTask createPixelTriplets();
+    LSTTask createQuintuplets();
     void pixelLineSegmentCleaning(bool no_pls_dupclean);
-    void createPixelQuintuplets();
-    void createQuadruplets();
+    LSTTask createPixelQuintuplets();
+    LSTTask createQuadruplets();
 
     // functions that map the objects to the appropriate modules
     void addMiniDoubletsToEventExplicit();
