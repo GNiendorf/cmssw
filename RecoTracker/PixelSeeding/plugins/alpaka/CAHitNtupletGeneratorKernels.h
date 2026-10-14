@@ -7,6 +7,7 @@
 #include <cstdint>
 
 #include <alpaka/alpaka.hpp>
+#include <vector>
 
 #include "DataFormats/TrackSoA/interface/TrackDefinitions.h"
 #include "DataFormats/TrackSoA/interface/TracksHost.h"
@@ -18,6 +19,7 @@
 #include "HeterogeneousCore/AlpakaInterface/interface/memory.h"
 #include "RecoTracker/PixelSeeding/interface/CAGeometrySoA.h"
 #include "RecoTracker/PixelSeeding/interface/alpaka/CAPairSoACollection.h"
+#include "RecoTracker/LSTCore/interface/alpaka/OTPullCellsDeviceCollection.h"
 
 #include "CACell.h"
 #include "CAPixelDoublets.h"
@@ -170,6 +172,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
 
     void classifyTuples(const HitsMultiView& hh, TkSoAView& track_view, Queue& queue);
 
+    // OT-seeded lookup: terminal cells of a CA path (no outer neighbour; an inner neighbour or a tuple through it),
+    // device product sized exactly (one host sync for the count).
+    void exportOTPullCells(const HitsMultiView& hh, Queue& queue, std::optional<lst::OTPullCellsDeviceCollection>& out);
+
     void buildDoublets(const HitsMultiView& hh,
                        const ::reco::CAGraphSoAConstView& cc,
                        const ::reco::CALayersSoAConstView& ll,
@@ -240,6 +246,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     std::optional<cms::alpakatools::device_view<Device, uint32_t>> device_nCells_;
     std::optional<cms::alpakatools::device_view<Device, uint32_t>> device_nTriplets_;
     std::optional<cms::alpakatools::device_view<Device, uint32_t>> device_nCellTracks_;
+    std::optional<cms::alpakatools::device_view<Device, uint32_t>> device_nBarrelTriplets_;
 
     std::optional<CAPairSoACollection> deviceTriplets_;
     std::optional<CAPairSoACollection> deviceTracksCells_;

@@ -592,7 +592,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                                                  float& pixelRadiusError,
                                                                  const float ptCut,
                                                                  bool runDNN = true,
-                                                                 bool runChiSquaredCuts = true) {
+                                                                 bool runChiSquaredCuts = true,
+                                                                 const float wpHigh = WP::wpHigh()) {
     uint16_t lowerModuleIndex = triplets.lowerModuleIndices()[tripletIndex][0];
     uint16_t middleModuleIndex = triplets.lowerModuleIndices()[tripletIndex][1];
     uint16_t upperModuleIndex = triplets.lowerModuleIndices()[tripletIndex][2];
@@ -706,7 +707,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                                   rzChiSquared,
                                                   pixelData.eta,
                                                   pixelData.ptIn,
-                                                  module_type_3)) {
+                                                  module_type_3,
+                                                  wpHigh)) {
       return false;
     }
 

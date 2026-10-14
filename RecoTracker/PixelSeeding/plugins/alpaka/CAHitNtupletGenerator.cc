@@ -1,3 +1,6 @@
+#include <chrono>
+#include <cstdlib>
+#include <iostream>
 // #define GPU_DEBUG
 // #define DUMP_GPU_TK_TUPLES
 
@@ -57,6 +60,15 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
       desc.add<int>("maxDYPred", TrackerTraits::maxDYPred)
           ->setComment(
               "Maximum difference between actual and expected cluster size of inner RecHit. Barrel-forward cells.");
+      desc.add<int>("sizeWinMode", 0)
+          ->setComment(
+              "One-sided slope-predicted cluster-size window on pixel-barrel hits (0 = off). Bits: 1 inner hit of "
+              "barrel-barrel cells, 2 outer hit of barrel-barrel cells, 4 inner hit of barrel-other cells, 8 barrel-barrel "
+              "cells fail only if both hits are short (with bit 1).");
+      desc.add<std::vector<double>>("sizeWinA", std::vector<double>(4, 0.))
+          ->setComment("Window intercept per barrel layer (1/8 pixel): size >= A + B * |dz/dr|.");
+      desc.add<std::vector<double>>("sizeWinB", std::vector<double>(4, 0.))
+          ->setComment("Window slope per barrel layer (1/8 pixel per unit |dz/dr|).");
 
       edm::ParameterSetDescription geometryParams;
       // layers params
@@ -212,10 +224,12 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
               "Disable the triplet cleaner entirely.");  // FIXME this should be implemented as an automatic check (simple if) that disables if minHitsPerNtuplet > 3
       desc.add<bool>("doFastDuplicateRemover", true)->setComment("Disable the fastDuplicateRemover");
       desc.add<bool>("doEarlyDuplicateRemover", true)->setComment("Disable the earlyDuplicateRemover");
+      desc.add<unsigned int>("maxBarrelTripletTuples", 0)
+          ->setComment("Budget of terminal 3-layer pixel-barrel tuples stored below minHitsPerNtuplet (0 = off)");
     }
 
     AlgoParams makeCommonParams(edm::ParameterSet const& cfg) {
-      return AlgoParams({
+      AlgoParams params({
 
           // Container sizes
           (float)cfg.getParameter<double>("avgHitsPerTrack"),
@@ -250,7 +264,23 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
           cfg.getParameter<bool>("useSimpleTripletCleaner"),
           cfg.getParameter<bool>("doTripletCleaner"),
           cfg.getParameter<bool>("doFastDuplicateRemover"),
-          cfg.getParameter<bool>("doEarlyDuplicateRemover")});
+          cfg.getParameter<bool>("doEarlyDuplicateRemover"),
+          // Barrel-terminal 3-hit path
+          cfg.getParameter<unsigned int>("maxBarrelTripletTuples"),
+          // Cluster-size window, filled below
+          0,
+          {0.f, 0.f, 0.f, 0.f},
+          {0.f, 0.f, 0.f, 0.f}});
+      params.sizeWinMode_ = (int16_t)cfg.getParameter<int>("sizeWinMode");
+      auto const winA = cfg.getParameter<std::vector<double>>("sizeWinA");
+      auto const winB = cfg.getParameter<std::vector<double>>("sizeWinB");
+      if (winA.size() != 4 or winB.size() != 4)
+        throw cms::Exception("Configuration") << "sizeWinA and sizeWinB need one value per pixel-barrel layer (4)";
+      for (int l = 0; l < 4; ++l) {
+        params.sizeWinA_[l] = winA[l];
+        params.sizeWinB_[l] = winB[l];
+      }
+      return params;
     }
 
     //This is needed to have the partial specialization for isPhase1Topology/isPhase2Topology
@@ -422,7 +452,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
       float bfield,
       uint32_t nDoublets,
       uint32_t nTracks,
-      Queue& queue) const {
+      Queue& queue,
+      std::optional<lst::OTPullCellsDeviceCollection>* otpullCells) const {
     using HelixFit = HelixFit<TrackerTraits>;
     using GPUKernels = CAHitNtupletGeneratorKernels<TrackerTraits>;
     using TrackHitSoA = ::reco::TrackHitSoA;
@@ -484,6 +515,22 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
           trackingHits, modules, trackingHits.size(), TrackerTraits::maxNumberOfQuadruplets, queue);
     }
     kernels.classifyTuples(trackingHits, tracks, queue);
+    if (otpullCells) {
+      // CA_OTPULL_TIME (diagnostics only): device time of the export
+      bool const timeIt = std::getenv("CA_OTPULL_TIME") != nullptr;
+      std::chrono::steady_clock::time_point t0;
+      if (timeIt) {
+        alpaka::wait(queue);
+        t0 = std::chrono::steady_clock::now();
+      }
+      kernels.exportOTPullCells(trackingHits, queue, *otpullCells);
+      if (timeIt) {
+        alpaka::wait(queue);
+        std::cout << "[OTPULL-TIME] CA export "
+                  << std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count() << " ms "
+                  << (*otpullCells)->const_view().metadata().size() << " cells" << std::endl;
+      }
+    }
 #ifdef GPU_DEBUG
     alpaka::wait(queue);
     std::cout << "finished building pixel tracks on GPU" << std::endl;

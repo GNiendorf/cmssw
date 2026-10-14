@@ -1,6 +1,8 @@
 #ifndef RecoTracker_LSTCore_src_alpaka_PixelQuintuplet_h
 #define RecoTracker_LSTCore_src_alpaka_PixelQuintuplet_h
 
+#include <limits>
+
 #include "RecoTracker/LSTCore/interface/alpaka/Common.h"
 #include "RecoTracker/LSTCore/interface/HitsSoA.h"
 #include "RecoTracker/LSTCore/interface/ModulesSoA.h"
@@ -450,6 +452,13 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     return RMSE;
   }
 
+  // Study knob (env LST_PT5_RPHIIN_HISCALE / LST_PT5_WPHIGH, read on the host). rPhiInHiScale 0 = inward rPhi cut
+  // below 5 GeV only; s > 0 = cut at all T5 radii, threshold x s above 5 GeV. wpHigh < 0 = built-in kWpHigh_pT5.
+  struct PT5Knob {
+    float rPhiInHiScale;
+    float wpHigh;
+  };
+
   template <alpaka::concepts::Acc TAcc>
   ALPAKA_FN_ACC ALPAKA_FN_INLINE bool runPixelQuintupletDefaultAlgo(TAcc const& acc,
                                                                     ModulesConst modules,
@@ -470,7 +479,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                                                     float& centerX,
                                                                     float& centerY,
                                                                     unsigned int pixelSegmentArrayIndex,
-                                                                    const float ptCut) {
+                                                                    const float ptCut,
+                                                                    const PT5Knob knob) {
     unsigned int t5InnerT3Index = quintuplets.tripletIndices()[quintupletIndex][0];
     unsigned int t5OuterT3Index = quintuplets.tripletIndices()[quintupletIndex][1];
 
@@ -499,7 +509,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                                            pixelRadiusErrorTemp,
                                                            ptCut,
                                                            true,
-                                                           false))
+                                                           false,
+                                                           knob.wpHigh >= 0.f ? knob.wpHigh : dnn::pt3dnn::kWpHigh_pT5))
       return false;
 
     unsigned int firstSegmentIndex = triplets.segmentIndices()[t5InnerT3Index][0];
@@ -556,16 +567,14 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                           pixelData.pz,
                                           pixelData.charge);
 
-    if (pixelRadius < 5.0f * kR1GeVf) {  //only apply r-z chi2 cuts for <5GeV tracks
-      if (not passPT5RZChiSquaredCuts(modules,
-                                      lowerModuleIndex1,
-                                      lowerModuleIndex2,
-                                      lowerModuleIndex3,
-                                      lowerModuleIndex4,
-                                      lowerModuleIndex5,
-                                      rzChiSquared))
-        return false;
-    }
+    if (not passPT5RZChiSquaredCuts(modules,
+                                    lowerModuleIndex1,
+                                    lowerModuleIndex2,
+                                    lowerModuleIndex3,
+                                    lowerModuleIndex4,
+                                    lowerModuleIndex5,
+                                    rzChiSquared))
+      return false;
 
     //outer T5
     float xs[Params_T5::kBaseLayers] = {mds.anchorX()[firstMDIndex],
@@ -589,27 +598,27 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
 
     rPhiChiSquared = computePT5RPhiChiSquared(acc, modules, lowerModuleIndices, centerX, centerY, pixelRadius, xs, ys);
 
-    if (pixelRadius < 5.0f * kR1GeVf) {
-      if (not passPT5RPhiChiSquaredCuts(modules,
-                                        lowerModuleIndex1,
-                                        lowerModuleIndex2,
-                                        lowerModuleIndex3,
-                                        lowerModuleIndex4,
-                                        lowerModuleIndex5,
-                                        rPhiChiSquared))
-        return false;
-    }
+    if (not passPT5RPhiChiSquaredCuts(modules,
+                                      lowerModuleIndex1,
+                                      lowerModuleIndex2,
+                                      lowerModuleIndex3,
+                                      lowerModuleIndex4,
+                                      lowerModuleIndex5,
+                                      rPhiChiSquared))
+      return false;
 
     rPhiChiSquaredInwards = computePT5RPhiChiSquaredInwards(T5CenterX, T5CenterY, quintupletRadius, xPix, yPix);
 
-    if (quintuplets.regressionRadius()[quintupletIndex] < 5.0f * kR1GeVf) {
+    const bool lowT5Radius = quintuplets.regressionRadius()[quintupletIndex] < 5.0f * kR1GeVf;
+    if (lowT5Radius || knob.rPhiInHiScale > 0.f) {
       if (not passPT5RPhiChiSquaredInwardsCuts(modules,
                                                lowerModuleIndex1,
                                                lowerModuleIndex2,
                                                lowerModuleIndex3,
                                                lowerModuleIndex4,
                                                lowerModuleIndex5,
-                                               rPhiChiSquaredInwards))
+                                               lowT5Radius ? rPhiChiSquaredInwards
+                                                           : rPhiChiSquaredInwards / knob.rPhiInHiScale))
         return false;
     }
     //trusting the T5 regression center to also be a good estimate..
@@ -617,6 +626,18 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     centerY = (centerY + T5CenterY) / 2;
 
     return true;
+  }
+
+  // Study knob (env LST_PT5_SCORE): pT5 ranking score, lower is better. 0 = rPhi chi2; 1 = log of the product
+  // rz x rPhi x rPhi-inwards chi2; 2 = log of rz x rPhi chi2.
+  template <typename TAcc>
+  ALPAKA_FN_ACC ALPAKA_FN_INLINE float pT5RankScore(TAcc const& acc, int mode, float rz, float rPhi, float rPhiIn) {
+    if (mode == 0)
+      return rPhi;
+    constexpr float tiny = std::numeric_limits<float>::min();
+    const float s = alpaka::math::log(acc, alpaka::math::max(acc, rz, tiny)) +
+                    alpaka::math::log(acc, alpaka::math::max(acc, rPhi, tiny));
+    return mode == 1 ? s + alpaka::math::log(acc, alpaka::math::max(acc, rPhiIn, tiny)) : s;
   }
 
   struct CreatePixelQuintupletsFromMap {
@@ -635,7 +656,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                   unsigned int* connectedPixelIndex,
                                   unsigned int nPixelSegments,
                                   ObjectRangesConst ranges,
-                                  const float ptCut) const {
+                                  const float ptCut,
+                                  const int scoreMode,
+                                  const PT5Knob pt5Knob) const {
       for (unsigned int i_pLS : cms::alpakatools::uniform_elements_z(acc, nPixelSegments)) {
         auto iLSModule_max = connectedPixelIndex[i_pLS] + connectedPixelSize[i_pLS];
         for (unsigned int iLSModule :
@@ -685,7 +708,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                                          centerX,
                                                          centerY,
                                                          static_cast<unsigned int>(i_pLS),
-                                                         ptCut);
+                                                         ptCut,
+                                                         pt5Knob);
             if (success) {
               unsigned int totOccupancyPixelQuintuplets = alpaka::atomicAdd(
                   acc, &pixelQuintuplets.totOccupancyPixelQuintuplets(), 1u, alpaka::hierarchy::Threads{});
@@ -709,7 +733,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                            rzChiSquared,
                                            rPhiChiSquared,
                                            rPhiChiSquaredInwards,
-                                           rPhiChiSquared,
+                                           pT5RankScore(acc, scoreMode, rzChiSquared, rPhiChiSquared, rPhiChiSquaredInwards),
                                            eta,
                                            phi,
                                            pixelRadius,

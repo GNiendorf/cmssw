@@ -46,6 +46,18 @@ namespace caStructures {
     bool doTripletCleaner_;
     bool doFastDuplicateRemover_;
     bool doEarlyDuplicateRemover_;
+
+    // Barrel-terminal 3-hit path (0 = off): budget of 3-layer tuples whose hits are all in the pixel barrel,
+    // stored when the DFS ends there although the main search keeps minHitsPerNtuplet
+    uint32_t maxBarrelTripletTuples_;
+
+    // One-sided, slope-predicted cluster-size window for pixel-barrel hits (0 = off).
+    // A barrel hit of layer L (0-3) with a non-edge size s (1/8 pixel) fails if s < sizeWinA_[L] + sizeWinB_[L] * |dz/dr|.
+    // Mode bits: 1 = inner hit of barrel-barrel pairs, 2 = outer hit of barrel-barrel pairs, 4 = inner hit of barrel-other pairs,
+    // 8 = barrel-barrel pairs fail only if both hits are short (with bit 1).
+    int16_t sizeWinMode_;
+    float sizeWinA_[4];
+    float sizeWinB_[4];
   };
 
   // Hits data formats

@@ -312,6 +312,16 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
   constexpr float kCrossCleanGridWindow = 0.15f;
   constexpr float kCrossCleanGridEtaMax = 3.f;
 
+  // Study knob (env LST_T5CC_MODE / LST_T5CC_PTMAX / LST_T5CC_EMBSCALE, read on the host): which pLS a T5 TC may
+  // remove by the embedding test. mode 2 (default) = none (noT5cc), 0 = every pLS, 1 = pLS with pT < ptMax.
+  struct T5CrossCleanKnob {
+    int mode;
+    float ptMax;
+    float embScale;
+    ALPAKA_FN_HOST_ACC bool t5Enabled() const { return mode != 2; }
+    ALPAKA_FN_HOST_ACC bool cleans(float plsPt) const { return mode == 0 || (mode == 1 && plsPt < ptMax); }
+  };
+
   // Dense key of a packed pLS hit index (bit 31 = OT hit): IT hits in [0, nKeysIT), OT hits after them.
   ALPAKA_FN_ACC ALPAKA_FN_INLINE unsigned int pixelHitKey(unsigned int packedHit, unsigned int nKeysIT) {
     constexpr unsigned int kOTBit = 1u << 31;
@@ -342,7 +352,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     }
   };
 
-  // The (eta, phi) a pLS is compared with for a TC of this type; false for T4s, which CrossCleanpLS skips.
+  // The (eta, phi) a pLS is compared with for a TC of this type; false for T4s, and for T5s unless the knob enables them.
   ALPAKA_FN_ACC ALPAKA_FN_INLINE bool crossCleanEtaPhi(LSTObjType type,
                                                        unsigned int innerTrackletIdx,
                                                        unsigned int prefix,
@@ -350,8 +360,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                                        PixelSeedsConst pixelSeeds,
                                                        QuintupletsConst quintuplets,
                                                        float& eta,
-                                                       float& phi) {
-    if (type == LSTObjType::T5) {
+                                                       float& phi,
+                                                       T5CrossCleanKnob knob) {
+    if (type == LSTObjType::T5 && knob.t5Enabled()) {
       eta = __H2F(quintuplets.eta()[innerTrackletIdx]);
       phi = __H2F(quintuplets.phi()[innerTrackletIdx]);
     } else if (type == LSTObjType::pT3) {
@@ -380,13 +391,14 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                   EtaPhiGrid grid,
                                   unsigned int nKeysIT,
                                   uint32_t* hitKeyBits,
-                                  unsigned int* cellCount) const {
+                                  unsigned int* cellCount,
+                                  T5CrossCleanKnob knob) const {
       unsigned int prefix = ranges.segmentModuleIndices()[modules.nLowerModules()];
       for (unsigned int tc : cms::alpakatools::uniform_elements(acc, candsBase.nTrackCandidates())) {
         LSTObjType type = candsBase.trackCandidateType()[tc];
         unsigned int innerTrackletIdx = candsExtended.objectIndices()[tc][0];
         float eta, phi;
-        if (!crossCleanEtaPhi(type, innerTrackletIdx, prefix, pixelTriplets, pixelSeeds, quintuplets, eta, phi))
+        if (!crossCleanEtaPhi(type, innerTrackletIdx, prefix, pixelTriplets, pixelSeeds, quintuplets, eta, phi, knob))
           continue;
         alpaka::atomicAdd(acc, &cellCount[grid.cell(acc, eta, phi)], 1u, alpaka::hierarchy::Blocks{});
         if (type == LSTObjType::T5)
@@ -413,7 +425,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                   QuintupletsConst quintuplets,
                                   EtaPhiGrid grid,
                                   unsigned int* cellCursor,
-                                  unsigned int* cellTCs) const {
+                                  unsigned int* cellTCs,
+                                  T5CrossCleanKnob knob) const {
       unsigned int prefix = ranges.segmentModuleIndices()[modules.nLowerModules()];
       for (unsigned int tc : cms::alpakatools::uniform_elements(acc, candsBase.nTrackCandidates())) {
         float eta, phi;
@@ -424,7 +437,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                               pixelSeeds,
                               quintuplets,
                               eta,
-                              phi))
+                              phi,
+                              knob))
           continue;
         const unsigned int slot =
             alpaka::atomicAdd(acc, &cellCursor[grid.cell(acc, eta, phi)], 1u, alpaka::hierarchy::Blocks{});
@@ -448,7 +462,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                   unsigned int nKeysIT,
                                   uint32_t const* hitKeyBits,
                                   unsigned int const* cellStart,
-                                  unsigned int const* cellTCs) const {
+                                  unsigned int const* cellTCs,
+                                  T5CrossCleanKnob knob) const {
       int pixelModuleIndex = modules.nLowerModules();
       unsigned int nPixels = segmentsOccupancy.nSegments()[pixelModuleIndex];
       unsigned int prefix = ranges.segmentModuleIndices()[pixelModuleIndex];
@@ -470,6 +485,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
 
         float eta1 = pixelSeeds.eta()[pixelArrayIndex];
         float phi1 = pixelSeeds.phi()[pixelArrayIndex];
+        const bool t5Clean = knob.cleans(pixelSeeds.ptIn()[pixelArrayIndex]);
 
         // Store the pLS embedding outside the TC comparison loop.
         float plsEmbed[Params_pLS::kEmbed];
@@ -480,7 +496,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         // Get pLS embedding eta bin and cut value for that bin.
         float absEta1 = alpaka::math::abs(acc, eta1);
         uint8_t bin_idx = (absEta1 > 2.5f) ? (dnn::kEtaBins - 1) : static_cast<uint8_t>(absEta1 / dnn::kEtaSize);
-        const float threshold = dnn::plsembdnn::kWP[bin_idx];
+        const float threshold = knob.embScale * dnn::plsembdnn::kWP[bin_idx];
 
         const int etaBin = grid.etaBin(acc, eta1);
         const int phiBin = grid.phiBin(acc, phi1);
@@ -493,13 +509,13 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
               LSTObjType type = candsBase.trackCandidateType()[trackCandidateIndex];
               unsigned int innerTrackletIdx = candsExtended.objectIndices()[trackCandidateIndex][0];
               float eta2, phi2;
-              crossCleanEtaPhi(type, innerTrackletIdx, prefix, pixelTriplets, pixelSeeds, quintuplets, eta2, phi2);
+              crossCleanEtaPhi(type, innerTrackletIdx, prefix, pixelTriplets, pixelSeeds, quintuplets, eta2, phi2, knob);
               float dEta = alpaka::math::abs(acc, eta1 - eta2);
               float dPhi = cms::alpakatools::deltaPhi(acc, phi1, phi2);
               float dR2 = dEta * dEta + dPhi * dPhi;
               if (type == LSTObjType::T5) {
                 // Cut on pLS-T5 embed distance.
-                if (dR2 < 0.02f) {
+                if (t5Clean && dR2 < 0.02f) {
                   float d2 = 0.f;
                   CMS_UNROLL_LOOP for (unsigned k = 0; k < Params_pLS::kEmbed; ++k) {
                     const float diff = plsEmbed[k] - quintuplets.t5Embed()[innerTrackletIdx][k];

@@ -103,6 +103,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     const int avgHitsPerTrack_;
     const pixelTrack::Quality minimumTrackQuality_;
     const double scoreThreshold_;
+    const bool passThreeHitTracks_;
+    const bool logPreselection_;
     torch::AlpakaModel model_;
     const int batchSize_;
     const int warmupIterations_ = 3;
@@ -118,6 +120,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
         avgHitsPerTrack_(iConfig.getParameter<int>("avgHitsPerTrack")),
         minimumTrackQuality_(pixelTrack::qualityByName(iConfig.getParameter<std::string>("minimumTrackQuality"))),
         scoreThreshold_(iConfig.getParameter<double>("scoreThreshold")),
+        passThreeHitTracks_(iConfig.getParameter<bool>("passThreeHitTracks")),
+        logPreselection_(iConfig.getParameter<bool>("logPreselection")),
         model_(iConfig.getParameter<edm::FileInPath>("model").fullPath()),
         batchSize_(iConfig.getParameter<int>("batchSize")),
         tokenTrackOut_(produces()) {
@@ -295,6 +299,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     launchScoreFilter(queue,
                       maxPreselectedTracks_,
                       scoreThreshold_,
+                      passThreeHitTracks_,
                       trackScoresOnDevice.view(),
                       alpaka::getPtrNative(d_preselectedTrackIndices),
                       alpaka::getPtrNative(d_nPreselectedTracks),
@@ -303,6 +308,15 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
                       alpaka::getPtrNative(d_nSelectedTracks),
                       alpaka::getPtrNative(d_selectedTrackHitOffsets));
 
+    if (logPreselection_) {
+      // Torch preselection log: tracks at >= minimumTrackQuality against the scored cap, and the selected count
+      auto h_nPre = cms::alpakatools::make_host_buffer<int>(queue);
+      auto h_nSel = cms::alpakatools::make_host_buffer<int>(queue);
+      alpaka::memcpy(queue, h_nPre, d_nPreselectedTracks);
+      alpaka::memcpy(queue, h_nSel, d_nSelectedTracks);
+      alpaka::wait(queue);
+      printf("[TORCHPRESEL] preselected %d cap %d selected %d\n", *h_nPre.data(), maxPreselectedTracks_, *h_nSel.data());
+    }
 #ifdef PIXEL_TRACK_HP_DEBUG
     nSelectedTracks = fetchNumSelectedTracks();
     std::cout << "PixelTrackTorchHighPuritySelector::Filtered tracks=" << nSelectedTracks << "\n";
@@ -329,6 +343,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     desc.add<std::string>("minimumTrackQuality", "tight");
     desc.add<edm::FileInPath>("model");
     desc.add<double>("scoreThreshold", 0.5);
+    desc.add<bool>("passThreeHitTracks", false)->setComment("3-hit tracks are kept whatever their score");
+    desc.add<bool>("logPreselection", false)->setComment("print the per-event preselected and selected counts");
     desc.add<int>("batchSize", 10);
     descriptions.addWithDefaultLabel(desc);
   }

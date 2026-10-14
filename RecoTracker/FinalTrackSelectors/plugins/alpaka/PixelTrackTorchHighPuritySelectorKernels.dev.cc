@@ -258,6 +258,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
                                   const double scoreThreshold,
                                   const int* nPreselectedTracks,
                                   const PixelTrackScoresSoA::View trackScores,
+                                  const int* trackHitCounts,
+                                  const bool passThreeHitTracks,
                                   int* selectionMask) const {
       /**
             * Applies a DNN score threshold to preselected tracks.
@@ -277,7 +279,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
       const auto nValid = alpaka::math::min(acc, nPreselected, maxPreselectedTracks);
       for (auto i : cms::alpakatools::uniform_elements(acc, nValid)) {
         const auto score = trackScores[i].score();
-        selectionMask[i] = (score >= scoreThreshold) ? 1 : 0;
+        selectionMask[i] = (score >= scoreThreshold || (passThreeHitTracks && trackHitCounts[i] == 3)) ? 1 : 0;
       }
     }
   };
@@ -424,6 +426,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
   void launchScoreFilter(Queue& queue,
                          const int maxPreselectedTracks,
                          const double scoreThreshold,
+                         const bool passThreeHitTracks,
                          const PixelTrackScoresSoA::View trackScores,
                          const int* preselectedTrackIndices,
                          const int* nPreselectedTracks,
@@ -451,6 +454,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
                         scoreThreshold,
                         nPreselectedTracks,
                         trackScores,
+                        trackHitCounts,
+                        passThreeHitTracks,
                         selectionMask.data());
 
     // Apply the selection mask to compact the preselectedTrackIndices array

@@ -1,4 +1,5 @@
 #include <alpaka/alpaka.hpp>
+#include <optional>
 
 #include <TFormula.h>
 #include "CommonTools/Utils/interface/FormulaEvaluator.h"
@@ -354,6 +355,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     const device::EDGetToken<HitsOnDevice> pixelRecHitToken_;
     device::EDGetToken<HitsOnDevice> trackerRecHitToken_;
     const device::EDPutToken<TkSoADevice> tokenTrack_;
+    const bool otpullExport_;
+    device::EDPutToken<lst::OTPullCellsDeviceCollection> otpullToken_;
 
     const ::reco::FormulaEvaluator maxNumberOfDoublets_;
     const ::reco::FormulaEvaluator maxNumberOfTuples_;
@@ -370,9 +373,12 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
         tokenField_(esConsumes()),
         pixelRecHitToken_(consumes(iConfig.getParameter<edm::InputTag>("pixelRecHitSrc"))),
         tokenTrack_(produces()),
+        otpullExport_(iConfig.getParameter<bool>("otpullExport")),
         maxNumberOfDoublets_(iConfig.getParameter<std::string>("maxNumberOfDoublets")),
         maxNumberOfTuples_(iConfig.getParameter<std::string>("maxNumberOfTuples")),
         deviceAlgo_(iConfig) {
+    if (otpullExport_)
+      otpullToken_ = produces("otpullCells");
     auto trackerRecHitsSoAInputTag = iConfig.getParameter<edm::InputTag>("trackerRecHitsSoA");
     if (!trackerRecHitsSoAInputTag.label().empty()) {
       trackerRecHitToken_ = consumes(trackerRecHitsSoAInputTag);
@@ -388,6 +394,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
 
     desc.add<edm::InputTag>("pixelRecHitSrc", edm::InputTag("siPixelRecHitsPreSplittingAlpaka"));
     desc.add<edm::InputTag>("trackerRecHitsSoA", edm::InputTag(""));
+    desc.add<bool>("otpullExport", false)
+        ->setComment("export the terminal cells of CA paths for LST's OT-seeded lookup (device product)");
 
     Algo::fillPSetDescription(desc);
     descriptions.addWithDefaultLabel(desc);
@@ -415,6 +423,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
       auto ntracks_d = cms::alpakatools::make_device_view(queue, tracks.view().tracks().nTracks());
       alpaka::memset(queue, ntracks_d, 0);
       iEvent.emplace(tokenTrack_, std::move(tracks));
+      if (otpullExport_)
+        iEvent.emplace(otpullToken_, lst::OTPullCellsDeviceCollection(queue, 0));
       return;
     }
 
@@ -429,6 +439,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     /// TODO: this could be extended to a more general check for
     /// no hits on any of the starting layers.
 
+    bool otpullDone = false;
     if (globalCache()->startNoBPix1_ or offsetBPIX2 > 0) {
       std::array<double, 1> nHitsV{static_cast<double>(nHits)};
       std::array<double, 1> emptyV;
@@ -436,9 +447,18 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
       uint32_t const maxTuples = maxNumberOfTuples_.evaluate(nHitsV, emptyV);
       uint32_t const maxDoublets = maxNumberOfDoublets_.evaluate(nHitsV, emptyV);
 
-      iEvent.emplace(
-          tokenTrack_,
-          deviceAlgo_.makeTuplesAsync(hitsCollections, geometry, bf, maxDoublets, maxTuples, iEvent.queue()));
+      std::optional<lst::OTPullCellsDeviceCollection> otpullCells;
+      iEvent.emplace(tokenTrack_,
+                     deviceAlgo_.makeTuplesAsync(hitsCollections,
+                                                 geometry,
+                                                 bf,
+                                                 maxDoublets,
+                                                 maxTuples,
+                                                 iEvent.queue(),
+                                                 otpullExport_ ? &otpullCells : nullptr));
+      if (otpullExport_ && otpullCells)
+        iEvent.emplace(otpullToken_, std::move(*otpullCells));
+      otpullDone = otpullCells.has_value();
 
     } else {
       edm::LogWarning("CAHitNtupletAlpaka") << "No hit on BPix1 (" << offsetBPIX2
@@ -450,6 +470,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
       alpaka::memset(queue, ntracks_d, 0);
       iEvent.emplace(tokenTrack_, std::move(tracks));
     }
+    if (otpullExport_ && !otpullDone)
+      iEvent.emplace(otpullToken_, lst::OTPullCellsDeviceCollection(iEvent.queue(), 0));
   }
 
   using CAHitNtupletAlpakaPhase1 = CAHitNtupletAlpaka<pixelTopology::Phase1>;

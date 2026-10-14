@@ -222,6 +222,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
                                                       TmpTuple& tmpNtuplet,
                                                       hindex_type* __restrict__ hits,
                                                       const unsigned int minHitsPerNtuplet,
+                                                      uint32_t* __restrict__ nBarrelTriplets,
+                                                      const uint32_t maxBarrelTriplets,
                                                       const float preCurvature = kUninitializeCurvature) const {
       // the building process for a track ends if:
       // it has no right neighbor
@@ -299,6 +301,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
                                                                tmpNtuplet,
                                                                hits,
                                                                minHitsPerNtuplet,
+                                                               nBarrelTriplets,
+                                                               maxBarrelTriplets,
                                                                thisCurvature);
           }
         }
@@ -307,7 +311,18 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
         if (!foundNeighbor) {
           const uint8_t nl = tmpNtuplet.size() + 1;  // numLayers in tuplet
           // if long enough save...
-          if (nl >= minHitsPerNtuplet) {
+          bool save = nl >= minHitsPerNtuplet;
+          // barrel-terminal 3-hit path: a 3-layer tuple that ends here is kept, within its own budget,
+          // if all its hits are in the pixel barrel (CA layers 0-3)
+          if (!save && maxBarrelTriplets > 0 && nl == 3) {
+            constexpr uint8_t kPixelBarrelLayers = 4;
+            bool barrel = cells[tmpNtuplet[0]].theInnerLayer_ < kPixelBarrelLayers;
+            for (auto c : tmpNtuplet)
+              barrel &= cells[c].theOuterLayer_ < kPixelBarrelLayers;
+            if (barrel)
+              save = alpaka::atomicAdd(acc, nBarrelTriplets, 1u, alpaka::hierarchy::Blocks{}) < maxBarrelTriplets;
+          }
+          if (save) {
             {
               uint32_t nh = 0U;
               uint32_t nfb = 0U;

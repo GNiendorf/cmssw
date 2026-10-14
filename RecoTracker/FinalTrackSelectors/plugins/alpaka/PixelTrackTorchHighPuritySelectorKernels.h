@@ -37,6 +37,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
   void launchScoreFilter(Queue& queue,
                          const int maxPreselectedTracks,
                          const double scoreThreshold,
+                         const bool passThreeHitTracks,
                          const PixelTrackScoresSoA::View trackScores,
                          const int* preselectedTrackIndices,
                          const int* nPreselectedTracks,

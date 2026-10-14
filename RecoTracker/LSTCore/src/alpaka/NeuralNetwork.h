@@ -151,7 +151,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                                      const float rzChiSquared,
                                                      const float pixelEta,
                                                      const float pixelPt,
-                                                     const int moduleType3) {
+                                                     const int moduleType3,
+                                                     const float wpHigh = WP::wpHigh()) {
       constexpr unsigned int kInputFeatures = 7;
       constexpr unsigned int kHiddenFeatures = 32;
       constexpr unsigned int kOutputFeatures = 1;
@@ -184,7 +185,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                               : static_cast<unsigned int>(alpaka::math::abs(acc, pixelEta) / dnn::kEtaSize);
 
       if (pixelPt > 5.0f)
-        return output > WP::wpHigh();
+        return output > wpHigh;
 
       return output > WP::wp(bin_index);
     }

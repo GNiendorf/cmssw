@@ -1,6 +1,8 @@
 #ifndef RecoTracker_LSTCore_src_alpaka_LSTEvent_h
 #define RecoTracker_LSTCore_src_alpaka_LSTEvent_h
 
+#include "RecoTracker/LSTCore/interface/OTPull.h"
+#include "RecoTracker/LSTCore/interface/alpaka/OTPullCellsDeviceCollection.h"
 #include <algorithm>
 #include <optional>
 
@@ -111,6 +113,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     double memoryAllocatedMB_ = 0;
     double memoryLiveMB_ = 0;
     unsigned int nT4Compact_ = 0;  // T4 count after compactQuadruplets()
+    unsigned int tcHeadroom_ = 0;  // extra track candidate slots (OT-seeded cell lookup), 0 = off
     double memoryPeakLiveMB_ = 0;
 
     // pLS superbins and pixel types, read back at the MD-stage sync, and the pixel-map ranges built from them (pT5, pT3).
@@ -166,6 +169,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     void compactSegments(SegmentCandidatesDeviceCollection const& candidatesDC);
     void createTriplets();
     void createTrackCandidates(bool no_pls_dupclean, bool tc_pls_triplets);
+    void setTCHeadroom(unsigned int n) { tcHeadroom_ = n; }
+    void pullOTCells(OTPullParams const& p, OTPullCellsDeviceCollection const& cells);
     void createPixelTriplets();
     void createQuintuplets();
     void pixelLineSegmentCleaning(bool no_pls_dupclean);

@@ -22,6 +22,7 @@
   <use name="HeterogeneousCore/AlpakaInterface"/>
   <use name="RecoLocalTracker/Records"/>
   <use name="RecoLocalTracker/SiPixelRecHits"/>
+  <use name="RecoTracker/LSTCore" source_only="1"/>
   <!-- work around for cms-sw/cmssw#45179 -->
   <use name="no-array-bounds-flag" for="alpaka/serial"/>
   <flags ALPAKA_BACKENDS="1"/>

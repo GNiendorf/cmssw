@@ -15,8 +15,12 @@
 #include "TrackCandidate.h"
 #include "Triplet.h"
 #include "Quadruplet.h"
+#include "OTPull.h"
+#include "HeterogeneousCore/AlpakaInterface/interface/prefixScan.h"
 
+#include <chrono>
 #include <format>
+#include <cstdlib>
 
 using Device = ALPAKA_ACCELERATOR_NAMESPACE::Device;
 using Queue = ALPAKA_ACCELERATOR_NAMESPACE::Queue;
@@ -991,6 +995,48 @@ void LSTEvent::compactQuadruplets(Queue& queue, uint16_t nEligibleT4Modules) {
   }
 }
 
+// Study knob (lane itot_r1/arb): pT5 ranking score, env LST_PT5_SCORE (unset = 0, the rPhi chi2).
+static int lstPT5ScoreMode() {
+  static const int mode = [] {
+    const char* v = std::getenv("LST_PT5_SCORE");
+    const int m = v ? std::atoi(v) : 0;
+    if (v)
+      lstWarning(std::format("LST PT5 SCORE mode {}", m));
+    return m;
+  }();
+  return mode;
+}
+
+// Study knob (lane itot_r1/arb): T5 TC x pLS cross cleaning, read once per process; unset = mode 2 (noT5cc).
+static T5CrossCleanKnob lstT5CrossCleanKnob() {
+  static const T5CrossCleanKnob knob = [] {
+    auto envOr = [](const char* name, float def) {
+      const char* v = std::getenv(name);
+      return v ? float(std::atof(v)) : def;
+    };
+    T5CrossCleanKnob k{int(envOr("LST_T5CC_MODE", 2.f)), envOr("LST_T5CC_PTMAX", 2.f), envOr("LST_T5CC_EMBSCALE", 1.f)};
+    if (std::getenv("LST_T5CC_MODE"))
+      lstWarning(std::format("LST T5CC knob mode {} ptMax {} embScale {}", k.mode, k.ptMax, k.embScale));
+    return k;
+  }();
+  return knob;
+}
+
+// Study knob (lane itot_r2/combine): pT5 inward rPhi cut scale above 5 GeV and high-pT working point; unset = S2.
+static PT5Knob lstPT5Knob() {
+  static const PT5Knob knob = [] {
+    auto envOr = [](const char* name, float def) {
+      const char* v = std::getenv(name);
+      return v ? float(std::atof(v)) : def;
+    };
+    PT5Knob k{envOr("LST_PT5_RPHIIN_HISCALE", 0.f), envOr("LST_PT5_WPHIGH", -1.f)};
+    if (std::getenv("LST_PT5_RPHIIN_HISCALE") || std::getenv("LST_PT5_WPHIGH"))
+      lstWarning(std::format("LST PT5 knob rPhiInHiScale {} wpHigh {}", k.rPhiInHiScale, k.wpHigh));
+    return k;
+  }();
+  return knob;
+}
+
 void LSTEvent::createTrackCandidates(bool no_pls_dupclean, bool tc_pls_triplets) {
   {
     // pT3 x pT5 cross cleaning through an eta-phi grid of the pT5 seeds (count, scan, fill, then 3x3 neighbourhood).
@@ -1229,9 +1275,9 @@ void LSTEvent::createTrackCandidates(bool no_pls_dupclean, bool tc_pls_triplets)
     nTotal = 1;  // avoid zero-size allocation
 
   // TC allocation
-  trackCandidatesBaseDC_.emplace(queue_, nTotal);
+  trackCandidatesBaseDC_.emplace(queue_, nTotal + tcHeadroom_);
   trackCandidatesBaseDC_->zeroInitialise(queue_);
-  trackCandidatesExtendedDC_.emplace(queue_, nTotal);
+  trackCandidatesExtendedDC_.emplace(queue_, nTotal + tcHeadroom_);
   trackCandidatesExtendedDC_->zeroInitialise(queue_);
   if (objectsStatistics_) {
     double mb = (alpaka::getExtentProduct(trackCandidatesBaseDC_->buffer()) +
@@ -1399,7 +1445,8 @@ void LSTEvent::createTrackCandidates(bool no_pls_dupclean, bool tc_pls_triplets)
                       grid,
                       nKeysIT,
                       hitKeyBits_buf.data(),
-                      cellCount_buf.data());
+                      cellCount_buf.data(),
+                      lstT5CrossCleanKnob());
 
   alpaka::exec<Acc1D>(queue_,
                       cms::alpakatools::make_workdiv<Acc1D>(1, 1024),
@@ -1420,7 +1467,8 @@ void LSTEvent::createTrackCandidates(bool no_pls_dupclean, bool tc_pls_triplets)
                       quintupletsDC_->const_view().quintuplets(),
                       grid,
                       cellCount_buf.data(),
-                      cellTCs_buf.data());
+                      cellTCs_buf.data(),
+                      lstT5CrossCleanKnob());
 
   auto const crossCleanpLS_workDiv = cms::alpakatools::make_workdiv<Acc1D>(max_blocks, 256);
 
@@ -1440,7 +1488,8 @@ void LSTEvent::createTrackCandidates(bool no_pls_dupclean, bool tc_pls_triplets)
                       nKeysIT,
                       hitKeyBits_buf.data(),
                       cellStart_buf.data(),
-                      cellTCs_buf.data());
+                      cellTCs_buf.data(),
+                      lstT5CrossCleanKnob());
 
   auto const addpLSasTrackCandidate_workDiv = cms::alpakatools::make_workdiv<Acc1D>(max_blocks, 384);
 
@@ -1455,6 +1504,161 @@ void LSTEvent::createTrackCandidates(bool no_pls_dupclean, bool tc_pls_triplets)
                       pixelSegmentsDC_->const_view(),
                       tc_pls_triplets,
                       nTotal);
+}
+
+void LSTEvent::pullOTCells(OTPullParams const& p, OTPullCellsDeviceCollection const& cellsDC) {
+  auto const cellsView = cellsDC.const_view();
+  unsigned int const nCells = cellsView.metadata().size();
+  unsigned int const nHits = lstInputDC_->const_view().hits().metadata().size();
+  unsigned int const nHitsIT = lstInputDC_->const_view().hitsIT().metadata().size();
+  unsigned int const nTriplets = tripletsDC_->const_view().triplets().metadata().size();
+  unsigned int const nAllocated = trackCandidatesBaseDC_->const_view().metadata().size();
+  if (nCells == 0 || nTriplets == 0 || p.chi2Cut <= 0.f)
+    return;
+  unsigned int const nBins = p.nShells * p.nPhiBins;
+  uint32_t hashSize = 2;
+  while (hashSize < 2 * nHitsIT + 2)
+    hashSize <<= 1;
+  auto hashKeys_d = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, hashSize);
+  alpaka::memset(queue_, hashKeys_d, 0xff);
+  auto hashVals_d = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, hashSize);
+  alpaka::memset(queue_, hashVals_d, 0);
+  auto bin_d = cms::alpakatools::make_device_buffer<int[]>(queue_, nCells);
+  auto binCount_d = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, nBins);
+  alpaka::memset(queue_, binCount_d, 0);
+  auto binStart_d = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, nBins + 1);
+  alpaka::memset(queue_, binStart_d, 0);
+  auto fill_d = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, nBins);
+  auto cells_d = cms::alpakatools::make_device_buffer<float[]>(queue_, 6 * nCells);
+  auto used_d = cms::alpakatools::make_device_buffer<uint8_t[]>(queue_, nHits);
+  alpaka::memset(queue_, used_d, 0);
+  auto bestCell_d = cms::alpakatools::make_device_buffer<int[]>(queue_, nTriplets);
+  alpaka::memset(queue_, bestCell_d, 0xff);
+  auto bestChi2_d = cms::alpakatools::make_device_buffer<float[]>(queue_, nTriplets);
+  auto cellBest_d = cms::alpakatools::make_device_buffer<unsigned long long[]>(queue_, nCells);
+  alpaka::memset(queue_, cellBest_d, 0xff);
+  auto hitBest_d = cms::alpakatools::make_device_buffer<unsigned long long[]>(queue_, nHits);
+  alpaka::memset(queue_, hitBest_d, 0xff);
+  constexpr unsigned int kNCounters = 9;
+  auto counters_d = cms::alpakatools::make_device_buffer<unsigned int[]>(queue_, kNCounters);
+  alpaka::memset(queue_, counters_d, 0);
+  if (objectsStatistics_)
+    trackTransientMB((hashSize * 8. + nCells * 36. + nBins * 12. + nHits * 9. + nTriplets * 8.) / 1e6);
+  // diagnostics only (each adds a host sync): LST_OTPULL_PRINT counters, LST_OTPULL_TIME device time of the lookup
+  bool const print = objectsStatistics_ || std::getenv("LST_OTPULL_PRINT");
+  bool const timeIt = std::getenv("LST_OTPULL_TIME") != nullptr;
+  std::chrono::steady_clock::time_point t0;
+  if (timeIt) {
+    alpaka::wait(queue_);
+    t0 = std::chrono::steady_clock::now();
+  }
+
+  auto const wd1 = cms::alpakatools::make_workdiv<Acc1D>(max_blocks, 256);
+  if (p.plsMatch > 0)
+    alpaka::exec<Acc1D>(queue_,
+                        wd1,
+                        OTPullHashPLSHits{},
+                        lstInputDC_->const_view().hits(),
+                        lstInputDC_->const_view().pixelSeeds(),
+                        lstInputDC_->const_view().hitsIT(),
+                        p.plsMatch,
+                        hashKeys_d.data(),
+                        hashVals_d.data(),
+                        hashSize - 1);
+  alpaka::exec<Acc1D>(queue_,
+                      wd1,
+                      OTPullBinCells{},
+                      cellsView,
+                      lstInputDC_->const_view().hits(),
+                      lstInputDC_->const_view().pixelSeeds(),
+                      p,
+                      hashKeys_d.data(),
+                      hashVals_d.data(),
+                      hashSize - 1,
+                      bin_d.data(),
+                      binCount_d.data(),
+                      counters_d.data());
+  // inclusive scan of the bin counts into binStart[1..nBins]: binStart[b] = first slot of bin b
+  cms::alpakatools::iterativePrefixScan<Acc1D>(binCount_d.data(), binStart_d.data() + 1, nBins, queue_);
+  alpaka::memcpy(queue_, fill_d, cms::alpakatools::make_device_view(queue_, binStart_d.data(), nBins));
+  alpaka::exec<Acc1D>(
+      queue_, wd1, OTPullPlaceCells{}, cellsView, bin_d.data(), fill_d.data(), cells_d.data(), counters_d.data());
+
+  alpaka::exec<Acc1D>(queue_, wd1, OTPullMarkTCHits{}, trackCandidatesBaseDC_->const_view(), used_d.data(), nHits);
+  alpaka::exec<Acc1D>(queue_,
+                      cms::alpakatools::make_workdiv<Acc1D>(cms::alpakatools::divide_up_by(nTriplets, 64u), 64u),
+                      OTPullSearch{},
+                      modules_.const_view().modules(),
+                      rangesDC_->const_view(),
+                      miniDoubletsDC_->const_view().miniDoublets(),
+                      segmentsDC_->const_view().segments(),
+                      tripletsDC_->const_view().triplets(),
+                      tripletsDC_->const_view().tripletsOccupancy(),
+                      nLowerModules_,
+                      nTriplets,
+                      used_d.data(),
+                      nHits,
+                      cells_d.data(),
+                      binStart_d.data(),
+                      p,
+                      bestCell_d.data(),
+                      bestChi2_d.data(),
+                      cellBest_d.data(),
+                      counters_d.data());
+  alpaka::exec<Acc1D>(queue_,
+                      wd1,
+                      OTPullClaimHits{},
+                      miniDoubletsDC_->const_view().miniDoublets(),
+                      segmentsDC_->const_view().segments(),
+                      tripletsDC_->const_view().triplets(),
+                      bestCell_d.data(),
+                      bestChi2_d.data(),
+                      cellBest_d.data(),
+                      nTriplets,
+                      hitBest_d.data(),
+                      nHits);
+  alpaka::exec<Acc1D>(queue_,
+                      wd1,
+                      OTPullAddTC{},
+                      modules_.const_view().modules(),
+                      miniDoubletsDC_->const_view().miniDoublets(),
+                      segmentsDC_->const_view().segments(),
+                      tripletsDC_->const_view().triplets(),
+                      bestCell_d.data(),
+                      bestChi2_d.data(),
+                      cellBest_d.data(),
+                      hitBest_d.data(),
+                      nTriplets,
+                      nHits,
+                      trackCandidatesBaseDC_->view(),
+                      trackCandidatesExtendedDC_->view(),
+                      nAllocated,
+                      counters_d.data());
+  if (timeIt) {
+    alpaka::wait(queue_);
+    lstWarning(std::format("[OTPULL-TIME] lookup {:.3f} ms",
+                           std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count()));
+  }
+  if (!print)
+    return;
+  auto counters_h = cms::alpakatools::make_host_buffer<unsigned int[]>(queue_, kNCounters);
+  alpaka::memcpy(queue_, counters_h, counters_d);
+  alpaka::wait(queue_);
+  auto const* n = counters_h.data();
+  lstWarning(
+      std::format("[OTPULL] cells {} pLS-matched {} (last-hit pos <50um {} <500um {} far {}) kept {} T3s searched {} "
+                  "window tests {} "
+                  "added {} dropped {}",
+                  nCells,
+                  n[4],
+                  n[5],
+                  n[6],
+                  n[7],
+                  n[8],
+                  n[0],
+                  n[1],
+                  n[2],
+                  n[3]));
 }
 
 void LSTEvent::copyPixelSeedTypesToHost() {
@@ -1969,7 +2173,9 @@ void LSTEvent::createPixelQuintuplets() {
                       connectedPixelIndex_->data(),
                       nInnerSegments,
                       rangesDC_->const_view(),
-                      ptCut_);
+                      ptCut_,
+                      lstPT5ScoreMode(),
+                      lstPT5Knob());
 
   // pT5 duplicate removal on an eta-phi grid (window 0.2): count -> prefix -> scatter, then 3x3 cells per pT5.
   auto const pT5Grid = EtaPhiGrid::make(0.2f, 3.f);

@@ -2,8 +2,10 @@
 #define RecoTracker_PixelSeeding_plugins_alpaka_CAHitNtupletGenerator_h
 
 #include <alpaka/alpaka.hpp>
+#include <optional>
 
 #include "DataFormats/Common/interface/RefProdVector.h"
+#include "RecoTracker/LSTCore/interface/alpaka/OTPullCellsDeviceCollection.h"
 #include "DataFormats/SiPixelDetId/interface/PixelSubdetector.h"
 #include "DataFormats/TrackSoA/interface/TrackDefinitions.h"
 #include "DataFormats/TrackSoA/interface/alpaka/TracksSoACollection.h"
@@ -64,7 +66,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
                                 float bfield,
                                 uint32_t maxDoublets,
                                 uint32_t maxTuples,
-                                Queue& queue) const;
+                                Queue& queue,
+                                std::optional<lst::OTPullCellsDeviceCollection>* otpullCells = nullptr) const;
 
   private:
     Params m_params;
