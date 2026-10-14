@@ -454,9 +454,12 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
 
   // Study knob (env LST_PT5_RPHIIN_HISCALE / LST_PT5_WPHIGH, read on the host). rPhiInHiScale 0 = inward rPhi cut
   // below 5 GeV only; s > 0 = cut at all T5 radii, threshold x s above 5 GeV. wpHigh < 0 = built-in kWpHigh_pT5.
+  // rPhiOutHiPow (env LST_PT5_RPHIOUT_HIPOW): outward rPhi cut for pLS pT >= 5 GeV; 0 = unchanged, p > 0 = threshold
+  // x (pT / 5 GeV)^p, p < 0 = no outward cut above 5 GeV.
   struct PT5Knob {
     float rPhiInHiScale;
     float wpHigh;
+    float rPhiOutHiPow;
   };
 
   template <alpaka::concepts::Acc TAcc>
@@ -598,13 +601,18 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
 
     rPhiChiSquared = computePT5RPhiChiSquared(acc, modules, lowerModuleIndices, centerX, centerY, pixelRadius, xs, ys);
 
-    if (not passPT5RPhiChiSquaredCuts(modules,
-                                      lowerModuleIndex1,
-                                      lowerModuleIndex2,
-                                      lowerModuleIndex3,
-                                      lowerModuleIndex4,
-                                      lowerModuleIndex5,
-                                      rPhiChiSquared))
+    // a pixel-only pLS circle predicts the OT hits less well with rising pT
+    const bool highPtPLS = knob.rPhiOutHiPow != 0.f && pixelData.ptIn >= 5.0f;
+    if (not(highPtPLS && knob.rPhiOutHiPow < 0.f) &&
+        not passPT5RPhiChiSquaredCuts(
+            modules,
+            lowerModuleIndex1,
+            lowerModuleIndex2,
+            lowerModuleIndex3,
+            lowerModuleIndex4,
+            lowerModuleIndex5,
+            highPtPLS ? rPhiChiSquared / alpaka::math::pow(acc, pixelData.ptIn / 5.0f, knob.rPhiOutHiPow)
+                      : rPhiChiSquared))
       return false;
 
     rPhiChiSquaredInwards = computePT5RPhiChiSquaredInwards(T5CenterX, T5CenterY, quintupletRadius, xPix, yPix);
@@ -712,14 +720,14 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                                          pt5Knob);
             if (success) {
               unsigned int totOccupancyPixelQuintuplets = alpaka::atomicAdd(
-                  acc, &pixelQuintuplets.totOccupancyPixelQuintuplets(), 1u, alpaka::hierarchy::Threads{});
+                  acc, &pixelQuintuplets.totOccupancyPixelQuintuplets(), 1u, alpaka::hierarchy::Blocks{});
               if (totOccupancyPixelQuintuplets >= n_max_pixel_quintuplets) {
 #ifdef WARNINGS
                 printf("Pixel Quintuplet excess alert!\n");
 #endif
               } else {
                 unsigned int pixelQuintupletIndex =
-                    alpaka::atomicAdd(acc, &pixelQuintuplets.nPixelQuintuplets(), 1u, alpaka::hierarchy::Threads{});
+                    alpaka::atomicAdd(acc, &pixelQuintuplets.nPixelQuintuplets(), 1u, alpaka::hierarchy::Blocks{});
                 float eta = __H2F(quintuplets.eta()[quintupletIndex]);
                 float phi = __H2F(quintuplets.phi()[quintupletIndex]);
 

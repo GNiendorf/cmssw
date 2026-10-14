@@ -10,6 +10,7 @@
 // and seed hits go to 'pixelSeedStates' for the build module and the seed hand-off. The KF capacity / lookup failures
 // go to a per-event status product "status" (MkFitStatus: pixSeedTooManyHits / NoRow / NoLayer / NoEOH) and a
 // LogWarning when non-zero.
+#include <cstdlib>
 #include <Eigen/Core>  // before any SoA header (Eigen columns of TracksSoA)
 #include <algorithm>
 #include <cmath>
@@ -229,6 +230,15 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
         }
       }
 
+      if (std::getenv("LST_OTPULL_KEYCHECK")) {  // diagnostics: CA pixel hit index vs cluster key
+        uint32_t nDiff = 0, nNo = 0;
+        for (uint32_t soa = 0; soa < nPixelSoA; ++soa) {
+          nNo += pixKey[soa] == kNoKey;
+          nDiff += pixKey[soa] != kNoKey && pixKey[soa] != soa;
+        }
+        edm::LogWarning("MkFitAlpakaLstInput")
+            << "[KEYCHECK] pixel SoA rows " << nPixelSoA << " key != row " << nDiff << " no key " << nNo;
+      }
       auto& p = p_;
       p.ptCut = ptCut_;
       p.bsx = bs.x0();

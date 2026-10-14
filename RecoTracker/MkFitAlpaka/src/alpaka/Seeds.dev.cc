@@ -100,14 +100,17 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::mkfitdev::seeds {
                       const uint64_t* pixelPriorityLayers,
                       ::mkfitdev::TrackSoAView exported,
                       ::mkfitdev::TrackSoAView out,
-                      uint32_t* brokenChains) {
+                      uint32_t* brokenChains,
+                      bool survivorsOnly) {
     if (capacity <= 0)
       return;
     // no filter here: every row s < *nSeedsDev with candidates is a survivor of the engine's post-filter
     exportBestCands(queue, seedCands, slots, hots, hotsPerSeed, nSeedsDev, capacity, nullptr, exported, brokenChains);
-    clean::CleanAlgo algo(queue, capacity);
+    clean::CleanAlgo algo(queue, capacity, removeDuplicates && survivorsOnly);
     if (removeDuplicates) {
-      algo.flagDuplicates(queue, exported, ::mkfitdev::clean::makeDupCleanParams(dc, pixelPriorityLayers));
+      auto p = ::mkfitdev::clean::makeDupCleanParams(dc, pixelPriorityLayers);
+      p.survivorsOnly = survivorsOnly ? 1 : 0;
+      algo.flagDuplicates(queue, exported, p);
       algo.removeDuplicates(queue, exported, out);
     } else {
       algo.filterTracks(queue, exported, out, 0);  // stable copy (n-hits >= 0 and not silly: the engine filtered)

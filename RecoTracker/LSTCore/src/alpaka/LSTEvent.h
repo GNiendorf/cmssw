@@ -114,6 +114,18 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     double memoryLiveMB_ = 0;
     unsigned int nT4Compact_ = 0;  // T4 count after compactQuadruplets()
     unsigned int tcHeadroom_ = 0;  // extra track candidate slots (OT-seeded cell lookup), 0 = off
+    // OT-seeded cell lookup: its parameters and the CA cells (set for one event), the cells binned by radial shell x phi,
+    // the bin starts and the diagnostic counters
+    OTPullParams const* otpullParams_ = nullptr;
+    OTPullCellsDeviceCollection const* otpullCellsIn_ = nullptr;
+    uint32_t const* otpullPixKey_ = nullptr;  // CA pixel hit row -> pixel cluster key (pixel stubs only)
+    unsigned int otpullNPixKey_ = 0;
+    static constexpr unsigned int kOTPullNCounters = 18;
+    std::optional<cms::alpakatools::device_buffer<Device, float[]>> otpullCells_;
+    // pixel stubs: the two pixel cluster keys of each binned cell
+    std::optional<cms::alpakatools::device_buffer<Device, uint32_t[]>> otpullCellKeys_;
+    std::optional<cms::alpakatools::device_buffer<Device, uint32_t[]>> otpullBinStart_;
+    std::optional<cms::alpakatools::device_buffer<Device, unsigned int[]>> otpullCounters_;
     double memoryPeakLiveMB_ = 0;
 
     // pLS superbins and pixel types, read back at the MD-stage sync, and the pixel-map ranges built from them (pT5, pT3).
@@ -169,8 +181,18 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     void compactSegments(SegmentCandidatesDeviceCollection const& candidatesDC);
     void createTriplets();
     void createTrackCandidates(bool no_pls_dupclean, bool tc_pls_triplets);
-    void setTCHeadroom(unsigned int n) { tcHeadroom_ = n; }
-    void pullOTCells(OTPullParams const& p, OTPullCellsDeviceCollection const& cells);
+    void setOTPull(OTPullParams const& p,
+                   OTPullCellsDeviceCollection const& cells,
+                   uint32_t const* pixKey = nullptr,
+                   unsigned int nPixKey = 0) {
+      otpullParams_ = &p;
+      otpullCellsIn_ = &cells;
+      otpullPixKey_ = pixKey;
+      otpullNPixKey_ = nPixKey;
+      tcHeadroom_ = p.capacity;
+    }
+    void binOTCells();
+    void pullOTCells();
     void createPixelTriplets();
     void createQuintuplets();
     void pixelLineSegmentCleaning(bool no_pls_dupclean);

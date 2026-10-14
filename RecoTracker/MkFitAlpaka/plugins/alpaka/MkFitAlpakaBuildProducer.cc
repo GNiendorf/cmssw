@@ -183,7 +183,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
           removeDuplicates_{iConfig.getParameter<bool>("removeDuplicates")},
           groupScan_{iConfig.getParameter<bool>("k2GroupScan")},
           statusToken_{produces()},
-          lstSeedFit_{iConfig.getParameter<bool>("lstSeedFit")} {
+          lstSeedFit_{iConfig.getParameter<bool>("lstSeedFit")},
+          dupSurvivorsOnly_{iConfig.getParameter<bool>("duplicateRemovalBySurvivorsOnly")},
+          dupSharedFraction_{iConfig.getParameter<double>("duplicateRemovalSharedFraction")} {
       if (auto const t = iConfig.getParameter<edm::InputTag>("deviceSeeds"); !t.label().empty()) {
         deviceSeedsToken_ = consumes(t);  // K1: the seed rows of MkFitAlpakaSeedHandoffK1 (device)
         k1Seeds_ = true;
@@ -224,6 +226,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
       desc.add("esData", edm::ESInputTag{"", ""})->setComment("MkFitAlpakaESProducer ComponentName");
       desc.add("hotsPerSeed", 256)->setComment("HoT pool rows per seed (overflow: seed failed and counted)");
       desc.add("removeDuplicates", true);
+      desc.add("duplicateRemovalBySurvivorsOnly", false)
+          ->setComment("true: a candidate is removed as a duplicate only by a winner that is itself kept");
+      desc.add("duplicateRemovalSharedFraction", -1.)
+          ->setComment("< 0: dc_fracSharedHits of the iteration config; else this shared-hit fraction");
       // MkFitProducer parameters, accepted only inside the validated envelope (interface/SupportedConfig.h)
       desc.add("clustersToSkip", edm::InputTag())->setComment("must be empty: no hit mask on the device");
       desc.add<std::string>("buildingRoutine", "cloneEngine");
@@ -399,6 +405,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
       alpaka::memset(queue, status, 0);
       mkfitdev::TrackSoADeviceCollection exportedD(queue, n);
       mkfitdev::TrackSoADeviceCollection finalD(queue, n);
+      float dc[4] = {T.dc[0], T.dc[1], T.dc[2], T.dc[3]};
+      if (dupSharedFraction_ >= 0.)
+        dc[0] = float(dupSharedFraction_);
       mkfitdev::seeds::exportAndClean(queue,
                                       res.seeds.const_view(),
                                       res.slots.const_view(),
@@ -407,11 +416,12 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
                                       res.nRowsDev,
                                       n,
                                       removeDuplicates_,
-                                      T.dc,
+                                      dc,
                                       T.pixelPriority ? T.pixelLayers : nullptr,
                                       exportedD.view(),
                                       finalD.view(),
-                                      status.data());
+                                      status.data(),
+                                      dupSurvivorsOnly_);
       {
         mkfitdev::StatusSources src;
         src.add(seedsD.view().metadata().addressOf_nOverflowHits(), ::mkfitdev::kSeedHitsTruncated);
@@ -475,6 +485,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     const bool groupScan_;
     const device::EDPutToken<mkfitdev::MkFitStatusDeviceObject> statusToken_;
     const bool lstSeedFit_;
+    const bool dupSurvivorsOnly_;
+    const double dupSharedFraction_;
     static constexpr bool kCpuBackend = std::is_same_v<Device, alpaka::DevCpu>;
     ::mkfitdev::lstseeds::LstSeedFitConfig lstSeedCfg_;
     device::EDGetToken<mkfitdev::TrackSoADeviceCollection> pixStatesToken_;

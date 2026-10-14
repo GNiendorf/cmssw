@@ -1535,13 +1535,13 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
                                     uint32_t capConn,
                                     uint32_t const *__restrict__ nCells,
                                     uint32_t maxCells,
-                                    uint8_t *__restrict__ hasInner) const {
+                                    uint32_t *__restrict__ hasInner) const {
         uint32_t const nk = alpaka::math::min(acc, *nConn, capConn);
         uint32_t const nc = alpaka::math::min(acc, *nCells, maxCells);
         for (uint32_t k : cms::alpakatools::uniform_elements(acc, nk)) {
           uint32_t const o = cn[k].outer() & ::caStructures::kCellIndexMask;
           if (o < nc)
-            hasInner[o] = 1;
+            alpaka::atomicOr(acc, &hasInner[o / 32], 1u << (o % 32), alpaka::hierarchy::Blocks{});
         }
       }
     };
@@ -1556,14 +1556,14 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
                                     TContainer const *__restrict__ c2t,
                                     uint32_t const *__restrict__ nCells,
                                     uint32_t maxCells,
-                                    uint8_t const *__restrict__ hasInner,
+                                    uint32_t const *__restrict__ hasInner,
                                     uint32_t *__restrict__ counter,
                                     ::lst::OTPullCellsSoA::View out,
                                     bool fill) const {
         uint32_t const nc = alpaka::math::min(acc, *nCells, maxCells);
         uint32_t const nPix = hh.view(0).metadata().size();
         for (uint32_t c : cms::alpakatools::uniform_elements(acc, nc)) {
-          if (cells[c].isKilled() || c2n->size(c) != 0 || !(hasInner[c] || c2t->size(c) != 0))
+          if (cells[c].isKilled() || c2n->size(c) != 0 || !(((hasInner[c / 32] >> (c % 32)) & 1) || c2t->size(c) != 0))
             continue;
           uint32_t const d = alpaka::atomicAdd(acc, counter, 1u, alpaka::hierarchy::Blocks{});
           if (!fill || d >= static_cast<uint32_t>(out.metadata().size()))
@@ -2165,7 +2165,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     using namespace caHitNtupletGeneratorKernels;
     uint32_t const maxCells = this->maxNumberOfDoublets_;
     uint32_t const capConn = this->deviceTriplets_->view().metadata().size();
-    auto hasInner = cms::alpakatools::make_device_buffer<uint8_t[]>(queue, maxCells);
+    // one bit per cell slot
+    auto hasInner = cms::alpakatools::make_device_buffer<uint32_t[]>(queue, (maxCells + 31) / 32);
     alpaka::memset(queue, hasInner, 0);
     auto counter = cms::alpakatools::make_device_buffer<uint32_t>(queue);
     alpaka::memset(queue, counter, 0);

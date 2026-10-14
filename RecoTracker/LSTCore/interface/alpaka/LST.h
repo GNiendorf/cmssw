@@ -28,7 +28,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
              bool no_pls_dupclean,
              bool tc_pls_triplets,
              OTPullParams const* otpull = nullptr,
-             OTPullCellsDeviceCollection const* otpullCells = nullptr);
+             OTPullCellsDeviceCollection const* otpullCells = nullptr,
+             uint32_t const* otpullPixKey = nullptr,
+             unsigned int otpullNPixKey = 0);
     std::unique_ptr<TrackCandidatesBaseDeviceCollection> getTrackCandidates() {
       return std::move(trackCandidatesBaseDC_);
     }

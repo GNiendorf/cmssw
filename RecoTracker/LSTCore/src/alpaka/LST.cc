@@ -19,7 +19,9 @@ void LST::run(Queue& queue,
               bool no_pls_dupclean,
               bool tc_pls_triplets,
               OTPullParams const* otpull,
-              OTPullCellsDeviceCollection const* otpullCells) {
+              OTPullCellsDeviceCollection const* otpullCells,
+              uint32_t const* otpullPixKey,
+              unsigned int otpullNPixKey) {
   auto event = LSTEvent(verbose, ptCut, clustSizeCut, queue, deviceESData);
 
   event.addInputToEvent(lstInputDC);
@@ -126,10 +128,9 @@ void LST::run(Queue& queue,
   }
 
   if (otpull && otpullCells)
-    event.setTCHeadroom(otpull->capacity);
+    event.setOTPull(*otpull, *otpullCells, otpullPixKey, otpullNPixKey);
   event.createTrackCandidates(no_pls_dupclean, tc_pls_triplets);
-  if (otpull && otpullCells)
-    event.pullOTCells(*otpull, *otpullCells);
+  event.pullOTCells();
   if (verbose) {
     alpaka::wait(queue);  // event calls are asynchronous: wait before printing
     printf("# of TrackCandidates produced: %d\n", event.getNumberOfTrackCandidates());

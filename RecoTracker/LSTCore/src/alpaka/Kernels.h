@@ -498,7 +498,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
           if (quintuplets.isDup()[ix] & 1)
             continue;
           const int cell = t5DupGrid::cell(acc, __H2F(quintuplets.eta()[ix]), __H2F(quintuplets.phi()[ix]));
-          alpaka::atomicAdd(acc, &cellCount[cell], 1u, alpaka::hierarchy::Threads{});
+          alpaka::atomicAdd(acc, &cellCount[cell], 1u, alpaka::hierarchy::Blocks{});
         }
       }
     }
@@ -565,7 +565,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
           if (quintuplets.isDup()[ix] & 1)
             continue;
           const int cell = t5DupGrid::cell(acc, __H2F(quintuplets.eta()[ix]), __H2F(quintuplets.phi()[ix]));
-          const unsigned int slot = alpaka::atomicAdd(acc, &cellCursor[cell], 1u, alpaka::hierarchy::Threads{});
+          const unsigned int slot = alpaka::atomicAdd(acc, &cellCursor[cell], 1u, alpaka::hierarchy::Blocks{});
           cellEntries[slot] = ix;
         }
       }
@@ -584,7 +584,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
       for (unsigned int i : cms::alpakatools::uniform_elements(acc, pixelQuintuplets.nPixelQuintuplets())) {
         const unsigned int pLS = pixelQuintuplets.pixelSegmentIndices()[i] - prefix;
         const int cell = t5DupGrid::cell(acc, pixelSeeds.eta()[pLS], pixelSeeds.phi()[pLS]);
-        alpaka::atomicAdd(acc, &cellCount[cell], 1u, alpaka::hierarchy::Threads{});
+        alpaka::atomicAdd(acc, &cellCount[cell], 1u, alpaka::hierarchy::Blocks{});
       }
     }
   };
@@ -601,7 +601,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
       for (unsigned int i : cms::alpakatools::uniform_elements(acc, pixelQuintuplets.nPixelQuintuplets())) {
         const unsigned int pLS = pixelQuintuplets.pixelSegmentIndices()[i] - prefix;
         const int cell = t5DupGrid::cell(acc, pixelSeeds.eta()[pLS], pixelSeeds.phi()[pLS]);
-        const unsigned int slot = alpaka::atomicAdd(acc, &cellCursor[cell], 1u, alpaka::hierarchy::Threads{});
+        const unsigned int slot = alpaka::atomicAdd(acc, &cellCursor[cell], 1u, alpaka::hierarchy::Blocks{});
         cellEntries[slot] = i;
       }
     }
@@ -805,7 +805,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         for (unsigned int i = 0; i < pT3HitBuckets::kT3Hits; ++i) {
           const unsigned int hitBucket =
               pT3HitBuckets::bucket(pixelTriplets.hitIndices()[ix][pT3HitBuckets::kT3HitOffset + i]);
-          alpaka::atomicAdd(acc, &bucketCount[hitBucket], 1u, alpaka::hierarchy::Threads{});
+          alpaka::atomicAdd(acc, &bucketCount[hitBucket], 1u, alpaka::hierarchy::Blocks{});
         }
       }
     }
@@ -820,7 +820,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         for (unsigned int i = 0; i < pT3HitBuckets::kT3Hits; ++i) {
           const unsigned int hitBucket =
               pT3HitBuckets::bucket(pixelTriplets.hitIndices()[ix][pT3HitBuckets::kT3HitOffset + i]);
-          const unsigned int slot = alpaka::atomicAdd(acc, &bucketCursor[hitBucket], 1u, alpaka::hierarchy::Threads{});
+          const unsigned int slot = alpaka::atomicAdd(acc, &bucketCursor[hitBucket], 1u, alpaka::hierarchy::Blocks{});
           bucketEntries[slot] = ix;
         }
       }

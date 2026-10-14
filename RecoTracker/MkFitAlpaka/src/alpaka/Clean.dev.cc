@@ -28,7 +28,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::mkfitdev::clean {
     }
   }  // namespace detail
 
-  CleanAlgo::CleanAlgo(Queue& queue, int capacity)
+  CleanAlgo::CleanAlgo(Queue& queue, int capacity, bool survivorsOnly)
       : capacity_(capacity),
         ct_{cms::alpakatools::make_device_buffer<float[]>(queue, capacity)},
         hasPix_{cms::alpakatools::make_device_buffer<int8_t[]>(queue, capacity)},
@@ -43,7 +43,12 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::mkfitdev::clean {
         cellCount_{cms::alpakatools::make_device_buffer<int[]>(queue, kNCells)},
         cellStart_{cms::alpakatools::make_device_buffer<int[]>(queue, kNCells + 1)},
         cellCursor_{cms::alpakatools::make_device_buffer<int[]>(queue, kNCells)},
-        counters_{cms::alpakatools::make_device_buffer<int[]>(queue, kNCounters)} {}
+        counters_{cms::alpakatools::make_device_buffer<int[]>(queue, kNCounters)},
+        edgeCap_(survivorsOnly ? 2 * capacity : 0),
+        edges_{cms::alpakatools::make_device_buffer<int[]>(queue, survivorsOnly ? 4 * capacity : 1)},
+        st_{cms::alpakatools::make_device_buffer<int[]>(queue, survivorsOnly ? capacity : 1)},
+        kw_{cms::alpakatools::make_device_buffer<int[]>(queue, survivorsOnly ? capacity : 1)},
+        uw_{cms::alpakatools::make_device_buffer<int[]>(queue, survivorsOnly ? capacity : 1)} {}
 
   void CleanAlgo::checkRows(int rows) const {
     if (rows > capacity_)
@@ -106,7 +111,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::mkfitdev::clean {
                         pairOffset_.data(),
                         p,
                         flags_.data(),
-                        counters_.data());
+                        counters_.data(),
+                        edgesFor(p),
+                        edgeCap_);
     alpaka::exec<Acc1D>(queue,
                         wdPairs,
                         KernelWildcardPairs{},
@@ -116,7 +123,20 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::mkfitdev::clean {
                         wild_.data(),
                         p,
                         flags_.data(),
-                        counters_.data());
+                        counters_.data(),
+                        edgesFor(p),
+                        edgeCap_);
+    if (edgesFor(p))
+      alpaka::exec<Acc1D>(queue,
+                          detail::oneBlock(),
+                          KernelSurvivorsOnly{},
+                          ::mkfitdev::TrackSoAConstView(tracks),
+                          flags_.data(),
+                          (const int*)counters_.data(),
+                          (const int*)edges_.data(),
+                          st_.data(),
+                          kw_.data(),
+                          uw_.data());
     alpaka::exec<Acc1D>(queue, wdTrk, KernelWriteDupFlags{}, tracks, flags_.data(), keep_.data());
   }
 

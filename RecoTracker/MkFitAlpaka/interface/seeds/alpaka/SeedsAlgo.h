@@ -76,7 +76,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::mkfitdev::seeds {
                       const uint64_t* pixelPriorityLayers,
                       ::mkfitdev::TrackSoAView exported,
                       ::mkfitdev::TrackSoAView out,
-                      uint32_t* brokenChains = nullptr);
+                      uint32_t* brokenChains = nullptr,
+                      bool survivorsOnly = false);
 
   // VALIDATION ONLY (seed-import producer on freshly imported rows; never after engineRunChain, whose post-filter
   // already repacked: a second repack corrupts the HoT chains, C2). Tail of run_OneIteration incl. the filter:

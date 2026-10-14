@@ -34,6 +34,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::mkfitdev::clean {
   enum Counter : int {
     kCntWildcard = 0,
     kCntCellOverflow = 1,
+    kCntEdges = 2,         // survivorsOnly: (winner, loser) pairs recorded
+    kCntEdgeOverflow = 3,  // survivorsOnly: pairs beyond the edge capacity (then the any-winner flags are kept)
     kNCounters = 8
   };  // overflow must stay 0 (consistency check)
 
@@ -171,10 +173,21 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::mkfitdev::clean {
                                       int j,
                                       DupCleanParams const& p,
                                       int* flags,
-                                      int* counters) {
+                                      int* counters,
+                                      int* edges,
+                                      int edgeCap) {
     const int loser = dupPairDecision(trk, ct, hasPix, i, j, p);
-    if (loser >= 0)
+    if (loser >= 0) {
       alpaka::atomicOr(acc, &flags[loser], 1, alpaka::hierarchy::Grids{});
+      if (edges) {
+        const int e = alpaka::atomicAdd(acc, &counters[kCntEdges], 1, alpaka::hierarchy::Blocks{});
+        if (e < edgeCap) {
+          edges[2 * e] = loser == i ? j : i;
+          edges[2 * e + 1] = loser;
+        } else
+          alpaka::atomicAdd(acc, &counters[kCntEdgeOverflow], 1, alpaka::hierarchy::Blocks{});
+      }
+    }
   }
 
   // One thread per candidate pair: global pair index -> (track i, neighbour slot) -> partner j; pairs with j <= i
@@ -190,7 +203,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::mkfitdev::clean {
                                   const int* pairOffset,
                                   DupCleanParams p,
                                   int* flags,
-                                  int* counters) const {
+                                  int* counters,
+                                  int* edges,
+                                  int edgeCap) const {
       const int n = trk.nTracks();
       const int nPairs = pairOffset[n];
       // Per-thread walk state. Consecutive pair indices of one thread (CPU backends: contiguous element ranges) are
@@ -235,7 +250,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::mkfitdev::clean {
         const int j = cellContent[cellStart[nc] + s];
         if (j <= i)
           continue;
-        applyPair(acc, trk, ct, hasPix, i, j, p, flags, counters);
+        applyPair(acc, trk, ct, hasPix, i, j, p, flags, counters, edges, edgeCap);
       }
     }
   };
@@ -249,7 +264,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::mkfitdev::clean {
                                   const int* wild,
                                   DupCleanParams p,
                                   int* flags,
-                                  int* counters) const {
+                                  int* counters,
+                                  int* edges,
+                                  int edgeCap) const {
       const int n = trk.nTracks();
       const int nw = counters[kCntWildcard];
       for (int32_t g : cms::alpakatools::uniform_elements(acc, nw * n)) {
@@ -257,8 +274,70 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::mkfitdev::clean {
         const int t = g % n;
         if (t == w)
           continue;
-        applyPair(acc, trk, ct, hasPix, w < t ? w : t, w < t ? t : w, p, flags, counters);
+        applyPair(acc, trk, ct, hasPix, w < t ? w : t, w < t ? t : w, p, flags, counters, edges, edgeCap);
       }
+    }
+  };
+
+  // survivorsOnly: re-decide the losers on the recorded (winner, loser) pairs so that only kept tracks remove others.
+  // The winner order (pixel priority, then score, then index) is total, so the pairs form a DAG and the fixed point
+  // is the greedy result; each round settles every loser whose winners are all settled. One block.
+  // st: 0 kept, 1 removed, 2 undecided; kw / uw: loser has a kept / an undecided winner in this round.
+  struct KernelSurvivorsOnly {
+    ALPAKA_FN_ACC void operator()(Acc1D const& acc,
+                                  TrackSoAConstView trk,
+                                  int* flags,
+                                  const int* counters,
+                                  const int* edges,
+                                  int* st,
+                                  int* kw,
+                                  int* uw) const {
+      if (counters[kCntEdgeOverflow] > 0)
+        return;  // keep the any-winner flags
+      const int n = trk.nTracks();
+      const int ne = counters[kCntEdges];
+      const int nThr = static_cast<int>(alpaka::getWorkDiv<alpaka::Block, alpaka::Threads>(acc)[0u]);
+      const int tid = static_cast<int>(alpaka::getIdx<alpaka::Block, alpaka::Threads>(acc)[0u]);
+      auto& changed = alpaka::declareSharedVar<int, __COUNTER__>(acc);
+      for (int i = tid; i < n; i += nThr) {
+        st[i] = flags[i] ? 2 : 0;
+        kw[i] = 0;
+        uw[i] = 0;
+      }
+      alpaka::syncBlockThreads(acc);
+      for (int round = 0; round < n + 1; ++round) {
+        if (tid == 0)
+          changed = 0;
+        for (int e = tid; e < ne; e += nThr) {
+          const int w = edges[2 * e], l = edges[2 * e + 1];
+          if (st[l] == 2) {
+            if (st[w] == 0)
+              kw[l] = 1;
+            else if (st[w] == 2)
+              uw[l] = 1;
+          }
+        }
+        alpaka::syncBlockThreads(acc);
+        for (int e = tid; e < ne; e += nThr) {
+          const int l = edges[2 * e + 1];
+          if (st[l] == 2 && (kw[l] || !uw[l])) {
+            st[l] = kw[l] ? 1 : 0;
+            changed = 1;
+          }
+        }
+        alpaka::syncBlockThreads(acc);
+        for (int e = tid; e < ne; e += nThr) {
+          const int l = edges[2 * e + 1];
+          kw[l] = 0;
+          uw[l] = 0;
+        }
+        const int c = changed;
+        alpaka::syncBlockThreads(acc);
+        if (!c)
+          break;
+      }
+      for (int i = tid; i < n; i += nThr)
+        flags[i] = st[i] != 0 ? 1 : 0;  // undecided (not reached) counts as removed
     }
   };
 

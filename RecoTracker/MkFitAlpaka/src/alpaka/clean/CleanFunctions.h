@@ -36,6 +36,8 @@ namespace mkfitdev::clean {
     float drthForward;
     int pixelPriority = 0;
     uint64_t pixelLayers[4] = {0, 0, 0, 0};
+    // 1: a track is removed only by a winner that is itself kept (greedy in winner order); 0: by any winner (MkFitCore)
+    int survivorsOnly = 0;
   };
 
   inline DupCleanParams makeDupCleanParams(const float dc[4], const uint64_t* pixelPriorityLayers) {
