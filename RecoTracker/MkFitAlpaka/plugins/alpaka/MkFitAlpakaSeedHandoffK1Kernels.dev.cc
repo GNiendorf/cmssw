@@ -14,6 +14,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::mkfitdev::k1 {
   using namespace cms::alpakatools;
 
   namespace {
+    constexpr uint32_t kLstPixStubFlag = 0x80000000u;  // as LST's OTPull.h: a pixel cluster key in a TC pixel slot
     // the working hit list of one TC (pixel seed list + LST OT hits); 64 pixel hits (kMaxTrkHits) + 22 OT slots
     constexpr int kListCap = 64;
     struct ListHit {
@@ -89,6 +90,29 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::mkfitdev::k1 {
             ri.kind = kError;
             alpaka::atomicAdd(acc, &counters[1], 1, alpaka::hierarchy::Blocks{});
             continue;
+          }
+          if (isT5orT4) {
+            // pixel stub attached by LST's cell lookup (first pixel slot, flagged pixel cluster keys = mkFit pixel rows)
+            ListHit stub[::lst::Params_TC::kHitsPerLayer];
+            int ns0 = 0;
+            for (int hs = 0; hs < ::lst::Params_TC::kHitsPerLayer; ++hs) {
+              const uint32_t key = tcs.hitIndices()[r][0][hs];
+              if (key == ::lst::kTCEmptyHitIdx || !(key & kLstPixStubFlag))
+                continue;
+              const uint32_t k = key & ~kLstPixStubFlag;
+              const int layer = k < nPixel ? mk[k].layer() : -1;
+              const int32_t d = detOf(layer, int(k));
+              if (d < 0) {
+                ns0 = -1;
+                break;
+              }
+              stub[ns0++] = ListHit{::mkfitdev::HitOnTrack{int(k), layer}, d};
+            }
+            if (ns0 < 0)
+              alpaka::atomicAdd(acc, &counters[3], 1, alpaka::hierarchy::Blocks{});
+            for (int k = 0; k < ns0; ++k)
+              list[n++] = stub[k];
+            nPix = n;
           }
           // a host request for this row (slot by atomic counter; the entry carries the row, so the order is irrelevant)
           auto request = [&](int kind, int32_t pe, ListHit const* hs, int nh) {
@@ -226,19 +250,24 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::mkfitdev::k1 {
             continue;
           }
           // LSTOutputConverter's selections, in place (the selected hits keep their order)
-          int ns = 0;
+          int ns = 0, nsOT = 0;
           int32_t firstLayer = -1;
           for (int k = 0; k < n; ++k) {
             DetInfo const& di = dets[list[k].det];
-            if (type == ::lst::LSTObjType::T5 && ns < 2 && di.type != 1)
-              continue;  // the first two should be P
+            if (!di.isOT) {  // IT hits (pixel seed, or a stub on a T5 / T4) are all kept
+              list[ns++] = list[k];
+              continue;
+            }
+            if (type == ::lst::LSTObjType::T5 && nsOT < 2 && di.type != 1)
+              continue;  // the first two OT hits should be P
             if (type == ::lst::LSTObjType::T4) {
-              if (ns == 0)
+              if (nsOT == 0)
                 firstLayer = di.topoLayer;
               else if (di.topoLayer == firstLayer && di.type == 2)
                 continue;
             }
             list[ns++] = list[k];
+            ++nsOT;
           }
           if (ns == 0) {
             if (!isT5orT4)

@@ -19,7 +19,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::mkfitdev::clean {
 
   class CleanAlgo {
   public:
-    CleanAlgo(Queue& queue, int capacity);
+    // survivorsOnly: buffers of the survivors-only re-decision (DupCleanParams::survivorsOnly) are allocated
+    CleanAlgo(Queue& queue, int capacity, bool survivorsOnly = false);
 
     // StdSeq::clean_duplicates_sharedhits_pixelseed decisions: sets the 'duplicate' column of every row of 'tracks'
     // (rows [0, tracks.nTracks())). Does not remove anything.
@@ -53,6 +54,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::mkfitdev::clean {
 
   private:
     void checkRows(int rows) const;
+    int* edgesFor(::mkfitdev::clean::DupCleanParams const& p) {
+      return (p.survivorsOnly && edgeCap_ > 0) ? edges_.data() : nullptr;
+    }
     void compact(Queue& queue, ::mkfitdev::TrackSoAConstView in, ::mkfitdev::TrackSoAView out);
 
     int capacity_;
@@ -70,6 +74,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::mkfitdev::clean {
     cms::alpakatools::device_buffer<Device, int[]> cellStart_;
     cms::alpakatools::device_buffer<Device, int[]> cellCursor_;
     cms::alpakatools::device_buffer<Device, int[]> counters_;
+    int edgeCap_;
+    cms::alpakatools::device_buffer<Device, int[]> edges_;  // (winner, loser) pairs, survivorsOnly
+    cms::alpakatools::device_buffer<Device, int[]> st_, kw_, uw_;
   };
 
 }  // namespace ALPAKA_ACCELERATOR_NAMESPACE::mkfitdev::clean

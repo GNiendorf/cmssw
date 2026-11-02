@@ -78,7 +78,7 @@ namespace mkfitdev::k1 {
     float err[21];
   };
 
-  // device counters: [0] host-request overflow, [1] error rows, [2] rows with > kMaxSeedHits hits
+  // device counters: [0] host-request overflow, [1] error rows, [2] rows with > kMaxSeedHits hits, [3] pixel stubs dropped
   constexpr int kNCounters = 4;
 
 }  // namespace mkfitdev::k1
