@@ -292,7 +292,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                   MiniDoubletsConst mds,
                                   HitsBaseConst hitsBase,
                                   QuintupletsConst quintuplets,
-                                  QuadrupletsConst quadruplets) const {
+                                  QuadrupletsConst quadruplets,
+                                  bool t5CleanspLS) const {
       int pixelModuleIndex = modules.nLowerModules();
       unsigned int nPixels = segmentsOccupancy.nSegments()[pixelModuleIndex];
       for (unsigned int pixelArrayIndex : cms::alpakatools::uniform_elements_y(acc, nPixels)) {
@@ -318,7 +319,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         for (unsigned int trackCandidateIndex : cms::alpakatools::uniform_elements_x(acc, nTrackCandidates)) {
           LSTObjType type = candsBase.trackCandidateType()[trackCandidateIndex];
           unsigned int innerTrackletIdx = candsExtended.objectIndices()[trackCandidateIndex][0];
-          if (type == LSTObjType::T5) {
+          if (type == LSTObjType::T5 && t5CleanspLS) {
             unsigned int quintupletIndex = innerTrackletIdx;  // T5 index
             float eta2 = __H2F(quintuplets.eta()[quintupletIndex]);
             float phi2 = __H2F(quintuplets.phi()[quintupletIndex]);
@@ -522,16 +523,16 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
           continue;
 
         unsigned int trackCandidateIdx =
-            alpaka::atomicAdd(acc, &candsBase.nTrackCandidates(), 1u, alpaka::hierarchy::Threads{});
+            alpaka::atomicAdd(acc, &candsBase.nTrackCandidates(), 1u, alpaka::hierarchy::Blocks{});
         if (trackCandidateIdx >= nAllocated) {
 #ifdef WARNINGS
           printf("Track Candidate excess alert! Type = pT3");
 #endif
-          alpaka::atomicSub(acc, &candsBase.nTrackCandidates(), 1u, alpaka::hierarchy::Threads{});
+          alpaka::atomicSub(acc, &candsBase.nTrackCandidates(), 1u, alpaka::hierarchy::Blocks{});
           break;
 
         } else {
-          alpaka::atomicAdd(acc, &candsExtended.nTrackCandidatespT3(), 1u, alpaka::hierarchy::Threads{});
+          alpaka::atomicAdd(acc, &candsExtended.nTrackCandidatespT3(), 1u, alpaka::hierarchy::Blocks{});
 
           float radius = 0.5f * (__H2F(pixelTriplets.pixelRadius()[pixelTripletIndex]) +
                                  __H2F(pixelTriplets.tripletRadius()[pixelTripletIndex]));
@@ -663,16 +664,16 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
           continue;
 
         unsigned int trackCandidateIdx =
-            alpaka::atomicAdd(acc, &candsBase.nTrackCandidates(), 1u, alpaka::hierarchy::Threads{});
+            alpaka::atomicAdd(acc, &candsBase.nTrackCandidates(), 1u, alpaka::hierarchy::Blocks{});
         if (trackCandidateIdx >= nAllocated) {
 #ifdef WARNINGS
           printf("Track Candidate excess alert! Type = pT5");
 #endif
-          alpaka::atomicSub(acc, &candsBase.nTrackCandidates(), 1u, alpaka::hierarchy::Threads{});
+          alpaka::atomicSub(acc, &candsBase.nTrackCandidates(), 1u, alpaka::hierarchy::Blocks{});
           break;
 
         } else {
-          alpaka::atomicAdd(acc, &candsExtended.nTrackCandidatespT5(), 1u, alpaka::hierarchy::Threads{});
+          alpaka::atomicAdd(acc, &candsExtended.nTrackCandidatespT5(), 1u, alpaka::hierarchy::Blocks{});
 
           float radius = 0.5f * (__H2F(pixelQuintuplets.pixelRadius()[pixelQuintupletIndex]) +
                                  __H2F(pixelQuintuplets.quintupletRadius()[pixelQuintupletIndex]));

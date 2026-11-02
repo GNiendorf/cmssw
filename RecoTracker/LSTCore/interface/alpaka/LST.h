@@ -3,6 +3,9 @@
 
 #include "RecoTracker/LSTCore/interface/alpaka/Common.h"
 #include "RecoTracker/LSTCore/interface/LSTESData.h"
+#include "RecoTracker/LSTCore/interface/OTPull.h"
+#include "RecoTracker/LSTCore/interface/PixelObjectOptions.h"
+#include "RecoTracker/LSTCore/interface/alpaka/OTPullCellsDeviceCollection.h"
 #include "RecoTracker/LSTCore/interface/alpaka/LSTInputDeviceCollection.h"
 #include "RecoTracker/LSTCore/interface/alpaka/TrackCandidatesDeviceCollection.h"
 
@@ -24,7 +27,12 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
              LSTESData<Device> const* deviceESData,
              LSTInputDeviceCollection const* lstInputDC,
              bool no_pls_dupclean,
-             bool tc_pls_triplets);
+             bool tc_pls_triplets,
+             PixelObjectOptions const& pixelObjectOptions = PixelObjectOptions(),
+             OTPullParams const* otpull = nullptr,
+             OTPullCellsDeviceCollection const* otpullCells = nullptr,
+             uint32_t const* otpullPixKey = nullptr,
+             unsigned int otpullNPixKey = 0);
     std::unique_ptr<TrackCandidatesBaseDeviceCollection> getTrackCandidates() {
       return std::move(trackCandidatesBaseDC_);
     }
