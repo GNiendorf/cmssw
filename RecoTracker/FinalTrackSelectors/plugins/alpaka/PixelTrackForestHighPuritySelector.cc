@@ -182,6 +182,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     const int avgHitsPerTrack_;
     const pixelTrack::Quality minimumTrackQuality_;
     const double scoreThreshold_;
+    const bool passThreeHitTracks_;
     // dxy-aware threshold ramp: threshold goes from scoreThresholdLowDxy at |dxyBS|=0 down to
     // scoreThreshold at |dxyBS|>=dxyRampKnee. scoreThresholdLowDxy < 0 disables it (flat threshold).
     const double scoreThresholdLowDxy_;
@@ -218,6 +219,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
         avgHitsPerTrack_(iConfig.getParameter<int>("avgHitsPerTrack")),
         minimumTrackQuality_(pixelTrack::qualityByName(iConfig.getParameter<std::string>("minimumTrackQuality"))),
         scoreThreshold_(iConfig.getParameter<double>("scoreThreshold")),
+        passThreeHitTracks_(iConfig.getParameter<bool>("passThreeHitTracks")),
         scoreThresholdLowDxy_(iConfig.getParameter<double>("scoreThresholdLowDxy")),
         dxyRampKnee_(iConfig.getParameter<double>("dxyRampKnee")),
         useHitFeatures_(iConfig.getParameter<bool>("useHitFeatures")),
@@ -345,6 +347,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
                       scoreThreshold_,
                       scoreThresholdLowDxy_,
                       dxyRampKnee_,
+                      passThreeHitTracks_,
                       trackFeatures.const_view().fit(),
                       trackScoresOnDevice.view(),
                       alpaka::getPtrNative(d_preselectedTrackIndices),
@@ -411,6 +414,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     // positions in the fit-then-hit column order.
     desc.add<edm::FileInPath>("model");
     desc.add<double>("scoreThreshold", 0.232);
+    desc.add<bool>("passThreeHitTracks", false)->setComment("3-hit tracks are kept whatever their score");
     // dxy-aware threshold ramp: scoreThresholdLowDxy < 0 disables it (flat scoreThreshold). When
     // >= 0 the cut ramps from scoreThresholdLowDxy at |dxyBS| = 0 to scoreThreshold at
     // |dxyBS| >= dxyRampKnee (cm), so low reco displacement is cut harder.

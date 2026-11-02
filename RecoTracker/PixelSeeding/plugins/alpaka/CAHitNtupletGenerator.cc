@@ -359,6 +359,18 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
               "Disable the triplet cleaner entirely.");  // FIXME this should be implemented as an automatic check (simple if) that disables if minHitsPerNtuplet > 3
       desc.add<bool>("doFastDuplicateRemover", true)->setComment("Disable the fastDuplicateRemover");
       desc.add<bool>("doEarlyDuplicateRemover", true)->setComment("Disable the earlyDuplicateRemover");
+      desc.add<unsigned int>("maxBarrelTripletTuples", 0)
+          ->setComment("Budget of terminal 3-layer pixel-barrel tuples stored below minHitsPerNtuplet (0 = off)");
+      desc.add<int>("sizeWinMode", 0)
+          ->setComment(
+              "One-sided slope-predicted cluster-size window on pixel-barrel hits (0 = off). Bits: 1 inner hit of "
+              "barrel-barrel cells, 2 outer hit of barrel-barrel cells, 4 inner hit of barrel-other cells, 8 "
+              "barrel-barrel "
+              "cells fail only if both hits are short (with bit 1).");
+      desc.add<std::vector<double>>("sizeWinA", std::vector<double>(AlgoParams::kSizeWinLayers, 0.))
+          ->setComment("Window intercept per barrel layer (1/8 pixel): size >= A + B * |dz/dr|.");
+      desc.add<std::vector<double>>("sizeWinB", std::vector<double>(AlgoParams::kSizeWinLayers, 0.))
+          ->setComment("Window slope per barrel layer (1/8 pixel per unit |dz/dr|).");
 
       // Inline per-triplet DNN gate (Phase2OTVectorHits only)
       desc.add<bool>("useTripletDNN", kVectorHits)
@@ -423,7 +435,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
       // Designated initializers: the field set of AlgoParams is shared with upstream and grows there,
       // so a positional aggregate initialization would silently shift every value the next time a
       // member is inserted. Keep this list keyed by name.
-      return AlgoParams{
+      AlgoParams params{
           // Container sizes
           .avgHitsPerTrack_ = (float)cfg.getParameter<double>("avgHitsPerTrack"),
           .avgCellsPerHit_ = (float)cfg.getParameter<double>("avgCellsPerHit"),
@@ -470,7 +482,24 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
 
           // CA fast-duplicate / shared-hit covariance gate width, in units of the fitted covariance
           .fastDupNSigma2_ = (float)cfg.getParameter<double>("fastDupNSigma2"),
+
+          // Barrel-terminal 3-hit path
+          .maxBarrelTripletTuples_ = cfg.getParameter<unsigned int>("maxBarrelTripletTuples"),
+
+          // Cluster-size window, the per-layer coefficients are filled below
+          .sizeWinMode_ = (int16_t)cfg.getParameter<int>("sizeWinMode"),
+          .sizeWinA_ = {},
+          .sizeWinB_ = {},
       };
+      auto const winA = cfg.getParameter<std::vector<double>>("sizeWinA");
+      auto const winB = cfg.getParameter<std::vector<double>>("sizeWinB");
+      if (winA.size() != AlgoParams::kSizeWinLayers or winB.size() != AlgoParams::kSizeWinLayers)
+        throw cms::Exception("Configuration") << "sizeWinA and sizeWinB need one value per pixel-barrel layer";
+      for (int l = 0; l < AlgoParams::kSizeWinLayers; ++l) {
+        params.sizeWinA_[l] = winA[l];
+        params.sizeWinB_[l] = winB[l];
+      }
+      return params;
     }
 
     //This is needed to have the partial specialization for isPhase1Topology/isPhase2Topology
@@ -681,7 +710,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
       float bfield,
       uint32_t nDoublets,
       uint32_t nTracks,
-      Queue& queue) const {
+      Queue& queue,
+      bool otpullExport) const {
     using GPUKernels = CAHitNtupletGeneratorKernels<TrackerTraits>;
 
     PendingTuples pending;
@@ -755,6 +785,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
       kernels.allocateAfterDoublets(nCells, queue);
     }
 
+    kernels.otpullExport_ = otpullExport;
     kernels.launchKernels(trackingHits,
                           offsetBPIX2,
                           layers.metadata().size(),
@@ -779,13 +810,22 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
       kernels.allocateAfterNtuplets(0u, queue);
     }
 
+    if (otpullExport) {
+      pending.otpullCountHost.emplace(cms::alpakatools::make_host_buffer<uint32_t>(queue));
+      kernels.enqueueOTPullCountReadback(*pending.otpullCountHost, queue);
+    }
+
     pending.built = true;
     return pending;
   }
 
   template <typename TrackerTraits>
   reco::TracksSoACollection CAHitNtupletGenerator<TrackerTraits>::finishTuplesAsync(
-      PendingTuples&& pending, HitsInput const& hitsInput, CAGeometryOnDevice const& geometry_d, Queue& queue) const {
+      PendingTuples&& pending,
+      HitsInput const& hitsInput,
+      CAGeometryOnDevice const& geometry_d,
+      Queue& queue,
+      std::optional<lst::OTPullCellsDeviceCollection>* otpullCells) const {
     using HelixFit = HelixFit<TrackerTraits>;
 
     if (!pending.built) {
@@ -821,6 +861,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
       fitter.launchBrokenLineKernels(trackingHits, modules, nHits, nTracks, queue);
     }
     kernels.classifyTuples(trackingHits, tracks, queue);
+    if (otpullCells && pending.otpullCountHost)
+      otpullCells->emplace(kernels.fillOTPullCells(trackingHits, *pending.otpullCountHost->data(), queue));
 
     // Refresh the pinned overflow mirror with the running totals. Ordered after classifyTuples,
     // which is where the always-on overflow sentinel is enqueued on this same queue, so the

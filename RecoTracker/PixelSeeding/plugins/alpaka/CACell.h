@@ -206,6 +206,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
                                                       TmpTuple& tmpNtuplet,
                                                       hindex_type* __restrict__ hits,
                                                       const unsigned int minHitsPerNtuplet,
+                                                      uint32_t* __restrict__ nBarrelTriplets,
+                                                      const uint32_t maxBarrelTriplets,
                                                       const float preCurvature = kUninitializeCurvature) const {
       // the building process for a track ends if:
       // it has no right neighbor
@@ -293,6 +295,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
                                                                tmpNtuplet,
                                                                hits,
                                                                minHitsPerNtuplet,
+                                                               nBarrelTriplets,
+                                                               maxBarrelTriplets,
                                                                thisCurvature);
           }
         }
@@ -301,7 +305,17 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
         if (!foundNeighbor) {
           const uint8_t nl = tmpNtuplet.size() + 1;  // numLayers in tuplet
           // if long enough save...
-          if (nl >= minHitsPerNtuplet) {
+          bool save = nl >= minHitsPerNtuplet;
+          // barrel-terminal 3-hit path: a 3-layer tuple that ends here is kept, within its own budget,
+          // if all its hits are in the pixel barrel
+          if (!save && maxBarrelTriplets > 0 && nl == 3) {
+            bool barrel = cells[tmpNtuplet[0]].innerLayer(cc) <= pixelTopology::last_barrel_layer;
+            for (auto c : tmpNtuplet)
+              barrel &= cells[c].outerLayer(cc) <= pixelTopology::last_barrel_layer;
+            if (barrel)
+              save = alpaka::atomicAdd(acc, nBarrelTriplets, 1u, alpaka::hierarchy::Blocks{}) < maxBarrelTriplets;
+          }
+          if (save) {
             {
               // `hits` is owned by the caller, one buffer per thread sized maxHitsOnTrack to cover fishbone
               // hits: declaring it here would put a copy at every inlined recursion depth on the stack, and a

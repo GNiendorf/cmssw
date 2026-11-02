@@ -557,10 +557,14 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
                                                            int lane,
                                                            int stride,
                                                            Quality reject,
-                                                           float fastDupNSigma2) {
+                                                           float fastDupNSigma2,
+                                                           int minMainLayers) {
       constexpr auto loose = Quality::loose;
 
       auto score = [&](uint32_t it) { return tracks_view[it].chi2(); };
+      // barrel-terminal 3-hit path: its tuples (fewer layers than the main search's minimum) form a second
+      // class that never demotes a main tuple, so the main population is cleaned exactly as without them
+      auto isShort = [&](uint32_t it) { return tracks_view[it].nLayers() < minMainLayers; };
       auto demote = [&](uint32_t it, Quality q) {
         alpaka::atomicMin(acc, &qualityScratch[it], static_cast<int32_t>(q), alpaka::hierarchy::Blocks{});
       };
@@ -613,43 +617,53 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
           if (incompatibleTrackParams(jt)) {
             continue;
           }
-          if ((qj > qi) || (qj == qi && score(jt) < score(it))) {
+          bool const si = isShort(it), sj = isShort(jt);
+          if (sj && !si) {
+            continue;
+          }
+          if ((si && !sj) || (qj > qi) || (qj == qi && score(jt) < score(it))) {
             demote(it, reject);
             break;
           }
         }
       }
 
-      // find maxQual -- run whole by every lane (no reduction: the value must come out of the same
-      // code on every lane, and O(ntr) redundant integer loads are nothing against the pass above)
-      auto maxQual = reject;  // no duplicate!
-      for (int i = 0; i < ntr; i++) {
-        auto q = tracks_view[thisCellTracks[i]].quality();
-        if (q > maxQual) {
-          maxQual = q;
+      // per class (main, then the short class if present)
+      for (int cls = 0; cls < (minMainLayers > 0 ? 2 : 1); ++cls) {
+        // find maxQual -- run whole by every lane (no reduction: the value must come out of the same
+        // code on every lane, and O(ntr) redundant integer loads are nothing against the pass above)
+        auto maxQual = reject;  // no duplicate!
+        for (int i = 0; i < ntr; i++) {
+          if (int(isShort(thisCellTracks[i])) != cls) {
+            continue;
+          }
+          auto q = tracks_view[thisCellTracks[i]].quality();
+          if (q > maxQual) {
+            maxQual = q;
+          }
         }
-      }
 
-      if (maxQual <= loose) {
-        return;  // warp-uniform when Coop: every lane ran the same loop over the same data
-      }
-
-      // min chi2 among the best-quality tracks (read from the unmodified quality, which the dup-marking
-      // above does not affect for the max-quality min-chi2 track) -- run whole by every lane, so mc
-      // is bit-for-bit the same on every lane
-      float mc = maxScore;
-      for (int i = 0; i < ntr; i++) {
-        auto it = thisCellTracks[i];
-        if (tracks_view[it].quality() == maxQual && score(it) < mc) {
-          mc = score(it);
+        if (maxQual <= loose) {
+          continue;  // warp-uniform when Coop: every lane ran the same loop over the same data
         }
-      }
 
-      // mark all other duplicates (keep them loose) -- same test on every lane; only the WRITES are distributed
-      for (int i = iFirst; i < ntr; i += iStep) {
-        auto it = thisCellTracks[i];
-        if (tracks_view[it].quality() > loose && score(it) > mc) {
-          demote(it, loose);
+        // min chi2 among the best-quality tracks (read from the unmodified quality, which the dup-marking
+        // above does not affect for the max-quality min-chi2 track) -- run whole by every lane, so mc
+        // is bit-for-bit the same on every lane
+        float mc = maxScore;
+        for (int i = 0; i < ntr; i++) {
+          auto it = thisCellTracks[i];
+          if (int(isShort(it)) == cls && tracks_view[it].quality() == maxQual && score(it) < mc) {
+            mc = score(it);
+          }
+        }
+
+        // mark all other duplicates (keep them loose) -- same test on every lane; only the WRITES are distributed
+        for (int i = iFirst; i < ntr; i += iStep) {
+          auto it = thisCellTracks[i];
+          if (int(isShort(it)) == cls && tracks_view[it].quality() > loose && score(it) > mc) {
+            demote(it, loose);
+          }
         }
       }
     }
@@ -667,7 +681,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
                                     TkSoAView tracks_view,
                                     int32_t *__restrict__ qualityScratch,
                                     bool dupPassThrough,
-                                    float fastDupNSigma2) const {
+                                    float fastDupNSigma2,
+                                    int minMainLayers) const {
         // quality to mark rejected
         auto const reject = dupPassThrough ? Quality::loose : Quality::dup;
 
@@ -698,15 +713,24 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
               }
               const uint32_t cell = static_cast<uint32_t>(alpaka::warp::shfl(acc, static_cast<int32_t>(idx), l));
               const int n = alpaka::warp::shfl(acc, ntr, l);
-              fastDupRemoverCell<true>(
-                  acc, cellTracksHisto, tracks_view, qualityScratch, cell, n, laneId, warpSize, reject, fastDupNSigma2);
+              fastDupRemoverCell<true>(acc,
+                                       cellTracksHisto,
+                                       tracks_view,
+                                       qualityScratch,
+                                       cell,
+                                       n,
+                                       laneId,
+                                       warpSize,
+                                       reject,
+                                       fastDupNSigma2,
+                                       minMainLayers);
             }
           }
 
           // tier 1: one cell per thread, exactly as before
           if (inRange && ntr >= 2 && ntr <= kDupCoopMinTracks) {
             fastDupRemoverCell<false>(
-                acc, cellTracksHisto, tracks_view, qualityScratch, idx, ntr, 0, 1, reject, fastDupNSigma2);
+                acc, cellTracksHisto, tracks_view, qualityScratch, idx, ntr, 0, 1, reject, fastDupNSigma2, minMainLayers);
           }
         }
       }
@@ -723,7 +747,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
                                     TkSoAView tracks_view,
                                     int32_t *__restrict__ qualityScratch,
                                     bool dupPassThrough,
-                                    float fastDupNSigma2) const {
+                                    float fastDupNSigma2,
+                                    int /* minMainLayers: Phase-2 barrel-terminal 3-hit path only */) const {
         // quality to mark rejected
         auto const reject = dupPassThrough ? Quality::loose : Quality::dup;
         constexpr auto loose = Quality::loose;
@@ -1120,6 +1145,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
                                     uint32_t const *nTriplets,
                                     uint32_t const *nCells,
                                     cms::alpakatools::AtomicPairCounter *apc,
+                                    uint32_t *nBarrelTriplets,
                                     AlgoParams const &params) const {
         using Cell = CACell<TrackerTraits>;
 
@@ -1186,7 +1212,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
                                                       tracks_view.pt().data(),
                                                       stack,
                                                       hits,
-                                                      params.minHitsPerNtuplet_);
+                                                      params.minHitsPerNtuplet_,
+                                                      nBarrelTriplets,
+                                                      params.maxBarrelTripletTuples_);
             ALPAKA_ASSERT_ACC(stack.empty());
           }
         }
@@ -2262,6 +2290,85 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
       }
     };
 
+    // OT-seeded lookup export (LST): terminal cells of a CA path = not killed, no outer neighbour, and an inner
+    // neighbour or a tuple through the cell; bit sets with one bit per cell slot
+    class Kernel_otpullMarkInner {
+    public:
+      template <typename TConn>
+      ALPAKA_FN_ACC void operator()(Acc1D const &acc,
+                                    TConn cn,
+                                    uint32_t const *__restrict__ nConn,
+                                    uint32_t capConn,
+                                    uint32_t const *__restrict__ nCells,
+                                    uint32_t maxCells,
+                                    uint32_t *__restrict__ hasInner) const {
+        uint32_t const nk = alpaka::math::min(acc, *nConn, capConn);
+        uint32_t const nc = alpaka::math::min(acc, *nCells, maxCells);
+        for (uint32_t k : cms::alpakatools::uniform_elements(acc, nk)) {
+          uint32_t const o = cn[k].outer() & ::caStructures::kCellIndexMask;
+          if (o < nc)
+            alpaka::atomicOr(acc, &hasInner[o / 32], 1u << (o % 32), alpaka::hierarchy::Blocks{});
+        }
+      }
+    };
+
+    template <typename TrackerTraits>
+    class Kernel_otpullMarkTerminal {
+    public:
+      ALPAKA_FN_ACC void operator()(Acc1D const &acc,
+                                    CACell<TrackerTraits> const *__restrict__ cells,
+                                    CellToCell const *__restrict__ c2n,
+                                    CellToTrack const *__restrict__ c2t,
+                                    uint32_t const *__restrict__ nCells,
+                                    uint32_t maxCells,
+                                    uint32_t const *__restrict__ hasInner,
+                                    uint32_t *__restrict__ terminal,
+                                    uint32_t *__restrict__ counter) const {
+        uint32_t const nc = alpaka::math::min(acc, *nCells, maxCells);
+        for (uint32_t c : cms::alpakatools::uniform_elements(acc, nc)) {
+          if (cells[c].isKilled() || c2n->size(c) != 0 || !(((hasInner[c / 32] >> (c % 32)) & 1) || c2t->size(c) != 0))
+            continue;
+          alpaka::atomicOr(acc, &terminal[c / 32], 1u << (c % 32), alpaka::hierarchy::Blocks{});
+          alpaka::atomicAdd(acc, counter, 1u, alpaka::hierarchy::Blocks{});
+        }
+      }
+    };
+
+    template <typename TrackerTraits>
+    class Kernel_otpullFill {
+    public:
+      using HitsMultiView = caStructures::HitsViewT<TrackerTraits>;
+
+      ALPAKA_FN_ACC void operator()(Acc1D const &acc,
+                                    HitsMultiView hh,
+                                    CACell<TrackerTraits> const *__restrict__ cells,
+                                    uint32_t const *__restrict__ nCells,
+                                    uint32_t maxCells,
+                                    uint32_t const *__restrict__ terminal,
+                                    uint32_t *__restrict__ counter,
+                                    ::lst::OTPullCellsSoA::View out) const {
+        uint32_t const nc = alpaka::math::min(acc, *nCells, maxCells);
+        uint32_t const nPix = hh.view(0).metadata().size();
+        for (uint32_t c : cms::alpakatools::uniform_elements(acc, nc)) {
+          if (!((terminal[c / 32] >> (c % 32)) & 1))
+            continue;
+          uint32_t const d = alpaka::atomicAdd(acc, counter, 1u, alpaka::hierarchy::Blocks{});
+          if (d >= static_cast<uint32_t>(out.metadata().size()))
+            continue;
+          uint32_t const hi = cells[c].inner_hit_id(), ho = cells[c].outer_hit_id();
+          out.xi()[d] = hh[hi].xGlobal();
+          out.yi()[d] = hh[hi].yGlobal();
+          out.zi()[d] = hh[hi].zGlobal();
+          out.xo()[d] = hh[ho].xGlobal();
+          out.yo()[d] = hh[ho].yGlobal();
+          out.zo()[d] = hh[ho].zGlobal();
+          // pixel cluster keys; OT hits get no key
+          out.hi()[d] = hi < nPix ? hi : 0xffffffffu;
+          out.ho()[d] = ho < nPix ? ho : 0xffffffffu;
+        }
+      }
+    };
+
   }  // namespace caHitNtupletGeneratorKernels
 
   // The host side of CAHitNtupletGeneratorKernels: the launchers and the buffer management. Instantiated per
@@ -2569,6 +2676,11 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     alpaka::memset(queue, *device_nCells_, 0);
     alpaka::memset(queue, *device_nTriplets_, 0);
     alpaka::memset(queue, *device_nCellTracks_, 0);
+
+    // barrel-terminal 3-hit path: tuples found against the budget (a scalar of its own, outside the counter block
+    // that the count readbacks copy whole)
+    device_nBarrelTriplets_ = cms::alpakatools::make_device_buffer<uint32_t>(queue);
+    alpaka::memset(queue, *device_nBarrelTriplets_, 0);
 
     maxNumberOfDoublets_ = cellBound;
     launchCells_ = cellBound;
@@ -3059,6 +3171,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
                         this->device_nTriplets_->data(),
                         this->device_nCells_->data(),
                         this->device_hitTuple_apc_,
+                        this->device_nBarrelTriplets_->data(),
                         this->m_params.algoParams_);
 
 #ifdef GPU_DEBUG
@@ -3245,10 +3358,88 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     alpaka::wait(queue);
 #endif
 
+    // the OT-seeded lookup export reads the cell->cell containers, which the release below hands back
+    if (this->otpullExport_)
+      this->markOTPullCells(queue);
+
     // Every build-only buffer has now had its last reader enqueued. Hand them back here instead of at
     // the end of produce(): tens of MiB return to the caching allocator half an event early, which
     // lets another stream reuse the bin instead of growing the pool.
     this->releaseBuildScratch();
+  }
+
+  template <typename TrackerTraits>
+  void CAHitNtupletGeneratorKernels<TrackerTraits>::markOTPullCells(Queue &queue) {
+    using namespace caHitNtupletGeneratorKernels;
+    uint32_t const maxCells = this->maxNumberOfDoublets_;
+    uint32_t const nWords = cms::alpakatools::divide_up_by(maxCells, 32u);
+    auto hasInner = cms::alpakatools::make_device_buffer<uint32_t[]>(queue, nWords);
+    alpaka::memset(queue, hasInner, 0);
+    device_otpullTerminal_ = cms::alpakatools::make_device_buffer<uint32_t[]>(queue, nWords);
+    alpaka::memset(queue, *device_otpullTerminal_, 0);
+    device_otpullCount_ = cms::alpakatools::make_device_buffer<uint32_t>(queue);
+    alpaka::memset(queue, *device_otpullCount_, 0);
+    uint32_t const capConn = this->tripletsN_;
+    constexpr uint32_t blockSize = 256;
+    // grid-stride loops over the device counts: a bounded grid, not one sized by the capacities
+    constexpr uint32_t maxBlocks = 1024;
+    auto const wdConn = cms::alpakatools::make_workdiv<Acc1D>(
+        std::max(1u, std::min(cms::alpakatools::divide_up_by(capConn, blockSize), maxBlocks)), blockSize);
+    auto const wdCells = cms::alpakatools::make_workdiv<Acc1D>(
+        std::max(1u, std::min(cms::alpakatools::divide_up_by(maxCells, blockSize), maxBlocks)), blockSize);
+    alpaka::exec<Acc1D>(queue,
+                        wdConn,
+                        Kernel_otpullMarkInner{},
+                        this->deviceTriplets_->view(),
+                        this->device_nTriplets_->data(),
+                        capConn,
+                        this->device_nCells_->data(),
+                        maxCells,
+                        hasInner.data());
+    alpaka::exec<Acc1D>(queue,
+                        wdCells,
+                        Kernel_otpullMarkTerminal<TrackerTraits>{},
+                        this->device_simpleCells_->data(),
+                        this->device_cellToNeighbors_->data(),
+                        this->device_cellToTracks_->data(),
+                        this->device_nCells_->data(),
+                        maxCells,
+                        hasInner.data(),
+                        device_otpullTerminal_->data(),
+                        device_otpullCount_->data());
+  }
+
+  template <typename TrackerTraits>
+  void CAHitNtupletGeneratorKernels<TrackerTraits>::enqueueOTPullCountReadback(
+      cms::alpakatools::host_buffer<uint32_t> &dst, Queue &queue) {
+    alpaka::memcpy(queue, dst, *device_otpullCount_);
+  }
+
+  template <typename TrackerTraits>
+  lst::OTPullCellsDeviceCollection CAHitNtupletGeneratorKernels<TrackerTraits>::fillOTPullCells(const HitsMultiView &hh,
+                                                                                                uint32_t nCells,
+                                                                                                Queue &queue) {
+    using namespace caHitNtupletGeneratorKernels;
+    lst::OTPullCellsDeviceCollection out(queue, static_cast<int32_t>(nCells));
+    if (nCells == 0)
+      return out;
+    uint32_t const maxCells = this->maxNumberOfDoublets_;
+    alpaka::memset(queue, *device_otpullCount_, 0);
+    constexpr uint32_t blockSize = 256;
+    constexpr uint32_t maxBlocks = 1024;
+    auto const wdCells = cms::alpakatools::make_workdiv<Acc1D>(
+        std::max(1u, std::min(cms::alpakatools::divide_up_by(maxCells, blockSize), maxBlocks)), blockSize);
+    alpaka::exec<Acc1D>(queue,
+                        wdCells,
+                        Kernel_otpullFill<TrackerTraits>{},
+                        hh,
+                        this->device_simpleCells_->data(),
+                        this->device_nCells_->data(),
+                        maxCells,
+                        device_otpullTerminal_->data(),
+                        device_otpullCount_->data(),
+                        out.view());
+    return out;
   }
 
   // Early release of the build-only scratch (called at the end of launchKernels). No new
@@ -3351,7 +3542,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
                           doubletCuts,
                           this->device_layerStarts_->data(),
                           this->device_hitPhiHist_->data(),
-                          this->device_hitToCell_->data());
+                          this->device_hitToCell_->data(),
+                          this->m_params.algoParams_);
 
       const uint32_t nCellsFound = this->readbackNCells(queue);
       nCellsCounted = nCellsFound;
@@ -3385,7 +3577,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
                         doubletCuts,
                         this->device_layerStarts_->data(),
                         this->device_hitPhiHist_->data(),
-                        this->device_hitToCell_->data());
+                        this->device_hitToCell_->data(),
+                        this->m_params.algoParams_);
 
     HitToCell::template launchFinalize<Acc1D>(this->device_hitToCellView_, queue);
 
@@ -3500,7 +3693,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
                           tracks_view,
                           qScratch,
                           this->m_params.algoParams_.dupPassThrough_,
-                          this->m_params.algoParams_.fastDupNSigma2_);
+                          this->m_params.algoParams_.fastDupNSigma2_,
+                          this->m_params.algoParams_.maxBarrelTripletTuples_ > 0
+                              ? int(this->m_params.algoParams_.minHitsPerNtuplet_)
+                              : 0);
       applyQuality();
 #ifdef GPU_DEBUG
       alpaka::wait(queue);
@@ -3576,7 +3772,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
 #endif
       }
 
-      if (this->m_params.algoParams_.doTripletCleaner_ && (this->m_params.algoParams_.minHitsPerNtuplet_ <= 3)) {
+      if (this->m_params.algoParams_.doTripletCleaner_ && (this->m_params.algoParams_.minHitsPerNtuplet_ <= 3 ||
+                                                           this->m_params.algoParams_.maxBarrelTripletTuples_ > 0)) {
         if (this->m_params.algoParams_.useSimpleTripletCleaner_) {
           numberOfBlocks =
               cms::alpakatools::divide_up_by(int(nhits * this->m_params.algoParams_.avgHitsPerTrack_) + 1, blockSize);

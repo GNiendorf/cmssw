@@ -74,6 +74,19 @@ namespace caStructures {
     // covariance: lowering it tightens the gate (fewer merges), raising it merges more aggressively.
     // The Phase-1 specializations of those kernels keep their own hard-wired nSigma2Phase1 constant.
     float fastDupNSigma2_;
+
+    // Barrel-terminal 3-hit path (0 = off): budget of 3-layer tuples whose hits are all in the pixel barrel,
+    // stored when the search ends there although the main search keeps minHitsPerNtuplet
+    uint32_t maxBarrelTripletTuples_;
+
+    // One-sided, slope-predicted cluster-size window for pixel-barrel hits (0 = off).
+    // A barrel hit of layer L with a non-edge size s (1/8 pixel) fails if s < sizeWinA_[L] + sizeWinB_[L] * |dz/dr|.
+    // Mode bits: 1 = inner hit of barrel-barrel pairs, 2 = outer hit of barrel-barrel pairs, 4 = inner hit of
+    // barrel-other pairs, 8 = barrel-barrel pairs fail only if both hits are short (with bit 1).
+    static constexpr int kSizeWinLayers = 4;
+    int16_t sizeWinMode_;
+    float sizeWinA_[kSizeWinLayers];
+    float sizeWinB_[kSizeWinLayers];
   };
 
   // Hits data formats

@@ -21,6 +21,7 @@
 #include "HeterogeneousCore/AlpakaInterface/interface/memory.h"
 #include "RecoTracker/PixelSeeding/interface/CAGeometrySoA.h"
 #include "RecoTracker/PixelSeeding/interface/alpaka/CAPairSoACollection.h"
+#include "RecoTracker/LSTCore/interface/alpaka/OTPullCellsDeviceCollection.h"
 // Type defined unconditionally (zero memory: just the layout + an empty std::optional below);
 // the actual device buffer is allocated only under #ifdef CA_TRIPLET_DUMP (see the .dev.cc).
 #include "RecoTracker/PixelSeeding/interface/alpaka/TripletDumpSoACollection.h"
@@ -228,6 +229,14 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
 
     void classifyTuples(const HitsMultiView& hh, TkSoAView& track_view, Queue& queue);
 
+    // OT-seeded lookup export (LST): the terminal cells of the CA paths (no outer neighbour; an inner neighbour or a
+    // tuple through the cell). With otpullExport_ set, launchKernels marks them and counts them before the build
+    // scratch is released; the count crosses the acquire->produce seam through a pinned buffer, and fillOTPullCells
+    // writes the exactly sized device product.
+    bool otpullExport_ = false;
+    void enqueueOTPullCountReadback(cms::alpakatools::host_buffer<uint32_t>& dst, Queue& queue);
+    lst::OTPullCellsDeviceCollection fillOTPullCells(const HitsMultiView& hh, uint32_t nCells, Queue& queue);
+
     // Returns the doublet count the countDoubletsFirst count-only pass read back to the host
     // (0 when countDoubletsFirst_ is off, or when the event was too empty to run the passes).
     // The caller reuses it as the allocateAfterDoublets sizing basis instead of paying a second
@@ -380,6 +389,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     std::optional<cms::alpakatools::device_view<Device, uint32_t>> device_nCells_;
     std::optional<cms::alpakatools::device_view<Device, uint32_t>> device_nTriplets_;
     std::optional<cms::alpakatools::device_view<Device, uint32_t>> device_nCellTracks_;
+    std::optional<cms::alpakatools::device_buffer<Device, uint32_t>> device_nBarrelTriplets_;
+    std::optional<cms::alpakatools::device_buffer<Device, uint32_t[]>> device_otpullTerminal_;
+    std::optional<cms::alpakatools::device_buffer<Device, uint32_t>> device_otpullCount_;
+    void markOTPullCells(Queue& queue);
 
     std::optional<CAPairSoACollection> deviceTriplets_;
     std::optional<CAPairSoACollection> deviceTracksCells_;

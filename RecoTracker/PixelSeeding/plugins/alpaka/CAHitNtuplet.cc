@@ -826,6 +826,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     // CAHitsView facade.
     device::EDGetToken<VectorHitsOnDevice> vectorHitsToken_;
     const device::EDPutToken<TkSoADevice> tokenTrack_;
+    // OT-seeded lookup export for LST: the terminal cells of the CA paths (device product 'otpullCells')
+    const bool otpullExport_;
+    device::EDPutToken<lst::OTPullCellsDeviceCollection> otpullToken_;
 #ifdef CA_TRIPLET_DUMP
     // Per-built-triplet training-dataset product (one row per built triplet, valid rows = view().nValid()).
     // Only registered/emitted in CA_TRIPLET_DUMP builds; production builds carry nothing.
@@ -854,6 +857,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
         tokenField_(esConsumes()),
         pixelRecHitToken_(consumes(iConfig.getParameter<edm::InputTag>("pixelRecHitSrc"))),
         tokenTrack_(produces()),
+        otpullExport_(iConfig.getParameter<bool>("otpullExport")),
 #ifdef CA_TRIPLET_DUMP
         tokenTripletDump_(produces()),
 #endif
@@ -862,6 +866,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
         minNumberOfDoublets_(iConfig.getParameter<uint32_t>("minNumberOfDoublets")),
         minNumberOfTuples_(iConfig.getParameter<uint32_t>("minNumberOfTuples")),
         deviceAlgo_(iConfig) {
+    if (otpullExport_)
+      otpullToken_ = produces("otpullCells");
     auto trackerRecHitsSoAInputTag = iConfig.getParameter<edm::InputTag>("trackerRecHitsSoA");
     if (!trackerRecHitsSoAInputTag.label().empty()) {
       trackerRecHitToken_ = consumes(trackerRecHitsSoAInputTag);
@@ -890,6 +896,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
             "Outer-tracker vector hits SoA (a reco::VectorHitsSoACollection). Consumed only by the Phase2OTVectorHits "
             "topology, whose CA reads the pixel rechits and the vector hits side by side through the CAHitsView "
             "facade; ignored by every other topology.");
+    desc.add<bool>("otpullExport", false)
+        ->setComment("export the terminal cells of the CA paths for LST's OT-seeded lookup (device product)");
 
     Algo::fillPSetDescription(desc);
     descriptions.addWithDefaultLabel(desc);
@@ -935,7 +943,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     // The whole CA build (hit prep, doublets, connect, ntuplets) + one async D2H of the
     // tuple-multiplicity offsets. No blocking wait anywhere: the framework's seam runs
     // produce only after this queue has drained.
-    pending_ = deviceAlgo_.beginTuplesAsync(hitsInput, geometry, bf, maxDoublets, maxTuples, iEvent.queue());
+    pending_ =
+        deviceAlgo_.beginTuplesAsync(hitsInput, geometry, bf, maxDoublets, maxTuples, iEvent.queue(), otpullExport_);
   }
 
   template <typename TrackerTraits>
@@ -948,6 +957,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
       auto ntracks_d = cms::alpakatools::make_device_view(queue, tracks.view().tracks().nTracks());
       alpaka::memset(queue, ntracks_d, 0);
       iEvent.emplace(tokenTrack_, std::move(tracks));
+      if (otpullExport_)
+        iEvent.emplace(otpullToken_, lst::OTPullCellsDeviceCollection(queue, 0));
 #ifdef CA_TRIPLET_DUMP
       // No CA was run -> no triplets; still emit an empty (0-row) dump so the product is present.
       iEvent.emplace(tokenTripletDump_, TripletDumpSoACollection(queue, 0u));
@@ -960,9 +971,15 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     auto const& geometry = runCache()->geometry_.get(iEvent.queue());
     HitsInput const hitsInput = makeHitsInput(iEvent);
 
-    iEvent.emplace(tokenTrack_,
-                   deviceAlgo_.finishTuplesAsync(std::move(*pending_), hitsInput, geometry, iEvent.queue()));
+    std::optional<lst::OTPullCellsDeviceCollection> otpullCells;
+    iEvent.emplace(
+        tokenTrack_,
+        deviceAlgo_.finishTuplesAsync(
+            std::move(*pending_), hitsInput, geometry, iEvent.queue(), otpullExport_ ? &otpullCells : nullptr));
     pending_.reset();
+    if (otpullExport_)
+      iEvent.emplace(otpullToken_,
+                     otpullCells ? std::move(*otpullCells) : lst::OTPullCellsDeviceCollection(iEvent.queue(), 0));
 
 #ifdef CA_TRIPLET_DUMP
     // Emit the per-built-triplet dump that finishTuplesAsync stashed in the generator. The collection

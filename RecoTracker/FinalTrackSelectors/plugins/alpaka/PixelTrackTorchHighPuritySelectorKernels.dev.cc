@@ -596,6 +596,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
                                   const PixelTrackFitFeaturesConstView fitFeatures,
                                   const int* nPreselectedTracks,
                                   const PixelTrackScoresSoA::View trackScores,
+                                  const int* trackHitCounts,
+                                  const bool passThreeHitTracks,
                                   int* selectionMask) const {
       /**
             * Applies a DNN score threshold to preselected tracks.
@@ -630,7 +632,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
         // in the promoting form (`score >= thr` -> keep), which leaves a non-finite score on the
         // rejecting side under -Ofast (-ffinite-math-only); the negated form is rewritable.
         const bool fitOk = forestFitFeaturesFinite(fitFeatures, i);
-        selectionMask[i] = (fitOk && score >= thr) ? 1 : 0;
+        // with passThreeHitTracks, a 3-hit track is kept whatever its score
+        const bool threeHitPass = passThreeHitTracks && trackHitCounts[i] == 3;
+        selectionMask[i] = (fitOk && (score >= thr || threeHitPass)) ? 1 : 0;
       }
     }
   };
@@ -785,6 +789,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
                          const double scoreThreshold,
                          const double scoreThresholdLowDxy,
                          const double dxyRampKnee,
+                         const bool passThreeHitTracks,
                          const PixelTrackFitFeaturesConstView fitFeatures,
                          const PixelTrackScoresSoA::View trackScores,
                          const int* preselectedTrackIndices,
@@ -818,6 +823,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
                         fitFeatures,
                         nPreselectedTracks,
                         trackScores,
+                        trackHitCounts,
+                        passThreeHitTracks,
                         selectionMask.data());
 
     // Apply the selection mask to compact the preselectedTrackIndices array

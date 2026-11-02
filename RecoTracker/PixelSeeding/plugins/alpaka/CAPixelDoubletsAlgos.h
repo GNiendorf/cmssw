@@ -190,6 +190,37 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::caPixelDoublets {
   // CountOnly: run the full cut path but only increment nCells (do not write the cell
   // or the hit->cell association). Used by the
   // countDoubletsFirst runtime flag's first pass to learn the exact nCells before allocating
+  // One-sided slope-predicted cluster-size window: a pixel-barrel hit whose cluster is shorter along z than the
+  // pair slope allows is short: size < A + B * |dz| / dr, evaluated as size * dr < A * dr + B * |dz| (dr > 0).
+  // Edge clusters (negative size) are never short. Returns true if the cell fails.
+  // Mode bits: 1 inner hit and 2 outer hit of barrel-barrel cells, 4 inner hit of barrel-other cells,
+  // 8 barrel-barrel cells fail only if both hits are short (needs bit 1).
+  template <typename TrackerTraits, alpaka::concepts::Acc TAcc>
+  ALPAKA_FN_ACC ALPAKA_FN_INLINE bool sizeWindowCut(const TAcc& acc,
+                                                    caStructures::HitsViewT<TrackerTraits> const& hh,
+                                                    caStructures::AlgoParams const& params,
+                                                    uint8_t inner,
+                                                    uint8_t outer,
+                                                    int i,
+                                                    int o,
+                                                    float adz,
+                                                    float dr) {
+    if (inner > pixelTopology::last_barrel_layer or dr <= 0.f)
+      return false;
+    const bool outerBarrel = outer <= pixelTopology::last_barrel_layer;
+    const bool testInner = outerBarrel ? (params.sizeWinMode_ & 1) : (params.sizeWinMode_ & 4);
+    const bool testOuter = outerBarrel and (params.sizeWinMode_ & 2);
+    auto isShort = [&](int h, uint8_t layer) {
+      const int16_t size = caStructures::clusterSizeY(hh, h);
+      return size > 0 and size * dr < params.sizeWinA_[layer] * dr + params.sizeWinB_[layer] * adz;
+    };
+    const bool shortInner = testInner and isShort(i, inner);
+    // pair mode (bit 8): a barrel-barrel cell fails only if both hits are short
+    if (outerBarrel and (params.sizeWinMode_ & 8))
+      return shortInner and isShort(o, outer);
+    return shortInner or (testOuter and isShort(o, outer));
+  }
+
   template <typename TrackerTraits, bool CountOnly, alpaka::concepts::Acc TAcc>
   ALPAKA_FN_ACC ALPAKA_FN_INLINE void doubletsFromHisto(const TAcc& acc,
                                                         uint32_t maxNumOfDoublets,
@@ -201,10 +232,12 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::caPixelDoublets {
                                                         ::reco::CADoubletCutsSoAConstView doubletCuts,
                                                         uint32_t const* __restrict__ offsets,
                                                         PhiBinner<TrackerTraits> const* phiBinner,
-                                                        HitToCell* outerHitHisto) {
+                                                        HitToCell* outerHitHisto,
+                                                        caStructures::AlgoParams const params) {
     const bool doClusterCut = doubletCuts.minInnerSizeB1() > 0 or doubletCuts.minInnerSizeB2() > 0;
     const bool doZSizeCut =
         doubletCuts.maxDSizeB1() > 0 or doubletCuts.maxDSize() > 0 or doubletCuts.maxDSizePred() > 0;
+    const bool doSizeWindow = params.sizeWinMode_ > 0;
 
     const uint32_t nPairs = cc.metadata().size();
     using PhiHisto = PhiBinner<TrackerTraits>;
@@ -579,6 +612,12 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::caPixelDoublets {
                 }
               }
             }
+          }
+
+          // last, so that it is evaluated only on cells that pass every other cut
+          if (doSizeWindow &&
+              sizeWindowCut<TrackerTraits, TAcc>(acc, hh, params, inner, outer, i, oi, std::abs(dz), ro - ri)) {
+            continue;
           }
 
           auto ind = alpaka::atomicAdd(acc, nCells, 1u, alpaka::hierarchy::Blocks{});
