@@ -425,7 +425,9 @@ def _otRecHitsDevice(process):
             m.Phase2StripCPE = cpe
             m.outerTrackerRecHitSrc = blank
     legacy = getattr(process, OT_RECHITS)
-    readers = sorted(set(c.split('.')[0] for c in _consumers(process, OT_RECHITS, skip=(OT_RECHITS,))))
+    # modules in no sequence, path or task never run (e.g. the vector hit producers of the menu without phase2CAVectorHits)
+    readers = sorted(set(c.split('.')[0] for c in _consumers(process, OT_RECHITS, skip=(OT_RECHITS,))
+                         if _inSequenceOrTask(process, c.split('.')[0])))
     validation = [l for l in readers if l in process.analyzers_() or 'Validat' in getattr(process, l).type_()]
     production = [l for l in readers if l not in validation]
     if production:
@@ -478,14 +480,19 @@ def _lstInputDevice(process):
     pixel-track hits (the host seed creator's structure, then the beam-line PCA), the OT rows from the device OT
     rechits; the build module takes the pixel seed states from the device."""
     seeds = process.hltInitialStepSeeds
+    ca = getattr(process, PIXEL_TRACKS_CA)
+    if ca.type_().split('@')[0] != 'CAHitNtupletAlpakaPhase2OT':
+        raise RuntimeError('customizeHLTforMkFitAlpaka: %s is %s, the device LST input supports the pixel-track CA with '
+                           'the outer-tracker rechit extension (CAHitNtupletAlpakaPhase2OT) only'
+                           % (PIXEL_TRACKS_CA, ca.type_()))
+    # removeOTRechits keeps the pixel hits and the P hits of the TOB PS modules, the only outer-tracker hits of this CA:
+    # with includeFourthHit the seeds are then the ones the device KF reproduces
     if (seeds.type_() != 'SeedGeneratorFromProtoTracksEDProducer' or seeds.useProtoTrackKinematics.value()
-            or seeds.removeOTRechits.value() or seeds.produceComplement.value() or seeds.usePV.value()
+            or (seeds.removeOTRechits.value() and not seeds.includeFourthHit.value())
+            or seeds.produceComplement.value() or seeds.usePV.value()
             or seeds.InputVertexCollection.value() not in ('', '""') or not seeds.useEventsWithNoVertex.value()
             or seeds.InputCollection.value() != 'hltPhase2PixelTracks'):
         raise RuntimeError('customizeHLTforMkFitAlpaka: hltInitialStepSeeds configuration not supported')
-    ca = getattr(process, PIXEL_TRACKS_CA)
-    if not ca.type_().startswith('CAHitNtupletAlpaka'):
-        raise RuntimeError('customizeHLTforMkFitAlpaka: %s is not the pixel-track CA' % PIXEL_TRACKS_CA)
     eoh = getattr(process, EOH)
     dev = cms.EDProducer('MkFitAlpakaLstInputProducer@alpaka',
                          ptCut=process.hltInputLST.ptCut,
