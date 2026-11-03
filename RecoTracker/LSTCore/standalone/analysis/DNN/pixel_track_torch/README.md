@@ -18,7 +18,8 @@ This directory holds everything needed to remake the model from the deployed cha
 | `cmssw/LocalVal/PttDump` | `PixelTupleTorchDump`: one row per preselected tuple (inputs, deployed decisions, layer pattern, truth) |
 | `cfg/cache_cfg.py` | stream one RAW file into a compact local-reco + truth cache |
 | `cfg/dump_cfg.py` | on-policy dump from the cache with the classifier cut off |
-| `cfg/policy_op.py`, `cfg/pix_only.py` | the CA policy the model was trained on (OP, optionally with the forward skip pairs) |
+| `cfg/policy_op.py`, `cfg/pix_only.py` | the CA policy v1 was trained on (OP, with all, none or a subset of the forward skip pairs) |
+| `cfg/policy_cand.py` | the integrated candidate menu (`customizeCandidate`): the policy of v2 and of the otpull network v2 |
 | `cfg/deploy_block.py` | `pttDeploy(process, model, wp_json)`: model, tables, high-purity subset, vertex input |
 | `pttlib.py` | dump reading, event split, preprocessing, network, deployed TorchScript form |
 | `train.py` | training (recipe below) |
@@ -100,6 +101,33 @@ keepForwardSkipPairs=True)`), CPU serial dumps.
 - Dev + holdout pooled against the extension menu (eps4 0.99 tables, 11 ttbar / 22 QCD files): hltGeneral efficiency
   +0.359 +- 0.061 / +0.857 +- 0.058, fake -0.078 +- 0.009 / -0.004 +- 0.005.
 
+## v2: retrained on the integrated candidate (2026-11-03), the model file now shipped
+
+The CA policy changed under the model: the integrated candidate keeps 4 of the 14 forward skip pairs (51 pixel pairs,
+not the 57 above), saves 3-layer tuples with disk outer layers and sizes the 3-hit storage from a count
+(`tripletTuplesOuterDisks`, `countTripletTuples`), so the classifier was retrained on-policy with the same recipe and
+the same working-point rule; `pixel_track_classifier_noOT.pt` is the v2 model and the v1 numbers above are history.
+
+- Policy: the candidate menu, `cfg/policy_cand.py` `customizeCandidate` (= `customizeOP` with the forward skip pairs
+  d3-d5, d5-d7, d6-d8, d7-d9 kept, the 3-hit tuple options, the LST / mkFit options of the candidate; the dumps ran with
+  the v1 classifier deployed, which the dump's cut-off settings replace).
+  Dump binary: branch itaca-290-extoff-v2 at 682b631cd9b (C++ as 0b936edaa18), IB CMSSW_20_1_X_2026-11-02-1100, CPU serial.
+- Samples: the same caches as v1 (`samples/train_{ttbar,qcd}.lfn`, 1000 ttbar + 300 QCD events, all events of each file),
+  same event split (train 603 + 182, validation 199 + 59, test 198 + 59). 4.35M training rows. Largest preselected count
+  per event 5131 (ttbar) / 5164 (QCD), below the menu cap of 9984.
+- Commands: `scripts/run_all.sh` with `PTT_MENU=<candidate menu>`, `PTT_CACHE_ROOT=<v1 caches>`, `PTT_EPS4=0.99
+  PTT_EPS4_FWD=0.995 PTT_EPS3=0.99` (the lane ran its steps one by one with the same commands).
+- Training: kept epoch 174 of 200, worst-sample validation AUC 0.99482. Test AUC: ttbar 0.99499 (three-hit 0.9260, four or
+  more 0.99738), QCD 0.99460 (0.9206, 0.99719). The three-hit share of the rows is larger than for v1 (disk triplets,
+  no 3-hit budget), which is why the overall AUC is lower. `shipped/v2/train_summary.json`.
+- Export: max |score difference| 2.6e-6 (`shipped/v2/export_check.json`). C++ parity (2 cache files per sample, 1,000,254
+  tuples): agreement 1.0 (`shipped/v2/parity.json`).
+- Tables: `shipped/v2/wp_eps4_0.99_fwd0.995_eps3_0.99.json` (the v1 choice of eps, refitted). Offline on the test
+  events against the v1 model with its tables on the same tuples: tuples with four or more hits 1686 vs 1692 per ttbar
+  event at 0.89% vs 1.11% fake; three-hit tuples 896 vs 818 per event; true-tuple efficiency at pT 10-25 GeV 98.1 vs
+  96.5, vxy 1-5 cm 87.2 vs 85.1. `shipped/v2/wp_eps4_0.99_fwd0.995_eps3_0.95.json` is the tighter three-hit option
+  (559 three-hit tuples per event).
+
 To deploy: `exec(open('cfg/deploy_block.py').read()); pttDeploy(process,
 'RecoTracker/FinalTrackSelectors/data/PixelTrackTorchHighPuritySelector/pixel_track_classifier_noOT.pt',
-'shipped/wp_eps4_0.99_fwd0.995_eps3_0.99.json')` after the CA policy, before the early-deletion customisation.
+'shipped/v2/wp_eps4_0.99_fwd0.995_eps3_0.99.json')` after the CA policy, before the early-deletion customisation.
