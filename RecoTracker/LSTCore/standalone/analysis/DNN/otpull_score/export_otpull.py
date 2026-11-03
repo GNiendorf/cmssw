@@ -66,6 +66,14 @@ def main():
     txt += arr1("bias_output_layer", b3) + arr2("wgtT_output_layer", w3.T)
     txt += "}  // namespace ALPAKA_ACCELERATOR_NAMESPACE::lst::dnn::otpulldnn\n\n#endif\n"
     open(a.out, "w").write(txt)
+    # CMSSW code format (clang-format of the release, available after cmsenv)
+    import shutil
+    import subprocess
+    style = os.path.join(os.environ.get("CMSSW_RELEASE_BASE", ""), "src/.clang-format")
+    if shutil.which("clang-format") and os.path.exists(style):
+        subprocess.run(["clang-format", f"--style=file:{style}", "-i", a.out], check=True)
+    else:
+        print("note: clang-format of the release not found (run cmsenv): header left unformatted")
     # check: header (float32, folded) vs the unfolded float64 model
     rng = np.random.default_rng(1)
     X = lo + (hi - lo) * rng.random((20000, NIN))

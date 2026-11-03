@@ -37,6 +37,7 @@ if [ $STEP = dump ] || [ $STEP = all ]; then
   for s in ttbar qcd; do
     v=OTP_CACHE_${s^^}
     for c in ${!v}; do
+      [ -e "$c" ] || continue
       dump_one $s $(readlink -f $c) >> $W/logs/dump.txt 2>&1 &
       sleep 2
       [ -z "${OTP_SLOT:-}" ] && while [ $(jobs -rp | wc -l) -ge 3 ]; do sleep 5; done
@@ -50,6 +51,7 @@ if [ $STEP = rows ] || [ $STEP = all ]; then
   ( env_area $OTP_DUMP_AREA
     for s in ttbar qcd; do
       for d in $W/dump/$s/*/; do
+        [ -s $d/prov.txt ] || continue  # unfinished dump
         t=$(basename $d); [ -s $W/rows/${s}_$t.npz ] || $PY $HERE/make_rows.py $W/rows/${s}_$t.npz $d/diag.root
       done
     done ) > $W/logs/rows.txt 2>&1
