@@ -182,7 +182,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
       desc.add<bool>("duplicateRemovalBySurvivorsOnly", false)
           ->setComment("with duplicateRemoval: a track is removed only by a winner that is itself kept");
       desc.add<double>("duplicateRemovalSharedFraction", -1.)
-          ->setComment("with duplicateRemoval: < 0 dc_fracSharedHits of the iteration config; else this shared-hit fraction");
+          ->setComment(
+              "with duplicateRemoval: < 0 dc_fracSharedHits of the iteration config; else this shared-hit fraction");
       desc.add<edm::InputTag>("eventOfHitsQueue", edm::InputTag(""))
           ->setComment(
               "the EventOfHits producer's 'queue' product, set when the device EventOfHits is deleted"
