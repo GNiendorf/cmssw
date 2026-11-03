@@ -362,6 +362,17 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::mkfitdev::clean {
     }
   };
 
+  // Fitted tracks the output conversion keeps: a fit with a non-finite or negative chi2 has failed
+  struct KernelFilterFitted {
+    ALPAKA_FN_ACC void operator()(Acc1D const& acc, TrackSoAConstView trk, int* keep) const {
+      const int n = trk.nTracks();
+      for (int32_t i : cms::alpakatools::uniform_elements(acc, n)) {
+        const float c = trk[i].chi2();
+        keep[i] = (isFiniteBits(c) && c >= 0.f) ? 1 : 0;
+      }
+    }
+  };
+
   // Stable compaction of rows with keep != 0 (std::remove_if / filter_comb_cands order); dest from the exclusive scan.
   struct KernelCompact {
     ALPAKA_FN_ACC void operator()(
@@ -389,6 +400,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::mkfitdev::clean {
         out[d].algorithm() = in[i].algorithm();
         out[d].nOverlaps() = in[i].nOverlaps();
         out[d].duplicate() = in[i].duplicate();
+        out[d].outer() = in[i].outer();
         const int nh = in[i].nTotalHits();
         for (int h = 0; h < nh; ++h)
           out[d].hits().hot[h] = in[i].hits().hot[h];

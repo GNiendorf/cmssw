@@ -34,6 +34,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::mkfitdev::clean {
     // the passing rows into 'out'. passFlags() holds the per-row decisions afterwards.
     void filterTracks(Queue& queue, ::mkfitdev::TrackSoAConstView in, ::mkfitdev::TrackSoAView out, int minHitsQF);
 
+    // Fitted tracks: stable copy of the rows whose fit did not fail (finite, non-negative chi2), the rows the output
+    // conversion keeps on that test, into 'out'.
+    void filterFitted(Queue& queue, ::mkfitdev::TrackSoAConstView in, ::mkfitdev::TrackSoAView out);
+
     // Stable compaction map for filter_comb_cands on the seed store of the building: pass[s] (0/1, nSeeds entries,
     // device) -> dest[s] (new position of passing seed s, nSeeds + 1 entries, dest[nSeeds] = number kept) and the
     // region separators oldSep[r] -> newSep[r] (nRegions entries, device). nSeeds is read on device from *nSeedsPtr.

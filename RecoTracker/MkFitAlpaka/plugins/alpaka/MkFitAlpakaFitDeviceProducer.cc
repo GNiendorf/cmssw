@@ -17,6 +17,9 @@
 // - Output: TrackSoA (capacity = the building's), rows [0, nTracks) = fitted tracks in MkFitCore order; status fields,
 //   label, score, charge copied; removed outliers have the index Hit::fitOutlierIdx(index) and nFoundHits
 //   decremented (Track::removeHit), failed fits chi2 = -1; the state at the outermost fitted hit in the outer column.
+// - duplicateRemoval: the iteration's duplicate cleaner runs here on the fitted tracks instead of in the building
+//   (which then runs with removeDuplicates false), so the hits the fit removed as outliers no longer count as shared:
+//   a track whose shared hits do not survive its own fit, or whose fit failed, cannot remove the track that holds them.
 // - the building's TrackSoA is read first, so the module takes over the building's queue (=
 //   the EventOfHits queue). eventOfHitsQueue set (the menu deletes the device EventOfHits right after this
 //   module, canDeleteEarly): if this module's queue is not the one the EventOfHits was allocated on, it waits for its
@@ -72,6 +75,7 @@
 #include "RecoTracker/MkFitAlpaka/interface/hits/alpaka/EventOfHitsDeviceCollections.h"
 #include "RecoTracker/MkFitAlpaka/plugins/alpaka/MkFitAlpakaClusterCpeFill.h"
 #include "RecoTracker/MkFitAlpaka/plugins/alpaka/MkFitAlpakaFitCpeTables.h"
+#include "RecoTracker/MkFitAlpaka/src/alpaka/clean/CleanAlgo.h"
 #include "RecoTracker/MkFitAlpaka/src/alpaka/engine/FitHandoff.h"
 #include "RecoTracker/MkFitAlpaka/src/alpaka/fit/FitTracks.h"
 
@@ -87,7 +91,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
           esToken_{esConsumes(iConfig.getParameter<edm::ESInputTag>("esData"))},
           putToken_{produces()},
           statusToken_{produces()},
-          useCpe_{iConfig.getParameter<bool>("cpe")} {
+          useCpe_{iConfig.getParameter<bool>("cpe")},
+          dupClean_{iConfig.getParameter<bool>("duplicateRemoval")},
+          dupSurvivorsOnly_{iConfig.getParameter<bool>("duplicateRemovalBySurvivorsOnly")},
+          dupSharedFraction_{iConfig.getParameter<double>("duplicateRemovalSharedFraction")} {
       if (auto const q = iConfig.getParameter<edm::InputTag>("eventOfHitsQueue"); !q.label().empty()) {
         eohQueueToken_ = consumes(q);
         eohQueueCheck_ = true;
@@ -168,6 +175,14 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
           ->setComment(
               "DEVIATION DEV-10 (switch, MkFitCore = 0 = all): at most this many outliers (largest f + b first) "
               "removed per round, as the KF fit-smoother's one outlier per iteration");
+      desc.add<bool>("duplicateRemoval", false)
+          ->setComment(
+              "true: the iteration's duplicate cleaner on the fitted tracks (outlier hits do not count as shared); set "
+              "removeDuplicates false in the building");
+      desc.add<bool>("duplicateRemovalBySurvivorsOnly", false)
+          ->setComment("with duplicateRemoval: a track is removed only by a winner that is itself kept");
+      desc.add<double>("duplicateRemovalSharedFraction", -1.)
+          ->setComment("with duplicateRemoval: < 0 dc_fracSharedHits of the iteration config; else this shared-hit fraction");
       desc.add<edm::InputTag>("eventOfHitsQueue", edm::InputTag(""))
           ->setComment(
               "the EventOfHits producer's 'queue' product, set when the device EventOfHits is deleted"
@@ -284,7 +299,25 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
         }
         mkfitdev::collectStatus(queue, status, src);
       }
-      iEvent.emplace(putToken_, std::move(out));
+      if (dupClean_) {
+        // 4. the duplicate cleaner on the fitted tracks; stable compaction keeps the MkFitCore order. DEVIATION DEV-12
+        auto const& cfg = es.hostConfigValue();
+        float dc[4] = {cfg.dc_fracSharedHits, cfg.dc_drth_central, cfg.dc_drth_obarrel, cfg.dc_drth_forward};
+        if (dupSharedFraction_ >= 0.)
+          dc[0] = float(dupSharedFraction_);
+        const bool pixelPriority = cfg.duplicate_cleaner == ::mkfitdev::DuplicateCleaner::SharedHitsPixelPriority;
+        auto p = ::mkfitdev::clean::makeDupCleanParams(dc, pixelPriority ? cfg.pixel_layer_mask : nullptr);
+        p.survivorsOnly = dupSurvivorsOnly_ ? 1 : 0;
+        mkfitdev::clean::CleanAlgo algo(queue, capacity, dupSurvivorsOnly_);
+        // failed fits, which the output conversion drops, are removed first, so they cannot remove another track
+        mkfitdev::TrackSoADeviceCollection fitted(queue, capacity);
+        algo.filterFitted(queue, out.const_view(), fitted.view());
+        algo.flagDuplicates(queue, fitted.view(), p);
+        mkfitdev::TrackSoADeviceCollection cleaned(queue, capacity);
+        algo.removeDuplicates(queue, fitted.const_view(), cleaned.view());
+        iEvent.emplace(putToken_, std::move(cleaned));
+      } else
+        iEvent.emplace(putToken_, std::move(out));
       iEvent.emplace(statusToken_, std::move(status));
       releaseGuard(iEvent, queue);
     }
@@ -377,6 +410,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     const device::EDPutToken<mkfitdev::TrackSoADeviceCollection> putToken_;
     const device::EDPutToken<mkfitdev::MkFitStatusDeviceObject> statusToken_;
     const bool useCpe_;
+    const bool dupClean_;
+    const bool dupSurvivorsOnly_;
+    const double dupSharedFraction_;
     mkfitdev::fit::FitOptions fitOpt_;
     ::mkfitdev::handoff::CandCutSel sel_;
     edm::EDGetTokenT<edmNew::DetSetVector<SiPixelCluster>> clusterCollToken_;

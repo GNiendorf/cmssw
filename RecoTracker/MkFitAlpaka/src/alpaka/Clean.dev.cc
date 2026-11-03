@@ -166,6 +166,11 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::mkfitdev::clean {
     compact(queue, in, out);
   }
 
+  void CleanAlgo::filterFitted(Queue& queue, ::mkfitdev::TrackSoAConstView in, ::mkfitdev::TrackSoAView out) {
+    alpaka::exec<Acc1D>(queue, detail::perTrack(capacity_), KernelFilterFitted{}, in, keep_.data());
+    compact(queue, in, out);
+  }
+
   void CleanAlgo::seedCompactionMap(
       Queue& queue, const int* pass, const int32_t* nSeedsPtr, int* dest, const int* oldSep, int* newSep, int nRegions) {
     alpaka::exec<Acc1D>(queue, detail::oneBlock(), KernelScanOneBlock{}, pass, dest, nSeedsPtr, 0);
