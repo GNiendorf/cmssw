@@ -157,4 +157,8 @@ hit cut to three when a three-hit row exists. The selector's defaults leave the 
   1.67 / 1.78%; z RMS 410 / 403 / 408 um.
 - The barrel three-hit cells (pT < 2 and 2-5 GeV, |eta| < 1.1; `_b80`) are the eps3 = 0.80 quantile of the true prompt
   three-hit scores (fit_wp.py's rule) instead of 0.99; they cut the three-hit pLS fill-holes candidates, the source of
-  about half of the barrel low-pT fake rise. Its end-to-end result is in the lane report.
+  about half of the barrel low-pT fake rise. End to end against the candidate (dev + holdout, 741 ttbar / 1100 QCD
+  events, validated with the cuts rounded to 0.264 / 0.257): barrel |eta| < 0.5 fake -0.12 +- 0.04 / -0.09 +- 0.04,
+  inclusive fake -0.036 / -0.035, inclusive efficiency -0.032 +- 0.008 / -0.028 +- 0.006 (in the barrel low-pT bins,
+  -0.10 +- 0.03 at ttbar |eta| < 0.5); no efficiency bin below the extension menu. Not the default (efficiency first); an
+  option for the barrel fake rate.
