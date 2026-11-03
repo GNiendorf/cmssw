@@ -642,6 +642,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
         // in the promoting form (`score >= thr` -> keep), which leaves a non-finite score on the
         // rejecting side under -Ofast (-ffinite-math-only); the negated form is rewritable.
         const bool fitOk = forestFitFeaturesFinite(fitFeatures, i);
+        int icell = 0;
         // working-point table: the cut of the track's (pT, |eta|) cell, from the three-hit block for three-hit tracks
         if (wp.thresholds != nullptr) {
           const float pt = fitFeatures[i].pt();
@@ -654,16 +655,21 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
             ieta += (absEta >= wp.absEtaEdges[k]) ? 1 : 0;
           const float* block =
               (wp.thresholdsThreeHit != nullptr && trackHitCounts[i] == 3) ? wp.thresholdsThreeHit : wp.thresholds;
-          thr = block[ipt * (wp.nAbsEtaEdges + 1) + ieta];
+          icell = ipt * (wp.nAbsEtaEdges + 1) + ieta;
+          thr = block[icell];
         }
         // with passThreeHitTracks, a 3-hit track is kept whatever its score
         const bool threeHitPass = passThreeHitTracks && trackHitCounts[i] == 3;
         const bool selected = fitOk && (score >= thr || threeHitPass);
         selectionMask[i] = selected ? 1 : 0;
         if (highPurityMask != nullptr) {
-          highPurityMask[i] =
-              (selected && trackHitCounts[i] >= wp.highPurityMinNumberOfHits && score >= wp.highPurityThreshold) ? 1
-                                                                                                                 : 0;
+          bool hp = false;
+          if (selected && trackHitCounts[i] >= wp.highPurityMinNumberOfHits)
+            hp =
+                score >= (wp.highPurityThresholds != nullptr ? wp.highPurityThresholds[icell] : wp.highPurityThreshold);
+          else if (selected && trackHitCounts[i] == 3 && wp.highPurityThresholdsThreeHit != nullptr)
+            hp = score >= wp.highPurityThresholdsThreeHit[icell];
+          highPurityMask[i] = hp ? 1 : 0;
         }
       }
     }
