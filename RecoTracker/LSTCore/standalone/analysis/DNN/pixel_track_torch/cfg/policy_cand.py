@@ -7,14 +7,14 @@
 #          (tripletTuplesOuterDisks); 3-hit storage sized from a count (countTripletTuples; tuple cap 40960 + the count)
 #   Torch: the classifier, its per-(pT, |eta|) tables and the high-purity subset for the pixel vertices (pttDeploy)
 #   LST  : 3-hit pLS fill-holes candidates (tripletpLSFillHoles); the otpull pair network (customizeOtpullScore); the
-#          T5 x pLS cross cleaning of the extension menu kept (t5CleanspLS, which customizeOP turns off; False = the
-#          prototype's setting: more efficiency, more duplicates)
+#          T5 x pLS cross cleaning off (t5CleanspLS False, as customizeOP): its duplicates are removed after the fit
+#          instead (sameParticleChi2); True = the extension menu's rule: less efficiency, fewer duplicates
 #   mkFit: duplicate removal after the final fit (removeDuplicates False in the building, duplicateRemoval in the fit);
 #          overlap hits on the first two outer-tracker layers of pT3 / pT5 seeds (seedOverlapHits); with
 #          sameParticleChi2 > 0 the fit's same-particle pass for pixel-seeded / pixel-less tracks without a shared hit
 #          (duplicateRemovalSameParticleChi2). CAND_SAME_PARTICLE_CHI2 is not a chi2 quantile: the pixel-less tracks'
-#          fitted covariance is far below their scatter, so the cut is the smallest of a scan that brings the duplicate
-#          rate within the extension menu's (lane itaca_extoff/w3/h1)
+#          fitted covariance is far below their scatter, so the cut is the smallest scanned value that brings the
+#          duplicate rate within the allowance over the extension menu's (lane itaca_extoff/w3/h1)
 import os
 import FWCore.ParameterSet.Config as cms
 
@@ -35,8 +35,8 @@ def customizeCandidate(process,
                        otpullWP,
                        pttModel=CAND_PTT_MODEL,
                        keep=CAND_FORWARD_SKIP_KEEP,
-                       t5CleanspLS=True,
-                       sameParticleChi2=0.):
+                       t5CleanspLS=False,
+                       sameParticleChi2=CAND_SAME_PARTICLE_CHI2):
     customizeOP(process, keepForwardSkipPairs=keep)
     done = []
     for lab in _OP_CA:
@@ -70,6 +70,7 @@ def customizeCandidate(process,
             m.duplicateRemovalSameParticleChi2 = cms.double(sameParticleChi2)
             nf += 1
     assert nb > 0 and nf > 0, 'candidate: no mkFit build / fit module (%d / %d)' % (nb, nf)
-    done.append('mkFit: post-fit duplicate removal (fits %d), overlap hits K=%d (builds %d)' % (nf, CAND_OVERLAP_OT_HITS, nb))
+    done.append('mkFit: post-fit duplicate removal (fits %d), same-particle chi2 cut %g, overlap hits K=%d (builds %d)' %
+                (nf, sameParticleChi2, CAND_OVERLAP_OT_HITS, nb))
     print('CANDIDATE: forward skip pairs kept %s; ' % list(keep) + '; '.join(done))
     return process

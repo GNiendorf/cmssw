@@ -128,5 +128,14 @@ DEV-14 Same-particle removal of a pixel-seeded and a pixel-less fitted track wit
     crossed in between; below the cut the track with fewer found hits is removed (survivors-only as DEV-12).
   Cut: the fitted covariance of the pixel-less tracks is far smaller than their scatter (true pixel / pixel-less pairs
     at the reference point: pulls of about ten in lambda, phi, dxy and dsz), so the chi2 quantile keeps few true pairs;
-    the cut is the smallest of a scan that brings the duplicate rate within the extension menu's.
+    the cut is the smallest scanned value that brings the duplicate rate within the allowance over the extension
+    menu's.
+  Evidence (the extension-off candidate chain with the T5 x pLS cross cleaning off, CPU, paired over files, 741 ttbar +
+    1100 QCD PU200 events = dev + a disjoint holdout; cut 200): duplicate rate -0.243 +- 0.015 / -0.230 +- 0.012 pp
+    (ttbar / QCD), efficiency -0.030 +- 0.007 / -0.014 +- 0.004 pp, fake rate unchanged, resolutions unchanged; against
+    the extension menu efficiency +0.83 +- 0.07 / +1.34 +- 0.06 pp without a significant loss in any bin, duplicate rate
+    +0.098 / +0.085 pp, fake rate -0.030 / +0.005 pp. Truth-linked pairs (one ttbar file): a chi2 below the cut for a
+    third of the same-particle pairs and for about one in a thousand pairs of different particles; the chi2(5) 99%
+    quantile keeps two percent of the same-particle pairs. Cut scan on dev (duplicates / efficiency against the pass
+    off): 400 gives -0.36 / -0.06 to -0.08 pp, 1000 gives -0.50 / -0.17 pp. GPU (L40, dev) as CPU.
 
