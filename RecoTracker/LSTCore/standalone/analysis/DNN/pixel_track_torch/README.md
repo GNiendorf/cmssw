@@ -13,7 +13,7 @@ This directory holds everything needed to remake the model from the deployed cha
 | File | Role |
 |---|---|
 | `samples/train_{ttbar,qcd}.lfn` | the RAW files streamed for training (all their events) |
-| `samples/excluded_files.txt` | files never used: dev, holdout, every val5k list, the older holdout parents |
+| `samples/excluded_files.list` | files never used: dev, holdout, every val5k list, the older holdout parents |
 | `cmssw/LocalVal/PttTruth` | `CompactClusterTruthProducer`: cluster -> TrackingParticle truth keyed by cluster position |
 | `cmssw/LocalVal/PttDump` | `PixelTupleTorchDump`: one row per preselected tuple (inputs, deployed decisions, layer pattern, truth) |
 | `cfg/cache_cfg.py` | stream one RAW file into a compact local-reco + truth cache |
@@ -60,7 +60,7 @@ to `src/LocalVal/` and built (`scram b`), a grid proxy for the streaming (X509_U
 ```
 export PTT_AREA=<area> PTT_MENU=<full-menu CPU config with the CA policy and VALIDATION, e.g. op57_cpu.py>
 export PTT_LFN_TTBAR=$PWD/samples/train_ttbar.lfn PTT_LFN_QCD=$PWD/samples/train_qcd.lfn
-export PTT_EPS4=0.995 PTT_EPS3=0.99 PTT_DEVICE=cuda
+export PTT_EPS4=0.99 PTT_EPS3=0.99 PTT_DEVICE=cuda
 scripts/run_all.sh <workdir>          # cache -> dumps -> train -> export -> fit_wp -> install -> parity
 ```
 
@@ -71,4 +71,29 @@ used here is `cmsDriver.py Phase2 -s L1P2GT,HLT:75e33_timing,VALIDATION::hltMult
 --conditions auto:phase2_realistic_T35 --customise SLHCUpgradeSimulations/Configuration/aging.customise_aging_1000
 --accelerators cpu ...` followed by `customizeOP(process, keepForwardSkipPairs=True)` from `cfg/policy_op.py`.
 
-RESULTS: see the section appended below by the training lane.
+## The shipped model (2026-11-03)
+
+Produced with this branch at 4a90c015c63 (the selector defaults reproduce itaca-290-extoff 10205f3529a), IB
+CMSSW_20_1_X_2026-11-02-1100, policy = OP with the forward skip pairs kept (57 pixel pairs, `customizeOP(process,
+keepForwardSkipPairs=True)`), CPU serial dumps.
+
+- Samples: `samples/train_ttbar.lfn` (10 files, all 1000 events) and `samples/train_qcd.lfn` (6 files, all 300 events).
+  Split by event: train 603 + 182, validation 199 + 59, test 198 + 59 (ttbar + QCD). 3.87M tuples.
+- Largest preselected count per event: 4545 (ttbar), 4736 (QCD), below the menu's cap of 9984.
+- Training: kept epoch 151 of 200; worst-sample validation AUC 0.99651. Test AUC: ttbar 0.99661 (three-hit 0.9267, four
+  or more 0.99828), QCD 0.99636 (0.9205, 0.99813). Tuples with four or more hits by pT: 0-2 GeV 0.9981, 2-5 0.9989,
+  5-10 0.9976, 10-30 0.9964, 30-100 0.9957, above 100 0.9927. `shipped/train_summary.json`.
+- Export: TorchScript vs the training model, max |score difference| 2.3e-6 (`shipped/export_check.json`).
+- Working point (chosen by the MTV scan below): eps4 0.99, eps3 0.99, `shipped/wp_eps4_0.99_eps3_0.99.json`. The
+  high-purity cut fits to 0 there: the selected tuples with four or more hits are already at 1.2% fake offline.
+- C++ parity (`shipped/parity.json`): in-menu decisions of the shipped model and tables against the offline decisions on
+  300 cache events (890,542 tuples): agreement 0.9999978; the 2 differing tuples are within 1.2e-7 of their cut.
+- MTV (dev, CPU serial, 332 ttbar / 500 QCD events), against the same CA with the earlier classifier (OPfs):
+  hltGeneral efficiency +0.124 +- 0.037 / +0.016 +- 0.022, fake rate -0.096 / -0.097, duplicates +0.007 / +0.005;
+  pixel-track fake rate 27.9 -> 20.9% / 26.9 -> 20.1%; the high-purity subset (1697 / 1716 tracks per event) at
+  1.46% / 1.52% fake (the extension menu's pixel tracks: 3.20% / 3.29%). eps4 0.995 gave +0.087 / +0.025 more
+  efficiency for +0.13 / +0.14 more fake, above the extension menu's fake rate.
+
+To deploy: `exec(open('cfg/deploy_block.py').read()); pttDeploy(process,
+'RecoTracker/FinalTrackSelectors/data/PixelTrackTorchHighPuritySelector/pixel_track_classifier_noOT.pt',
+'shipped/wp_eps4_0.99_eps3_0.99.json')` after the CA policy, before the early-deletion customisation.
