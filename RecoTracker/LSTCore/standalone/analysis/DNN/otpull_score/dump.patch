@@ -1,0 +1,1240 @@
+diff -ruN a/DiagLST/OTPullDiag/plugins/BuildFile.xml b/DiagLST/OTPullDiag/plugins/BuildFile.xml
+--- a/DiagLST/OTPullDiag/plugins/BuildFile.xml	1969-12-31 19:00:00.000000000 -0500
++++ b/DiagLST/OTPullDiag/plugins/BuildFile.xml	2026-11-02 23:26:18.909098816 -0500
+@@ -0,0 +1,19 @@
++<use name="FWCore/Framework"/>
++<use name="FWCore/ParameterSet"/>
++<use name="FWCore/ServiceRegistry"/>
++<use name="FWCore/Utilities"/>
++<use name="CommonTools/UtilAlgos"/>
++<use name="DataFormats/Common"/>
++<use name="DataFormats/BeamSpot"/>
++<use name="DataFormats/Phase2TrackerCluster"/>
++<use name="DataFormats/SiPixelCluster"/>
++<use name="DataFormats/TrackReco"/>
++<use name="DataFormats/TrackerRecHit2D"/>
++<use name="SimDataFormats/TrackingAnalysis"/>
++<use name="SimDataFormats/Associations"/>
++<use name="SimDataFormats/EncodedEventId"/>
++<use name="SimTracker/TrackerHitAssociation"/>
++<use name="root"/>
++<library file="*.cc" name="DiagLSTOTPullDiagPlugins">
++  <flags EDM_PLUGIN="1"/>
++</library>
+diff -ruN a/DiagLST/OTPullDiag/plugins/OTPullDiagAnalyzer.cc b/DiagLST/OTPullDiag/plugins/OTPullDiagAnalyzer.cc
+--- a/DiagLST/OTPullDiag/plugins/OTPullDiagAnalyzer.cc	1969-12-31 19:00:00.000000000 -0500
++++ b/DiagLST/OTPullDiag/plugins/OTPullDiagAnalyzer.cc	2026-11-02 23:19:57.729112960 -0500
+@@ -0,0 +1,401 @@
++// DIAGNOSTIC ONLY (lane itaca_extoff/decision; otpull_score dump record): truth for the LST OT-seeded lookup dump (hltLST diag* vectors) through
++// ClusterTPAssociation; per-TP reco matches from TrackAssociatorEDProducer sim->reco maps. One TTree entry per event.
++#include <algorithm>
++#include <cmath>
++#include <random>
++#include <string>
++#include <unordered_map>
++#include <vector>
++
++#include "TTree.h"
++
++#include "CommonTools/UtilAlgos/interface/TFileService.h"
++#include "DataFormats/BeamSpot/interface/BeamSpot.h"
++#include "FWCore/Framework/interface/Event.h"
++#include "FWCore/Framework/interface/Frameworkfwd.h"
++#include "FWCore/Framework/interface/MakerMacros.h"
++#include "FWCore/Framework/interface/one/EDAnalyzer.h"
++#include "FWCore/ParameterSet/interface/ParameterSet.h"
++#include "FWCore/ServiceRegistry/interface/Service.h"
++#include "SimDataFormats/Associations/interface/TrackAssociation.h"
++#include "SimDataFormats/TrackingAnalysis/interface/TrackingParticle.h"
++#include "SimDataFormats/TrackingAnalysis/interface/TrackingParticleFwd.h"
++#include "SimTracker/TrackerHitAssociation/interface/ClusterTPAssociation.h"
++
++namespace {
++  constexpr int kPixBit = 1 << 30;
++  constexpr int kStubBit = 1 << 29;
++  constexpr int kT3I = 16, kT3F = 16, kPairF = 22, kTCI = 28, kPLSI = 6;
++
++  struct Best {
++    int tp = -1;
++    int n = 0;
++    int nAny = 0;
++  };
++}  // namespace
++
++class OTPullDiagAnalyzer : public edm::one::EDAnalyzer<edm::one::SharedResources> {
++public:
++  explicit OTPullDiagAnalyzer(edm::ParameterSet const& ps)
++      : lstLabel_(ps.getParameter<std::string>("lstLabel")),
++        hasLST_(ps.getParameter<bool>("hasDiag")),
++        falseKeep_(ps.getParameter<double>("falsePairKeep")),
++        tpTok_(consumes(ps.getParameter<edm::InputTag>("trackingParticles"))),
++        clTok_(consumes(ps.getParameter<edm::InputTag>("clusterTP"))),
++        bsTok_(consumes(ps.getParameter<edm::InputTag>("beamSpot"))),
++        rng_(12345) {
++    usesResource("TFileService");
++    if (hasLST_) {
++      pairsTok_ = consumes(edm::InputTag(lstLabel_, "diagPairs"));
++      t3iTok_ = consumes(edm::InputTag(lstLabel_, "diagT3i"));
++      t3fTok_ = consumes(edm::InputTag(lstLabel_, "diagT3f"));
++      cellsTok_ = consumes(edm::InputTag(lstLabel_, "diagCells"));
++      cellKeysTok_ = consumes(edm::InputTag(lstLabel_, "diagCellKeys"));
++      tcTok_ = consumes(edm::InputTag(lstLabel_, "diagTC"));
++      plsTok_ = consumes(edm::InputTag(lstLabel_, "diagPLS"));
++      infoTok_ = consumes(edm::InputTag(lstLabel_, "diagInfo"));
++    }
++    for (auto const& t : ps.getParameter<std::vector<edm::InputTag>>("assocs"))
++      assocToks_.push_back(consumes<reco::SimToRecoCollection>(t));
++    nAssoc_ = assocToks_.size();
++    edm::Service<TFileService> fs;
++    tree_ = fs->make<TTree>("ev", "ev");
++    tree_->Branch("run", &run_);
++    tree_->Branch("lumi", &lumi_);
++    tree_->Branch("event", &event_);
++    tree_->Branch("info", &info_);
++    tree_->Branch("tp_key", &tpKey_);
++    tree_->Branch("tp_pt", &tpPt_);
++    tree_->Branch("tp_eta", &tpEta_);
++    tree_->Branch("tp_phi", &tpPhi_);
++    tree_->Branch("tp_vx", &tpVx_);
++    tree_->Branch("tp_vy", &tpVy_);
++    tree_->Branch("tp_vz", &tpVz_);
++    tree_->Branch("tp_dxy", &tpDxy_);
++    tree_->Branch("tp_dz", &tpDz_);
++    tree_->Branch("tp_q", &tpQ_);
++    tree_->Branch("tp_pdg", &tpPdg_);
++    tree_->Branch("tp_sig", &tpSig_);
++    tree_->Branch("tp_nPix", &tpNPix_);
++    tree_->Branch("tp_nOT", &tpNOT_);
++    tree_->Branch("tp_found", &tpFound_);  // nAssoc per TP, flattened
++    tree_->Branch("t3_i", &t3i_);
++    tree_->Branch("t3_f", &t3f_);
++    tree_->Branch("t3_tp", &t3tp_);
++    tree_->Branch("t3_nm", &t3nm_);
++    tree_->Branch("t3_nany", &t3nany_);
++    tree_->Branch("cell_idx", &cellIdx_);
++    tree_->Branch("cell_tp", &cellTp_);
++    tree_->Branch("cell_f", &cellF_);
++    tree_->Branch("cell_ntrue1", &cellNTrue1_);
++    tree_->Branch("pair_f", &pairF_);
++    tree_->Branch("pair_ctp", &pairCtp_);
++    tree_->Branch("pair_cf", &pairCF_);
++    tree_->Branch("pair_otp", &pairOtp_);
++    tree_->Branch("pair_onm", &pairOnm_);
++    tree_->Branch("pair_w", &pairW_);
++    tree_->Branch("tc_type", &tcType_);
++    tree_->Branch("tc_hk", &tcHk_);
++    tree_->Branch("tc_seed", &tcSeed_);
++    tree_->Branch("tc_nOT", &tcNOT_);
++    tree_->Branch("tc_nPix", &tcNPix_);
++    tree_->Branch("tc_stub", &tcStub_);
++    tree_->Branch("tc_tp", &tcTp_);
++    tree_->Branch("tc_nm", &tcNm_);
++    tree_->Branch("tc_tpOT", &tcTpOT_);
++    tree_->Branch("tc_nmOT", &tcNmOT_);
++    tree_->Branch("tc_tpPix", &tcTpPix_);
++    tree_->Branch("tc_nmPix", &tcNmPix_);
++    tree_->Branch("pls_seed", &plsSeed_);
++    tree_->Branch("pls_nh", &plsNh_);
++    tree_->Branch("pls_tp", &plsTp_);
++    tree_->Branch("pls_nm", &plsNm_);
++    tree_->Branch("pls_npix", &plsNpix_);
++  }
++
++  static void fillDescriptions(edm::ConfigurationDescriptions& descriptions) {
++    edm::ParameterSetDescription desc;
++    desc.add<std::string>("lstLabel", "hltLST");
++    desc.add<bool>("hasDiag", true);
++    desc.add<double>("falsePairKeep", 1.0);
++    desc.add<edm::InputTag>("trackingParticles", edm::InputTag("mix", "MergedTrackTruth"));
++    desc.add<edm::InputTag>("clusterTP", edm::InputTag("hltTPClusterProducer"));
++    desc.add<edm::InputTag>("beamSpot", edm::InputTag("hltOnlineBeamSpot"));
++    desc.add<std::vector<edm::InputTag>>("assocs", {});
++    descriptions.addWithDefaultLabel(desc);
++  }
++
++private:
++  std::vector<int> const& tpsOf(int key) const {
++    static const std::vector<int> empty;
++    if (key < 0)
++      return empty;
++    if (key & kPixBit) {
++      auto it = pixMap_.find(static_cast<uint32_t>(key & (kStubBit - 1)));
++      return it == pixMap_.end() ? empty : it->second;
++    }
++    auto it = otMap_.find(static_cast<uint32_t>(key));
++    return it == otMap_.end() ? empty : it->second;
++  }
++
++  Best best(int const* keys, int n) const {
++    Best b;
++    std::vector<std::pair<int, int>> cnt;
++    for (int i = 0; i < n; ++i) {
++      if (keys[i] < 0)
++        continue;
++      auto const& v = tpsOf(keys[i]);
++      if (!v.empty())
++        ++b.nAny;
++      for (int tp : v) {
++        auto it = std::find_if(cnt.begin(), cnt.end(), [tp](auto const& p) { return p.first == tp; });
++        if (it == cnt.end())
++          cnt.emplace_back(tp, 1);
++        else
++          ++it->second;
++      }
++    }
++    for (auto const& p : cnt)
++      if (p.second > b.n) {
++        b.n = p.second;
++        b.tp = p.first;
++      }
++    return b;
++  }
++
++  int common2(int k0, int k1) const {
++    auto const& a = tpsOf(k0);
++    auto const& b = tpsOf(k1);
++    for (int x : a)
++      for (int y : b)
++        if (x == y)
++          return x;
++    return -1;
++  }
++
++  void analyze(edm::Event const& iEvent, edm::EventSetup const&) override {
++    // events that do not reach tracking have no LST products: skipped
++    if (hasLST_ && !iEvent.getHandle(infoTok_).isValid())
++      return;
++    run_ = iEvent.id().run();
++    lumi_ = iEvent.id().luminosityBlock();
++    event_ = iEvent.id().event();
++    for (auto* v : {&tpKey_, &tpQ_, &tpPdg_, &tpSig_, &tpNPix_, &tpNOT_, &tpFound_, &t3i_, &t3tp_, &t3nm_, &t3nany_,
++                    &cellIdx_, &cellTp_, &pairCtp_, &pairOtp_, &pairOnm_, &tcType_, &tcHk_, &tcSeed_, &tcNOT_, &tcNPix_, &tcStub_,
++                    &tcTp_, &tcNm_, &tcTpOT_, &tcNmOT_, &tcTpPix_, &tcNmPix_, &plsSeed_, &plsNh_, &plsTp_, &plsNm_,
++                    &plsNpix_, &info_})
++      v->clear();
++    for (auto* v : {&tpPt_, &tpEta_, &tpPhi_, &tpVx_, &tpVy_, &tpVz_, &tpDxy_, &tpDz_, &t3f_, &cellF_, &pairF_, &pairW_, &pairCF_})
++      v->clear();
++    cellNTrue1_ = 0;
++
++    auto const& clTP = iEvent.get(clTok_);
++    pixMap_.clear();
++    otMap_.clear();
++    std::unordered_map<int, int> nPix, nOT;
++    for (auto const& p : clTP) {
++      auto const& c = p.first;
++      int const tk = static_cast<int>(p.second.key());
++      if (c.isPixel()) {
++        pixMap_[c.index()].push_back(tk);
++        ++nPix[tk];
++      } else if (c.isPhase2()) {
++        otMap_[c.index()].push_back(tk);
++        ++nOT[tk];
++      }
++    }
++    auto const tpH = iEvent.getHandle(tpTok_);
++    auto const& tps = *tpH;
++    auto const& bs = iEvent.get(bsTok_);
++    std::vector<reco::SimToRecoCollection const*> assocs;
++    for (auto const& t : assocToks_) {
++      auto h = iEvent.getHandle(t);
++      assocs.push_back(h.isValid() ? h.product() : nullptr);
++    }
++    for (size_t i = 0; i < tps.size(); ++i) {
++      auto const& tp = tps[i];
++      if (tp.charge() == 0 || tp.pt() < 0.7 || std::abs(tp.eta()) > 4.5 || tp.eventId().bunchCrossing() != 0)
++        continue;
++      tpKey_.push_back(i);
++      tpPt_.push_back(tp.pt());
++      tpEta_.push_back(tp.eta());
++      tpPhi_.push_back(tp.phi());
++      tpVx_.push_back(tp.vx());
++      tpVy_.push_back(tp.vy());
++      tpVz_.push_back(tp.vz());
++      const double dx = tp.vx() - bs.x0(), dy = tp.vy() - bs.y0(), dz = tp.vz() - bs.z0();
++      const double px = tp.px(), py = tp.py(), pz = tp.pz(), pt = tp.pt();
++      tpDxy_.push_back((-dx * py + dy * px) / pt);
++      tpDz_.push_back(dz - (dx * px + dy * py) / pt * (pz / pt));
++      tpQ_.push_back(tp.charge());
++      tpPdg_.push_back(tp.pdgId());
++      tpSig_.push_back(tp.eventId().event() == 0 ? 1 : 0);
++      tpNPix_.push_back(nPix.count(i) ? nPix[i] : 0);
++      tpNOT_.push_back(nOT.count(i) ? nOT[i] : 0);
++      TrackingParticleRef ref(tpH, i);
++      for (auto const* a : assocs) {
++        int f = -1;
++        if (a) {
++          auto it = a->find(ref);
++          f = (it != a->end() && !it->val.empty()) ? 1 : 0;
++        }
++        tpFound_.push_back(f);
++      }
++    }
++
++    if (hasLST_) {
++      auto const& info = iEvent.get(infoTok_);
++      info_ = info;
++      auto const& t3i = iEvent.get(t3iTok_);
++      auto const& t3f = iEvent.get(t3fTok_);
++      auto const& cells = iEvent.get(cellsTok_);
++      auto const& ckeys = iEvent.get(cellKeysTok_);
++      auto const& pairs = iEvent.get(pairsTok_);
++      auto const& tcs = iEvent.get(tcTok_);
++      auto const& pls = iEvent.get(plsTok_);
++      // T3 truth over its 6 OT hits; t -> best (for pairs)
++      std::unordered_map<int, std::pair<int, int>> t3Truth;
++      const int nT3 = t3i.size() / kT3I;
++      for (int r = 0; r < nT3; ++r) {
++        int const* oi = &t3i[kT3I * r];
++        Best b = best(oi + 9, 6);
++        if (oi[8] >= 1)
++          t3Truth[oi[0]] = {b.tp, b.n};
++        if (oi[8] >= 1 || b.n >= 4) {
++          t3i_.insert(t3i_.end(), oi, oi + kT3I);
++          t3f_.insert(t3f_.end(), &t3f[kT3F * r], &t3f[kT3F * r] + kT3F);
++          t3tp_.push_back(b.tp);
++          t3nm_.push_back(b.n);
++          t3nany_.push_back(b.nAny);
++        }
++      }
++      // TC truth
++      const int nTC = tcs.size() / kTCI;
++      std::vector<std::pair<int, int>> tcTruthOT(nTC, {-1, 0});
++      for (int r = 0; r < nTC; ++r) {
++        int const* o = &tcs[kTCI * r];
++        std::vector<int> ot, pix;
++        int stub = 0;
++        for (int j = 2; j < kTCI; ++j) {
++          if (o[j] < 0)
++            continue;
++          if (o[j] & kPixBit) {
++            pix.push_back(o[j]);
++            if (o[j] & kStubBit)
++              stub = 1;
++          } else
++            ot.push_back(o[j]);
++        }
++        std::vector<int> all(ot);
++        all.insert(all.end(), pix.begin(), pix.end());
++        Best ba = best(all.data(), all.size()), bo = best(ot.data(), ot.size()), bp = best(pix.data(), pix.size());
++        tcHk_.insert(tcHk_.end(), o + 2, o + kTCI);
++        tcType_.push_back(o[0]);
++        tcSeed_.push_back(o[1]);
++        tcNOT_.push_back(ot.size());
++        tcNPix_.push_back(pix.size());
++        tcStub_.push_back(stub);
++        tcTp_.push_back(ba.tp);
++        tcNm_.push_back(ba.n);
++        tcTpOT_.push_back(bo.tp);
++        tcNmOT_.push_back(bo.n);
++        tcTpPix_.push_back(bp.tp);
++        tcNmPix_.push_back(bp.n);
++        tcTruthOT[r] = {bo.tp, bo.n};
++      }
++      const int nPLS = pls.size() / kPLSI;
++      for (int s = 0; s < nPLS; ++s) {
++        int const* o = &pls[kPLSI * s];
++        Best b = best(o + 2, 4);
++        int np = 0;
++        for (int j = 2; j < kPLSI; ++j)
++          np += (o[j] >= 0 && (o[j] & kPixBit)) ? 1 : 0;
++        plsSeed_.push_back(o[0]);
++        plsNh_.push_back(o[1]);
++        plsTp_.push_back(b.tp);
++        plsNm_.push_back(b.n);
++        plsNpix_.push_back(np);
++      }
++      // cells: truth of every binned cell (kept: true ones)
++      const int nCells = cells.size() / 6;
++      std::vector<int> cellTP(nCells, -1);
++      for (int c = 0; c < nCells && 2 * c + 1 < static_cast<int>(ckeys.size()); ++c) {
++        const int k0 = ckeys[2 * c] >= 0 ? (ckeys[2 * c] | kPixBit) : -1;
++        const int k1 = ckeys[2 * c + 1] >= 0 ? (ckeys[2 * c + 1] | kPixBit) : -1;
++        cellTP[c] = common2(k0, k1);
++        if (cellTP[c] < 0 && (!tpsOf(k0).empty() || !tpsOf(k1).empty()))
++          ++cellNTrue1_;
++        if (cellTP[c] >= 0) {
++          cellIdx_.push_back(c);
++          cellTp_.push_back(cellTP[c]);
++          cellF_.insert(cellF_.end(), &cells[6 * c], &cells[6 * c] + 6);
++        }
++      }
++      // pairs
++      std::uniform_real_distribution<double> u(0., 1.);
++      const int nP = pairs.size() / kPairF;
++      for (int k = 0; k < nP; ++k) {
++        float const* o = &pairs[kPairF * k];
++        const int id = static_cast<int>(o[0]), c = static_cast<int>(o[1]);
++        const bool isTC = false;  // only T3 pairs are dumped
++        std::pair<int, int> ot{-1, 0};
++        if (isTC) {
++          if (id < nTC)
++            ot = tcTruthOT[id];
++        } else {
++          auto it = t3Truth.find(id);
++          if (it != t3Truth.end())
++            ot = it->second;
++        }
++        const int ctp = (c >= 0 && c < nCells) ? cellTP[c] : -1;
++        const bool anyTrue = (ctp >= 0 && ot.first == ctp);
++        double w = 1.;
++        if (!anyTrue && falseKeep_ < 1.) {
++          if (u(rng_) > falseKeep_)
++            continue;
++          w = 1. / falseKeep_;
++        }
++        pairF_.insert(pairF_.end(), o, o + kPairF);
++        if (c >= 0 && c < nCells)
++          pairCF_.insert(pairCF_.end(), &cells[6 * c], &cells[6 * c] + 6);
++        else
++          pairCF_.insert(pairCF_.end(), 6, 0.f);
++        pairCtp_.push_back(ctp);
++        pairOtp_.push_back(ot.first);
++        pairOnm_.push_back(ot.second);
++        pairW_.push_back(w);
++      }
++    }
++    tree_->Fill();
++  }
++
++  std::string lstLabel_;
++  bool hasLST_;
++  double falseKeep_;
++  edm::EDGetTokenT<TrackingParticleCollection> tpTok_;
++  edm::EDGetTokenT<ClusterTPAssociation> clTok_;
++  edm::EDGetTokenT<reco::BeamSpot> bsTok_;
++  edm::EDGetTokenT<std::vector<float>> pairsTok_, t3fTok_, cellsTok_;
++  edm::EDGetTokenT<std::vector<int>> t3iTok_, cellKeysTok_, tcTok_, plsTok_, infoTok_;
++  std::vector<edm::EDGetTokenT<reco::SimToRecoCollection>> assocToks_;
++  size_t nAssoc_ = 0;
++  std::mt19937_64 rng_;
++  std::unordered_map<uint32_t, std::vector<int>> pixMap_, otMap_;
++  TTree* tree_;
++  unsigned int run_, lumi_;
++  unsigned long long event_;
++  std::vector<int> info_;
++  std::vector<int> tpKey_, tpQ_, tpPdg_, tpSig_, tpNPix_, tpNOT_, tpFound_;
++  std::vector<float> tpPt_, tpEta_, tpPhi_, tpVx_, tpVy_, tpVz_, tpDxy_, tpDz_;
++  std::vector<int> t3i_, t3tp_, t3nm_, t3nany_;
++  std::vector<float> t3f_;
++  std::vector<int> cellIdx_, cellTp_;
++  std::vector<float> cellF_;
++  int cellNTrue1_ = 0;
++  std::vector<float> pairF_, pairW_, pairCF_;
++  std::vector<int> pairCtp_, pairOtp_, pairOnm_;
++  std::vector<int> tcType_, tcHk_, tcSeed_, tcNOT_, tcNPix_, tcStub_, tcTp_, tcNm_, tcTpOT_, tcNmOT_, tcTpPix_, tcNmPix_;
++  std::vector<int> plsSeed_, plsNh_, plsTp_, plsNm_, plsNpix_;
++};
++
++DEFINE_FWK_MODULE(OTPullDiagAnalyzer);
+diff -ruN a/DiagLST/OTPullDiag/plugins/OTPullPairDump.cc b/DiagLST/OTPullDiag/plugins/OTPullPairDump.cc
+--- a/DiagLST/OTPullDiag/plugins/OTPullPairDump.cc	1969-12-31 19:00:00.000000000 -0500
++++ b/DiagLST/OTPullDiag/plugins/OTPullPairDump.cc	2026-11-02 23:26:11.604073038 -0500
+@@ -0,0 +1,213 @@
++// DUMP PATCH ONLY (standalone/analysis/DNN/otpull_score): truth for the otpull pair dump of hltLST (diagPairs, diagT3i,
++// diagCellKeys) from the compact cluster truth of a training cache (LocalVal/PttTruth CompactClusterTruthProducer):
++// clusters are matched by (detId, position) to the clusters of this job, whose indices are LST's hit keys (OT: the
++// hltSiPhase2Clusters key; pixel: the hltSiPixelClusters key). One TTree entry per event that reaches tracking.
++#include <algorithm>
++#include <random>
++#include <unordered_map>
++#include <vector>
++
++#include "TTree.h"
++
++#include "CommonTools/UtilAlgos/interface/TFileService.h"
++#include "DataFormats/Common/interface/DetSetVectorNew.h"
++#include "DataFormats/Phase2TrackerCluster/interface/Phase2TrackerCluster1D.h"
++#include "DataFormats/SiPixelCluster/interface/SiPixelCluster.h"
++#include "FWCore/Framework/interface/Event.h"
++#include "FWCore/Framework/interface/MakerMacros.h"
++#include "FWCore/Framework/interface/one/EDAnalyzer.h"
++#include "FWCore/ParameterSet/interface/ParameterSet.h"
++#include "FWCore/ServiceRegistry/interface/Service.h"
++
++namespace {
++  constexpr int kT3I = 16, kPairF = 22;
++  using Key = unsigned long long;
++  Key pk(unsigned int det, unsigned int pos) { return (static_cast<Key>(det) << 32) | pos; }
++}  // namespace
++
++class OTPullPairDump : public edm::one::EDAnalyzer<edm::one::SharedResources> {
++public:
++  explicit OTPullPairDump(edm::ParameterSet const& ps)
++      : pairsTok_(consumes(ps.getParameter<edm::InputTag>("pairs"))),
++        t3iTok_(consumes(ps.getParameter<edm::InputTag>("t3i"))),
++        cellKeysTok_(consumes(ps.getParameter<edm::InputTag>("cellKeys"))),
++        pixTok_(consumes(ps.getParameter<edm::InputTag>("pixelClusters"))),
++        otTok_(consumes(ps.getParameter<edm::InputTag>("phase2OTClusters"))),
++        falseKeep_(ps.getParameter<double>("falsePairKeep")),
++        rng_(12345) {
++    auto const tr = ps.getParameter<std::string>("truthLabel");
++    pixDetTok_ = consumes(edm::InputTag(tr, "pixDet"));
++    pixPosTok_ = consumes(edm::InputTag(tr, "pixPos"));
++    otDetTok_ = consumes(edm::InputTag(tr, "otDet"));
++    otPosTok_ = consumes(edm::InputTag(tr, "otPos"));
++    pixTPTok_ = consumes(edm::InputTag(tr, "pixTP"));
++    otTPTok_ = consumes(edm::InputTag(tr, "otTP"));
++    tpEvTok_ = consumes(edm::InputTag(tr, "tpEvent"));
++    tpBxTok_ = consumes(edm::InputTag(tr, "tpBx"));
++    tpPtTok_ = consumes(edm::InputTag(tr, "tpPt"));
++    tpVxTok_ = consumes(edm::InputTag(tr, "tpVx"));
++    tpVyTok_ = consumes(edm::InputTag(tr, "tpVy"));
++    usesResource("TFileService");
++    edm::Service<TFileService> fs;
++    tree_ = fs->make<TTree>("ev", "ev");
++    tree_->Branch("run", &run_);
++    tree_->Branch("lumi", &lumi_);
++    tree_->Branch("event", &event_);
++    tree_->Branch("tp_key", &tpKey_);
++    tree_->Branch("tp_pt", &tpPt_);
++    tree_->Branch("tp_vx", &tpVx_);
++    tree_->Branch("tp_vy", &tpVy_);
++    tree_->Branch("tp_sig", &tpSig_);
++    tree_->Branch("pair_f", &pairF_);
++    tree_->Branch("pair_ctp", &pairCtp_);
++    tree_->Branch("pair_otp", &pairOtp_);
++    tree_->Branch("pair_onm", &pairOnm_);
++    tree_->Branch("pair_w", &pairW_);
++    tree_->Branch("n_match", &nMatch_);
++  }
++
++  static void fillDescriptions(edm::ConfigurationDescriptions& descriptions) {
++    edm::ParameterSetDescription desc;
++    desc.add<edm::InputTag>("pairs", edm::InputTag("hltLST", "diagPairs"));
++    desc.add<edm::InputTag>("t3i", edm::InputTag("hltLST", "diagT3i"));
++    desc.add<edm::InputTag>("cellKeys", edm::InputTag("hltLST", "diagCellKeys"));
++    desc.add<edm::InputTag>("pixelClusters", edm::InputTag("hltSiPixelClusters"));
++    desc.add<edm::InputTag>("phase2OTClusters", edm::InputTag("hltSiPhase2Clusters"));
++    desc.add<std::string>("truthLabel", "pttTruth");
++    desc.add<double>("falsePairKeep", 1.0);
++    descriptions.addWithDefaultLabel(desc);
++  }
++
++private:
++  void analyze(edm::Event const& iEvent, edm::EventSetup const&) override {
++    auto hPairs = iEvent.getHandle(pairsTok_);
++    if (!hPairs.isValid())
++      return;  // the event does not reach tracking
++    run_ = iEvent.id().run();
++    lumi_ = iEvent.id().luminosityBlock();
++    event_ = iEvent.id().event();
++    for (auto* v : {&tpKey_, &tpSig_, &pairCtp_, &pairOtp_, &pairOnm_, &nMatch_})
++      v->clear();
++    for (auto* v : {&tpPt_, &tpVx_, &tpVy_, &pairF_, &pairW_})
++      v->clear();
++    // truth: (det, pos) -> slim TPs, then this job's cluster keys -> slim TPs
++    auto buildMap = [](auto const& det, auto const& pos, auto const& tp) {
++      std::unordered_map<Key, std::vector<int>> m;
++      m.reserve(det.size());
++      for (size_t k = 0; k < det.size(); ++k)
++        m[pk(det[k], pos[k])].push_back(tp[k]);
++      return m;
++    };
++    auto const pixT = buildMap(iEvent.get(pixDetTok_), iEvent.get(pixPosTok_), iEvent.get(pixTPTok_));
++    auto const otT = buildMap(iEvent.get(otDetTok_), iEvent.get(otPosTok_), iEvent.get(otTPTok_));
++    auto const hPix = iEvent.getHandle(pixTok_);
++    auto const hOT = iEvent.getHandle(otTok_);
++    std::vector<std::vector<int> const*> pixKey(hPix->dataSize(), nullptr), otKey(hOT->dataSize(), nullptr);
++    int nm[2] = {0, 0};
++    for (auto ds = hPix->begin(); ds != hPix->end(); ++ds)
++      for (auto cl = ds->begin(); cl != ds->end(); ++cl) {
++        auto it = pixT.find(pk(ds->detId(), (static_cast<unsigned int>(cl->minPixelRow()) << 16) | cl->minPixelCol()));
++        if (it != pixT.end()) {
++          pixKey[edmNew::makeRefTo(hPix, cl).key()] = &it->second;
++          ++nm[0];
++        }
++      }
++    for (auto ds = hOT->begin(); ds != hOT->end(); ++ds)
++      for (auto cl = ds->begin(); cl != ds->end(); ++cl) {
++        auto it = otT.find(pk(ds->detId(), (cl->column() << 16) | cl->firstStrip()));
++        if (it != otT.end()) {
++          otKey[edmNew::makeRefTo(hOT, cl).key()] = &it->second;
++          ++nm[1];
++        }
++      }
++    nMatch_ = {nm[0], static_cast<int>(pixT.size()), nm[1], static_cast<int>(otT.size())};
++    auto const& tev = iEvent.get(tpEvTok_);
++    auto const& tbx = iEvent.get(tpBxTok_);
++    auto const& tpt = iEvent.get(tpPtTok_);
++    auto const& tvx = iEvent.get(tpVxTok_);
++    auto const& tvy = iEvent.get(tpVyTok_);
++    for (size_t i = 0; i < tpt.size(); ++i) {
++      tpKey_.push_back(i);
++      tpPt_.push_back(tpt[i]);
++      tpVx_.push_back(tvx[i]);
++      tpVy_.push_back(tvy[i]);
++      tpSig_.push_back(tev[i] == 0 && tbx[i] == 0 ? 1 : 0);
++    }
++    static const std::vector<int> empty;
++    auto tpsOT = [&](int key) -> std::vector<int> const& {
++      return (key >= 0 && key < static_cast<int>(otKey.size()) && otKey[key]) ? *otKey[key] : empty;
++    };
++    auto tpsPix = [&](int key) -> std::vector<int> const& {
++      return (key >= 0 && key < static_cast<int>(pixKey.size()) && pixKey[key]) ? *pixKey[key] : empty;
++    };
++    // T3 truth: the particle with the most of its 6 OT hits
++    auto const& t3i = iEvent.get(t3iTok_);
++    std::unordered_map<int, std::pair<int, int>> t3Truth;
++    for (size_t r = 0; r < t3i.size() / kT3I; ++r) {
++      int const* oi = &t3i[kT3I * r];
++      if (oi[8] < 1)
++        continue;  // not searched
++      std::vector<std::pair<int, int>> cnt;
++      for (int j = 0; j < 6; ++j)
++        for (int tp : tpsOT(oi[9 + j])) {
++          auto it = std::find_if(cnt.begin(), cnt.end(), [tp](auto const& p) { return p.first == tp; });
++          if (it == cnt.end())
++            cnt.emplace_back(tp, 1);
++          else
++            ++it->second;
++        }
++      std::pair<int, int> b{-1, 0};
++      for (auto const& p : cnt)
++        if (p.second > b.second)
++          b = p;
++      t3Truth[oi[0]] = b;
++    }
++    auto const& ckeys = iEvent.get(cellKeysTok_);
++    auto const& pairs = *hPairs;
++    std::uniform_real_distribution<double> u(0., 1.);
++    for (size_t k = 0; k < pairs.size() / kPairF; ++k) {
++      float const* o = &pairs[kPairF * k];
++      const int id = static_cast<int>(o[0]), c = static_cast<int>(o[1]);
++      int ctp = -1;
++      if (c >= 0 && 2 * c + 1 < static_cast<int>(ckeys.size())) {
++        auto const& a = tpsPix(ckeys[2 * c]);
++        auto const& b = tpsPix(ckeys[2 * c + 1]);
++        for (int x : a)
++          if (ctp < 0 && std::find(b.begin(), b.end(), x) != b.end())
++            ctp = x;
++      }
++      auto it = t3Truth.find(id);
++      const std::pair<int, int> ot = it == t3Truth.end() ? std::pair<int, int>{-1, 0} : it->second;
++      const bool isTrue = ctp >= 0 && ot.first == ctp;
++      double w = 1.;
++      if (!isTrue && falseKeep_ < 1.) {
++        if (u(rng_) > falseKeep_)
++          continue;
++        w = 1. / falseKeep_;
++      }
++      pairF_.insert(pairF_.end(), o, o + kPairF);
++      pairCtp_.push_back(ctp);
++      pairOtp_.push_back(ot.first);
++      pairOnm_.push_back(ot.second);
++      pairW_.push_back(w);
++    }
++    tree_->Fill();
++  }
++
++  edm::EDGetTokenT<std::vector<float>> pairsTok_;
++  edm::EDGetTokenT<std::vector<int>> t3iTok_, cellKeysTok_;
++  edm::EDGetTokenT<edmNew::DetSetVector<SiPixelCluster>> pixTok_;
++  edm::EDGetTokenT<edmNew::DetSetVector<Phase2TrackerCluster1D>> otTok_;
++  edm::EDGetTokenT<std::vector<unsigned int>> pixDetTok_, pixPosTok_, otDetTok_, otPosTok_;
++  edm::EDGetTokenT<std::vector<int>> pixTPTok_, otTPTok_, tpEvTok_, tpBxTok_;
++  edm::EDGetTokenT<std::vector<float>> tpPtTok_, tpVxTok_, tpVyTok_;
++  double falseKeep_;
++  std::mt19937_64 rng_;
++  TTree* tree_;
++  unsigned int run_, lumi_;
++  unsigned long long event_;
++  std::vector<int> tpKey_, tpSig_, pairCtp_, pairOtp_, pairOnm_, nMatch_;
++  std::vector<float> tpPt_, tpVx_, tpVy_, pairF_, pairW_;
++};
++
++DEFINE_FWK_MODULE(OTPullPairDump);
+diff -ruN a/RecoTracker/LST/plugins/alpaka/LSTProducer.cc b/RecoTracker/LST/plugins/alpaka/LSTProducer.cc
+--- a/RecoTracker/LST/plugins/alpaka/LSTProducer.cc	2026-11-02 23:14:33.251307734 -0500
++++ b/RecoTracker/LST/plugins/alpaka/LSTProducer.cc	2026-11-02 23:19:37.160050499 -0500
+@@ -44,7 +44,18 @@
+           lstInputToken_{consumes(config.getParameter<edm::InputTag>("lstInput"))},
+           lstESToken_{esConsumes(edm::ESInputTag("", ptCutStr_))},
+           lstOutputToken_{produces()},
+-          otpullOn_(!config.getParameter<edm::InputTag>("otpullCells").label().empty()) {
++          otpullOn_(!config.getParameter<edm::InputTag>("otpullCells").label().empty()),
++          diag_(config.getParameter<bool>("diagDump")) {
++      if (diag_) {
++        dgPairsTok_ = produces("diagPairs");
++        dgT3iTok_ = produces("diagT3i");
++        dgT3fTok_ = produces("diagT3f");
++        dgCellsTok_ = produces("diagCells");
++        dgCellKeysTok_ = produces("diagCellKeys");
++        dgTCTok_ = produces("diagTC");
++        dgPLSTok_ = produces("diagPLS");
++        dgInfoTok_ = produces("diagInfo");
++      }
+       pixelObjectOptions_.pT5Chi2CutsAllPt = config.getParameter<bool>("pT5Chi2CutsAllPt");
+       pixelObjectOptions_.pT5ScoreMode = config.getParameter<int>("pT5ScoreMode");
+       pixelObjectOptions_.pT5RPhiInHiScale = config.getParameter<double>("pT5RPhiInHiScale");
+@@ -126,6 +137,7 @@
+         }
+       }
+ 
++      lst.setDiag(diag_);
+       lst.run(iEvent.queue(),
+               verbose_,
+               ptCut_,
+@@ -143,11 +155,23 @@
+       // Output
+       auto lstTrackCandidates = lst.getTrackCandidates();
+       iEvent.emplace(lstOutputToken_, std::move(*lstTrackCandidates.release()));
++      if (diag_) {
++        auto& d = lst.diagData();
++        iEvent.emplace(dgPairsTok_, std::move(d.pairs));
++        iEvent.emplace(dgT3iTok_, std::move(d.t3i));
++        iEvent.emplace(dgT3fTok_, std::move(d.t3f));
++        iEvent.emplace(dgCellsTok_, std::move(d.cells));
++        iEvent.emplace(dgCellKeysTok_, std::move(d.cellKeys));
++        iEvent.emplace(dgTCTok_, std::move(d.tcs));
++        iEvent.emplace(dgPLSTok_, std::move(d.pls));
++        iEvent.emplace(dgInfoTok_, std::move(d.info));
++      }
+     }
+ 
+     static void fillDescriptions(edm::ConfigurationDescriptions& descriptions) {
+       edm::ParameterSetDescription desc;
+       desc.add<edm::InputTag>("lstInput", edm::InputTag{"lstInputProducer"});
++      desc.add<bool>("diagDump", false)->setComment("DIAGNOSTIC PATCH ONLY: put the OT-seeded lookup dump vectors");
+       desc.add<bool>("verbose", false);
+       desc.add<double>("ptCut", 0.8);
+       desc.add<uint32_t>("clustSizeCut", 16);
+@@ -224,6 +248,9 @@
+     device::EDGetToken<lst::OTPullCellsDeviceCollection> otpullToken_;
+     lst::OTPullParams otpullParams_{};
+     edm::EDGetTokenT<std::vector<uint32_t>> srcRowsToken_;
++    const bool diag_;
++    edm::EDPutTokenT<std::vector<float>> dgPairsTok_, dgT3fTok_, dgCellsTok_;
++    edm::EDPutTokenT<std::vector<int>> dgT3iTok_, dgCellKeysTok_, dgTCTok_, dgPLSTok_, dgInfoTok_;
+   };
+ 
+ }  // namespace ALPAKA_ACCELERATOR_NAMESPACE
+diff -ruN a/RecoTracker/LSTCore/interface/alpaka/LST.h b/RecoTracker/LSTCore/interface/alpaka/LST.h
+--- a/RecoTracker/LSTCore/interface/alpaka/LST.h	2026-11-02 23:09:11.189875880 -0500
++++ b/RecoTracker/LSTCore/interface/alpaka/LST.h	2026-11-02 23:19:37.160050499 -0500
+@@ -5,6 +5,7 @@
+ #include "RecoTracker/LSTCore/interface/LSTESData.h"
+ #include "RecoTracker/LSTCore/interface/OTPull.h"
+ #include "RecoTracker/LSTCore/interface/PixelObjectOptions.h"
++#include "RecoTracker/LSTCore/interface/OTPullDiagData.h"
+ #include "RecoTracker/LSTCore/interface/alpaka/OTPullCellsDeviceCollection.h"
+ #include "RecoTracker/LSTCore/interface/alpaka/LSTInputDeviceCollection.h"
+ #include "RecoTracker/LSTCore/interface/alpaka/TrackCandidatesDeviceCollection.h"
+@@ -37,9 +38,15 @@
+       return std::move(trackCandidatesBaseDC_);
+     }
+ 
++    // DIAGNOSTIC PATCH ONLY
++    void setDiag(bool d) { diag_ = d; }
++    ::lst::OTPullDiagData& diagData() { return diagData_; }
++
+   private:
+     // Output collection
+     std::unique_ptr<TrackCandidatesBaseDeviceCollection> trackCandidatesBaseDC_;
++    bool diag_ = false;
++    ::lst::OTPullDiagData diagData_;
+   };
+ 
+ }  // namespace ALPAKA_ACCELERATOR_NAMESPACE::lst
+diff -ruN a/RecoTracker/LSTCore/interface/OTPullDiagData.h b/RecoTracker/LSTCore/interface/OTPullDiagData.h
+--- a/RecoTracker/LSTCore/interface/OTPullDiagData.h	1969-12-31 19:00:00.000000000 -0500
++++ b/RecoTracker/LSTCore/interface/OTPullDiagData.h	2026-11-02 23:19:37.160050499 -0500
+@@ -0,0 +1,20 @@
++#ifndef RecoTracker_LSTCore_interface_OTPullDiagData_h
++#define RecoTracker_LSTCore_interface_OTPullDiagData_h
++
++#include <vector>
++
++// DIAGNOSTIC PATCH ONLY (lane itaca_extoff/decision): host copies of the OT-seeded lookup decisions and LST objects.
++namespace lst {
++  struct OTPullDiagData {
++    std::vector<float> pairs;    // tested (T3 or TC, cell) pairs, kOTPullDiagPairF floats each
++    std::vector<int> t3i;        // every filled T3, kDiagT3I ints
++    std::vector<float> t3f;      // every filled T3, kDiagT3F floats
++    std::vector<float> cells;    // binned cells, 6 floats (xi yi zi xo yo zo)
++    std::vector<int> cellKeys;   // binned cells, 2 pixel cluster keys (-1 none)
++    std::vector<int> tcs;        // track candidates, kDiagTCI ints
++    std::vector<int> pls;        // pLS rows, kDiagPLSI ints
++    std::vector<int> info;       // nHitsOT, nHitsIT, nPairsTotal, nT3, nCells, nTC, nPLS, pair cap
++  };
++}  // namespace lst
++
++#endif
+diff -ruN a/RecoTracker/LSTCore/src/alpaka/LST.cc b/RecoTracker/LSTCore/src/alpaka/LST.cc
+--- a/RecoTracker/LSTCore/src/alpaka/LST.cc	2026-11-02 23:09:11.190875883 -0500
++++ b/RecoTracker/LSTCore/src/alpaka/LST.cc	2026-11-02 23:19:37.160050499 -0500
+@@ -131,8 +131,11 @@
+ 
+   if (otpull && otpullCells)
+     event.setOTPull(*otpull, *otpullCells, otpullPixKey, otpullNPixKey);
++  event.setDiag(diag_);
+   event.createTrackCandidates(no_pls_dupclean, tc_pls_triplets);
+   event.pullOTCells();
++  if (diag_)
++    event.dumpDiag(diagData_);
+   if (verbose) {
+     alpaka::wait(queue);  // event calls are asynchronous: wait before printing
+     printf("# of TrackCandidates produced: %d\n", event.getNumberOfTrackCandidates());
+diff -ruN a/RecoTracker/LSTCore/src/alpaka/LSTEvent.dev.cc b/RecoTracker/LSTCore/src/alpaka/LSTEvent.dev.cc
+--- a/RecoTracker/LSTCore/src/alpaka/LSTEvent.dev.cc	2026-11-02 23:14:15.649281042 -0500
++++ b/RecoTracker/LSTCore/src/alpaka/LSTEvent.dev.cc	2026-11-02 23:19:37.159050496 -0500
+@@ -16,6 +16,7 @@
+ #include "Triplet.h"
+ #include "Quadruplet.h"
+ #include "OTPull.h"
++#include "OTPullDiag.h"
+ #include "HeterogeneousCore/AlpakaInterface/interface/prefixScan.h"
+ 
+ #include <format>
+@@ -1302,6 +1303,14 @@
+                         counters);
+   }
+   alpaka::exec<Acc1D>(queue_, wd1, OTPullMarkTCHits{}, trackCandidatesBaseDC_->const_view(), used_d.data(), nHitsOT);
++  if (diag_) {
++    dgPairCap_ = 2000000;
++    dgPairs_.emplace(cms::alpakatools::make_device_buffer<float[]>(queue_, kOTPullDiagPairF * dgPairCap_));
++    dgPairN_.emplace(cms::alpakatools::make_device_buffer<unsigned int[]>(queue_, 1u));
++    alpaka::memset(queue_, *dgPairN_, 0);
++  }
++  float* const dgP = diag_ ? dgPairs_->data() : nullptr;
++  unsigned int* const dgN = diag_ ? dgPairN_->data() : nullptr;
+   alpaka::exec<Acc1D>(queue_,
+                       cms::alpakatools::make_workdiv<Acc1D>(cms::alpakatools::divide_up_by(nTriplets, 64u), 64u),
+                       OTPullSearch{},
+@@ -1321,7 +1330,10 @@
+                       bestCell_d.data(),
+                       bestChi2_d.data(),
+                       cellBest_d.data(),
+-                      counters);
++                      counters,
++                      dgP,
++                      dgN,
++                      dgPairCap_);
+   if (attachTC) {
+     auto const wdTC = cms::alpakatools::make_workdiv<Acc1D>(cms::alpakatools::divide_up_by(nAllocated, 64u), 64u);
+     alpaka::exec<Acc1D>(queue_,
+@@ -1337,7 +1349,10 @@
+                         tcBestCell_d.data(),
+                         tcBestChi2_d.data(),
+                         cellBest_d.data(),
+-                        counters);
++                        counters,
++                        dgP,
++                        dgN,
++                        dgPairCap_);
+     if (upgrade) {
+       alpaka::exec<Acc1D>(queue_,
+                           wd1,
+@@ -1399,6 +1414,13 @@
+                       nAllocated,
+                       counters,
+                       (p.attach & 4) ? cellKeys : nullptr);
++  if (diag_) {
++    dgBestCell_.emplace(std::move(bestCell_d));
++    dgBestChi2_.emplace(std::move(bestChi2_d));
++    dgCellBest_.emplace(std::move(cellBest_d));
++    dgHitBest_.emplace(std::move(hitBest_d));
++    dgUsed_.emplace(std::move(used_d));
++  }
+   if (!objectsStatistics_)
+     return;
+   auto counters_h = cms::alpakatools::make_host_buffer<unsigned int[]>(queue_, kOTPullNCounters);
+@@ -2693,3 +2715,104 @@
+ }
+ template ModulesConst LSTEvent::getModules<ModulesSoA>(bool);
+ template ModulesPixelConst LSTEvent::getModules<ModulesPixelSoA>(bool);
++
++// DIAGNOSTIC PATCH ONLY: copy the OT-seeded lookup decisions and the LST objects to the host
++void LSTEvent::dumpDiag(::lst::OTPullDiagData& out) {
++  out = ::lst::OTPullDiagData();
++  auto const wd1 = cms::alpakatools::make_workdiv<Acc1D>(max_blocks, 256);
++  unsigned int const nHits = lstInputDC_->const_view().hits().metadata().size();
++  unsigned int const nHitsIT = lstInputDC_->const_view().hitsIT().metadata().size();
++  unsigned int const nHitsOT = nHits - nHitsIT;
++  unsigned int const nTripletSlots = tripletsDC_->const_view().triplets().metadata().size();
++  unsigned int const nPLS = lstInputDC_->const_view().pixelSeeds().metadata().size();
++  unsigned int const nTC = getNumberOfTrackCandidates();
++  // T3s
++  auto t3i_d = cms::alpakatools::make_device_buffer<int[]>(queue_, kDiagT3I * std::max(nTripletSlots, 1u));
++  auto t3f_d = cms::alpakatools::make_device_buffer<float[]>(queue_, kDiagT3F * std::max(nTripletSlots, 1u));
++  auto t3n_d = cms::alpakatools::make_device_buffer<unsigned int[]>(queue_, 1u);
++  alpaka::memset(queue_, t3n_d, 0);
++  alpaka::exec<Acc1D>(queue_,
++                      wd1,
++                      OTPullDiagT3{},
++                      modules_.const_view().modules(),
++                      rangesDC_->const_view(),
++                      miniDoubletsDC_->const_view().miniDoublets(),
++                      segmentsDC_->const_view().segments(),
++                      tripletsDC_->const_view().triplets(),
++                      tripletsDC_->const_view().tripletsOccupancy(),
++                      nLowerModules_,
++                      nTripletSlots,
++                      dgUsed_ ? dgUsed_->data() : nullptr,
++                      nHitsOT,
++                      dgBestCell_ ? dgBestCell_->data() : nullptr,
++                      dgBestChi2_ ? dgBestChi2_->data() : nullptr,
++                      dgCellBest_ ? dgCellBest_->data() : nullptr,
++                      dgHitBest_ ? dgHitBest_->data() : nullptr,
++                      t3i_d.data(),
++                      t3f_d.data(),
++                      t3n_d.data(),
++                      nTripletSlots);
++  auto tc_d = cms::alpakatools::make_device_buffer<int[]>(queue_, kDiagTCI * std::max(nTC, 1u));
++  if (nTC > 0)
++    alpaka::exec<Acc1D>(queue_,
++                        wd1,
++                        OTPullDiagTC{},
++                        trackCandidatesBaseDC_->const_view(),
++                        lstInputDC_->const_view().hits(),
++                        lstInputDC_->const_view().hitsIT(),
++                        nTC,
++                        tc_d.data());
++  auto pls_d = cms::alpakatools::make_device_buffer<int[]>(queue_, kDiagPLSI * std::max(nPLS, 1u));
++  if (nPLS > 0)
++    alpaka::exec<Acc1D>(queue_,
++                        wd1,
++                        OTPullDiagPLS{},
++                        lstInputDC_->const_view().hits(),
++                        lstInputDC_->const_view().pixelSeeds(),
++                        lstInputDC_->const_view().hitsIT(),
++                        pls_d.data());
++  auto t3n_h = cms::alpakatools::make_host_buffer<unsigned int[]>(queue_, 1u);
++  alpaka::memcpy(queue_, t3n_h, t3n_d);
++  auto pn_h = cms::alpakatools::make_host_buffer<unsigned int[]>(queue_, 1u);
++  pn_h.data()[0] = 0;
++  if (dgPairN_)
++    alpaka::memcpy(queue_, pn_h, *dgPairN_);
++  alpaka::wait(queue_);
++  unsigned int const nT3 = std::min(t3n_h.data()[0], nTripletSlots);
++  unsigned int const nPairsTot = pn_h.data()[0];
++  unsigned int const nPairs = std::min(nPairsTot, dgPairCap_);
++  unsigned int const nCells = otpullCells_ ? alpaka::getExtentProduct(*otpullCells_) / 6 : 0;
++  auto copyOut = [&](auto& dbuf, auto& vec, unsigned int n) {
++    using T = std::remove_reference_t<decltype(vec[0])>;
++    vec.resize(n);
++    if (n == 0)
++      return;
++    auto hb = cms::alpakatools::make_host_buffer<T[]>(queue_, n);
++    alpaka::memcpy(queue_, hb, cms::alpakatools::make_device_view(queue_, dbuf.data(), n));
++    alpaka::wait(queue_);
++    std::copy(hb.data(), hb.data() + n, vec.begin());
++  };
++  copyOut(t3i_d, out.t3i, kDiagT3I * nT3);
++  copyOut(t3f_d, out.t3f, kDiagT3F * nT3);
++  copyOut(tc_d, out.tcs, kDiagTCI * nTC);
++  copyOut(pls_d, out.pls, kDiagPLSI * nPLS);
++  if (dgPairs_)
++    copyOut(*dgPairs_, out.pairs, kOTPullDiagPairF * nPairs);
++  if (otpullCells_)
++    copyOut(*otpullCells_, out.cells, 6 * nCells);
++  if (otpullCellKeys_) {
++    std::vector<uint32_t> k;
++    copyOut(*otpullCellKeys_, k, 2 * nCells);
++    out.cellKeys.resize(k.size());
++    for (size_t i = 0; i < k.size(); ++i)
++      out.cellKeys[i] = k[i] == kOTPullEmpty ? -1 : static_cast<int>(k[i]);
++  }
++  out.info = {static_cast<int>(nHitsOT),
++              static_cast<int>(nHitsIT),
++              static_cast<int>(nPairsTot),
++              static_cast<int>(nT3),
++              static_cast<int>(nCells),
++              static_cast<int>(nTC),
++              static_cast<int>(nPLS),
++              static_cast<int>(dgPairCap_)};
++}
+diff -ruN a/RecoTracker/LSTCore/src/alpaka/LSTEvent.h b/RecoTracker/LSTCore/src/alpaka/LSTEvent.h
+--- a/RecoTracker/LSTCore/src/alpaka/LSTEvent.h	2026-11-02 23:09:11.190875883 -0500
++++ b/RecoTracker/LSTCore/src/alpaka/LSTEvent.h	2026-11-02 23:19:37.159050496 -0500
+@@ -3,6 +3,7 @@
+ 
+ #include "RecoTracker/LSTCore/interface/OTPull.h"
+ #include "RecoTracker/LSTCore/interface/PixelObjectOptions.h"
++#include "RecoTracker/LSTCore/interface/OTPullDiagData.h"
+ #include "RecoTracker/LSTCore/interface/alpaka/OTPullCellsDeviceCollection.h"
+ #include <algorithm>
+ #include <optional>
+@@ -128,6 +129,16 @@
+     std::optional<cms::alpakatools::device_buffer<Device, uint32_t[]>> otpullBinStart_;
+     std::optional<cms::alpakatools::device_buffer<Device, unsigned int[]>> otpullCounters_;
+     double memoryPeakLiveMB_ = 0;
++    // DIAGNOSTIC PATCH ONLY: decision buffers of the OT-seeded lookup kept for the dump
++    bool diag_ = false;
++    unsigned int dgPairCap_ = 0;
++    std::optional<cms::alpakatools::device_buffer<Device, float[]>> dgPairs_;
++    std::optional<cms::alpakatools::device_buffer<Device, unsigned int[]>> dgPairN_;
++    std::optional<cms::alpakatools::device_buffer<Device, int[]>> dgBestCell_;
++    std::optional<cms::alpakatools::device_buffer<Device, float[]>> dgBestChi2_;
++    std::optional<cms::alpakatools::device_buffer<Device, unsigned long long[]>> dgCellBest_;
++    std::optional<cms::alpakatools::device_buffer<Device, unsigned long long[]>> dgHitBest_;
++    std::optional<cms::alpakatools::device_buffer<Device, uint8_t[]>> dgUsed_;
+ 
+     void trackAllocatedMB(double mb);
+     void trackTransientMB(double mb);  // live (peak) accounting only, not added to the allocated total
+@@ -187,6 +198,8 @@
+     void setPixelObjectOptions(PixelObjectOptions const& opts) { pixelObjectOptions_ = opts; }
+     void binOTCells();
+     void pullOTCells();
++    void setDiag(bool d) { diag_ = d; }
++    void dumpDiag(::lst::OTPullDiagData& out);
+     void createPixelTriplets();
+     void createQuintuplets();
+     void pixelLineSegmentCleaning(bool no_pls_dupclean);
+diff -ruN a/RecoTracker/LSTCore/src/alpaka/OTPullDiag.h b/RecoTracker/LSTCore/src/alpaka/OTPullDiag.h
+--- a/RecoTracker/LSTCore/src/alpaka/OTPullDiag.h	1969-12-31 19:00:00.000000000 -0500
++++ b/RecoTracker/LSTCore/src/alpaka/OTPullDiag.h	2026-11-02 23:19:37.160050499 -0500
+@@ -0,0 +1,164 @@
++#ifndef RecoTracker_LSTCore_src_alpaka_OTPullDiag_h
++#define RecoTracker_LSTCore_src_alpaka_OTPullDiag_h
++
++// DIAGNOSTIC PATCH ONLY (lane itaca_extoff/decision): dump kernels for the OT-seeded lookup study.
++#include "OTPull.h"
++
++namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
++
++  constexpr unsigned int kDiagT3I = 16;
++  constexpr unsigned int kDiagT3F = 16;
++  constexpr unsigned int kDiagTCI = 2 + Params_TC::kLayers * Params_TC::kHitsPerLayer;
++  constexpr unsigned int kDiagPLSI = 2 + kMaxPLSHitsInHitsSoA;
++  constexpr int kDiagPixBit = 1 << 30;
++  constexpr int kDiagStubBit = 1 << 29;  // pixel stub key (flagged TC pixel slot)
++
++  // hit key with detector flag: OT cluster key, or pixel cluster key | kDiagPixBit; -1 empty, -2 out of range
++  ALPAKA_FN_ACC ALPAKA_FN_INLINE int diagHitKey(
++      unsigned int ih, HitsBaseConst hits, HitsITConst hitsIT, unsigned int nHitsOT, unsigned int nHitsIT) {
++    if (ih == kTCEmptyHitIdx)
++      return -1;
++    if (ih & kOTPullPixFlag)
++      return static_cast<int>((ih & ~kOTPullPixFlag) | kDiagPixBit | kDiagStubBit);
++    if (ih < nHitsOT)
++      return static_cast<int>(ih);
++    if (ih - nHitsOT >= nHitsIT)
++      return -2;
++    const unsigned int key = hitsIT.idxs()[ih - nHitsOT];
++    const unsigned int sub = (hits.detid()[ih] >> 25) & 7u;
++    return sub >= 3 ? static_cast<int>(key) : static_cast<int>(key | kDiagPixBit);
++  }
++
++  struct OTPullDiagT3 {
++    ALPAKA_FN_ACC void operator()(Acc1D const& acc,
++                                  ModulesConst modules,
++                                  ObjectRangesConst ranges,
++                                  MiniDoubletsConst mds,
++                                  SegmentsConst segments,
++                                  TripletsConst triplets,
++                                  TripletsOccupancyConst tripletsOcc,
++                                  uint16_t nLowerModules,
++                                  unsigned int nTripletSlots,
++                                  const uint8_t* used,
++                                  unsigned int nHitsOT,
++                                  const int* bestCell,
++                                  const float* bestChi2,
++                                  const unsigned long long* cellBest,
++                                  const unsigned long long* hitBest,
++                                  int* outI,
++                                  float* outF,
++                                  unsigned int* outN,
++                                  unsigned int cap) const {
++      for (unsigned int t : cms::alpakatools::uniform_elements(acc, nTripletSlots)) {
++        const uint16_t lm = triplets.lowerModuleIndices()[t][0];
++        if (lm >= nLowerModules)
++          continue;
++        const int off = ranges.tripletModuleIndices()[lm];
++        if (off < 0 || t < static_cast<unsigned int>(off) || t - off >= tripletsOcc.nTriplets()[lm])
++          continue;
++        const unsigned int s0 = triplets.segmentIndices()[t][0], s1 = triplets.segmentIndices()[t][1];
++        const unsigned int md[3] = {
++            segments.mdIndices()[s0][0], segments.mdIndices()[s0][1], segments.mdIndices()[s1][1]};
++        unsigned int h[6];
++        for (int k = 0; k < 3; ++k) {
++          h[2 * k] = mds.anchorHitIndices()[md[k]];
++          h[2 * k + 1] = mds.outerHitIndices()[md[k]];
++        }
++        int fr = -1;
++        if (used) {
++          fr = 1;
++          for (int k = 0; k < 6; ++k)
++            if (h[k] < nHitsOT && used[h[k]])
++              fr = 0;
++        }
++        const bool bl12 = modules.subdets()[lm] == Barrel && (modules.layers()[lm] == 1 || modules.layers()[lm] == 2);
++        const bool partOf = triplets.partOfPT5()[t] || triplets.partOfT5()[t] || triplets.partOfPT3()[t];
++        int status = 0;
++        const int bc = (bestCell && bl12 && !partOf && fr == 1) ? bestCell[t] : -1;
++        if (bl12 && !partOf && fr == 1)
++          status = 1;
++        if (status == 1 && bc >= 0) {
++          status = 2;
++          const unsigned long long key = otpullKey(bestChi2[t], t);
++          if (cellBest[bc] == key) {
++            status = 3;
++            bool own = true;
++            for (int k = 0; k < 3; ++k)
++              own = own && (h[2 * k] >= nHitsOT || hitBest[h[2 * k]] == key);
++            if (own)
++              status = 4;
++          }
++        }
++        const unsigned int k = alpaka::atomicAdd(acc, outN, 1u, alpaka::hierarchy::Blocks{});
++        if (k >= cap)
++          continue;
++        int* oi = outI + kDiagT3I * k;
++        float* of = outF + kDiagT3F * k;
++        oi[0] = static_cast<int>(t);
++        oi[1] = static_cast<int>(modules.subdets()[lm]);
++        oi[2] = static_cast<int>(modules.layers()[lm]);
++        oi[3] = triplets.partOfPT5()[t];
++        oi[4] = triplets.partOfT5()[t];
++        oi[5] = triplets.partOfPT3()[t];
++        oi[6] = fr;
++        oi[7] = bc;
++        oi[8] = status;
++        for (int j = 0; j < 6; ++j)
++          oi[9 + j] = static_cast<int>(h[j]);
++        const uint16_t lm3 = triplets.lowerModuleIndices()[t][2];
++        oi[15] = static_cast<int>(modules.subdets()[lm3]) * 100 + static_cast<int>(modules.layers()[lm3]);
++        of[0] = bc >= 0 ? bestChi2[t] : -1.f;
++        of[1] = triplets.centerX()[t];
++        of[2] = triplets.centerY()[t];
++        of[3] = triplets.radius()[t];
++        for (int j = 0; j < 3; ++j) {
++          of[4 + 4 * j] = mds.anchorX()[md[j]];
++          of[5 + 4 * j] = mds.anchorY()[md[j]];
++          of[6 + 4 * j] = mds.anchorZ()[md[j]];
++          of[7 + 4 * j] = mds.anchorRt()[md[j]];
++        }
++      }
++    }
++  };
++
++  struct OTPullDiagTC {
++    ALPAKA_FN_ACC void operator()(Acc1D const& acc,
++                                  TrackCandidatesBaseConst cands,
++                                  HitsBaseConst hits,
++                                  HitsITConst hitsIT,
++                                  unsigned int nTC,
++                                  int* out) const {
++      const unsigned int nHitsOT = hits.nHitsOT();
++      const unsigned int nHitsIT = hitsIT.metadata().size();
++      for (unsigned int r : cms::alpakatools::uniform_elements(acc, nTC)) {
++        int* o = out + kDiagTCI * r;
++        o[0] = static_cast<int>(cands.trackCandidateType()[r]);
++        o[1] = static_cast<int>(cands.pixelSeedIndex()[r]);
++        for (int slot = 0; slot < Params_TC::kLayers; ++slot)
++          for (int hs = 0; hs < Params_TC::kHitsPerLayer; ++hs)
++            o[2 + slot * Params_TC::kHitsPerLayer + hs] =
++                diagHitKey(cands.hitIndices()[r][slot][hs], hits, hitsIT, nHitsOT, nHitsIT);
++      }
++    }
++  };
++
++  struct OTPullDiagPLS {
++    ALPAKA_FN_ACC void operator()(
++        Acc1D const& acc, HitsBaseConst hits, PixelSeedsConst seeds, HitsITConst hitsIT, int* out) const {
++      const unsigned int nHitsOT = hits.nHitsOT();
++      const unsigned int nHitsIT = hitsIT.metadata().size();
++      for (unsigned int s : cms::alpakatools::uniform_elements(acc, seeds.metadata().size())) {
++        int* o = out + kDiagPLSI * s;
++        o[0] = static_cast<int>(seeds.seedIdx()[s]);
++        o[1] = static_cast<int>(seeds.nHits()[s]);
++        const unsigned int nh = seeds.nHits()[s];
++        const unsigned int nStored = nh < kMaxPLSHitsInHitsSoA ? nh : kMaxPLSHitsInHitsSoA;
++        for (unsigned int k = 0; k < kMaxPLSHitsInHitsSoA; ++k)
++          o[2 + k] = k < nStored ? diagHitKey(seeds.firstHit()[s] + k, hits, hitsIT, nHitsOT, nHitsIT) : -1;
++      }
++    }
++  };
++
++}  // namespace ALPAKA_ACCELERATOR_NAMESPACE::lst
++
++#endif
+diff -ruN a/RecoTracker/LSTCore/src/alpaka/OTPull.h b/RecoTracker/LSTCore/src/alpaka/OTPull.h
+--- a/RecoTracker/LSTCore/src/alpaka/OTPull.h	2026-11-02 23:14:09.216271287 -0500
++++ b/RecoTracker/LSTCore/src/alpaka/OTPull.h	2026-11-02 23:19:57.728112957 -0500
+@@ -27,6 +27,9 @@
+   }
+ 
+   constexpr uint32_t kOTPullEmpty = 0xffffffffu;
++  // DUMP PATCH ONLY (analysis/DNN/otpull_score): id, cell, network inputs (before clipping), logit, chi2, inside the
++  // sqrt(chi2Cut)-sigma windows, pT bin, cost
++  constexpr unsigned int kOTPullDiagPairF = 22;
+ 
+   // pixel cluster key of a CA pixel hit row (kOTPullEmpty: none)
+   ALPAKA_FN_ACC ALPAKA_FN_INLINE uint32_t otpullPixKey(const uint32_t* pixKey, unsigned int nPixKey, uint32_t row) {
+@@ -233,7 +236,11 @@
+                                                  unsigned int& ntest,
+                                                  const float* t3In,
+                                                  float wpComp,
+-                                                 unsigned int& neval) {
++                                                 unsigned int& neval,
++                                                 float* dg = nullptr,
++                                                 unsigned int* dgN = nullptr,
++                                                 unsigned int dgCap = 0,
++                                                 unsigned int dgId = 0) {
+     constexpr float kPi = static_cast<float>(M_PI);
+     const float sDo = p.sigma[0][pb], sDz = p.sigma[1][pb], sDa = p.sigma[2][pb], sDs = p.sigma[3][pb],
+                 sJ = p.sigma[4][pb];
+@@ -369,8 +376,26 @@
+                                                           ro,
+                                                           alpaka::math::abs(acc, zi),
+                                                           alpaka::math::abs(acc, zo)};
++              float raw[dnn::otpulldnn::kInputFeatures];
++              for (unsigned int k = 0; k < dnn::otpulldnn::kInputFeatures; ++k)
++                raw[k] = in[k];
+               const float logit = otpulldnn::runInference(acc, in);
+               cost = 1.f / ((1.f + alpaka::math::exp(acc, logit)) * wpComp);
++              if (dg) {
++                const unsigned int kd = alpaka::atomicAdd(acc, dgN, 1u, alpaka::hierarchy::Blocks{});
++                if (kd < dgCap) {
++                  float* o = dg + kOTPullDiagPairF * kd;
++                  o[0] = static_cast<float>(dgId);
++                  o[1] = static_cast<float>(c);
++                  for (unsigned int k = 0; k < dnn::otpulldnn::kInputFeatures; ++k)
++                    o[2 + k] = raw[k];
++                  o[17] = logit;
++                  o[18] = chi2;
++                  o[19] = (alpaka::math::abs(acc, dO) <= sqc * sDo && alpaka::math::abs(acc, dZ) <= sqc * sDz) ? 1.f : 0.f;
++                  o[20] = static_cast<float>(pb);
++                  o[21] = cost;
++                }
++              }
+             }
+             if (cost < best) {
+               best = cost;
+@@ -400,7 +425,10 @@
+                                   int* bestCell,
+                                   float* bestChi2,
+                                   unsigned long long* cellBest,
+-                                  unsigned int* counters) const {
++                                  unsigned int* counters,
++                                  float* dg,
++                                  unsigned int* dgN,
++                                  unsigned int dgCap) const {
+       const float sqc = alpaka::math::sqrt(acc, p.chi2Cut);
+       // one thread per triplet slot; a slot counts if it is a filled triplet of a barrel layer 1-2 module
+       // (an unfilled slot fails the range test whatever its stale module index)
+@@ -481,7 +509,11 @@
+                    ntest,
+                    learned ? t3In : nullptr,
+                    wpComp,
+-                   neval);
++                   neval,
++                   dg,
++                   dgN,
++                   dgCap,
++                   t);
+         alpaka::atomicAdd(acc, &counters[1], ntest, alpaka::hierarchy::Blocks{});
+         if (learned)
+           alpaka::atomicAdd(acc, &counters[17], neval, alpaka::hierarchy::Blocks{});
+@@ -540,7 +572,10 @@
+                                   int* tcBestCell,
+                                   float* tcBestChi2,
+                                   unsigned long long* cellBest,
+-                                  unsigned int* counters) const {
++                                  unsigned int* counters,
++                                  float*,
++                                  unsigned int*,
++                                  unsigned int) const {
+       for (unsigned int r : cms::alpakatools::uniform_elements(acc, cands.nTrackCandidates())) {
+         tcBestCell[r] = -1;
+         const auto type = cands.trackCandidateType()[r];

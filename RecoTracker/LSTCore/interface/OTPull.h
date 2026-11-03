@@ -23,6 +23,17 @@ namespace lst {
     float attachHiPt;       // GeV (anchor-circle pT): above it the TC lookup uses attachChi2CutHi
     float attachChi2CutHi;  // chi2 cut of the TC lookup above attachHiPt
     int attachPLSVeto;      // 1: cells sharing a hit with the pLS of a pLS/pT3/pT5 TC are not offered to TCs
+    // decision of the T3 lookup: 0 the chi2 below chi2Cut inside windows of sqrt(chi2Cut) sigma; 1 the pair network
+    // (NeuralNetwork.h otpulldnn) on the pairs inside windows of scoreWindow sigma whose joint circle rms is below
+    // scoreJrmsCut sigma, a pair passing if its score clears the working point of its T3's (pT, |eta|) cell
+    int scoreMode;
+    float scoreWindow;
+    float scoreJrmsCut;
+    static constexpr int kNWpPt = 6;
+    static constexpr int kNWpEta = 3;
+    float wpPtEdges[kNWpPt - 1];    // GeV, T3 pT
+    float wpEtaEdges[kNWpEta - 1];  // T3 |eta|
+    float wp[kNWpPt][kNWpEta];      // working point (sigmoid of the network output) per cell
   };
 }  // namespace lst
 

@@ -14,6 +14,7 @@
 #include "RecoTracker/LSTCore/interface/OTPull.h"
 #include "RecoTracker/LSTCore/interface/OTPullCellsSoA.h"
 #include "RecoTracker/LSTCore/interface/LSTInputSoA.h"
+#include "NeuralNetwork.h"
 #include "TrackCandidate.h"
 #include "TripletAccessors.h"
 
@@ -206,8 +207,11 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     }
   };
 
-  // best cell (chi2 < best on entry) for the circle (cx, cy, rad) and r-z line of three OT anchors; skip: placed cells
-  // not offered (null = all)
+  // best cell (cost < best on entry) for the circle (cx, cy, rad) and r-z line of three OT anchors; skip: placed cells
+  // not offered (null = all). t3In null: the cost is the chi2, windows of sqc sigma. t3In = the T3 inputs of the pair
+  // network (log10 pT, first layer is barrel layer 2, outer module in the endcap, outer layer, |eta|): windows of
+  // scoreWindow sigma, the joint-rms prefilter, cost = (1 - score) / wpComp, below one iff the score clears the working
+  // point (the TC lookup's chi2 competes for the cells on the same scale below its cut)
   template <typename TAcc>
   ALPAKA_FN_ACC ALPAKA_FN_INLINE void otpullScan(TAcc const& acc,
                                                  const float* x,
@@ -226,7 +230,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                                  const uint8_t* skip,
                                                  float& best,
                                                  int& bc,
-                                                 unsigned int& ntest) {
+                                                 unsigned int& ntest,
+                                                 const float* t3In,
+                                                 float wpComp,
+                                                 unsigned int& neval) {
     constexpr float kPi = static_cast<float>(M_PI);
     const float sDo = p.sigma[0][pb], sDz = p.sigma[1][pb], sDa = p.sigma[2][pb], sDs = p.sigma[3][pb],
                 sJ = p.sigma[4][pb];
@@ -238,7 +245,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     // cos(alpha) = (r^2 + d^2 - R'^2) / (2 r d), r in [ra, rb), R' in [R - w, R + w]: only those bins (+-1) are
     // scanned, inside the same +-phiWindow bins as the plain scan, so the candidate set passing the cuts is unchanged.
     // double precision: d^2 - R'^2 cancels for large radii
-    const double wDo = sqc * sDo;
+    const float win = t3In ? p.scoreWindow : sqc;
+    const double wDo = win * sDo;
     const double dc = alpaka::math::sqrt(acc, double(cx) * cx + double(cy) * cy);
     const float phic = alpaka::math::atan2(acc, cy, cx);
     const double rlo = alpaka::math::max(acc, rad - wDo, 0.), rhi = rad + wDo;
@@ -290,11 +298,11 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
             const float* cc = cells + 6 * c;
             const float xi = cc[0], yi = cc[1], zi = cc[2], xo = cc[3], yo = cc[4], zo = cc[5];
             const float dO = alpaka::math::sqrt(acc, (xo - cx) * (xo - cx) + (yo - cy) * (yo - cy)) - rad;
-            if (alpaka::math::abs(acc, dO) > sqc * sDo)
+            if (alpaka::math::abs(acc, dO) > win * sDo)
               continue;
             const float ro = alpaka::math::sqrt(acc, xo * xo + yo * yo);
             const float dZ = zo - (z[0] + slope * (ro - rt[0]));
-            if (alpaka::math::abs(acc, dZ) > sqc * sDz)
+            if (alpaka::math::abs(acc, dZ) > win * sDz)
               continue;
             ++ntest;
             const float ri = alpaka::math::sqrt(acc, xi * xi + yi * yi);
@@ -341,8 +349,31 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
             const float jrms = static_cast<float>(alpaka::math::sqrt(acc, ss / 5));
             const float chi2 = (dO / sDo) * (dO / sDo) + (dZ / sDz) * (dZ / sDz) + (dA / sDa) * (dA / sDa) +
                                (dS / sDs) * (dS / sDs) + (jrms / sJ) * (jrms / sJ);
-            if (chi2 < best) {
-              best = chi2;
+            float cost = chi2;
+            if (t3In) {
+              if (jrms >= p.scoreJrmsCut * sJ)
+                continue;
+              ++neval;
+              float in[dnn::otpulldnn::kInputFeatures] = {dO / sDo,
+                                                          dZ / sDz,
+                                                          dA / sDa,
+                                                          dS / sDs,
+                                                          jrms / sJ,
+                                                          alpaka::math::log10(acc, 1.f + chi2),
+                                                          t3In[0],
+                                                          t3In[1],
+                                                          t3In[2],
+                                                          t3In[3],
+                                                          t3In[4],
+                                                          ri,
+                                                          ro,
+                                                          alpaka::math::abs(acc, zi),
+                                                          alpaka::math::abs(acc, zo)};
+              const float logit = otpulldnn::runInference(acc, in);
+              cost = 1.f / ((1.f + alpaka::math::exp(acc, logit)) * wpComp);
+            }
+            if (cost < best) {
+              best = cost;
               bc = static_cast<int>(c);
             }
           }
@@ -409,11 +440,51 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         int pb = 0;
         for (int i = 0; i < OTPullParams::kNPtBins - 1; ++i)
           pb += (pt >= p.ptEdges[i]);
-        float best = p.chi2Cut;
+        const bool learned = p.scoreMode == 1;
+        float t3In[5] = {0.f, 0.f, 0.f, 0.f, 0.f};
+        float wpComp = 1.f;
+        if (learned) {
+          const uint16_t lm0 = triplets.lowerModuleIndices()[t][0], lm2 = triplets.lowerModuleIndices()[t][2];
+          const float absEta = alpaka::math::abs(acc, alpaka::math::asinh(acc, slope));
+          t3In[0] = alpaka::math::log10(acc, pt);
+          t3In[1] = modules.layers()[lm0] == 2 ? 1.f : 0.f;
+          t3In[2] = modules.subdets()[lm2] == Endcap ? 1.f : 0.f;
+          t3In[3] = static_cast<float>(modules.layers()[lm2]);
+          t3In[4] = absEta;
+          int ip = 0, ie = 0;
+          for (int i = 0; i < OTPullParams::kNWpPt - 1; ++i)
+            ip += (pt >= p.wpPtEdges[i]);
+          for (int i = 0; i < OTPullParams::kNWpEta - 1; ++i)
+            ie += (absEta >= p.wpEtaEdges[i]);
+          wpComp = 1.f - p.wp[ip][ie];
+        }
+        float best = learned ? 1.f : p.chi2Cut;
         int bc = -1;
-        unsigned int ntest = 0;
-        otpullScan(acc, x, y, z, r, cx, cy, rad, slope, pb, p, sqc, cells, binStart, nullptr, best, bc, ntest);
+        unsigned int ntest = 0, neval = 0;
+        otpullScan(acc,
+                   x,
+                   y,
+                   z,
+                   r,
+                   cx,
+                   cy,
+                   rad,
+                   slope,
+                   pb,
+                   p,
+                   sqc,
+                   cells,
+                   binStart,
+                   nullptr,
+                   best,
+                   bc,
+                   ntest,
+                   learned ? t3In : nullptr,
+                   wpComp,
+                   neval);
         alpaka::atomicAdd(acc, &counters[1], ntest, alpaka::hierarchy::Blocks{});
+        if (learned)
+          alpaka::atomicAdd(acc, &counters[17], neval, alpaka::hierarchy::Blocks{});
         if (bc >= 0) {
           bestCell[t] = bc;
           bestChi2[t] = best;
@@ -509,8 +580,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
         float best = pt >= p.attachHiPt ? p.attachChi2CutHi : p.attachChi2Cut;
         const float sqc = alpaka::math::sqrt(acc, best);
         int bc = -1;
-        unsigned int ntest = 0;
-        otpullScan(acc, x, y, z, rt, cx, cy, rad, slope, pb, p, sqc, cells, binStart, skip, best, bc, ntest);
+        unsigned int ntest = 0, neval = 0;
+        otpullScan(
+            acc, x, y, z, rt, cx, cy, rad, slope, pb, p, sqc, cells, binStart, skip, best, bc, ntest, nullptr, 1.f, neval);
         alpaka::atomicAdd(acc, &counters[10], ntest, alpaka::hierarchy::Blocks{});
         if (bc >= 0) {
           tcBestCell[r] = bc;
