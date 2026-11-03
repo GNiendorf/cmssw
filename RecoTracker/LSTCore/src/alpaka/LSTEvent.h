@@ -187,6 +187,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     void setPixelObjectOptions(PixelObjectOptions const& opts) { pixelObjectOptions_ = opts; }
     void binOTCells();
     void pullOTCells();
+    void addTripletpLSFillHoles();
     void createPixelTriplets();
     void createQuintuplets();
     void pixelLineSegmentCleaning(bool no_pls_dupclean);

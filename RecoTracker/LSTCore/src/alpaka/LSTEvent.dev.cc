@@ -939,7 +939,7 @@ void LSTEvent::createTrackCandidates(bool no_pls_dupclean, bool tc_pls_triplets)
                       pixelSegmentsDC_->const_view(),
                       rangesDC_->const_view(),
                       nSurvivingTCs_dev.data(),
-                      tc_pls_triplets);
+                      tc_pls_triplets || pixelObjectOptions_.tripletpLSFillHoles);
 
   // the CA cells are read before the last wait of the event, so the menu can delete them right after this module
   binOTCells();
@@ -1214,6 +1214,41 @@ void LSTEvent::binOTCells() {
                       otpullNPixKey_);
   if (objectsStatistics_)
     memoryLiveMB_ -= scratchMB;
+}
+
+void LSTEvent::addTripletpLSFillHoles() {
+  unsigned int const nAllocated = trackCandidatesBaseDC_->const_view().metadata().size();
+  // open-addressing set of the pixel cluster keys held by the track candidates, sized to stay at most half full
+  uint32_t size = 2;
+  while (size < 2 * nAllocated * Params_TC::kPixelLayerSlots * Params_TC::kHitsPerLayer + 2)
+    size <<= 1;
+  auto keys_d = cms::alpakatools::make_device_buffer<uint32_t[]>(queue_, size);
+  alpaka::memset(queue_, keys_d, 0xff);
+  auto const workDiv = cms::alpakatools::make_workdiv<Acc1D>(max_blocks, 256);
+  alpaka::exec<Acc1D>(queue_,
+                      workDiv,
+                      FillHolesHashTCPixelKeys{},
+                      trackCandidatesBaseDC_->const_view(),
+                      lstInputDC_->const_view().hits(),
+                      lstInputDC_->const_view().hitsIT(),
+                      keys_d.data(),
+                      size - 1);
+  alpaka::exec<Acc1D>(queue_,
+                      workDiv,
+                      AddTripletpLSFillHoles{},
+                      nLowerModules_,
+                      trackCandidatesBaseDC_->view(),
+                      trackCandidatesExtendedDC_->view(),
+                      segmentsDC_->const_view().segmentsOccupancy(),
+                      lstInputDC_->const_view().pixelSeeds(),
+                      pixelSegmentsDC_->const_view(),
+                      lstInputDC_->const_view().hits(),
+                      lstInputDC_->const_view().hitsIT(),
+                      keys_d.data(),
+                      size - 1,
+                      nAllocated);
+  if (objectsStatistics_)
+    trackTransientMB(size * 4. / 1e6);
 }
 
 void LSTEvent::pullOTCells() {

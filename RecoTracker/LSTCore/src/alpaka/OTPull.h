@@ -745,6 +745,85 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     }
   };
 
+  // 3-hit pLS fill-holes rule: the pixel cluster keys held by every track candidate, a pLS hit (stored as a hit index)
+  // or a flagged cell hit (stored as its key), into an open-addressing set
+  struct FillHolesHashTCPixelKeys {
+    ALPAKA_FN_ACC void operator()(Acc1D const& acc,
+                                  TrackCandidatesBaseConst cands,
+                                  HitsBaseConst hits,
+                                  HitsITConst hitsIT,
+                                  uint32_t* keys,
+                                  uint32_t mask) const {
+      const unsigned int nHitsOT = hits.nHitsOT();
+      const unsigned int nHitsIT = hitsIT.metadata().size();
+      for (unsigned int r : cms::alpakatools::uniform_elements(acc, cands.nTrackCandidates())) {
+        for (int slot = 0; slot < Params_TC::kPixelLayerSlots; ++slot)
+          for (int hs = 0; hs < Params_TC::kHitsPerLayer; ++hs) {
+            const unsigned int e = cands.hitIndices()[r][slot][hs];
+            if (e == kTCEmptyHitIdx)
+              continue;
+            uint32_t key = kOTPullEmpty;
+            if (e & kOTPullPixFlag)
+              key = e & ~kOTPullPixFlag;
+            else if (e >= nHitsOT && e - nHitsOT < nHitsIT)
+              key = hitsIT.idxs()[e - nHitsOT];
+            if (key == kOTPullEmpty)
+              continue;
+            const uint32_t empty = kOTPullEmpty;
+            uint32_t slotH = otpullHashSlot(key, mask);
+            while (true) {
+              const uint32_t prev = alpaka::atomicCas(acc, &keys[slotH], empty, key, alpaka::hierarchy::Blocks{});
+              if (prev == empty || prev == key)
+                break;
+              slotH = (slotH + 1) & mask;
+            }
+          }
+      }
+    }
+  };
+
+  // 3-hit pLS fill-holes rule: a 3-hit pLS that is no duplicate and has no hit in the set becomes a pLS track candidate
+  struct AddTripletpLSFillHoles {
+    ALPAKA_FN_ACC void operator()(Acc1D const& acc,
+                                  uint16_t nLowerModules,
+                                  TrackCandidatesBase candsBase,
+                                  TrackCandidatesExtended candsExtended,
+                                  SegmentsOccupancyConst segmentsOccupancy,
+                                  PixelSeedsConst pixelSeeds,
+                                  PixelSegmentsConst pixelSegments,
+                                  HitsBaseConst hits,
+                                  HitsITConst hitsIT,
+                                  const uint32_t* keys,
+                                  uint32_t mask,
+                                  unsigned int nAllocated) const {
+      const unsigned int nHitsOT = hits.nHitsOT();
+      const unsigned int nHitsIT = hitsIT.metadata().size();
+      unsigned int nPixels = segmentsOccupancy.nSegments()[nLowerModules];
+      for (unsigned int i : cms::alpakatools::uniform_elements(acc, nPixels)) {
+        if (pixelSeeds.isQuad()[i] || pixelSegments.isDup()[i])
+          continue;
+        bool used = false;
+        for (int k = 0; k < Params_pLS::kHits && !used; ++k) {
+          const unsigned int ih = pixelSegments.pLSHitsIdxs()[i][k];
+          if (ih < nHitsOT || ih - nHitsOT >= nHitsIT)
+            continue;
+          const uint32_t key = hitsIT.idxs()[ih - nHitsOT];
+          used = key != kOTPullEmpty && otpullHashFind(keys, mask, key) >= 0;
+        }
+        if (used)
+          continue;
+        const unsigned int idx = alpaka::atomicAdd(acc, &candsBase.nTrackCandidates(), 1u, alpaka::hierarchy::Blocks{});
+        if (idx >= nAllocated) {
+          alpaka::atomicSub(acc, &candsBase.nTrackCandidates(), 1u, alpaka::hierarchy::Blocks{});
+          break;
+        }
+        alpaka::atomicAdd(acc, &candsExtended.nTrackCandidatespLS(), 1u, alpaka::hierarchy::Blocks{});
+        addpLSTrackCandidateToMemory(
+            candsBase, candsExtended, i, idx, pixelSegments.pLSHitsIdxs()[i], pixelSeeds.seedIdx()[i]);
+      }
+    }
+  };
+
 }  // namespace ALPAKA_ACCELERATOR_NAMESPACE::lst
 
 #endif

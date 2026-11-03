@@ -1214,9 +1214,41 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
                                                       hits,
                                                       params.minHitsPerNtuplet_,
                                                       nBarrelTriplets,
-                                                      params.maxBarrelTripletTuples_);
+                                                      params.maxBarrelTripletTuples_,
+                                                      params.tripletTuplesOuterDisks_);
             ALPAKA_ASSERT_ACC(stack.empty());
           }
+        }
+      }
+    };
+
+    // Count of the terminal 3-layer tuples the search will save through the 3-hit path (countTripletTuples): the
+    // starting cells of Kernel_find_ntuplets, each counted with CACell::countShortTuples.
+    template <typename TrackerTraits>
+    class Kernel_countShortTuples {
+    public:
+      using HitsMultiView = caStructures::HitsViewT<TrackerTraits>;
+
+      ALPAKA_FN_ACC void operator()(Acc1D const &acc,
+                                    HitsMultiView hh,
+                                    const ::reco::CAGraphSoAConstView &cc,
+                                    const ::reco::CANtupletCutsSoAConstView &ntupletCuts,
+                                    CellToCell const *__restrict__ cellNeighborsHisto,
+                                    CACell<TrackerTraits> const *__restrict__ cells,
+                                    uint32_t const *nCells,
+                                    bool outerDisks,
+                                    uint32_t *nShort) const {
+        for (auto idx : cms::alpakatools::uniform_elements(acc, (*nCells))) {
+          auto const &thisCell = cells[idx];
+          if (thisCell.isKilled() || cellNeighborsHisto->size(idx) == 0)
+            continue;
+          if (!cc[thisCell.layerPairId()].startingPair())
+            continue;
+          if (thisCell.inner_r(hh) > ntupletCuts[thisCell.innerLayer(cc)].startMaxInnerR())
+            continue;
+          auto const n = thisCell.countShortTuples(hh, ntupletCuts, cc, cells, cellNeighborsHisto, outerDisks);
+          if (n > 0)
+            alpaka::atomicAdd(acc, nShort, n, alpaka::hierarchy::Blocks{});
         }
       }
     };
@@ -2531,36 +2563,24 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     uint32_t outerHits =
         nHits - offsetBPIX2;  // the number of hits that may be used as outer hits for a cell (so not on bpix1)
 
-    // Sizes the per-track hit storage (hitContainer/hitToTuple). Same expression as the output
-    // trackHits SoA in CAHitNtupletGenerator::beginTuplesAsync, so the two capacities match.
-    uint32_t nHitsToTracks = caHitNtupletGenerator::nHitRowsForTuples(maxTuples, algoParams.avgHitsPerTrack_);
-
 #ifdef GPU_DEBUG
     std::cout << "Allocation for tuple building with: " << std::endl;
     std::cout << "- nHits          = " << nHits << std::endl;
     std::cout << "- outerHits      = " << outerHits << std::endl;
     std::cout << "- maxDoublets    = " << maxDoublets << std::endl;
     std::cout << "- maxTracks      = " << maxTuples << std::endl;
-    std::cout << "- nHitsToTracks  = " << nHitsToTracks << std::endl;
+    std::cout << "- nHitsToTracks  = "
+              << caHitNtupletGenerator::nHitRowsForTuples(maxTuples, algoParams.avgHitsPerTrack_) << std::endl;
 #endif
 
     // Hits -> Track
     // The handle and the per-hit offsets (key space) are always allocated here. The
     // storage holds one entry per hit-in-track: with delayAllocations_ it is sized from
     // the actual hits-in-tracks count in allocateAfterNtuplets (after launchKernels)
-    // Otherwise it is allocated here at the nHitsToTracks safety cap
+    // Otherwise it is allocated in allocateTuples at the nHitsToTracks safety cap
     device_hitToTuple_ = cms::alpakatools::make_device_buffer<GenericContainer>(queue);
     device_hitToTupleOffsets_ = cms::alpakatools::make_device_buffer<GenericContainerOffsets[]>(queue, nHits + 1);
-    if (!delay) {
-      device_hitToTupleStorage_ = cms::alpakatools::make_device_buffer<GenericContainerStorage[]>(queue, nHitsToTracks);
-      device_hitToTupleView_ = {device_hitToTuple_->data(),
-                                device_hitToTupleOffsets_->data(),
-                                device_hitToTupleStorage_->data(),
-                                nHits + 1,
-                                nHitsToTracks};
-
-      HitToTuple::template launchZero<Acc1D>(device_hitToTupleView_, queue);
-    }
+    nHits_ = nHits;
 
     // (Outer) Hits-> Cells
     // The storage holds exactly one entry per cell
@@ -2595,9 +2615,6 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     // This will hold where each layer starts in the hit soa
     device_layerStarts_ = cms::alpakatools::make_device_buffer<hindex_type[]>(queue, nLayers + 1);
 
-    // Scratch quality mirror used by the (order-independent) duplicate-removal kernels
-    device_qualityScratch_ = cms::alpakatools::make_device_buffer<int32_t[]>(queue, maxTuples);
-
     // Cell array. Allocated here, ahead of allocateAfterDoublets, because in the up-front allocation
     // mode it doubles as the arena that also carries the cell->track offsets (see the header).
     // With countDoubletsFirst the cells buffer is instead sized to the exact nCells in buildDoublets.
@@ -2623,38 +2640,11 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
       allocateAfterDoublets(maxDoublets, queue);
     }
 
-    // Track -> Hits
-    // - This is a OneToManyAssocSequential since each bin is filled
-    //   in one go: all the hits forming a track are pushed together.
-    device_hitContainer_ = cms::alpakatools::make_device_buffer<SequentialContainer>(queue);
-    device_hitContainerStorage_ =
-        cms::alpakatools::make_device_buffer<SequentialContainerStorage[]>(queue, nHitsToTracks);
-    device_hitContainerOffsets_ =
-        cms::alpakatools::make_device_buffer<SequentialContainerOffsets[]>(queue, maxTuples + 1);
-    device_hitContainerView_ = {device_hitContainer_->data(),
-                                device_hitContainerOffsets_->data(),
-                                device_hitContainerStorage_->data(),
-                                maxTuples + 1u,
-                                nHitsToTracks};
-
-    HitContainer::template launchZero<Acc1D>(device_hitContainerView_, queue);
     device_tupleClampBound_ = cms::alpakatools::make_device_buffer<uint32_t[]>(queue, 2u);
 
-    // No.Hits -> Track (track multiplicity)
-    device_tupleMultiplicity_ = cms::alpakatools::make_device_buffer<GenericContainer>(queue);
-    device_tupleMultiplicityStorage_ =
-        cms::alpakatools::make_device_buffer<GenericContainerStorage[]>(queue, maxTuples);
-    device_tupleMultiplicityOffsets_ =
-        cms::alpakatools::make_device_buffer<GenericContainerOffsets[]>(queue, TrackerTraits::maxHitsOnTrack + 2);
-    device_tupleMultiplicityView_ = {
-        device_tupleMultiplicity_->data(),
-        device_tupleMultiplicityOffsets_->data(),
-        device_tupleMultiplicityStorage_->data(),
-        // this has to be +2 instead of +1 because you want all values from 0 to maxHitsOnTrack to be valid keys
-        // (N+1 values) + the extra +1 for the Container definition
-        TrackerTraits::maxHitsOnTrack + 2u,
-        maxTuples};
-    TupleMultiplicity::template launchZero<Acc1D>(device_tupleMultiplicityView_, queue);
+    // the tuple-sized buffers: here, or after the 3-hit tuple count (allocateTuples)
+    if (!algoParams.countTripletTuples_)
+      allocateTuples(maxTuples, queue);
 
     // Structures and Counters Storage. device_simpleCells_ was allocated above, before
     // allocateAfterDoublets, so that it can carry the cell->track offsets in its tail.
@@ -2689,6 +2679,91 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     alpaka::wait(queue);
     std::cout << "Allocations for CAHitNtupletGeneratorKernels: done!" << std::endl;
 #endif
+  }
+
+  // The buffers sized by the tuple capacity: the hit->track storage (allocated here unless delayAllocations_ defers it
+  // to allocateAfterNtuplets), the quality scratch, the track->hit container and the track multiplicity.
+  template <typename TrackerTraits>
+  void CAHitNtupletGeneratorKernels<TrackerTraits>::allocateTuples(uint32_t maxTuples, Queue &queue) {
+    // Sizes the per-track hit storage (hitContainer/hitToTuple). Same expression as the output
+    // trackHits SoA in CAHitNtupletGenerator::beginTuplesAsync, so the two capacities match.
+    uint32_t const nHitsToTracks =
+        caHitNtupletGenerator::nHitRowsForTuples(maxTuples, m_params.algoParams_.avgHitsPerTrack_);
+    if (!m_params.algoParams_.delayAllocations_) {
+      device_hitToTupleStorage_ = cms::alpakatools::make_device_buffer<GenericContainerStorage[]>(queue, nHitsToTracks);
+      device_hitToTupleView_ = {device_hitToTuple_->data(),
+                                device_hitToTupleOffsets_->data(),
+                                device_hitToTupleStorage_->data(),
+                                nHits_ + 1,
+                                nHitsToTracks};
+
+      HitToTuple::template launchZero<Acc1D>(device_hitToTupleView_, queue);
+    }
+
+    // Scratch quality mirror used by the (order-independent) duplicate-removal kernels
+    device_qualityScratch_ = cms::alpakatools::make_device_buffer<int32_t[]>(queue, maxTuples);
+
+    // Track -> Hits
+    // - This is a OneToManyAssocSequential since each bin is filled
+    //   in one go: all the hits forming a track are pushed together.
+    device_hitContainer_ = cms::alpakatools::make_device_buffer<SequentialContainer>(queue);
+    device_hitContainerStorage_ =
+        cms::alpakatools::make_device_buffer<SequentialContainerStorage[]>(queue, nHitsToTracks);
+    device_hitContainerOffsets_ =
+        cms::alpakatools::make_device_buffer<SequentialContainerOffsets[]>(queue, maxTuples + 1);
+    device_hitContainerView_ = {device_hitContainer_->data(),
+                                device_hitContainerOffsets_->data(),
+                                device_hitContainerStorage_->data(),
+                                maxTuples + 1u,
+                                nHitsToTracks};
+
+    HitContainer::template launchZero<Acc1D>(device_hitContainerView_, queue);
+
+    // No.Hits -> Track (track multiplicity)
+    device_tupleMultiplicity_ = cms::alpakatools::make_device_buffer<GenericContainer>(queue);
+    device_tupleMultiplicityStorage_ =
+        cms::alpakatools::make_device_buffer<GenericContainerStorage[]>(queue, maxTuples);
+    device_tupleMultiplicityOffsets_ =
+        cms::alpakatools::make_device_buffer<GenericContainerOffsets[]>(queue, TrackerTraits::maxHitsOnTrack + 2);
+    device_tupleMultiplicityView_ = {
+        device_tupleMultiplicity_->data(),
+        device_tupleMultiplicityOffsets_->data(),
+        device_tupleMultiplicityStorage_->data(),
+        // this has to be +2 instead of +1 because you want all values from 0 to maxHitsOnTrack to be valid keys
+        // (N+1 values) + the extra +1 for the Container definition
+        TrackerTraits::maxHitsOnTrack + 2u,
+        maxTuples};
+    TupleMultiplicity::template launchZero<Acc1D>(device_tupleMultiplicityView_, queue);
+  }
+
+  // Count of the terminal 3-layer tuples the search will save (countTripletTuples), read back to the host to size the
+  // tuple storage. Needs the connected cells (connectCells).
+  template <typename TrackerTraits>
+  uint32_t CAHitNtupletGeneratorKernels<TrackerTraits>::countShortTuples(
+      const HitsMultiView &hh,
+      const ::reco::CAGraphSoAConstView &cc,
+      const ::reco::CANtupletCutsSoAConstView &ntupletCuts,
+      Queue &queue) {
+    using namespace caHitNtupletGeneratorKernels;
+    auto nShort_d = cms::alpakatools::make_device_buffer<uint32_t>(queue);
+    alpaka::memset(queue, nShort_d, 0);
+    const uint32_t blockSize = 64;
+    const uint32_t numberOfBlocks = cms::alpakatools::divide_up_by(this->launchCells_, blockSize);
+    alpaka::exec<Acc1D>(queue,
+                        cms::alpakatools::make_workdiv<Acc1D>(numberOfBlocks, blockSize),
+                        Kernel_countShortTuples<TrackerTraits>{},
+                        hh,
+                        cc,
+                        ntupletCuts,
+                        this->device_cellToNeighbors_->data(),
+                        this->device_simpleCells_->data(),
+                        this->device_nCells_->data(),
+                        this->m_params.algoParams_.tripletTuplesOuterDisks_,
+                        nShort_d.data());
+    auto nShort_h = cms::alpakatools::make_host_buffer<uint32_t>(queue);
+    alpaka::memcpy(queue, nShort_h, nShort_d);
+    alpaka::wait(queue);  // the count sizes the tuple storage, allocated by the host before the search
+    return *nShort_h.data();
   }
 
   template <typename TrackerTraits>
@@ -2969,25 +3044,20 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
 #endif
   }
 
+  // The cell connection (Kernel_connect and the cell->cell container) and the early fishbone: the first part of
+  // launchKernels, run on its own when the 3-hit tuples are counted before the tuple storage is allocated.
   template <typename TrackerTraits>
-  void CAHitNtupletGeneratorKernels<TrackerTraits>::launchKernels(const HitsMultiView &hh,
-                                                                  uint32_t offsetBPIX2,
-                                                                  uint16_t nLayers,
-                                                                  TkSoABlocksView &view,
-                                                                  const reco::CALayersSoAConstView &ll,
-                                                                  const reco::CAGraphSoAConstView &cc,
-                                                                  const reco::CATripletCutsSoAConstView &tripletCuts,
-                                                                  const reco::CANtupletCutsSoAConstView &ntupletCuts,
-                                                                  Queue &queue) {
+  void CAHitNtupletGeneratorKernels<TrackerTraits>::connectCells(const HitsMultiView &hh,
+                                                                 uint32_t offsetBPIX2,
+                                                                 const reco::CALayersSoAConstView &ll,
+                                                                 const reco::CAGraphSoAConstView &cc,
+                                                                 const reco::CATripletCutsSoAConstView &tripletCuts,
+                                                                 Queue &queue) {
     using namespace caPixelDoublets;
     using namespace caHitNtupletGeneratorKernels;
 
-    auto tracks_view = view.tracks();
-    auto tracks_hits_view = view.trackHits();
-
     uint32_t nhits = static_cast<uint32_t>(hh.size());
     auto const launchCells = this->launchCells_;
-    auto const maxTuples = tracks_view.metadata().size();
 #ifdef NTUPLE_DEBUG
     std::cout << "start tuple building. N hits " << nhits << std::endl;
     if (nhits < 2)
@@ -3152,9 +3222,36 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
 #endif
     }
 
-    blockSize = 64;
-    numberOfBlocks = cms::alpakatools::divide_up_by(launchCells, blockSize);
-    workDiv1D = cms::alpakatools::make_workdiv<Acc1D>(numberOfBlocks, blockSize);
+    cellsConnected_ = true;
+  }
+
+  template <typename TrackerTraits>
+  void CAHitNtupletGeneratorKernels<TrackerTraits>::launchKernels(const HitsMultiView &hh,
+                                                                  uint32_t offsetBPIX2,
+                                                                  uint16_t nLayers,
+                                                                  TkSoABlocksView &view,
+                                                                  const reco::CALayersSoAConstView &ll,
+                                                                  const reco::CAGraphSoAConstView &cc,
+                                                                  const reco::CATripletCutsSoAConstView &tripletCuts,
+                                                                  const reco::CANtupletCutsSoAConstView &ntupletCuts,
+                                                                  Queue &queue) {
+    using namespace caPixelDoublets;
+    using namespace caHitNtupletGeneratorKernels;
+
+    auto tracks_view = view.tracks();
+    auto tracks_hits_view = view.trackHits();
+
+    uint32_t nhits = static_cast<uint32_t>(hh.size());
+    auto const launchCells = this->launchCells_;
+    auto const maxTuples = tracks_view.metadata().size();
+
+    if (!cellsConnected_)
+      connectCells(hh, offsetBPIX2, ll, cc, tripletCuts, queue);
+
+    auto const threadsPerBlock = 1024;
+    uint32_t blockSize = 64;
+    auto numberOfBlocks = cms::alpakatools::divide_up_by(launchCells, blockSize);
+    auto workDiv1D = cms::alpakatools::make_workdiv<Acc1D>(numberOfBlocks, blockSize);
     alpaka::exec<Acc1D>(queue,
                         workDiv1D,
                         Kernel_find_ntuplets<TrackerTraits>{},
@@ -3184,7 +3281,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     // This pass fills the cell->TRACK edge list, so its grid is sized from avgTracksPerCell_.
     // The loop inside is a grid-stride uniform_elements over the true edge count, so the block
     // count is a throughput choice only and can never truncate work.
-    blocks = std::max<cms::alpakatools::Idx>(
+    auto const blocks = std::max<cms::alpakatools::Idx>(
         1u,
         cms::alpakatools::divide_up_by(std::lrint(launchCells * m_params.algoParams_.avgTracksPerCell_),
                                        threadsPerBlock));
