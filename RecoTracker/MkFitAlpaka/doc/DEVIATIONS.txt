@@ -98,3 +98,19 @@ DEV-12 Duplicate removal on the fitted tracks (OFF; MkFitAlpakaFitDeviceProducer
     simulated particle against the switch off: hltGeneral efficiency +0.01 +- 0.01 pp (ttbar) / +0.08 +- 0.02 pp (QCD);
     production radius 10-31.6 cm +0.20 +- 0.15 / +0.31 +- 0.12 pp; QCD pT > 50 GeV +0.46 +- 0.15 pp; duplicate rate
     +0.04 / +0.05 pp; QCD fake rate at pT 10-50 GeV -0.4 pp; about 1% more tracks enter the fit. GPU (L40) as CPU.
+DEV-13 Overlap hits on the first outer-tracker layers of pT3 / pT5 seeds (OFF by default; seedOverlapHits,
+       seedOverlapHitsMaxOTHits)
+  MkFitCore: the forward search starts after the seed's last hit, so the layers a seed already spans are never searched
+    and get no second-module (overlap) hit, which the building adds on every layer it searches itself. LST seeds carry
+    one hit per sensor layer. With the CA outer-tracker extension the pT5 seeds took the overlap pairs of the CA's
+    outer-tracker hits; without it these tracks are shorter.
+  Port: after the device seed fit, each seed with a pixel seed (pT3, pT5) walks the pixel seed's state over its first
+    seedOverlapHitsMaxOTHits outer-tracker hits (propagation and update with the inter-layer flags); on each such layer
+    with one seed hit, the hits on other modules are tested as the building tests a hit (selectHitIndicesV2 bins and
+    mini propagation with a phi tolerance from the chi2 cut, cluster size, chi2 under the dynamic cut, strip q
+    compatibility) and the best one enters the hit list in front of its seed hit. The seed state is unchanged.
+  Evidence (seedOverlapHitsMaxOTHits 2 on the extension-off menu, CPU, paired over files, 741 ttbar + 1100 QCD PU200
+    events = dev + a disjoint holdout): hits per track +0.173 / +0.174 (equal to the extension menu within 0.01), layers per
+    track unchanged, efficiency +0.013 +- 0.006 / +0.039 +- 0.010, fake and duplicate rates unchanged within errors; 97%
+    of the added hits belong to the track's particle (ClusterTPAssociation); the kernel takes 3.6 ms per ttbar event on
+    the serial backend (about 7% of the building module).

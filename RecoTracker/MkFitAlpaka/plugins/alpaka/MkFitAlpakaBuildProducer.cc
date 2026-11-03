@@ -185,7 +185,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
           statusToken_{produces()},
           lstSeedFit_{iConfig.getParameter<bool>("lstSeedFit")},
           dupSurvivorsOnly_{iConfig.getParameter<bool>("duplicateRemovalBySurvivorsOnly")},
-          dupSharedFraction_{iConfig.getParameter<double>("duplicateRemovalSharedFraction")} {
+          dupSharedFraction_{iConfig.getParameter<double>("duplicateRemovalSharedFraction")},
+          seedOverlapHits_{iConfig.getParameter<bool>("seedOverlapHits")},
+          seedOverlapHitsMaxOTHits_{iConfig.getParameter<int>("seedOverlapHitsMaxOTHits")} {
       if (auto const t = iConfig.getParameter<edm::InputTag>("deviceSeeds"); !t.label().empty()) {
         deviceSeedsToken_ = consumes(t);  // K1: the seed rows of MkFitAlpakaSeedHandoffK1 (device)
         k1Seeds_ = true;
@@ -197,6 +199,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
         pixStates_ = true;
         pixOfSeedToken_ = consumes(iConfig.getParameter<edm::InputTag>("pixelTrackOfSeed"));
       }
+      if (seedOverlapHits_ && !pixStates_)
+        throw cms::Exception("Configuration") << "MkFitAlpakaBuildProducer: seedOverlapHits needs pixelSeedStates";
       lstSeedCfg_.passes = iConfig.getParameter<int>("lstSeedFitPasses");
       lstSeedCfg_.errScale = iConfig.getParameter<double>("lstSeedFitErrScale");
       lstSeedCfg_.dropFailed = iConfig.getParameter<bool>("lstSeedFitDropFailed");
@@ -254,6 +258,13 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
           ->setComment("originPrior 3: a step is 'against the momentum' only below -tol cm");
       desc.add("lstSeedFitPixelFallback", true)
           ->setComment("originPrior 3 + dropFailed: failed pT3/pT5 seeds take their pixel seed (pixelSeedStates)");
+      desc.add("seedOverlapHits", false)
+          ->setComment(
+              "true: before the seed import, the outer-tracker seed layers with one seed hit of the seeds with a pixel "
+              "seed (pT3, pT5) get the best hit on another module of the layer (the building's overlap hit), tested "
+              "with the pixel seed's state walked over the seed hits (needs pixelSeedStates)");
+      desc.add("seedOverlapHitsMaxOTHits", -1)
+          ->setComment("seedOverlapHits on the first outer-tracker seed hits only, at most this many (< 0: all)");
       desc.add("lstSeedFitDropFailed", false)
           ->setComment("failed device seed fits removed (true; host seeds with placeholder states) or kept (false)");
       descriptions.addWithDefaultLabel(desc);
@@ -325,22 +336,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
         mkfitdev::lstseeds::fitLstSeeds(
             queue, esView, ev.hits(), nPixel, seedsD.view(), n, lstSeedCfg_, pix, cnt.data());
       }
-      mkfitdev::seeds::DeviceHitPositions hitPos;
-      hitPos.x = ev.hits().metadata().addressOf_x();
-      hitPos.y = ev.hits().metadata().addressOf_y();
-      hitPos.z = ev.hits().metadata().addressOf_z();
-      hitPos.layerHitBase = ev.layers().metadata().addressOf_hitBase();
-      BuildScratch eventScratch;  // per-event path (GPU backends): freed at the end of produce
-      const bool reuse = kCpuBackend;
-      BuildScratch& S = reuse ? *streamCache(sid) : eventScratch;
-      S.prepare(queue, n, hps, reuse);
-      mkfitdev::EngineBuffers& b = *S.b;
-      mkfitdev::EngineBuffers& work = *S.work;
-      mkfitdev::seeds::importSeeds(
-          queue, seedsD.view(), n, T.limits, b.seeds.view(), b.slots.view(), b.hots.view(), hps, hitPos);
-      b.nRowsDev = &seedsD.view().nKept();
-
-      // 2. event inputs of the engine kernels
+      // event inputs of the engine kernels (also read by the seed overlap-hit search)
       const auto hv = ev.hits();
       const ::mkfitdev::EngineHitInputs in{hv.metadata().addressOf_x(),
                                            hv.metadata().addressOf_y(),
@@ -355,6 +351,34 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
                                            nPixel,
                                            T.modules.data(),
                                            T.layers.data()};
+
+      if (seedOverlapHits_)  // DEVIATION DEV-12
+        mkfitdev::select::runSeedOverlapHits(queue,
+                                             seedsD.view(),
+                                             n,
+                                             esView,
+                                             ev.layers(),
+                                             ev.binnedHits(),
+                                             ev.bins(),
+                                             ev.hits(),
+                                             in,
+                                             T.ipFwd,
+                                             pix,
+                                             seedOverlapHitsMaxOTHits_);
+      mkfitdev::seeds::DeviceHitPositions hitPos;
+      hitPos.x = ev.hits().metadata().addressOf_x();
+      hitPos.y = ev.hits().metadata().addressOf_y();
+      hitPos.z = ev.hits().metadata().addressOf_z();
+      hitPos.layerHitBase = ev.layers().metadata().addressOf_hitBase();
+      BuildScratch eventScratch;  // per-event path (GPU backends): freed at the end of produce
+      const bool reuse = kCpuBackend;
+      BuildScratch& S = reuse ? *streamCache(sid) : eventScratch;
+      S.prepare(queue, n, hps, reuse);
+      mkfitdev::EngineBuffers& b = *S.b;
+      mkfitdev::EngineBuffers& work = *S.work;
+      mkfitdev::seeds::importSeeds(
+          queue, seedsD.view(), n, T.limits, b.seeds.view(), b.slots.view(), b.hots.view(), hps, hitPos);
+      b.nRowsDev = &seedsD.view().nKept();
 
       // 3. K2 (select) through the engine bridge; list capacity nSeeds * kMaxCandsPerSeed, count on the device
       auto& list = *S.list;
@@ -487,6 +511,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     const bool lstSeedFit_;
     const bool dupSurvivorsOnly_;
     const double dupSharedFraction_;
+    const bool seedOverlapHits_;
+    const int seedOverlapHitsMaxOTHits_;
     static constexpr bool kCpuBackend = std::is_same_v<Device, alpaka::DevCpu>;
     ::mkfitdev::lstseeds::LstSeedFitConfig lstSeedCfg_;
     device::EDGetToken<mkfitdev::TrackSoADeviceCollection> pixStatesToken_;

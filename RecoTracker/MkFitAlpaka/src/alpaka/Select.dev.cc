@@ -1,7 +1,8 @@
-// K2 (hit selection) of the clone engine: the one translation unit that instantiates the select kernels
-// (one TU per component). Kernel code in src/alpaka/select/.
+// K2 (hit selection) of the clone engine and the seed overlap-hit search: the one translation unit that instantiates
+// the select kernels (one TU per component). Kernel code in src/alpaka/select/.
 #include "RecoTracker/MkFitAlpaka/src/alpaka/select/SelectEntry.h"
 #include "RecoTracker/MkFitAlpaka/src/alpaka/select/SelectKernel.h"
+#include "RecoTracker/MkFitAlpaka/src/alpaka/select/SeedOverlapKernel.h"
 
 namespace ALPAKA_ACCELERATOR_NAMESPACE::mkfitdev::select {
 
@@ -71,6 +72,38 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::mkfitdev::select {
                         sels,
                         engProp,
                         engSel);
+  }
+
+  void runSeedOverlapHits(Queue& queue,
+                          ::mkfitdev::SeedSoAView seeds,
+                          int32_t n,
+                          ::mkfitdev::ESView const& es,
+                          ::mkfitdev::LayerSoA::ConstView eohLayers,
+                          ::mkfitdev::BinnedHitSoA::ConstView eohBinned,
+                          ::mkfitdev::BinSoA::ConstView eohBins,
+                          ::mkfitdev::HitSoA::ConstView hits,
+                          ::mkfitdev::EngineHitInputs const& in,
+                          ::mkfitdev::EngineIterParams const& ip,
+                          ::mkfitdev::lstseeds::PixelSeedRows const& pix,
+                          int maxOTHits) {
+    if (n <= 0)
+      return;
+    const auto workDiv =
+        cms::alpakatools::make_workdiv<Acc1D>(cms::alpakatools::divide_up_by(n, kSelectBlockSize), kSelectBlockSize);
+    alpaka::exec<Acc1D>(queue,
+                        workDiv,
+                        KernelSeedOverlapHits{},
+                        seeds,
+                        n,
+                        es,
+                        eohLayers,
+                        eohBinned,
+                        eohBins,
+                        hits,
+                        in,
+                        ip,
+                        pix,
+                        maxOTHits);
   }
 
 }  // namespace ALPAKA_ACCELERATOR_NAMESPACE::mkfitdev::select

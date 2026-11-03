@@ -9,6 +9,8 @@
 #include "RecoTracker/MkFitAlpaka/interface/es/ESView.h"
 #include "RecoTracker/MkFitAlpaka/interface/hits/EventOfHitsSoA.h"
 #include "RecoTracker/MkFitAlpaka/interface/hits/HitSoA.h"
+#include "RecoTracker/MkFitAlpaka/interface/seeds/SeedSoA.h"
+#include "RecoTracker/MkFitAlpaka/interface/seeds/alpaka/LstSeedFit.h"
 #include "RecoTracker/MkFitAlpaka/src/alpaka/select/SelectSoA.h"
 
 namespace ALPAKA_ACCELERATOR_NAMESPACE::mkfitdev::select {
@@ -34,6 +36,23 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::mkfitdev::select {
                      ::mkfitdev::CandPropState* engProp = nullptr,
                      ::mkfitdev::CandSelHits* engSel = nullptr,
                      bool groupScan = true);
+
+  // Overlap hits on the outer-tracker layers of the seed rows s < n with a pixel seed, added to their hit lists in place
+  // (src/alpaka/select/SeedOverlapKernel.h). `in` and `ip`: the clone engine's hit inputs and forward iteration
+  // parameters; pix: the pixel seed of each seed row (only seeds with one are searched, from its state); maxOTHits >= 0:
+  // only that many outer-tracker seed hits, from the innermost.
+  void runSeedOverlapHits(Queue& queue,
+                          ::mkfitdev::SeedSoAView seeds,
+                          int32_t n,
+                          ::mkfitdev::ESView const& es,
+                          ::mkfitdev::LayerSoA::ConstView eohLayers,
+                          ::mkfitdev::BinnedHitSoA::ConstView eohBinned,
+                          ::mkfitdev::BinSoA::ConstView eohBins,
+                          ::mkfitdev::HitSoA::ConstView hits,
+                          ::mkfitdev::EngineHitInputs const& in,
+                          ::mkfitdev::EngineIterParams const& ip,
+                          ::mkfitdev::lstseeds::PixelSeedRows const& pix,
+                          int maxOTHits);
 
 }  // namespace ALPAKA_ACCELERATOR_NAMESPACE::mkfitdev::select
 

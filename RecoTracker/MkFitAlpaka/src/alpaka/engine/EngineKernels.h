@@ -32,6 +32,7 @@
 #include "RecoTracker/MkFitAlpaka/interface/tracks/TrackSoA.h"
 #include "RecoTracker/MkFitAlpaka/src/alpaka/Packers.h"
 #include "RecoTracker/MkFitAlpaka/src/alpaka/cands/CandSeedOpsKernels.h"
+#include "RecoTracker/MkFitAlpaka/src/alpaka/engine/EngineHitChecks.h"
 #include "RecoTracker/MkFitAlpaka/src/alpaka/prop/KalmanUtilsMPlex.h"
 
 namespace ALPAKA_ACCELERATOR_NAMESPACE::mkfitdev {
@@ -95,8 +96,6 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::mkfitdev {
     pack::loadModulePlane<1>(in, layer, row, 0, nrm, dir, pnt);
   }
 
-  // MkFinder::getHitSelDynamicChi2Cut (MkFinder.cc:301-319) on the layer-propagated state (iP).
-  // MkFitCore (GCC, x86-64-v3) contracts v[c2_0]*max_invpt + v[c2_1]*theta into an fma; written explicitly.
   // Row i of a width-N Matriplex: K3a/K5 batch kNN rows per thread (8 on CPU backends as NN, 1 on GPU).
   template <idx_t N>
   ALPAKA_FN_HOST_ACC ALPAKA_FN_INLINE void loadCandStateSlot(
@@ -133,57 +132,6 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::mkfitdev {
       nrm.At(i, k, 0) = m.nrm[k];
       dir.At(i, k, 0) = m.dir[k];
       pnt.At(i, k, 0) = m.pnt[k];
-    }
-  }
-
-  template <typename TAcc>
-  ALPAKA_FN_ACC ALPAKA_FN_INLINE float engineDynamicChi2Cut(TAcc const& acc,
-                                                            const EngineLayerParams& lp,
-                                                            const CandPropState& ps,
-                                                            float minChi2Cut) {
-    const float invpt = ps.par[3];
-    const float theta = std::abs(ps.par[5] - Const::PIOver2);
-    const float max_invpt = alpaka::math::min(acc, invpt, 10.0f);
-    if (lp.hasC2) {
-      const float this_c2 = lp.c2[0] * (alpaka::math::fma(acc, lp.c2[1], max_invpt, lp.c2[2] * theta) + lp.c2[3]);
-      if (this_c2 > minChi2Cut)
-        return this_c2;
-    }
-    return minChi2Cut;
-  }
-
-  // isStripQCompatible (MkFinder.cc:1305-1330): pErr = layer-propagated errors (iP), (px, py, pz) =
-  // plane-propagated parameters, msErr/msPar of the hit. Sums of products written as the fma chains GCC forms.
-  template <typename TAcc>
-  ALPAKA_FN_ACC ALPAKA_FN_INLINE bool engineIsStripQCompatible(TAcc const& acc,
-                                                               bool isBarrel,
-                                                               const float* pErr,  // 21, lower triangle
-                                                               float px,
-                                                               float py,
-                                                               float pz,
-                                                               const MPlexHS<1>& msErr,
-                                                               const MPlexHV<1>& msPar) {
-    if (isBarrel) {
-      const float res = std::abs(msPar.constAt(0, 2, 0) - pz);
-      const float hitHL = alpaka::math::sqrt(acc, msErr.constAt(0, 2, 2) * 3.f);
-      const float qErr = alpaka::math::sqrt(acc, pErr[5]);  // (2,2)
-      return hitHL + alpaka::math::max(acc, 3.f * qErr, 0.5f) > res;
-    } else {
-      const float res0 = msPar.constAt(0, 0, 0) - px;
-      const float res1 = msPar.constAt(0, 1, 0) - py;
-      const float hitT2 = msErr.constAt(0, 0, 0) + msErr.constAt(0, 1, 1);
-      const float hitT2inv = 1.f / hitT2;
-      const float proj0 = msErr.constAt(0, 0, 0) * hitT2inv;
-      const float proj1 = msErr.constAt(0, 0, 1) * hitT2inv;
-      const float proj2 = msErr.constAt(0, 1, 1) * hitT2inv;
-      // pErr (0,0) = [0], (1,0) = [1], (1,1) = [2]
-      const float q =
-          alpaka::math::fma(acc, pErr[2], proj2, alpaka::math::fma(acc, pErr[0], proj0, 2.f * pErr[1] * proj1));
-      const float qErr = alpaka::math::sqrt(acc, std::abs(q));
-      const float rp = alpaka::math::fma(
-          acc, res1 * proj2, res1, alpaka::math::fma(acc, res0 * proj0, res0, 2.f * res1 * proj1 * res0));
-      const float resProj = alpaka::math::sqrt(acc, rp);
-      return alpaka::math::sqrt(acc, hitT2 * 3.f) + alpaka::math::max(acc, 3.f * qErr, 0.5f) > resProj;
     }
   }
 
