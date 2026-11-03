@@ -1,5 +1,5 @@
 # fit_wp.py: working points of the pixel-track classifier per (pT, |eta|) cell, separately for tuples with three hits
-# and with more, each cell the (1 - eps) quantile of the scores of its true prompt tuples (vxy < 1 cm) on the
+# and with more (optionally another eps for the last |eta| band of the latter), each cell the (1 - eps) quantile of the scores of its true prompt tuples (vxy < 1 cm) on the
 # training + validation events. A cell with fewer than --min-true true prompt tuples takes the cut of the next lower pT
 # cell of the same |eta| band (the lowest cell then takes the cut of all its hit class). Also fits the single
 # high-purity cut for the published subset (tuples with at least four hits): the lowest cut whose passing-fake
@@ -21,7 +21,8 @@ ap.add_argument('--train', required=True)
 ap.add_argument('--dump', required=True)
 ap.add_argument('--out', required=True)
 ap.add_argument('--eps4', type=float, default=0.99)
-ap.add_argument('--eps3', type=float, default=0.95)
+ap.add_argument('--eps3', type=float, default=0.99)
+ap.add_argument('--eps4-fwd', type=float, default=None, help='eps4 of the last |eta| band (default: eps4)')
 ap.add_argument('--pt-edges', default='2,5,10,25,50')
 ap.add_argument('--eta-edges', default='1.1,1.7,2.5')
 ap.add_argument('--min-true', type=int, default=30)
@@ -58,8 +59,9 @@ for cn, cm in classes.items():
             c = p_ * nE + e_
             m = allm & (cell == c)
             n[c] = int(m.sum())
+            e = args.eps4_fwd if (cn == '4hit' and args.eps4_fwd is not None and e_ == nE - 1) else eps[cn]
             if n[c] >= args.min_true:
-                t[c] = float(np.quantile(score[m], 1. - eps[cn]))
+                t[c] = float(np.quantile(score[m], 1. - e))
             else:
                 t[c] = t[(p_ - 1) * nE + e_] if p_ > 0 else pooled
     tables[cn], counts[cn] = t, n
@@ -123,7 +125,8 @@ def report(passm, hpm, m):
 
 
 res = {'ptEdges': PT, 'absEtaEdges': ETA, 'thresholds': tables['4hit'].tolist(), 'thresholdsThreeHit': tables['3hit'].tolist(),
-       'highPurityThreshold': hp, 'highPurityMinNumberOfHits': 4, 'eps4': args.eps4, 'eps3': args.eps3, 'hp_fake_target%': args.hp_fake,
+       'highPurityThreshold': hp, 'highPurityMinNumberOfHits': 4, 'eps4': args.eps4, 'eps4_fwd': args.eps4_fwd, 'eps3': args.eps3,
+       'hp_fake_target%': args.hp_fake,
        'counts_true_prompt': {k: v.tolist() for k, v in counts.items()},
        'test_new': report(sel, sel & ~three & (score >= hp), tst),
        'test_deployed': report(d['dep'][:, 0], d['dep'][:, 0] & ~three, tst),
