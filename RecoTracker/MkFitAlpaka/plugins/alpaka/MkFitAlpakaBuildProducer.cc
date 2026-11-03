@@ -352,7 +352,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
                                            T.modules.data(),
                                            T.layers.data()};
 
-      if (seedOverlapHits_)  // DEVIATION DEV-12
+      if (seedOverlapHits_)  // DEVIATION DEV-13
         mkfitdev::select::runSeedOverlapHits(queue,
                                              seedsD.view(),
                                              n,
