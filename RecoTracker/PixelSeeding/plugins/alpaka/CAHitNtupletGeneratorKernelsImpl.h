@@ -2644,7 +2644,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
 
     // the tuple-sized buffers: here, or after the 3-hit tuple count (allocateTuples)
     if (!algoParams.countTripletTuples_)
-      allocateTuples(maxTuples, queue);
+      allocateTuples(maxTuples, 0, queue);
 
     // Structures and Counters Storage. device_simpleCells_ was allocated above, before
     // allocateAfterDoublets, so that it can carry the cell->track offsets in its tail.
@@ -2682,9 +2682,12 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
   }
 
   // The buffers sized by the tuple capacity: the hit->track storage (allocated here unless delayAllocations_ defers it
-  // to allocateAfterNtuplets), the quality scratch, the track->hit container and the track multiplicity.
+  // to allocateAfterNtuplets), the quality scratch, the track->hit container and the track multiplicity. With
+  // delayAllocations_, the cell->track association is also grown here by the cells of the counted 3-hit tuples.
   template <typename TrackerTraits>
-  void CAHitNtupletGeneratorKernels<TrackerTraits>::allocateTuples(uint32_t maxTuples, Queue &queue) {
+  void CAHitNtupletGeneratorKernels<TrackerTraits>::allocateTuples(uint32_t maxTuples,
+                                                                   uint32_t nShortTuples,
+                                                                   Queue &queue) {
     // Sizes the per-track hit storage (hitContainer/hitToTuple). Same expression as the output
     // trackHits SoA in CAHitNtupletGenerator::beginTuplesAsync, so the two capacities match.
     uint32_t const nHitsToTracks =
@@ -2734,6 +2737,19 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
         TrackerTraits::maxHitsOnTrack + 2u,
         maxTuples};
     TupleMultiplicity::template launchZero<Acc1D>(device_tupleMultiplicityView_, queue);
+
+    // delayAllocations_ sized the cell->track association from the cell count and avgTracksPerCell_, a ratio set for
+    // the tuples above minHitsPerNtuplet; each counted 3-hit tuple adds exactly its two cells. Nothing has been
+    // written to it yet: the search fills it.
+    if (m_params.algoParams_.delayAllocations_ && nShortTuples > 0) {
+      tracksCellsN_ += 2u * nShortTuples;
+      device_cellToTracksStorage_ =
+          cms::alpakatools::make_device_buffer<GenericContainerStorage[]>(queue, tracksCellsN_);
+      device_cellToTracksView_.contentStorage = device_cellToTracksStorage_->data();
+      device_cellToTracksView_.contentSize = tracksCellsN_;
+      CellToTrack::template launchZero<Acc1D>(device_cellToTracksView_, queue);
+      deviceTracksCells_ = CAPairSoACollection(queue, tracksCellsN_);
+    }
   }
 
   // Count of the terminal 3-layer tuples the search will save (countTripletTuples), read back to the host to size the
