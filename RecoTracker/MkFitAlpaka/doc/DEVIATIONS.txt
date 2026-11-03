@@ -114,3 +114,19 @@ DEV-13 Overlap hits on the first outer-tracker layers of pT3 / pT5 seeds (OFF by
     track unchanged, efficiency +0.013 +- 0.006 / +0.039 +- 0.010, fake and duplicate rates unchanged within errors; 97%
     of the added hits belong to the track's particle (ClusterTPAssociation); the kernel takes 3.6 ms per ttbar event on
     the serial backend (about 7% of the building module).
+DEV-14 Same-particle removal of a pixel-seeded and a pixel-less fitted track without a shared hit (OFF;
+       MkFitAlpakaFitDeviceProducer duplicateRemovalSameParticleChi2, with duplicateRemoval)
+  MkFitCore: the duplicate cleaner compares tracks by shared hits. Two tracks of one particle with disjoint hits, a
+    pixel-only track (pLS seed) and an outer-tracker-only track (T5 seed), both stay. With the CA outer-tracker
+    extension the pixel tracks carried the particle's outer-tracker hits and the cleaner removed such pairs; without it
+    the LST T5 x pLS cross cleaning removes them before the building, but it also removes other particles' pLS.
+  Port: after DEV-12's cleaner, a second pass of the same cell-paired kernels over the kept tracks decides only pairs of
+    one pixel-seeded (>= 2 pixel hits) and one pixel-less track with no shared hit inside the cleaner's (phi, cot theta,
+    1/pT) pre-cuts: the pixel-less track's fitted state is propagated as a helix (helixAtRFromIterativeCCS and its
+    Jacobian) to the radius of the pixel track's innermost hit; the residual in (position transverse to the pixel
+    track, q/pT, phi, theta) is tested with both covariances plus the multiple scattering of the material-map layers
+    crossed in between; below the cut the track with fewer found hits is removed (survivors-only as DEV-12).
+  Cut: the fitted covariance of the pixel-less tracks is far smaller than their scatter (true pixel / pixel-less pairs
+    at the reference point: pulls of about ten in lambda, phi, dxy and dsz), so the chi2 quantile keeps few true pairs;
+    the cut is the smallest of a scan that brings the duplicate rate within the extension menu's.
+

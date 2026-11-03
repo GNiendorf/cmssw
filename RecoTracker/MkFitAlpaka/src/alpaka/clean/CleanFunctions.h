@@ -10,6 +10,7 @@
 
 #include <alpaka/alpaka.hpp>
 
+#include "RecoTracker/MkFitAlpaka/interface/es/MaterialView.h"
 #include "RecoTracker/MkFitAlpaka/interface/math/Config.h"
 #include "RecoTracker/MkFitAlpaka/interface/math/MathUtils.h"
 #include "RecoTracker/MkFitAlpaka/interface/tracks/TrackSoA.h"
@@ -38,6 +39,12 @@ namespace mkfitdev::clean {
     uint64_t pixelLayers[4] = {0, 0, 0, 0};
     // 1: a track is removed only by a winner that is itself kept (greedy in winner order); 0: by any winner (MkFitCore)
     int survivorsOnly = 0;
+    // > 0: the same-particle decision for pixel-seeded / pixel-less pairs without a shared hit
+    // (sameParticlePairDecision) with this chi2 cut, instead of the shared-hit decision; needs pixelPriority for the
+    // pixel test
+    float sameParticleChi2 = 0.f;
+    // material map of the multiple scattering between the two compared states (sameParticleChi2 > 0)
+    ::mkfitdev::MaterialView material{nullptr, nullptr, 0, 0, 0.f, 0.f, {}, {}};
   };
 
   inline DupCleanParams makeDupCleanParams(const float dc[4], const uint64_t* pixelPriorityLayers) {

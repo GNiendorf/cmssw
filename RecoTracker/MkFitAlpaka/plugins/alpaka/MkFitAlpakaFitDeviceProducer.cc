@@ -20,6 +20,9 @@
 // - duplicateRemoval: the iteration's duplicate cleaner runs here on the fitted tracks instead of in the building
 //   (which then runs with removeDuplicates false), so the hits the fit removed as outliers no longer count as shared:
 //   a track whose shared hits do not survive its own fit, or whose fit failed, cannot remove the track that holds them.
+// - duplicateRemovalSameParticleChi2 > 0 (with duplicateRemoval): a second pass on the kept tracks removes, of a
+//   pixel-seeded and a pixel-less track that share no hit (which the shared-hit cleaner cannot see), the shorter one
+//   when the pixel-less track propagated to the pixel track's innermost hit agrees with it within this chi2.
 // - the building's TrackSoA is read first, so the module takes over the building's queue (=
 //   the EventOfHits queue). eventOfHitsQueue set (the menu deletes the device EventOfHits right after this
 //   module, canDeleteEarly): if this module's queue is not the one the EventOfHits was allocated on, it waits for its
@@ -94,7 +97,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
           useCpe_{iConfig.getParameter<bool>("cpe")},
           dupClean_{iConfig.getParameter<bool>("duplicateRemoval")},
           dupSurvivorsOnly_{iConfig.getParameter<bool>("duplicateRemovalBySurvivorsOnly")},
-          dupSharedFraction_{iConfig.getParameter<double>("duplicateRemovalSharedFraction")} {
+          dupSharedFraction_{iConfig.getParameter<double>("duplicateRemovalSharedFraction")},
+          dupSameParticleChi2_{iConfig.getParameter<double>("duplicateRemovalSameParticleChi2")} {
       if (auto const q = iConfig.getParameter<edm::InputTag>("eventOfHitsQueue"); !q.label().empty()) {
         eohQueueToken_ = consumes(q);
         eohQueueCheck_ = true;
@@ -184,6 +188,11 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
       desc.add<double>("duplicateRemovalSharedFraction", -1.)
           ->setComment(
               "with duplicateRemoval: < 0 dc_fracSharedHits of the iteration config; else this shared-hit fraction");
+      desc.add<double>("duplicateRemovalSameParticleChi2", 0.)
+          ->setComment(
+              "with duplicateRemoval, > 0: then, of a pixel-seeded and a pixel-less fitted track without a shared hit, "
+              "the one with fewer found hits is removed when their states at the pixel track's innermost hit agree "
+              "within this chi2 (transverse position, q/pT, phi, theta: five degrees of freedom); 0 = off");
       desc.add<edm::InputTag>("eventOfHitsQueue", edm::InputTag(""))
           ->setComment(
               "the EventOfHits producer's 'queue' product, set when the device EventOfHits is deleted"
@@ -316,7 +325,18 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
         algo.flagDuplicates(queue, fitted.view(), p);
         mkfitdev::TrackSoADeviceCollection cleaned(queue, capacity);
         algo.removeDuplicates(queue, fitted.const_view(), cleaned.view());
-        iEvent.emplace(putToken_, std::move(cleaned));
+        if (dupSameParticleChi2_ > 0.) {
+          // 5. same-particle pass on the kept tracks (pixel-seeded vs pixel-less, no shared hit); 'fitted' is reused
+          // as its output
+          auto ps = ::mkfitdev::clean::makeDupCleanParams(dc, cfg.pixel_layer_mask);
+          ps.survivorsOnly = p.survivorsOnly;
+          ps.sameParticleChi2 = float(dupSameParticleChi2_);
+          ps.material = es.view().material;
+          algo.flagDuplicates(queue, cleaned.view(), ps);
+          algo.removeDuplicates(queue, cleaned.const_view(), fitted.view());
+          iEvent.emplace(putToken_, std::move(fitted));
+        } else
+          iEvent.emplace(putToken_, std::move(cleaned));
       } else
         iEvent.emplace(putToken_, std::move(out));
       iEvent.emplace(statusToken_, std::move(status));
@@ -414,6 +434,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     const bool dupClean_;
     const bool dupSurvivorsOnly_;
     const double dupSharedFraction_;
+    const double dupSameParticleChi2_;
     mkfitdev::fit::FitOptions fitOpt_;
     ::mkfitdev::handoff::CandCutSel sel_;
     edm::EDGetTokenT<edmNew::DetSetVector<SiPixelCluster>> clusterCollToken_;

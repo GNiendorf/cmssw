@@ -1,9 +1,11 @@
 <!-- Portable (Alpaka) mkFit: core library (src/*.cc host, src/alpaka/*.dev.cc per backend) -->
 <use name="alpaka"/>
 <use name="vdt_headers"/>
+<use name="eigen"/>
 <use name="FWCore/Utilities"/>
 <use name="FWCore/MessageLogger"/>
 <use name="DataFormats/Common"/>
+<use name="DataFormats/Math"/>
 <use name="DataFormats/Portable"/>
 <use name="DataFormats/SoATemplate"/>
 <use name="HeterogeneousCore/AlpakaInterface"/>
