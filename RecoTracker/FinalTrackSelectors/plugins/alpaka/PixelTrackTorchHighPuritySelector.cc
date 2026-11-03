@@ -257,9 +257,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
 
     // Warmup the model with dummy data
 
-    // Create temporary feature and score buffers used to warm up the model.
-    PixelTrackFeaturesOnDevice trackFeatures(queue, batchSize_, useHitFeatures_ ? batchSize_ : 0);
-    PixelTrackScoresOnDevice trackScoresOnDevice(queue, batchSize_);
+    // Create temporary feature and score buffers used to warm up the model, with the per-event capacity: the input
+    // tensors are views of the SoA columns, so the warm-up then sees the same shapes and strides as the events.
+    PixelTrackFeaturesOnDevice trackFeatures(queue, maxPreselectedTracks_, useHitFeatures_ ? maxPreselectedTracks_ : 0);
+    PixelTrackScoresOnDevice trackScoresOnDevice(queue, maxPreselectedTracks_);
     // a Metarecords keeps a reference to its view, so the views live in named locals
     auto fit_view = trackFeatures.view().fit();
     auto hit_view = trackFeatures.view().hit();
@@ -271,8 +272,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
       cms::torch::alpakatools::BatchedTensorCollection<Queue> dummy_inputs;
       cms::torch::alpakatools::BatchedTensorCollection<Queue> dummy_outputs;
 
-      // Same column list (and therefore the same tensor width) as the per-event inference below;
-      // the buffers hold batchSize_ rows, so this is a single batch.
+      // Same column list (and therefore the same tensor width) and batching as the per-event inference below.
       addTrackFeatures(dummy_inputs, batchSize_, fit_record, hit_record, useHitFeatures_);
 
       dummy_outputs.addBatched<PixelTrackScoresSoA>("track_scores", batchSize_, score_record.score());
