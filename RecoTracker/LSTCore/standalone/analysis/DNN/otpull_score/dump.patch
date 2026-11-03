@@ -762,7 +762,7 @@ diff -ruN a/RecoTracker/LSTCore/interface/OTPullDiagData.h b/RecoTracker/LSTCore
 diff -ruN a/RecoTracker/LSTCore/src/alpaka/LST.cc b/RecoTracker/LSTCore/src/alpaka/LST.cc
 --- a/RecoTracker/LSTCore/src/alpaka/LST.cc	2026-11-02 23:09:11.190875883 -0500
 +++ b/RecoTracker/LSTCore/src/alpaka/LST.cc	2026-11-02 23:19:37.160050499 -0500
-@@ -131,8 +131,11 @@
+@@ -131,9 +131,12 @@
  
    if (otpull && otpullCells)
      event.setOTPull(*otpull, *otpullCells, otpullPixKey, otpullNPixKey);
@@ -771,7 +771,8 @@ diff -ruN a/RecoTracker/LSTCore/src/alpaka/LST.cc b/RecoTracker/LSTCore/src/alpa
    event.pullOTCells();
 +  if (diag_)
 +    event.dumpDiag(diagData_);
-   if (verbose) {
+   if (pixelObjectOptions.tripletpLSFillHoles && !tc_pls_triplets)
+     event.addTripletpLSFillHoles();
      alpaka::wait(queue);  // event calls are asynchronous: wait before printing
      printf("# of TrackCandidates produced: %d\n", event.getNumberOfTrackCandidates());
 diff -ruN a/RecoTracker/LSTCore/src/alpaka/LSTEvent.dev.cc b/RecoTracker/LSTCore/src/alpaka/LSTEvent.dev.cc
@@ -971,12 +972,13 @@ diff -ruN a/RecoTracker/LSTCore/src/alpaka/LSTEvent.h b/RecoTracker/LSTCore/src/
  
      void trackAllocatedMB(double mb);
      void trackTransientMB(double mb);  // live (peak) accounting only, not added to the allocated total
-@@ -187,6 +198,8 @@
+@@ -187,7 +198,9 @@
      void setPixelObjectOptions(PixelObjectOptions const& opts) { pixelObjectOptions_ = opts; }
      void binOTCells();
      void pullOTCells();
 +    void setDiag(bool d) { diag_ = d; }
 +    void dumpDiag(::lst::OTPullDiagData& out);
+     void addTripletpLSFillHoles();
      void createPixelTriplets();
      void createQuintuplets();
      void pixelLineSegmentCleaning(bool no_pls_dupclean);
