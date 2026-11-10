@@ -494,7 +494,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     }
   };
 
-  constexpr uint32_t kOTPullPixFlag = 0x80000000u;  // TC pixel-slot entry holding a pixel cluster key (flagged)
+  constexpr uint32_t kOTPullPixFlag = ::lst::kOTPullPixFlag;
 
   // pixel cluster keys of the pLS hits stored in pLS / pT3 / pT5 track candidates (TC-attach veto)
   struct OTPullHashTCPixelHits {

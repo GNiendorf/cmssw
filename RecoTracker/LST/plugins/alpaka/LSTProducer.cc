@@ -110,18 +110,20 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
       // OT-seeded cell lookup: CA terminal cells (device product)
       lst::OTPullCellsDeviceCollection const* otpullCells = otpullOn_ ? &iEvent.get(otpullToken_) : nullptr;
 
-      // pixel cluster key of each CA pixel row, from the EventOfHits' key -> row list (empty list: no stub this event)
+      // pixel cluster key of each CA pixel row, from a key -> row list (empty list: no stub this event)
       std::optional<cms::alpakatools::device_buffer<Device, uint32_t[]>> pixKey_d;
       unsigned int nPixKey = 0;
       if (otpullOn_ && otpullParams_.attach) {
         auto const& rows = iEvent.get(srcRowsToken_);
         for (uint32_t const r : rows)
-          nPixKey = std::max<unsigned int>(nPixKey, r + 1);
+          if (r != lst::kOTPullNoRow)
+            nPixKey = std::max<unsigned int>(nPixKey, r + 1);
         if (nPixKey > 0) {
           auto h = cms::alpakatools::make_host_buffer<uint32_t[]>(iEvent.queue(), nPixKey);
           std::fill(h.data(), h.data() + nPixKey, 0xffffffffu);
           for (uint32_t k = 0; k < rows.size(); ++k)
-            h[rows[k]] = k;
+            if (rows[k] != lst::kOTPullNoRow)
+              h[rows[k]] = k;
           pixKey_d.emplace(cms::alpakatools::make_device_buffer<uint32_t[]>(iEvent.queue(), nPixKey));
           alpaka::memcpy(iEvent.queue(), *pixKey_d, h);
         }
@@ -210,7 +212,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
       desc.add<int>("otpullAttachPLSVeto", 0)
           ->setComment("1: cells sharing a hit with the pLS of a pLS/pT3/pT5 TC are not offered to TCs");
       desc.add<edm::InputTag>("otpullPixelSrcRows", edm::InputTag(""))
-          ->setComment("pixel cluster key -> CA pixel row (EventOfHits pixelSrcRows), needed with otpullAttach");
+          ->setComment(
+              "pixel cluster key -> CA pixel row (LSTPixelClusterRowsProducer or the EventOfHits pixelSrcRows), "
+              "needed with otpullAttach");
       descriptions.addWithDefaultLabel(desc);
     }
 

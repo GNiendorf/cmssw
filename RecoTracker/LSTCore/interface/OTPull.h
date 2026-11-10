@@ -1,7 +1,14 @@
 #ifndef RecoTracker_LSTCore_interface_OTPull_h
 #define RecoTracker_LSTCore_interface_OTPull_h
 
+#include <cstdint>
+
 namespace lst {
+  // TC pixel-slot entry holding a pixel cluster key (the otpull pixel stub of a T5 / T4 candidate)
+  constexpr uint32_t kOTPullPixFlag = 0x80000000u;
+  // pixel cluster key without a pixel rechit row (otpullPixelSrcRows)
+  constexpr uint32_t kOTPullNoRow = 0xffffffffu;
+
   // Decision constants of the OT-seeded cell lookup (plain data, passed to the kernels by value).
   struct OTPullParams {
     static constexpr int kNVars =
