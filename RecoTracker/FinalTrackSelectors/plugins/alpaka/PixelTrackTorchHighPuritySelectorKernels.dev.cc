@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <optional>
 #include <type_traits>
 #include <utility>
 
@@ -399,7 +400,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
                                   const int* selectedTrackHitOffsets,
                                   ::reco::TrackSoAView tracks_out,
                                   ::reco::TrackHitSoAView track_hits_out,
-                                  uint32_t* selectedCounts) const {
+                                  uint32_t* selectedCounts,
+                                  const int* selectedHighPurity) const {
       /**
             * Produces the final output TrackSoA by:
             *  - Copying selected tracks from the input TrackSoA
@@ -482,6 +484,12 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
           const auto& track = tracks[inputTrackIdx];
           tracks_out[i] = track;
           tracks_out[i].hitOffsets() = selectedTrackHitOffsets[i];
+          if (selectedHighPurity != nullptr) {
+            using Quality = ::pixelTrack::Quality;
+            const auto q = track.quality();
+            tracks_out[i].quality() =
+                selectedHighPurity[i] ? Quality::highPurity : (q > Quality::tight ? Quality::tight : q);
+          }
 
           //Access the hits associated to the track:
           auto hitBegin = (inputTrackIdx == 0) ? 0 : tracks[inputTrackIdx - 1].hitOffsets();
@@ -598,7 +606,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
                                   const PixelTrackScoresSoA::View trackScores,
                                   const int* trackHitCounts,
                                   const bool passThreeHitTracks,
-                                  int* selectionMask) const {
+                                  const ScoreWorkingPoints wp,
+                                  int* selectionMask,
+                                  int* highPurityMask) const {
       /**
             * Applies a DNN score threshold to preselected tracks.
             *
@@ -632,9 +642,29 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
         // in the promoting form (`score >= thr` -> keep), which leaves a non-finite score on the
         // rejecting side under -Ofast (-ffinite-math-only); the negated form is rewritable.
         const bool fitOk = forestFitFeaturesFinite(fitFeatures, i);
+        // working-point table: the cut of the track's (pT, |eta|) cell, from the three-hit block for three-hit tracks
+        if (wp.thresholds != nullptr) {
+          const float pt = fitFeatures[i].pt();
+          const float absEta = alpaka::math::abs(acc, fitFeatures[i].eta());
+          int ipt = 0;
+          for (int k = 0; k < wp.nPtEdges; ++k)
+            ipt += (pt >= wp.ptEdges[k]) ? 1 : 0;
+          int ieta = 0;
+          for (int k = 0; k < wp.nAbsEtaEdges; ++k)
+            ieta += (absEta >= wp.absEtaEdges[k]) ? 1 : 0;
+          const float* block =
+              (wp.thresholdsThreeHit != nullptr && trackHitCounts[i] == 3) ? wp.thresholdsThreeHit : wp.thresholds;
+          thr = block[ipt * (wp.nAbsEtaEdges + 1) + ieta];
+        }
         // with passThreeHitTracks, a 3-hit track is kept whatever its score
         const bool threeHitPass = passThreeHitTracks && trackHitCounts[i] == 3;
-        selectionMask[i] = (fitOk && (score >= thr || threeHitPass)) ? 1 : 0;
+        const bool selected = fitOk && (score >= thr || threeHitPass);
+        selectionMask[i] = selected ? 1 : 0;
+        if (highPurityMask != nullptr) {
+          highPurityMask[i] =
+              (selected && trackHitCounts[i] >= wp.highPurityMinNumberOfHits && score >= wp.highPurityThreshold) ? 1
+                                                                                                                 : 0;
+        }
       }
     }
   };
@@ -797,9 +827,18 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
                          const int* trackHitCounts,
                          int* selectedTrackIndices,
                          int* nSelectedTracks,
-                         int* selectedTrackHitOffsets) {
+                         int* selectedTrackHitOffsets,
+                         const ScoreWorkingPoints& wp,
+                         int* selectedHighPurity) {
     // Produce a selection mask out of the DNN scores
     auto selectionMask = cms::alpakatools::make_device_buffer<int[]>(queue, maxPreselectedTracks);
+    const bool markHighPurity = selectedHighPurity != nullptr && wp.highPurityThreshold >= 0.f;
+    // the high-purity flags, compacted with the same offsets as the track indices
+    std::optional<cms::alpakatools::device_buffer<Device, int[]>> highPurityMask;
+    if (markHighPurity) {
+      highPurityMask.emplace(cms::alpakatools::make_device_buffer<int[]>(queue, maxPreselectedTracks));
+      alpaka::memset(queue, *highPurityMask, 0);
+    }
     auto selectionOffsets = cms::alpakatools::make_device_buffer<int[]>(queue, maxPreselectedTracks);
     auto selectedTrackHitCounts = cms::alpakatools::make_device_buffer<int[]>(queue, maxPreselectedTracks);
 
@@ -825,7 +864,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
                         trackScores,
                         trackHitCounts,
                         passThreeHitTracks,
-                        selectionMask.data());
+                        wp,
+                        selectionMask.data(),
+                        markHighPurity ? highPurityMask->data() : nullptr);
 
     // Apply the selection mask to compact the preselectedTrackIndices array
     // and produce the final list of selected tracks,
@@ -847,6 +888,17 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
                         selectionOffsets.data(),
                         maxPreselectedTracks,
                         nSelectedTracks);
+
+    if (markHighPurity) {
+      alpaka::exec<Acc1D>(queue,
+                          workDivPrefixScan,
+                          FilterArray{},
+                          highPurityMask->data(),
+                          selectedHighPurity,
+                          selectionOffsets.data(),
+                          maxPreselectedTracks,
+                          nSelectedTracks);
+    }
 
     // Compact selectedTrackHitCounts using the same selection offsets to produce selectedTrackHitOffsets
     alpaka::exec<Acc1D>(queue,
@@ -873,7 +925,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
                                                       const int* selectedTrackIndices,
                                                       const int* nSelectedTracks,
                                                       const int* selectedTrackHitOffsets,
-                                                      uint32_t* selectedCounts) {
+                                                      uint32_t* selectedCounts,
+                                                      const int* selectedHighPurity) {
     reco::TracksSoACollection tracks_out(queue, int(maxPreselectedTracks), int(maxPreselectedTracks * avgHitsPerTrack));
 
     constexpr auto threadsPerBlock = 256u;
@@ -891,7 +944,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
                         selectedTrackHitOffsets,
                         tracks_out.view().tracks(),
                         tracks_out.view().trackHits(),
-                        selectedCounts);
+                        selectedCounts,
+                        selectedHighPurity);
 
     return tracks_out;
   }

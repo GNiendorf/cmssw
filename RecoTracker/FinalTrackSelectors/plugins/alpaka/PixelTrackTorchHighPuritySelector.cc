@@ -14,6 +14,10 @@
  * Torch inference: track tensor [maxPreselectedTracks, N_track_features], padding slots 0-filled.
  */
 
+#include <algorithm>
+#include <optional>
+#include <vector>
+
 #include "HeterogeneousCore/AlpakaInterface/interface/config.h"
 #include "HeterogeneousCore/AlpakaInterface/interface/workdivision.h"
 #include "HeterogeneousCore/AlpakaCore/interface/alpaka/EDGetToken.h"
@@ -158,8 +162,29 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     torch::AlpakaModel model_;
     const int batchSize_;
     const int warmupIterations_ = 3;
+    // score working points per (pT, |eta|) cell, separately for three-hit tracks, and the high-purity marking;
+    // the table is copied to the device once per stream and read there by the score filter
+    const std::vector<float> wpPtEdges_;
+    const std::vector<float> wpAbsEtaEdges_;
+    const std::vector<float> wpThresholds_;
+    const std::vector<float> wpThresholdsThreeHit_;
+    const double highPurityThreshold_;
+    const int highPurityMinNumberOfHits_;
+    std::optional<cms::alpakatools::device_buffer<Device, float[]>> wpDevice_;
     const device::EDPutToken<TkSoADevice> tokenTrackOut_;
   };
+
+  namespace {
+    std::vector<float> toFloats(std::vector<double> const& v) { return std::vector<float>(v.begin(), v.end()); }
+
+    void checkEdges(std::vector<float> const& edges, char const* name) {
+      for (size_t k = 1; k < edges.size(); ++k) {
+        if (!(edges[k] > edges[k - 1])) {
+          throw cms::Exception("PixelTrackConfiguration") << name << " must be strictly increasing";
+        }
+      }
+    }
+  }  // namespace
 
   PixelTrackTorchHighPuritySelector::PixelTrackTorchHighPuritySelector(const edm::ParameterSet& iConfig)
       : FixedQueueEDProducer(iConfig),
@@ -177,7 +202,24 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
         inferenceHalf_(iConfig.getParameter<bool>("inferenceHalf")),
         model_(iConfig.getParameter<edm::FileInPath>("model").fullPath()),
         batchSize_(iConfig.getParameter<int>("batchSize")),
+        wpPtEdges_(toFloats(iConfig.getParameter<std::vector<double>>("wpPtEdges"))),
+        wpAbsEtaEdges_(toFloats(iConfig.getParameter<std::vector<double>>("wpAbsEtaEdges"))),
+        wpThresholds_(toFloats(iConfig.getParameter<std::vector<double>>("wpThresholds"))),
+        wpThresholdsThreeHit_(toFloats(iConfig.getParameter<std::vector<double>>("wpThresholdsThreeHit"))),
+        highPurityThreshold_(iConfig.getParameter<double>("highPurityThreshold")),
+        highPurityMinNumberOfHits_(iConfig.getParameter<int>("highPurityMinNumberOfHits")),
         tokenTrackOut_(produces()) {
+    checkEdges(wpPtEdges_, "wpPtEdges");
+    checkEdges(wpAbsEtaEdges_, "wpAbsEtaEdges");
+    const size_t nCells = (wpPtEdges_.size() + 1) * (wpAbsEtaEdges_.size() + 1);
+    if (!wpThresholds_.empty() && wpThresholds_.size() != nCells) {
+      throw cms::Exception("PixelTrackConfiguration")
+          << "wpThresholds has " << wpThresholds_.size() << " entries, the (pT, |eta|) table needs " << nCells;
+    }
+    if (!wpThresholdsThreeHit_.empty() && (wpThresholds_.empty() || wpThresholdsThreeHit_.size() != nCells)) {
+      throw cms::Exception("PixelTrackConfiguration")
+          << "wpThresholdsThreeHit needs wpThresholds and the same number of entries (" << nCells << ")";
+    }
     if (useHitFeatures_) {
       pixelHitsToken_ = consumes(iConfig.getParameter<edm::InputTag>("pixelRecHitSrc"));
       vectorHitsToken_ = consumes(iConfig.getParameter<edm::InputTag>("vectorHitsSrc"));
@@ -200,11 +242,25 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
   }
 
   void PixelTrackTorchHighPuritySelector::beginStream(edm::StreamID /*sid*/, Queue queue) {
+    // The working-point table goes to the device once: edges, then the cut block, then the three-hit block
+    if (!wpThresholds_.empty()) {
+      std::vector<float> packed(wpPtEdges_);
+      packed.insert(packed.end(), wpAbsEtaEdges_.begin(), wpAbsEtaEdges_.end());
+      packed.insert(packed.end(), wpThresholds_.begin(), wpThresholds_.end());
+      packed.insert(packed.end(), wpThresholdsThreeHit_.begin(), wpThresholdsThreeHit_.end());
+      auto host = cms::alpakatools::make_host_buffer<float[]>(queue, packed.size());
+      std::copy(packed.begin(), packed.end(), host.data());
+      wpDevice_.emplace(cms::alpakatools::make_device_buffer<float[]>(queue, packed.size()));
+      alpaka::memcpy(queue, *wpDevice_, host);
+      alpaka::wait(queue);
+    }
+
     // Warmup the model with dummy data
 
-    // Create temporary feature and score buffers used to warm up the model.
-    PixelTrackFeaturesOnDevice trackFeatures(queue, batchSize_, useHitFeatures_ ? batchSize_ : 0);
-    PixelTrackScoresOnDevice trackScoresOnDevice(queue, batchSize_);
+    // Create temporary feature and score buffers used to warm up the model, with the per-event capacity: the input
+    // tensors are views of the SoA columns, so the warm-up then sees the same shapes and strides as the events.
+    PixelTrackFeaturesOnDevice trackFeatures(queue, maxPreselectedTracks_, useHitFeatures_ ? maxPreselectedTracks_ : 0);
+    PixelTrackScoresOnDevice trackScoresOnDevice(queue, maxPreselectedTracks_);
     // a Metarecords keeps a reference to its view, so the views live in named locals
     auto fit_view = trackFeatures.view().fit();
     auto hit_view = trackFeatures.view().hit();
@@ -216,8 +272,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
       cms::torch::alpakatools::BatchedTensorCollection<Queue> dummy_inputs;
       cms::torch::alpakatools::BatchedTensorCollection<Queue> dummy_outputs;
 
-      // Same column list (and therefore the same tensor width) as the per-event inference below;
-      // the buffers hold batchSize_ rows, so this is a single batch.
+      // Same column list (and therefore the same tensor width) and batching as the per-event inference below.
       addTrackFeatures(dummy_inputs, batchSize_, fit_record, hit_record, useHitFeatures_);
 
       dummy_outputs.addBatched<PixelTrackScoresSoA>("track_scores", batchSize_, score_record.score());
@@ -330,7 +385,25 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
 
     model_.forward(queue, inputs, outputs, inferenceDtype());
 
-    // 4. Score-based filtering
+    // 4. Score-based filtering, with the working-point table and the high-purity marking when configured
+    ScoreWorkingPoints wp;
+    if (wpDevice_) {
+      const float* base = wpDevice_->data();
+      wp.nPtEdges = wpPtEdges_.size();
+      wp.nAbsEtaEdges = wpAbsEtaEdges_.size();
+      wp.ptEdges = base;
+      wp.absEtaEdges = base + wp.nPtEdges;
+      wp.thresholds = wp.absEtaEdges + wp.nAbsEtaEdges;
+      if (!wpThresholdsThreeHit_.empty())
+        wp.thresholdsThreeHit = wp.thresholds + wpThresholds_.size();
+    }
+    wp.highPurityThreshold = highPurityThreshold_;
+    wp.highPurityMinNumberOfHits = highPurityMinNumberOfHits_;
+    std::optional<cms::alpakatools::device_buffer<Device, int[]>> d_selectedHighPurity;
+    if (highPurityThreshold_ >= 0.)
+      d_selectedHighPurity.emplace(cms::alpakatools::make_device_buffer<int[]>(queue, maxPreselectedTracks_));
+    int* selectedHighPurity = d_selectedHighPurity ? d_selectedHighPurity->data() : nullptr;
+
     launchScoreFilter(queue,
                       maxPreselectedTracks_,
                       scoreThreshold_,
@@ -344,7 +417,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
                       alpaka::getPtrNative(d_trackHitCounts),
                       alpaka::getPtrNative(d_selectedTrackIndices),
                       alpaka::getPtrNative(d_nSelectedTracks),
-                      alpaka::getPtrNative(d_selectedTrackHitOffsets));
+                      alpaka::getPtrNative(d_selectedTrackHitOffsets),
+                      wp,
+                      selectedHighPurity);
 
     auto tracks_out = launchProduceOutputTracks(queue,
                                                 maxPreselectedTracks_,
@@ -353,7 +428,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
                                                 tracks.trackHits(),
                                                 alpaka::getPtrNative(d_selectedTrackIndices),
                                                 alpaka::getPtrNative(d_nSelectedTracks),
-                                                alpaka::getPtrNative(d_selectedTrackHitOffsets));
+                                                alpaka::getPtrNative(d_selectedTrackHitOffsets),
+                                                nullptr,
+                                                selectedHighPurity);
     iEvent.emplace(tokenTrackOut_, std::move(tracks_out));
   }
 
@@ -384,6 +461,18 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     // inferenceHalf = false keeps the model in fp32, required for a tree model whose int index buffers
     // must not be cast to half; true selects the fp16 path used by the MLP models.
     desc.add<bool>("inferenceHalf", true);
+    // Working points per (pT, |eta|) cell: the bin of a value is the number of edges at or below it; the cut block
+    // is row-major in pT. wpThresholdsThreeHit (same layout) holds the cuts of three-hit tracks. An empty
+    // wpThresholds keeps the single scoreThreshold.
+    desc.add<std::vector<double>>("wpPtEdges", {});
+    desc.add<std::vector<double>>("wpAbsEtaEdges", {});
+    desc.add<std::vector<double>>("wpThresholds", {});
+    desc.add<std::vector<double>>("wpThresholdsThreeHit", {});
+    // highPurityThreshold >= 0: the selected tracks with at least highPurityMinNumberOfHits hits and a score at or
+    // above it get quality highPurity, the other selected tracks at most tight; a negative value leaves the CA
+    // qualities as they are.
+    desc.add<double>("highPurityThreshold", -1.0);
+    desc.add<int>("highPurityMinNumberOfHits", 4);
     descriptions.addWithDefaultLabel(desc);
   }
 }  // namespace ALPAKA_ACCELERATOR_NAMESPACE
