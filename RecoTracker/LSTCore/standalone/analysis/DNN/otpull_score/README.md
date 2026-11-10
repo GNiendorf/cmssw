@@ -102,3 +102,22 @@ python3 make_rows.py parity.npz parity.root && python3 parity_otpull.py parity.n
   0.5 / 0.7 / 0.5 (provisional), and v1 0.6 / 0.8 / 0.6 (chosen) and 0.5 / 0.8 / 0.5 (barrel efficiency loss).
 * C++ parity of v1: the dump build's logits vs `OTPullNeuralNetworkWeights.h` in numpy (`parity_otpull.py`), see the
   lane report.
+
+## Production record: weights v2 (2026-11-03), the weights in `OTPullNeuralNetworkWeights.h`
+
+Retrained on-policy on the integrated candidate (branch itaca-290-extoff-v2): the T3s and cells that reach the network
+change with the candidate's pixel tracks (forward skip-pair subset, disk triplets, counted 3-hit storage, classifier v2),
+so v1's recipe was rerun unchanged with `run_chain.sh`; v1 above is history.
+
+* Dump binary: branch itaca-290-extoff-v2 at 682b631cd9b (C++ as 0b936edaa18) + `dump.patch`, CMSSW_20_1_X_2026-11-02-1100,
+  CPU serial; arm = the candidate menu with classifier v2 (`production/v2/dump_arm_cpu.py`, policy
+  `../pixel_track_torch/cfg/policy_cand.py`).
+* Training caches: the same 10 ttbar + 6 QCD files as v1 (1000 + 300 events), `production/v2/dump_provenance.txt`.
+* Command: `OTP_DUMP_AREA=<area + dump.patch> OTP_ARM=<candidate menu> OTP_TAG=v2 OTP_Q=0.5/0.8/0.5,0.6/0.8/0.6,0.7/0.8/0.7,0.6/0.9/0.6 run_chain.sh all`
+  (defaults otherwise: 120 epochs, QCD share 0.25, false keep 0.25).
+* Training (`production/v2/train_v2.log`): best epoch 76, validation worst-sample AUC 0.99467; test AUC ttbar 0.99587,
+  QCD 0.99678. Export: max |header - model| logit 1.4e-5.
+* Working points (`production/v2/otpull_v2_wp.{json,txt}`): v1's MTV-chosen rule q 0.6 / 0.8 / 0.6,
+  `production/v2/wp_selected.py` (`OTPULL_WP_V2`); offline on the ttbar test split 23.0 true / 7.7 false objects per event
+  against 11.8 / 6.6 for the chi2 decision (QCD 24.3 / 8.0 against 12.9 / 7.1).
+
