@@ -120,4 +120,9 @@ so v1's recipe was rerun unchanged with `run_chain.sh`; v1 above is history.
 * Working points (`production/v2/otpull_v2_wp.{json,txt}`): v1's MTV-chosen rule q 0.6 / 0.8 / 0.6,
   `production/v2/wp_selected.py` (`OTPULL_WP_V2`); offline on the ttbar test split 23.0 true / 7.7 false objects per event
   against 11.8 / 6.6 for the chi2 decision (QCD 24.3 / 8.0 against 12.9 / 7.1).
+* C++ parity of v2 (README step 4, dump build of this branch at 23f6aabf3a6 + `dump.patch`, 10 events of QCD cache
+  8cc1c5f7): max |score difference| 2.7e-6, max |model (float64) - C++| logit 1.2e-5: PARITY OK.
+* The dumps ran with the T5 x pLS cross cleaning off (as the extension-off prototype menu); the integrated candidate
+  keeps it on (`customizeCandidate(..., t5CleanspLS=True)`). The cleaning only removes pure-pLS candidates, which hold no
+  OT triplet, so the pairs that reach the network are expected to be nearly the same; not re-dumped.
 

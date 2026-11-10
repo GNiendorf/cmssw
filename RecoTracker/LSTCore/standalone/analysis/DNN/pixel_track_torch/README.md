@@ -110,7 +110,8 @@ the same working-point rule; `pixel_track_classifier_noOT.pt` is the v2 model an
 
 - Policy: the candidate menu, `cfg/policy_cand.py` `customizeCandidate` (= `customizeOP` with the forward skip pairs
   d3-d5, d5-d7, d6-d8, d7-d9 kept, the 3-hit tuple options, the LST / mkFit options of the candidate; the dumps ran with
-  the v1 classifier deployed, which the dump's cut-off settings replace).
+  the v1 classifier deployed, which the dump's cut-off settings replace, and with t5CleanspLS False, an LST setting that
+  does not reach the pixel tuples).
   Dump binary: branch itaca-290-extoff-v2 at 682b631cd9b (C++ as 0b936edaa18), IB CMSSW_20_1_X_2026-11-02-1100, CPU serial.
 - Samples: the same caches as v1 (`samples/train_{ttbar,qcd}.lfn`, 1000 ttbar + 300 QCD events, all events of each file),
   same event split (train 603 + 182, validation 199 + 59, test 198 + 59). 4.35M training rows. Largest preselected count
