@@ -25,6 +25,7 @@ This directory holds everything needed to remake the model from the deployed cha
 | `train.py` | training (recipe below) |
 | `export.py` | TorchScript export, standardisation folded into the first layer, offline score check |
 | `fit_wp.py` | per-(pT, |eta|) working points and the high-purity cut |
+| `wp_rows.py` | a working-point json with the pixel-vertex subset's high-purity rows and re-fitted three-hit cells |
 | `parity.py` | C++ parity: in-menu decisions of the shipped settings against the offline decisions |
 | `scripts/run_all.sh` | the whole chain in one command |
 
@@ -132,3 +133,28 @@ the same working-point rule; `pixel_track_classifier_noOT.pt` is the v2 model an
 To deploy: `exec(open('cfg/deploy_block.py').read()); pttDeploy(process,
 'RecoTracker/FinalTrackSelectors/data/PixelTrackTorchHighPuritySelector/pixel_track_classifier_noOT.pt',
 'shipped/v2/wp_eps4_0.99_fwd0.995_eps3_0.99.json')` after the CA policy, before the early-deletion customisation.
+
+## Pixel-vertex subset rows and barrel three-hit cells (2026-11-03, lane itaca_extoff/w3/h4)
+
+The v2 subset (passing tuples with at least four hits) left the ttbar signal vertex first in 91% of the events against
+96% for the extension menu (same events). Two reasons on the v2 test split: the subset has no three-hit tuple (barrel
+|eta| 0.9-1.5 signal-TP efficiency 81% against 92% at |eta| < 0.9), and its tuples above 10 GeV are 28% fake
+(23-62% by pT row), which pushes pileup vertices up in the sum-pT^2 ordering. `wp_rows.py` writes the rows into the
+json; `cfg/deploy_block.py` sets them (`highPurityThresholds`, `highPurityThresholdsThreeHit`) and lowers the subset's
+hit cut to three when a three-hit row exists. The selector's defaults leave the subset as before.
+
+    python3 wp_rows.py --base shipped/v2/wp_eps4_0.99_fwd0.995_eps3_0.99.json --hp4-rows 0,0,0.5,0.8,0.8,0.8 --hp3 0.4 \
+        --train <retrain>/train --dump <retrain>/dump --out shipped/v2/wp_eps4_0.99_fwd0.995_eps3_0.99_pv.json
+    (and with --eps3-cells 0:0=0.80,1:0=0.80 for ..._pv_b80.json)
+
+- Rows: four or more hits, 0.5 at 5-10 GeV and 0.8 above 10 GeV (subset fake above 10 GeV 28% -> 2%, 94% of the true
+  tuples kept); three-hit tuples at or above 0.4 enter the subset (+104 per ttbar event, 49% of them fake; subset fake
+  0.9% -> 3.5%, the extension menu's pixel tracks are at 3.2-3.3% in MTV). The three-hit cut is the middle of the
+  end-to-end scan 0.5 / 0.4 / 0.3: 0.5 leaves the vertex efficiency 1.0 below the extension menu, 0.3 raises the vertex
+  fake rate above it and lowers the signal-vertex tagging.
+- End to end (hltMultiPVValidation, the same 1099 ttbar events dev + holdout, every event processed), extension menu /
+  v2 subset / rows: signal vertex first 96.2 / 91.1 / 96.1%; vertex efficiency 83.9 / 82.4 / 83.5%; vertex fake 1.91 /
+  1.67 / 1.78%; z RMS 410 / 403 / 408 um.
+- The barrel three-hit cells (pT < 2 and 2-5 GeV, |eta| < 1.1; `_b80`) are the eps3 = 0.80 quantile of the true prompt
+  three-hit scores (fit_wp.py's rule) instead of 0.99; they cut the three-hit pLS fill-holes candidates, the source of
+  about half of the barrel low-pT fake rise. Its end-to-end result is in the lane report.

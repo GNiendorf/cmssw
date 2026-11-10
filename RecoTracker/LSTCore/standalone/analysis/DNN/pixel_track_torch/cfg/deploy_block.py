@@ -4,7 +4,8 @@
 #   tables for tuples with more than three hits and with three hits (no blanket three-hit pass), and the high-purity
 #   marking of the published subset; the preselection cap stays the menu's (the model runs over the whole cap, so a
 #   larger cap costs inference time; the dumps record the largest preselected count per event);
-# - hltPhase2PixelTracksHighPurity (quality highPurity, so at least four hits and the high-purity cut) is made from the
+# - hltPhase2PixelTracksHighPurity (quality highPurity: at least four hits and the high-purity cut, or the per-(pT, |eta|)
+#   high-purity rows of the json and its three-hit row when present, see wp_rows.py) is made from the
 #   same SoA, and the pixel vertices read it; LST and the seed hand-off keep every passing tuple;
 # - the validation gets the subset as one more track collection (hltTrackValidator only).
 import json
@@ -28,13 +29,19 @@ def pttDeploy(process, model, wp_json, highPurityThreshold=None, verbose=True):
         m.wpThresholdsThreeHit = cms.vdouble(*wp['thresholdsThreeHit'])
         m.highPurityThreshold = cms.double(hpThr)
         m.highPurityMinNumberOfHits = cms.int32(wp.get('highPurityMinNumberOfHits', 4))
+        # optional per-(pT, |eta|) high-purity rows (wp_rows.py): four or more hits, and three-hit tuples
+        if 'highPurityThresholds' in wp:
+            m.highPurityThresholds = cms.vdouble(*wp['highPurityThresholds'])
+        if 'highPurityThresholdsThreeHit' in wp:
+            m.highPurityThresholdsThreeHit = cms.vdouble(*wp['highPurityThresholdsThreeHit'])
         done.append('%s model %s presel cap %d hp %.3f' % (lab, model.split('/')[-1], m.maxPreselectedTracks.value(), hpThr))
     for lab in ('hltPhase2PixelTracks', 'hltPhase2PixelTracksSerialSync'):
         if not hasattr(process, lab):
             continue
         conv = getattr(process, lab)
         sub = lab.replace('hltPhase2PixelTracks', 'hltPhase2PixelTracksHighPurity')
-        setattr(process, sub, conv.clone(minQuality='highPurity', minNumberOfHits=wp.get('highPurityMinNumberOfHits', 4)))
+        minHits = 3 if 'highPurityThresholdsThreeHit' in wp else wp.get('highPurityMinNumberOfHits', 4)
+        setattr(process, sub, conv.clone(minQuality='highPurity', minNumberOfHits=minHits))
         vtx = 'hltPhase2PixelVertices' + ('SerialSync' if 'SerialSync' in lab else '')
         if hasattr(process, vtx):
             getattr(process, vtx).TrackCollection = sub

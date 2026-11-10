@@ -5,7 +5,8 @@
 # On top of customizeOP (policy_op.py):
 #   CA   : forward skip pairs d3-d5, d5-d7, d6-d8, d7-d9 kept (51 pixel pairs); 3-layer tuples with disk outer layers
 #          (tripletTuplesOuterDisks); 3-hit storage sized from a count (countTripletTuples; tuple cap 40960 + the count)
-#   Torch: the classifier, its per-(pT, |eta|) tables and the high-purity subset for the pixel vertices (pttDeploy)
+#   Torch: the classifier, its per-(pT, |eta|) tables and the high-purity subset for the pixel vertices (pttDeploy; a
+#          json from wp_rows.py adds the subset's per-pT rows and three-hit row, e.g. shipped/v2/..._pv.json)
 #   LST  : 3-hit pLS fill-holes candidates (tripletpLSFillHoles); the otpull pair network (customizeOtpullScore); the
 #          T5 x pLS cross cleaning off (t5CleanspLS False, as customizeOP): its duplicates are removed after the fit
 #          instead (sameParticleChi2); True = the extension menu's rule: less efficiency, fewer duplicates
