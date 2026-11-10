@@ -1,0 +1,16 @@
+<use name="CommonTools/UtilAlgos"/>
+<use name="DataFormats/Common"/>
+<use name="DataFormats/Portable"/>
+<use name="DataFormats/SiPixelDetId"/>
+<use name="DataFormats/TrackSoA"/>
+<use name="DataFormats/TrackReco"/>
+<use name="DataFormats/TrackerCommon"/>
+<use name="DataFormats/TrackerRecHit2D"/>
+<use name="FWCore/Framework"/>
+<use name="FWCore/ParameterSet"/>
+<use name="FWCore/ServiceRegistry"/>
+<use name="FWCore/Utilities"/>
+<use name="Geometry/Records"/>
+<use name="eigen"/>
+<use name="root"/>
+<flags EDM_PLUGIN="1"/>
