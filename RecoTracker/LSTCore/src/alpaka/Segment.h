@@ -16,8 +16,6 @@
 #include "RecoTracker/LSTCore/interface/EndcapGeometry.h"
 #include "RecoTracker/LSTCore/interface/ObjectRangesSoA.h"
 
-#include "NeuralNetwork.h"
-
 namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
 
   ALPAKA_FN_ACC ALPAKA_FN_INLINE bool isTighterTiltedModules_seg(ModulesConst modules, unsigned int moduleIndex) {
@@ -304,23 +302,6 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     pixelSegments.circleCenterX()[pixelSegmentArrayIndex] = candidateCenterXs[bestIndex];
     pixelSegments.circleCenterY()[pixelSegmentArrayIndex] = candidateCenterYs[bestIndex];
     pixelSegments.circleRadius()[pixelSegmentArrayIndex] = circleRadius;
-
-    float plsEmbed[Params_pLS::kEmbed];
-    plsembdnn::runEmbed(acc,
-                        pixelSeeds.eta()[pixelSegmentArrayIndex],
-                        pixelSeeds.etaErr()[pixelSegmentArrayIndex],
-                        pixelSeeds.phi()[pixelSegmentArrayIndex],
-                        pixelSegments.circleCenterX()[pixelSegmentArrayIndex],
-                        pixelSegments.circleCenterY()[pixelSegmentArrayIndex],
-                        pixelSegments.circleRadius()[pixelSegmentArrayIndex],
-                        pixelSeeds.ptIn()[pixelSegmentArrayIndex],
-                        pixelSeeds.ptErr()[pixelSegmentArrayIndex],
-                        static_cast<bool>(pixelSeeds.isQuad()[pixelSegmentArrayIndex]),
-                        plsEmbed);
-
-    CMS_UNROLL_LOOP for (unsigned k = 0; k < Params_pLS::kEmbed; ++k) {
-      pixelSegments.plsEmbed()[pixelSegmentArrayIndex][k] = plsEmbed[k];
-    }
   }
 
   // When LooseOnly=true, returns after the pre-check (used by counting kernel).
