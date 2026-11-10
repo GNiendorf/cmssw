@@ -14,8 +14,9 @@
 #          overlap hits on the first two outer-tracker layers of pT3 / pT5 seeds (seedOverlapHits); with
 #          sameParticleChi2 > 0 the fit's same-particle pass for pixel-seeded / pixel-less tracks without a shared hit
 #          (duplicateRemovalSameParticleChi2). CAND_SAME_PARTICLE_CHI2 is not a chi2 quantile: the pixel-less tracks'
-#          fitted covariance is far below their scatter, so the cut is the smallest scanned value that brings the
-#          duplicate rate within the allowance over the extension menu's (lane itaca_extoff/w3/h1)
+#          fitted covariance is far below their scatter, so the cut comes from a scan (lane itaca_extoff/w3/h1): the
+#          value that brings the duplicate rate below the extension menu's at a small efficiency cost against the
+#          smallest value within the allowance (lane itaca_extoff/w3/integrate, dev + holdout)
 #   Memory (memory=True, candidateMemory): the CA buffers sized from the doublet and 3-hit tuple counts
 #          (useExactAllocations); the CA tracks deleted after the Torch selector (which then waits for its device work)
 #          and the otpull cells after LST, through process.options.canDeleteEarly. No physics change.
@@ -31,7 +32,7 @@ CAND_PTT_MODEL = 'RecoTracker/FinalTrackSelectors/data/PixelTrackTorchHighPurity
 CAND_MAX_TUPLES = 40960
 CAND_TORCH_MAX_TRACKS = 262144
 CAND_OVERLAP_OT_HITS = 2
-CAND_SAME_PARTICLE_CHI2 = 200.
+CAND_SAME_PARTICLE_CHI2 = 400.
 # product type names (friendly class names) of the CA tracks and of the otpull cells: CUDA, ROCm, host
 _CAND_TRACKS_TYPES = ('alpakaDevCudaRt128falserecoTrackBlocksLayoutvoidPortableDeviceCollectionedmDeviceProduct',
                       'alpakaDevHipRt128falserecoTrackBlocksLayoutvoidPortableDeviceCollectionedmDeviceProduct',
