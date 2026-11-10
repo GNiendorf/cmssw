@@ -1,4 +1,4 @@
-# policy_op.py (copy of lane itaca_extoff/port op_block.py, plus keepForwardSkipPairs): OP arm = PIX (base lane cfg/pix_only.py) + the earlier prototype's CA, Torch,
+# policy_op.py (copy of lane itaca_extoff/port op_block.py, plus keepForwardSkipPairs: all, none or a subset): OP arm = PIX (base lane cfg/pix_only.py) + the earlier prototype's CA, Torch,
 # LST and mkFit settings (Cfinal2 = d73c2adaf82 + e620e6ec7a2 on old #290), ported to branch itaca-290-extoff.
 # Exec'd at the end of a 75e33(_timing) config built with --procModifiers trackingMkFitFit,trackingMkFitAlpaka, then call
 #   customizeOP(process)
@@ -34,12 +34,19 @@ _OP_OTPULL_SIGMA = [0.1408, 0.0652, 0.0432, 0.0505, 0.0510,
 _OP_PER_PAIR = ('skipsLayers', 'phiCuts', 'minInner', 'maxInner', 'minOuter', 'maxOuter', 'maxDR', 'minDZ', 'maxDZ', 'ptCuts')
 
 
-def _op_drop_forward_skip_pairs(m):
+def _op_forward_skip_label(p):
+    # TFPX disk d -> disk d + 2: CA layers (3 + d, 5 + d) on the positive side, (15 + d, 17 + d) on the negative side
+    return 'd%d-d%d' % ((p[0] - 3, p[1] - 3) if p[0] < 16 else (p[0] - 15, p[1] - 15))
+
+
+def _op_drop_forward_skip_pairs(m, keep=()):
     g = m.geometry
     pg = list(g.pairGraph)
     pairs = [(pg[2 * i], pg[2 * i + 1]) for i in range(len(pg) // 2)]
     sk = list(g.skipsLayers)
-    drop = [i for i, p in enumerate(pairs) if sk[i] and 4 <= p[0] < 28]
+    fwd = [i for i, p in enumerate(pairs) if sk[i] and 4 <= p[0] < 28]
+    assert len(fwd) == 14, [pairs[i] for i in fwd]
+    drop = [i for i in fwd if _op_forward_skip_label(pairs[i]) not in keep]
     starting = list(g.startingPairs)
     assert not any(i in starting for i in drop), 'a forward skip pair is a starting pair'
     kept = [i for i in range(len(pairs)) if i not in drop]
@@ -54,17 +61,19 @@ def _op_drop_forward_skip_pairs(m):
 
 
 def customizeOP(process, budget=_OP_BUDGET, keepForwardSkipPairs=False):
-    """keepForwardSkipPairs: keep the menu's forward skip pairs (all pixel pairs of PIX, F1's likely outcome)"""
+    """keepForwardSkipPairs: True keeps the menu's 14 forward skip pairs (all pixel pairs of PIX), False drops them, a
+    tuple of labels 'dA-dB' (TFPX disk A -> disk B, both sides) keeps that subset"""
     customizePixelTracksPixelOnly(process)
     done = []
     ca_labels = [l for l in _OP_CA if hasattr(process, l)]
     for lab in ca_labels:
         m = getattr(process, lab)
-        if keepForwardSkipPairs:
+        if keepForwardSkipPairs is True:
             dropped, npairs = [], len(m.geometry.pairGraph) // 2
         else:
-            dropped, npairs = _op_drop_forward_skip_pairs(m)
-            assert len(dropped) == 14, dropped
+            keep = tuple(keepForwardSkipPairs) if keepForwardSkipPairs else ()
+            dropped, npairs = _op_drop_forward_skip_pairs(m, keep)
+            assert len(dropped) == 14 - 2 * len(keep), dropped
         m.trackQualityCuts.maxChi2TripletsOrQuadruplets = 5.0
         m.trackQualityCuts.maxChi2Quintuplets = 5.0
         m.maxNumberOfDoublets = _OP_MAXD
