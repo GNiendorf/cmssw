@@ -1,0 +1,10 @@
+{
+ "rows": 890542,
+ "agree": 0.9999977541766699,
+ "disagree": 2,
+ "disagree_offline_pass": 2,
+ "disagree_cpp_pass": 0,
+ "max_margin_of_disagreements": 1.1920928955078125e-07,
+ "pass_fraction_cpp": 0.7324000440181373,
+ "pass_fraction_offline": 0.7324022898414674
+}

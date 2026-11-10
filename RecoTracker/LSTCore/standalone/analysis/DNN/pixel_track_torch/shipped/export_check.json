@@ -1,0 +1,7 @@
+{
+ "out": "/mnt/data1/gsn27/here/CMSSW_17_0_0_pre2/src/RecoTracker/LSTCore/standalone/mem_ref/lanes/itaca_extoff/w2/f3/final/model/pixel_track_classifier_noOT.pt",
+ "rows": 500000,
+ "max_abs_diff": 2.2649765014648438e-06,
+ "mean_abs_diff": 5.622785437253697e-08,
+ "decision_agreement_at_0.5": 1.0
+}
