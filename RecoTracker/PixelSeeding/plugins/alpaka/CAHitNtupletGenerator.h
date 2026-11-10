@@ -7,6 +7,7 @@
 #include <memory>
 
 #include "DataFormats/Common/interface/RefProdVector.h"
+#include "RecoTracker/LSTCore/interface/alpaka/OTPullCellsDeviceCollection.h"
 #include "DataFormats/SiPixelDetId/interface/PixelSubdetector.h"
 #include "DataFormats/TrackSoA/interface/TrackDefinitions.h"
 #include "DataFormats/TrackSoA/interface/alpaka/TracksSoACollection.h"
@@ -92,6 +93,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
       uint32_t maxDoublets = 0;
       float bfield = 0.f;
       bool built = false;  // false = early-out (too few hits): tracks holds the empty collection
+      // OT-seeded lookup export: pinned host copy of the terminal-cell count, enqueued in beginTuplesAsync
+      std::optional<cms::alpakatools::host_buffer<uint32_t>> otpullCountHost;
     };
 
     PendingTuples beginTuplesAsync(HitsInput const& hits,
@@ -99,12 +102,15 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
                                    float bfield,
                                    uint32_t maxDoublets,
                                    uint32_t maxTuples,
-                                   Queue& queue) const;
+                                   Queue& queue,
+                                   bool otpullExport = false) const;
 
+    // otpullCells (optional): filled with the OT-seeded lookup export when beginTuplesAsync marked it
     TkSoADevice finishTuplesAsync(PendingTuples&& pending,
                                   HitsInput const& hits,
                                   CAGeometryOnDevice const& params_d,
-                                  Queue& queue) const;
+                                  Queue& queue,
+                                  std::optional<lst::OTPullCellsDeviceCollection>* otpullCells = nullptr) const;
 
     // Always-on overflow surfacing, independent of doStats_: the capacity guards in the build
     // kernels truncate silently, so without this a shortfall leaves no trace in production.

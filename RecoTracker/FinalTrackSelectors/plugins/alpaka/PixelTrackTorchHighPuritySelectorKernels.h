@@ -49,6 +49,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
                          const double scoreThreshold,
                          const double scoreThresholdLowDxy,
                          const double dxyRampKnee,
+                         const bool passThreeHitTracks,
                          const PixelTrackFitFeaturesConstView fitFeatures,
                          const PixelTrackScoresSoA::View trackScores,
                          const int* preselectedTrackIndices,
