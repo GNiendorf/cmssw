@@ -60,7 +60,7 @@ to `src/LocalVal/` and built (`scram b`), a grid proxy for the streaming (X509_U
 ```
 export PTT_AREA=<area> PTT_MENU=<full-menu CPU config with the CA policy and VALIDATION, e.g. op57_cpu.py>
 export PTT_LFN_TTBAR=$PWD/samples/train_ttbar.lfn PTT_LFN_QCD=$PWD/samples/train_qcd.lfn
-export PTT_EPS4=0.99 PTT_EPS3=0.99 PTT_DEVICE=cuda
+export PTT_EPS4=0.99 PTT_EPS4_FWD=0.995 PTT_EPS3=0.99 PTT_DEVICE=cuda
 scripts/run_all.sh <workdir>          # cache -> dumps -> train -> export -> fit_wp -> install -> parity
 ```
 
@@ -84,16 +84,22 @@ keepForwardSkipPairs=True)`), CPU serial dumps.
   or more 0.99828), QCD 0.99636 (0.9205, 0.99813). Tuples with four or more hits by pT: 0-2 GeV 0.9981, 2-5 0.9989,
   5-10 0.9976, 10-30 0.9964, 30-100 0.9957, above 100 0.9927. `shipped/train_summary.json`.
 - Export: TorchScript vs the training model, max |score difference| 2.3e-6 (`shipped/export_check.json`).
-- Working point (chosen by the MTV scan below): eps4 0.99, eps3 0.99, `shipped/wp_eps4_0.99_eps3_0.99.json`. The
-  high-purity cut fits to 0 there: the selected tuples with four or more hits are already at 1.2% fake offline.
+- Working point (chosen by the MTV scan below): eps4 0.99 with 0.995 in the |eta| >= 2.5 band, eps3 0.99,
+  `shipped/wp_eps4_0.99_fwd0.995_eps3_0.99.json` (`fit_wp.py --eps4 0.99 --eps4-fwd 0.995 --eps3 0.99`). The strict
+  fallback is eps4 0.99 everywhere, `shipped/wp_eps4_0.99_eps3_0.99.json`. The high-purity cut fits to 0 in both: the
+  selected tuples with four or more hits are already at 1.2-1.6% fake offline.
 - C++ parity (`shipped/parity.json`): in-menu decisions of the shipped model and tables against the offline decisions on
   300 cache events (890,542 tuples): agreement 0.9999978; the 2 differing tuples are within 1.2e-7 of their cut.
 - MTV (dev, CPU serial, 332 ttbar / 500 QCD events), against the same CA with the earlier classifier (OPfs):
   hltGeneral efficiency +0.124 +- 0.037 / +0.016 +- 0.022, fake rate -0.096 / -0.097, duplicates +0.007 / +0.005;
   pixel-track fake rate 27.9 -> 20.9% / 26.9 -> 20.1%; the high-purity subset (1697 / 1716 tracks per event) at
-  1.46% / 1.52% fake (the extension menu's pixel tracks: 3.20% / 3.29%). eps4 0.995 gave +0.087 / +0.025 more
-  efficiency for +0.13 / +0.14 more fake, above the extension menu's fake rate.
+  1.46% / 1.52% fake (the extension menu's pixel tracks: 3.20% / 3.29%). eps4 0.995 everywhere gave +0.087 / +0.025
+  more efficiency for +0.13 / +0.14 more fake, above the extension menu's fake rate. 0.995 in the forward band only
+  gave +0.050 +- 0.022 / +0.032 +- 0.007 (|eta| 2.5-3.0 +0.25 to +0.70 per 0.1 bin) for +0.047 / +0.046 fake, the
+  forward fake rate staying below the extension menu's in every bin.
+- Dev + holdout pooled against the extension menu (eps4 0.99 tables, 11 ttbar / 22 QCD files): hltGeneral efficiency
+  +0.359 +- 0.061 / +0.857 +- 0.058, fake -0.078 +- 0.009 / -0.004 +- 0.005.
 
 To deploy: `exec(open('cfg/deploy_block.py').read()); pttDeploy(process,
 'RecoTracker/FinalTrackSelectors/data/PixelTrackTorchHighPuritySelector/pixel_track_classifier_noOT.pt',
-'shipped/wp_eps4_0.99_eps3_0.99.json')` after the CA policy, before the early-deletion customisation.
+'shipped/wp_eps4_0.99_fwd0.995_eps3_0.99.json')` after the CA policy, before the early-deletion customisation.
