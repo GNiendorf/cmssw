@@ -4,6 +4,9 @@
 #   customizeOP(process)
 # Needs the itaca-290-extoff code (new parameters: sizeWin*, maxBarrelTripletTuples, otpullExport, passThreeHitTracks,
 # LSTProducer otpull*/pT5*/t5CleanspLS, MkFitAlpakaBuildProducer duplicateRemovalBySurvivorsOnly).
+# On a menu without the Alpaka mkFit (plain master: LSTOutputConverter seeds, CPU mkFit) the pixel stubs take their
+# cluster key -> CA row list from LSTPixelClusterRowsProducer, the LSTOutputConverters add the stub hits, and the
+# mkFit-side setting is skipped (it needs the matching mkFit code).
 #
 # What the prototype's S2 + Cfinal + Cfinal2 set, all applied here:
 #   CA   : no OT pairs (PIX), the forward skip pairs (skipsLayers with a disk as inner layer) dropped, q5 (chi2 cut 5 for
@@ -60,6 +63,30 @@ def _op_drop_forward_skip_pairs(m, keep=()):
     return [pairs[i] for i in drop], len(kept)
 
 
+def _op_pixel_cluster_rows(process, label='hltLSTPixelClusterRows'):
+    """menu without the Alpaka mkFit: the cluster key -> CA row list of the pixel stubs from the legacy pixel rechits
+    the pixel tracks are made of, scheduled before every LSTProducer; the LSTOutputConverters add the stub hits"""
+    src = process.hltPhase2PixelTracks.pixelRecHitLegacySrc.value()
+    setattr(process, label, cms.EDProducer('LSTPixelClusterRowsProducer', pixelRecHits=cms.InputTag(src)))
+    rows = getattr(process, label)
+    lsts = [m for m in process.producers_().values() if 'LSTProducer' in m.type_()]
+    for s in process.sequences_().values():
+        for m in lsts:
+            try:
+                i = s.index(m)
+            except Exception:
+                continue
+            s.insert(i, rows)
+            break
+    for t in process.tasks_().values():
+        if any(m.label_() in t.moduleNames() for m in lsts):
+            t.add(rows)
+    convs = [n for n, m in process.producers_().items() if m.type_() == 'LSTOutputConverter']
+    for n in convs:
+        getattr(process, n).pixelStubRecHits = cms.InputTag(src)
+    return cms.InputTag(label), convs
+
+
 def customizeOP(process, budget=_OP_BUDGET, keepForwardSkipPairs=False):
     """keepForwardSkipPairs: True keeps the menu's 14 forward skip pairs (all pixel pairs of PIX), False drops them, a
     tuple of labels 'dA-dB' (TFPX disk A -> disk B, both sides) keeps that subset"""
@@ -98,7 +125,10 @@ def customizeOP(process, budget=_OP_BUDGET, keepForwardSkipPairs=False):
             done.append('%s torch-rt pass3hit maxTracks %d' % (lab, m.maxNumberOfTracks.value()))
     rows = [m.pixelSrcRows for m in process.producers_().values()
             if 'MkFitAlpakaLstInputProducer' in m.type_() and m.pixelSrcRows.getModuleLabel()]
-    assert rows, 'OP: no MkFitAlpakaLstInputProducer.pixelSrcRows in the menu'
+    if not rows:
+        tag, convs = _op_pixel_cluster_rows(process)
+        rows = [tag]
+        done.append('stub rows %s, stub hits in %s' % (tag.getModuleLabel(), convs))
     main_ca = [c for c in ca_labels if 'SerialSync' not in c]
     for n, m in process.producers_().items():
         if 'LSTProducer' not in m.type_():
@@ -129,9 +159,8 @@ def customizeOP(process, budget=_OP_BUDGET, keepForwardSkipPairs=False):
         m.t5CleanspLS = cms.bool(False)
         done.append('%s otpull %s attach 5 pT5 opts, noT5cc, c2, tcpLSTriplets False' % (n, m.otpullCells.value()))
     so = [n for n, m in process.producers_().items() if 'MkFitAlpakaBuildProducer' in m.type_()]
-    assert so, 'OP: no MkFitAlpakaBuildProducer'
     for n in so:
         getattr(process, n).duplicateRemovalBySurvivorsOnly = cms.bool(True)
-    done.append('mkFit survivors-only %s' % so)
+    done.append('mkFit survivors-only %s' % so if so else 'mkFit survivors-only skipped (no MkFitAlpakaBuildProducer)')
     print('OP: ' + '; '.join(done))
     return process

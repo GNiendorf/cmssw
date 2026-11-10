@@ -20,6 +20,7 @@
 #   Memory (memory=True, candidateMemory): the CA buffers sized from the doublet and 3-hit tuple counts
 #          (useExactAllocations); the CA tracks deleted after the Torch selector (which then waits for its device work)
 #          and the otpull cells after LST, through process.options.canDeleteEarly. No physics change.
+# On a menu without the Alpaka mkFit (plain master) the mkFit settings are skipped: they need the matching mkFit code.
 import os
 import FWCore.ParameterSet.Config as cms
 
@@ -125,9 +126,12 @@ def customizeCandidate(process,
             m.duplicateRemovalBySurvivorsOnly = cms.bool(True)
             m.duplicateRemovalSameParticleChi2 = cms.double(sameParticleChi2)
             nf += 1
-    assert nb > 0 and nf > 0, 'candidate: no mkFit build / fit module (%d / %d)' % (nb, nf)
-    done.append('mkFit: post-fit duplicate removal (fits %d), same-particle chi2 cut %g, overlap hits K=%d (builds %d)' %
-                (nf, sameParticleChi2, CAND_OVERLAP_OT_HITS, nb))
+    if nb == 0 and nf == 0:
+        done.append('mkFit-side settings skipped (no MkFitAlpaka build / fit module)')
+    else:
+        assert nb > 0 and nf > 0, 'candidate: no mkFit build / fit module (%d / %d)' % (nb, nf)
+        done.append('mkFit: post-fit duplicate removal (fits %d), same-particle chi2 cut %g, overlap hits K=%d (builds %d)'
+                    % (nf, sameParticleChi2, CAND_OVERLAP_OT_HITS, nb))
     if memory:
         done.append('memory: exact CA allocations, early delete ' + ', '.join(candidateMemory(process)))
     print('CANDIDATE: forward skip pairs kept %s; ' % list(keep) + '; '.join(done))
