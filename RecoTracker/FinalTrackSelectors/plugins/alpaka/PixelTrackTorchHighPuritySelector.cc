@@ -171,6 +171,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     const double highPurityThreshold_;
     const int highPurityMinNumberOfHits_;
     std::optional<cms::alpakatools::device_buffer<Device, float[]>> wpDevice_;
+    // wait for the selector's device work at the end of produce, so that its input tracks may be deleted early
+    const bool waitBeforeReturn_;
     const device::EDPutToken<TkSoADevice> tokenTrackOut_;
   };
 
@@ -208,6 +210,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
         wpThresholdsThreeHit_(toFloats(iConfig.getParameter<std::vector<double>>("wpThresholdsThreeHit"))),
         highPurityThreshold_(iConfig.getParameter<double>("highPurityThreshold")),
         highPurityMinNumberOfHits_(iConfig.getParameter<int>("highPurityMinNumberOfHits")),
+        waitBeforeReturn_(iConfig.getParameter<bool>("waitBeforeReturn")),
         tokenTrackOut_(produces()) {
     checkEdges(wpPtEdges_, "wpPtEdges");
     checkEdges(wpAbsEtaEdges_, "wpAbsEtaEdges");
@@ -432,6 +435,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
                                                 nullptr,
                                                 selectedHighPurity);
     iEvent.emplace(tokenTrackOut_, std::move(tracks_out));
+    // the selector runs on its own queue: the input tracks are read by the kernels above until this queue completes
+    if (waitBeforeReturn_)
+      alpaka::wait(queue);
   }
 
   void PixelTrackTorchHighPuritySelector::fillDescriptions(edm::ConfigurationDescriptions& descriptions) {
@@ -473,6 +479,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     // qualities as they are.
     desc.add<double>("highPurityThreshold", -1.0);
     desc.add<int>("highPurityMinNumberOfHits", 4);
+    desc.add<bool>("waitBeforeReturn", false)
+        ->setComment(
+            "Wait for the selector's device work before produce returns, so that the input tracks can be listed in "
+            "process.options.canDeleteEarly (the selector uses its own queue, not the producer's)");
     descriptions.addWithDefaultLabel(desc);
   }
 }  // namespace ALPAKA_ACCELERATOR_NAMESPACE
