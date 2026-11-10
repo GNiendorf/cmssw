@@ -11,6 +11,7 @@
 
 #include "DataFormats/Common/interface/Handle.h"
 #include "DataFormats/Common/interface/ValueMap.h"
+#include "DataFormats/Math/interface/deltaPhi.h"
 #include "DataFormats/TrackReco/interface/Track.h"
 #include "DataFormats/TrackReco/interface/TrackBase.h"
 #include "DataFormats/TrackReco/interface/TrackExtra.h"
@@ -102,6 +103,7 @@ private:
   std::string priorityName_;
 
   double maxNormalizedChisq_;
+  double maxSameParticleChisq_;
   double minPT_;
   unsigned int minFound_;
   float epsilon_;
@@ -216,6 +218,7 @@ TrackListMerger::TrackListMerger(edm::ParameterSet const& conf) {
   std::vector<edm::InputTag> trackProducerTags(conf.getParameter<std::vector<edm::InputTag>>("TrackProducers"));
   //which of these do I need to turn into vectors?
   maxNormalizedChisq_ = conf.getParameter<double>("MaxNormalizedChisq");
+  maxSameParticleChisq_ = conf.getParameter<double>("MaxSameParticleChisq");
   minPT_ = conf.getParameter<double>("MinPT");
   minFound_ = (unsigned int)conf.getParameter<int>("MinFound");
   epsilon_ = conf.getParameter<double>("Epsilon");
@@ -317,6 +320,10 @@ void TrackListMerger::fillDescriptions(edm::ConfigurationDescriptions& descripti
   desc.add<std::string>("trackAlgoPriorityOrder");
   desc.add<std::vector<edm::InputTag>>("TrackProducers", {edm::InputTag(""), edm::InputTag("")});
   desc.add<double>("MaxNormalizedChisq", 1000.0)->setComment("maximum chisq/dof");
+  desc.add<double>("MaxSameParticleChisq", 0.)
+      ->setComment(
+          "a track with pixel hits and one without, on no common module, are one particle below this helix chisq; the "
+          "one with fewer valid hits is dropped (0: off)");
   desc.add<double>("MinPT", 0.05)->setComment("in GeV/c");
   desc.add<int>("MinFound", 3)->setComment("minimum number of RecHits used in fit");
   desc.add<double>("Epsilon", -0.001)
@@ -691,6 +698,52 @@ void TrackListMerger::produce(edm::Event& e, const edm::EventSetup& es) {
         }  //end track2 loop
       }  //end track loop
     }  //end loop over track list sets
+
+  // One particle as a track with pixel hits and one without shares no hit: compare the helices at the beam line (chisq
+  // with both covariances); one parameter's term never exceeds the full chisq, so phi and lambda reject most pairs first.
+  if (maxSameParticleChisq_ > 0 && ngood > 1) {
+    auto trackOf = [&](unsigned int j) -> const reco::Track& {
+      return trackColls[trackCollNum[j]]->at(j - trackCollFirsts[trackCollNum[j]]);
+    };
+    auto commonModule = [&](unsigned int k1, unsigned int k2) {
+      auto ih = rh1[k1].begin(), jh = rh1[k2].begin();
+      while (ih != rh1[k1].end() && jh != rh1[k2].end()) {
+        if (ih->first == jh->first)
+          return true;
+        ih->first < jh->first ? ++ih : ++jh;
+      }
+      return false;
+    };
+    std::vector<unsigned int> withPixels, withoutPixels;
+    for (unsigned int j = 0; j < rSize; j++) {
+      if (selected[j] != 0)
+        (trackOf(j).hitPattern().numberOfValidPixelHits() >= 2 ? withPixels : withoutPixels).push_back(j);
+    }
+    for (auto ip : withPixels) {
+      const reco::Track& pixelTrack = trackOf(ip);
+      for (auto jo : withoutPixels) {
+        if (selected[jo] == 0)
+          continue;
+        const reco::Track& otherTrack = trackOf(jo);
+        reco::TrackBase::CovarianceMatrix cov = pixelTrack.covariance() + otherTrack.covariance();
+        reco::TrackBase::ParameterVector diff = pixelTrack.parameters() - otherTrack.parameters();
+        diff[reco::TrackBase::i_phi] = reco::deltaPhi(pixelTrack.phi(), otherTrack.phi());
+        if (diff[reco::TrackBase::i_phi] * diff[reco::TrackBase::i_phi] >
+                maxSameParticleChisq_ * cov(reco::TrackBase::i_phi, reco::TrackBase::i_phi) ||
+            diff[reco::TrackBase::i_lambda] * diff[reco::TrackBase::i_lambda] >
+                maxSameParticleChisq_ * cov(reco::TrackBase::i_lambda, reco::TrackBase::i_lambda))
+          continue;
+        if (commonModule(indexG[ip], indexG[jo]) || !cov.Invert() ||
+            !(ROOT::Math::Similarity(diff, cov) < maxSameParticleChisq_))
+          continue;
+        if (otherTrack.numberOfValidHits() > pixelTrack.numberOfValidHits()) {
+          selected[ip] = 0;
+          break;
+        }
+        selected[jo] = 0;
+      }
+    }
+  }
 
   auto vmMVA = std::make_unique<edm::ValueMap<float>>();
   edm::ValueMap<float>::Filler fillerMVA(*vmMVA);
