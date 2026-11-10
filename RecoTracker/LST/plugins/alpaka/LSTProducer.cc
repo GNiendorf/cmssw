@@ -51,6 +51,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
       pixelObjectOptions_.pT5WpHigh = config.getParameter<double>("pT5WpHigh");
       pixelObjectOptions_.pT5RPhiOutHiPow = config.getParameter<double>("pT5RPhiOutHiPow");
       pixelObjectOptions_.t5CleanspLS = config.getParameter<bool>("t5CleanspLS");
+      pixelObjectOptions_.tripletpLSFillHoles = config.getParameter<bool>("tripletpLSFillHoles");
       if (otpullOn_) {
         otpullToken_ = consumes(config.getParameter<edm::InputTag>("otpullCells"));
         auto const sig = config.getParameter<std::vector<double>>("otpullSigma");
@@ -153,6 +154,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
               "pT5 outward rPhi cut for high-pT pLS: 0 unchanged, > 0 threshold scaled by (pT / threshold)^p, < 0 "
               "off");
       desc.add<bool>("t5CleanspLS", true)->setComment("T5 track candidates remove the pLSs they embed close to");
+      desc.add<bool>("tripletpLSFillHoles", false)
+          ->setComment(
+              "3-hit pLSs become track candidates after all other candidates, only if none of their hits is in a track "
+              "candidate (independent of tcpLSTriplets, which promotes them unconditionally)");
       desc.add<edm::InputTag>("otpullCells", edm::InputTag(""))
           ->setComment("CA terminal cells for the OT-seeded lookup (6 floats per cell); empty = off");
       desc.add<double>("otpullChi2Cut", 0.3);

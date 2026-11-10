@@ -7,6 +7,7 @@
 
 #include <cmath>
 #include <limits>
+#include <type_traits>
 
 #include <alpaka/alpaka.hpp>
 
@@ -185,6 +186,60 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
              maxDCurv * (std::abs(innerCurvature + outerCurvature)) + dCurv0;
     }
 
+    // Layers of a terminal 3-layer tuple (cells inner, outer) kept by the 3-hit path: all in the pixel barrel, or,
+    // with outerDisks, an innermost layer in the pixel barrel and outer layers in the pixel barrel or disks.
+    ALPAKA_FN_ACC ALPAKA_FN_INLINE static bool shortTupleLayers(CACell const& inner,
+                                                                CACell const& outer,
+                                                                ::reco::CAGraphSoAConstView cc,
+                                                                bool outerDisks) {
+      constexpr uint32_t nPixelLayers = std::is_base_of_v<pixelTopology::Phase2, TrackerTraits>
+                                            ? pixelTopology::Phase2::numberOfLayers
+                                            : TrackerTraits::numberOfLayers;
+      const uint32_t lastOuter = outerDisks ? nPixelLayers - 1 : pixelTopology::last_barrel_layer;
+      return inner.innerLayer(cc) <= pixelTopology::last_barrel_layer && inner.outerLayer(cc) <= lastOuter &&
+             outer.outerLayer(cc) <= lastOuter;
+    }
+
+    // Number of terminal 3-layer tuples that find_ntuplets started from this cell saves through the 3-hit path:
+    // pairs (this, neighbour) where the neighbour passes the search's cut and has no neighbour of its own that passes
+    // it. The same tests as find_ntuplets, in the same order, so the count equals the number of saves it attempts.
+    ALPAKA_FN_ACC ALPAKA_FN_INLINE uint32_t countShortTuples(const HitsMultiView& hh,
+                                                             const ::reco::CANtupletCutsSoAConstView& ntupletCuts,
+                                                             const ::reco::CAGraphSoAConstView& cc,
+                                                             CACell const* __restrict__ cells,
+                                                             CellToCell const* __restrict__ cellNeighborsHisto,
+                                                             bool outerDisks) const {
+      uint32_t n = 0;
+      auto const doubletId = this - cells;
+      auto const* __restrict__ neighbors = cellNeighborsHisto->begin(doubletId);
+      auto const nNeighbors = cellNeighborsHisto->size(doubletId);
+      for (auto idx = 0u; idx < nNeighbors; idx++) {
+        auto const second = neighbors[idx] & caStructures::kCellIndexMask;
+        if (cells[second].isKilled())
+          continue;
+        float curvature{kUninitializeCurvature};
+        if (cells[second].quadrupletCut(
+                kUninitializeCurvature, curvature, ntupletCuts, cc, hh, inner_x(hh), inner_y(hh)))
+          continue;
+        if (!shortTupleLayers(*this, cells[second], cc, outerDisks))
+          continue;
+        auto const* __restrict__ next = cellNeighborsHisto->begin(second);
+        auto const nNext = cellNeighborsHisto->size(second);
+        bool extended = false;
+        for (auto jdx = 0u; jdx < nNext && !extended; jdx++) {
+          auto const third = next[jdx] & caStructures::kCellIndexMask;
+          if (cells[third].isKilled())
+            continue;
+          float outerCurvature{kUninitializeCurvature};
+          extended = !cells[third].quadrupletCut(
+              curvature, outerCurvature, ntupletCuts, cc, hh, cells[second].inner_x(hh), cells[second].inner_y(hh));
+        }
+        if (!extended)
+          ++n;
+      }
+      return n;
+    }
+
     // trying to free the track building process from hardcoded layers, leaving
     // the visit of the graph based on the neighborhood connections between cells.
 
@@ -208,6 +263,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
                                                       const unsigned int minHitsPerNtuplet,
                                                       uint32_t* __restrict__ nBarrelTriplets,
                                                       const uint32_t maxBarrelTriplets,
+                                                      const bool tripletOuterDisks,
                                                       const float preCurvature = kUninitializeCurvature) const {
       // the building process for a track ends if:
       // it has no right neighbor
@@ -297,6 +353,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
                                                                minHitsPerNtuplet,
                                                                nBarrelTriplets,
                                                                maxBarrelTriplets,
+                                                               tripletOuterDisks,
                                                                thisCurvature);
           }
         }
@@ -306,15 +363,11 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
           const uint8_t nl = tmpNtuplet.size() + 1;  // numLayers in tuplet
           // if long enough save...
           bool save = nl >= minHitsPerNtuplet;
-          // barrel-terminal 3-hit path: a 3-layer tuple that ends here is kept, within its own budget,
-          // if all its hits are in the pixel barrel
-          if (!save && maxBarrelTriplets > 0 && nl == 3) {
-            bool barrel = cells[tmpNtuplet[0]].innerLayer(cc) <= pixelTopology::last_barrel_layer;
-            for (auto c : tmpNtuplet)
-              barrel &= cells[c].outerLayer(cc) <= pixelTopology::last_barrel_layer;
-            if (barrel)
-              save = alpaka::atomicAdd(acc, nBarrelTriplets, 1u, alpaka::hierarchy::Blocks{}) < maxBarrelTriplets;
-          }
+          // terminal 3-hit path: a 3-layer tuple that ends here is kept, within its own budget, if its layers
+          // qualify (see shortTupleLayers)
+          if (!save && maxBarrelTriplets > 0 && nl == 3 &&
+              shortTupleLayers(cells[tmpNtuplet[0]], cells[tmpNtuplet[1]], cc, tripletOuterDisks))
+            save = alpaka::atomicAdd(acc, nBarrelTriplets, 1u, alpaka::hierarchy::Blocks{}) < maxBarrelTriplets;
           if (save) {
             {
               // `hits` is owned by the caller, one buffer per thread sized maxHitsOnTrack to cover fishbone

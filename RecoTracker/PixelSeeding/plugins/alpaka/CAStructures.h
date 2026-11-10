@@ -78,6 +78,10 @@ namespace caStructures {
     // Barrel-terminal 3-hit path (0 = off): budget of 3-layer tuples whose hits are all in the pixel barrel,
     // stored when the search ends there although the main search keeps minHitsPerNtuplet
     uint32_t maxBarrelTripletTuples_;
+    // 3-hit path: the outer layers of a stored 3-layer tuple may be pixel disks (its innermost layer stays in the barrel)
+    bool tripletTuplesOuterDisks_;
+    // 3-hit path sized from a device count of its tuples (no budget): the tuple storage is allocated after the count
+    bool countTripletTuples_;
 
     // One-sided, slope-predicted cluster-size window for pixel-barrel hits (0 = off).
     // A barrel hit of layer L with a non-edge size s (1/8 pixel) fails if s < sizeWinA_[L] + sizeWinB_[L] * |dz/dr|.

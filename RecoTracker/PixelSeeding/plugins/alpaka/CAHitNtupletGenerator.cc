@@ -6,6 +6,7 @@
 #include <cassert>
 #include <cstdint>
 #include <functional>
+#include <limits>
 #include <optional>
 #include <type_traits>
 #include <vector>
@@ -361,6 +362,14 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
       desc.add<bool>("doEarlyDuplicateRemover", true)->setComment("Disable the earlyDuplicateRemover");
       desc.add<unsigned int>("maxBarrelTripletTuples", 0)
           ->setComment("Budget of terminal 3-layer pixel-barrel tuples stored below minHitsPerNtuplet (0 = off)");
+      desc.add<bool>("tripletTuplesOuterDisks", false)
+          ->setComment(
+              "3-hit path: the outer layers of a stored 3-layer tuple may be pixel disks (its innermost layer stays in "
+              "the barrel)");
+      desc.add<bool>("countTripletTuples", false)
+          ->setComment(
+              "3-hit path without a budget: its tuples are counted once the cells are connected and the tuple storage "
+              "is sized maxNumberOfTuples + that count (one device-to-host read of the count per event)");
       desc.add<int>("sizeWinMode", 0)
           ->setComment(
               "One-sided slope-predicted cluster-size window on pixel-barrel hits (0 = off). Bits: 1 inner hit of "
@@ -484,7 +493,11 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
           .fastDupNSigma2_ = (float)cfg.getParameter<double>("fastDupNSigma2"),
 
           // Barrel-terminal 3-hit path
-          .maxBarrelTripletTuples_ = cfg.getParameter<unsigned int>("maxBarrelTripletTuples"),
+          .maxBarrelTripletTuples_ = cfg.getParameter<bool>("countTripletTuples")
+                                         ? std::numeric_limits<uint32_t>::max()
+                                         : cfg.getParameter<unsigned int>("maxBarrelTripletTuples"),
+          .tripletTuplesOuterDisks_ = cfg.getParameter<bool>("tripletTuplesOuterDisks"),
+          .countTripletTuples_ = cfg.getParameter<bool>("countTripletTuples"),
 
           // Cluster-size window, the per-layer coefficients are filled below
           .sizeWinMode_ = (int16_t)cfg.getParameter<int>("sizeWinMode"),
@@ -716,16 +729,16 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
 
     PendingTuples pending;
     pending.bfield = bfield;
-    pending.maxTuples = nTracks;
     pending.maxDoublets = nDoublets;
 
-    // Output trackHits rows: the same expression the kernels use for the internal per-track hit
+    // Output tracks: the trackHits rows use the same expression the kernels use for the internal per-track hit
     // container, so the SoA the hits are copied into is never smaller than the container that
     // feeds it (see caHitNtupletGenerator::nHitRowsForTuples).
-    const uint32_t nHitRows = caHitNtupletGenerator::nHitRowsForTuples(nTracks, m_params.algoParams_.avgHitsPerTrack_);
-    pending.tracks.emplace(queue, nTracks, nHitRows);
-
-    auto tracks = pending.tracks->view().tracks();
+    auto emplaceTracks = [&](uint32_t maxTuples) {
+      pending.maxTuples = maxTuples;
+      pending.tracks.emplace(
+          queue, maxTuples, caHitNtupletGenerator::nHitRowsForTuples(maxTuples, m_params.algoParams_.avgHitsPerTrack_));
+    };
 
     // The hit and module-start views are built by the producer, which holds the event products.
     auto const& trackingHits = hitsInput.hits;
@@ -740,9 +753,15 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     const uint32_t nHits = hitsInput.nHits;
     const uint32_t offsetBPIX2 = static_cast<uint32_t>(hitsInput.offsetBPIX2);
 
+    // countTripletTuples: the tuple storage is sized after the cells are connected, from the count of the 3-hit tuples
+    const bool countShort = m_params.algoParams_.countTripletTuples_ && nHits >= 2;
+    if (!countShort)
+      emplaceTracks(nTracks);
+
     // Don't bother if less than 2 hits: return the empty (built=false) pending state; finish
     // hands the zeroed collection through.
     if (nHits < 2) {
+      auto tracks = pending.tracks->view().tracks();
       const auto device = alpaka::getDev(queue);
       auto ntracks_d = cms::alpakatools::make_device_view(device, tracks.nTracks());
       alpaka::memset(queue, ntracks_d, 0);
@@ -783,6 +802,13 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
       // Without it, the number only exists on the device and one D2H sync is unavoidable here.
       const uint32_t nCells = countFirst ? nCellsCounted : kernels.readbackNCells(queue);
       kernels.allocateAfterDoublets(nCells, queue);
+    }
+
+    if (countShort) {
+      kernels.connectCells(trackingHits, offsetBPIX2, layers, graph, tripletCuts, queue);
+      const uint32_t maxTuples = nTracks + kernels.countShortTuples(trackingHits, graph, ntupletCuts, queue);
+      emplaceTracks(maxTuples);
+      kernels.allocateTuples(maxTuples, queue);
     }
 
     kernels.otpullExport_ = otpullExport;

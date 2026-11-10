@@ -133,6 +133,8 @@ void LST::run(Queue& queue,
     event.setOTPull(*otpull, *otpullCells, otpullPixKey, otpullNPixKey);
   event.createTrackCandidates(no_pls_dupclean, tc_pls_triplets);
   event.pullOTCells();
+  if (pixelObjectOptions.tripletpLSFillHoles && !tc_pls_triplets)
+    event.addTripletpLSFillHoles();
   if (verbose) {
     alpaka::wait(queue);  // event calls are asynchronous: wait before printing
     printf("# of TrackCandidates produced: %d\n", event.getNumberOfTrackCandidates());

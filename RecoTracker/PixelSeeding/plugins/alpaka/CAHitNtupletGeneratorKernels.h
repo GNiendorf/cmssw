@@ -217,6 +217,21 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     // Kernel_overflowSentinel into it (doStats-independent overflow surfacing).
     uint32_t* ovfAccum_ = nullptr;
 
+    // The connection of the cells, run by launchKernels unless already called on its own (3-hit tuple count first)
+    void connectCells(const HitsMultiView& hh,
+                      uint32_t offsetBPIX2,
+                      const ::reco::CALayersSoAConstView& ll,
+                      const ::reco::CAGraphSoAConstView& cc,
+                      const ::reco::CATripletCutsSoAConstView& tripletCuts,
+                      Queue& queue);
+    // countTripletTuples: the number of terminal 3-layer tuples the search will save, read back to the host (blocking)
+    uint32_t countShortTuples(const HitsMultiView& hh,
+                              const ::reco::CAGraphSoAConstView& cc,
+                              const ::reco::CANtupletCutsSoAConstView& ntupletCuts,
+                              Queue& queue);
+    // The buffers sized by the tuple capacity, allocated by the constructor unless countTripletTuples defers them
+    void allocateTuples(uint32_t maxTuples, Queue& queue);
+
     void launchKernels(const HitsMultiView& hh,
                        uint32_t offsetBPIX2,
                        uint16_t nLayers,
@@ -390,6 +405,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     std::optional<cms::alpakatools::device_view<Device, uint32_t>> device_nTriplets_;
     std::optional<cms::alpakatools::device_view<Device, uint32_t>> device_nCellTracks_;
     std::optional<cms::alpakatools::device_buffer<Device, uint32_t>> device_nBarrelTriplets_;
+    uint32_t nHits_ = 0;
+    bool cellsConnected_ = false;
     std::optional<cms::alpakatools::device_buffer<Device, uint32_t[]>> device_otpullTerminal_;
     std::optional<cms::alpakatools::device_buffer<Device, uint32_t>> device_otpullCount_;
     void markOTPullCells(Queue& queue);
