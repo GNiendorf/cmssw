@@ -17,8 +17,14 @@ void LST::run(Queue& queue,
               LSTESData<Device> const* deviceESData,
               LSTInputDeviceCollection const* lstInputDC,
               bool no_pls_dupclean,
-              bool tc_pls_triplets) {
+              bool tc_pls_triplets,
+              PixelObjectOptions const& pixelObjectOptions,
+              OTPullParams const* otpull,
+              OTPullCellsDeviceCollection const* otpullCells,
+              uint32_t const* otpullPixKey,
+              unsigned int otpullNPixKey) {
   auto event = LSTEvent(verbose, ptCut, clustSizeCut, queue, deviceESData);
+  event.setPixelObjectOptions(pixelObjectOptions);
 
   event.addInputToEvent(lstInputDC);
   event.addHitToEvent();
@@ -123,7 +129,10 @@ void LST::run(Queue& queue,
     printf("# of Quadruplets produced endcap layer 5: %d\n", event.getNumberOfQuadrupletsByLayerEndcap(4));
   }
 
+  if (otpull && otpullCells)
+    event.setOTPull(*otpull, *otpullCells, otpullPixKey, otpullNPixKey);
   event.createTrackCandidates(no_pls_dupclean, tc_pls_triplets);
+  event.pullOTCells();
   if (verbose) {
     alpaka::wait(queue);  // event calls are asynchronous: wait before printing
     printf("# of TrackCandidates produced: %d\n", event.getNumberOfTrackCandidates());

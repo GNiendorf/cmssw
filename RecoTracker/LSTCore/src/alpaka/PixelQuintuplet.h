@@ -1,7 +1,10 @@
 #ifndef RecoTracker_LSTCore_src_alpaka_PixelQuintuplet_h
 #define RecoTracker_LSTCore_src_alpaka_PixelQuintuplet_h
 
+#include <limits>
+
 #include "RecoTracker/LSTCore/interface/alpaka/Common.h"
+#include "RecoTracker/LSTCore/interface/PixelObjectOptions.h"
 #include "RecoTracker/LSTCore/interface/HitsSoA.h"
 #include "RecoTracker/LSTCore/interface/ModulesSoA.h"
 #include "RecoTracker/LSTCore/interface/ObjectRangesSoA.h"
@@ -470,7 +473,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                                                     float& centerX,
                                                                     float& centerY,
                                                                     unsigned int pixelSegmentArrayIndex,
-                                                                    const float ptCut) {
+                                                                    const float ptCut,
+                                                                    const ::lst::PixelObjectOptions opts) {
     unsigned int t5InnerT3Index = quintuplets.tripletIndices()[quintupletIndex][0];
     unsigned int t5OuterT3Index = quintuplets.tripletIndices()[quintupletIndex][1];
 
@@ -480,24 +484,26 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     PixelSeedData pixelData =
         loadPixelSeedData(pixelSeeds, pixelSegments, mds, segments, pixelSegmentIndex, pixelSegmentArrayIndex);
 
-    if (not runPixelTripletDefaultAlgo<dnn::pt3dnn::pT5WP>(acc,
-                                                           modules,
-                                                           mds,
-                                                           segments,
-                                                           pixelData,
-                                                           triplets,
-                                                           t5InnerT3Index,
-                                                           pixelRadiusTemp,
-                                                           tripletRadius,
-                                                           centerXTemp,
-                                                           centerYTemp,
-                                                           rzChiSquaredTemp,
-                                                           rPhiChiSquaredTemp,
-                                                           rPhiChiSquaredInwardsTemp,
-                                                           pixelRadiusErrorTemp,
-                                                           ptCut,
-                                                           true,
-                                                           false))
+    if (not runPixelTripletDefaultAlgo<dnn::pt3dnn::pT5WP>(
+            acc,
+            modules,
+            mds,
+            segments,
+            pixelData,
+            triplets,
+            t5InnerT3Index,
+            pixelRadiusTemp,
+            tripletRadius,
+            centerXTemp,
+            centerYTemp,
+            rzChiSquaredTemp,
+            rPhiChiSquaredTemp,
+            rPhiChiSquaredInwardsTemp,
+            pixelRadiusErrorTemp,
+            ptCut,
+            true,
+            false,
+            opts.pT5WpHigh >= 0.f ? opts.pT5WpHigh : dnn::pt3dnn::kWpHigh_pT5))
       return false;
 
     unsigned int firstSegmentIndex = triplets.segmentIndices()[t5InnerT3Index][0];
@@ -554,16 +560,16 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                           pixelData.pz,
                                           pixelData.charge);
 
-    if (pixelRadius < 5.0f * kR1GeVf) {  //only apply r-z chi2 cuts for <5GeV tracks
-      if (not passPT5RZChiSquaredCuts(modules,
-                                      lowerModuleIndex1,
-                                      lowerModuleIndex2,
-                                      lowerModuleIndex3,
-                                      lowerModuleIndex4,
-                                      lowerModuleIndex5,
-                                      rzChiSquared))
-        return false;
-    }
+    // the rz and outward rPhi chi2 cuts apply below the high-pT threshold, or at every pT with pT5Chi2CutsAllPt
+    const bool chi2Cuts = pixelRadius < 5.0f * kR1GeVf || opts.pT5Chi2CutsAllPt;
+    if (chi2Cuts && not passPT5RZChiSquaredCuts(modules,
+                                                lowerModuleIndex1,
+                                                lowerModuleIndex2,
+                                                lowerModuleIndex3,
+                                                lowerModuleIndex4,
+                                                lowerModuleIndex5,
+                                                rzChiSquared))
+      return false;
 
     //outer T5
     float xs[Params_T5::kBaseLayers] = {mds.anchorX()[firstMDIndex],
@@ -587,27 +593,32 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
 
     rPhiChiSquared = computePT5RPhiChiSquared(acc, modules, lowerModuleIndices, centerX, centerY, pixelRadius, xs, ys);
 
-    if (pixelRadius < 5.0f * kR1GeVf) {
-      if (not passPT5RPhiChiSquaredCuts(modules,
-                                        lowerModuleIndex1,
-                                        lowerModuleIndex2,
-                                        lowerModuleIndex3,
-                                        lowerModuleIndex4,
-                                        lowerModuleIndex5,
-                                        rPhiChiSquared))
-        return false;
-    }
+    // a pixel-only pLS circle predicts the OT hits less well with rising pT
+    const bool highPtPLS = opts.pT5RPhiOutHiPow != 0.f && pixelData.ptIn >= 5.0f;
+    if (chi2Cuts && not(highPtPLS && opts.pT5RPhiOutHiPow < 0.f) &&
+        not passPT5RPhiChiSquaredCuts(
+            modules,
+            lowerModuleIndex1,
+            lowerModuleIndex2,
+            lowerModuleIndex3,
+            lowerModuleIndex4,
+            lowerModuleIndex5,
+            highPtPLS ? rPhiChiSquared / alpaka::math::pow(acc, pixelData.ptIn / 5.0f, opts.pT5RPhiOutHiPow)
+                      : rPhiChiSquared))
+      return false;
 
     rPhiChiSquaredInwards = computePT5RPhiChiSquaredInwards(T5CenterX, T5CenterY, quintupletRadius, xPix, yPix);
 
-    if (quintuplets.regressionRadius()[quintupletIndex] < 5.0f * kR1GeVf) {
-      if (not passPT5RPhiChiSquaredInwardsCuts(modules,
-                                               lowerModuleIndex1,
-                                               lowerModuleIndex2,
-                                               lowerModuleIndex3,
-                                               lowerModuleIndex4,
-                                               lowerModuleIndex5,
-                                               rPhiChiSquaredInwards))
+    const bool lowT5Radius = quintuplets.regressionRadius()[quintupletIndex] < 5.0f * kR1GeVf;
+    if (lowT5Radius || opts.pT5RPhiInHiScale > 0.f) {
+      if (not passPT5RPhiChiSquaredInwardsCuts(
+              modules,
+              lowerModuleIndex1,
+              lowerModuleIndex2,
+              lowerModuleIndex3,
+              lowerModuleIndex4,
+              lowerModuleIndex5,
+              lowT5Radius ? rPhiChiSquaredInwards : rPhiChiSquaredInwards / opts.pT5RPhiInHiScale))
         return false;
     }
     //trusting the T5 regression center to also be a good estimate..
@@ -615,6 +626,17 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     centerY = (centerY + T5CenterY) / 2;
 
     return true;
+  }
+
+  // pT5 ranking score, lower is better (PixelObjectOptions::pT5ScoreMode)
+  template <typename TAcc>
+  ALPAKA_FN_ACC ALPAKA_FN_INLINE float pT5RankScore(TAcc const& acc, int mode, float rz, float rPhi, float rPhiIn) {
+    if (mode == 0)
+      return rPhi;
+    constexpr float tiny = std::numeric_limits<float>::min();
+    const float s = alpaka::math::log(acc, alpaka::math::max(acc, rz, tiny)) +
+                    alpaka::math::log(acc, alpaka::math::max(acc, rPhi, tiny));
+    return mode == 1 ? s + alpaka::math::log(acc, alpaka::math::max(acc, rPhiIn, tiny)) : s;
   }
 
   struct CreatePixelQuintupletsFromMap {
@@ -633,7 +655,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                   unsigned int* connectedPixelIndex,
                                   unsigned int nPixelSegments,
                                   ObjectRangesConst ranges,
-                                  const float ptCut) const {
+                                  const float ptCut,
+                                  const ::lst::PixelObjectOptions opts) const {
       for (unsigned int i_pLS : cms::alpakatools::uniform_elements_z(acc, nPixelSegments)) {
         auto iLSModule_max = connectedPixelIndex[i_pLS] + connectedPixelSize[i_pLS];
         for (unsigned int iLSModule :
@@ -683,7 +706,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                                                          centerX,
                                                          centerY,
                                                          static_cast<unsigned int>(i_pLS),
-                                                         ptCut);
+                                                         ptCut,
+                                                         opts);
             if (success) {
               unsigned int totOccupancyPixelQuintuplets = alpaka::atomicAdd(
                   acc, &pixelQuintuplets.totOccupancyPixelQuintuplets(), 1u, alpaka::hierarchy::Blocks{});
@@ -697,23 +721,24 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
                 float eta = __H2F(quintuplets.eta()[quintupletIndex]);
                 float phi = __H2F(quintuplets.phi()[quintupletIndex]);
 
-                addPixelQuintupletToMemory(modules,
-                                           segments,
-                                           quintuplets,
-                                           pixelQuintuplets,
-                                           pixelSegmentIndex,
-                                           quintupletIndex,
-                                           pixelQuintupletIndex,
-                                           rzChiSquared,
-                                           rPhiChiSquared,
-                                           rPhiChiSquaredInwards,
-                                           rPhiChiSquared,
-                                           eta,
-                                           phi,
-                                           pixelRadius,
-                                           quintupletRadius,
-                                           centerX,
-                                           centerY);
+                addPixelQuintupletToMemory(
+                    modules,
+                    segments,
+                    quintuplets,
+                    pixelQuintuplets,
+                    pixelSegmentIndex,
+                    quintupletIndex,
+                    pixelQuintupletIndex,
+                    rzChiSquared,
+                    rPhiChiSquared,
+                    rPhiChiSquaredInwards,
+                    pT5RankScore(acc, opts.pT5ScoreMode, rzChiSquared, rPhiChiSquared, rPhiChiSquaredInwards),
+                    eta,
+                    phi,
+                    pixelRadius,
+                    quintupletRadius,
+                    centerX,
+                    centerY);
 
                 triplets.partOfPT5()[quintuplets.tripletIndices()[quintupletIndex][0]] = true;
                 triplets.partOfPT5()[quintuplets.tripletIndices()[quintupletIndex][1]] = true;

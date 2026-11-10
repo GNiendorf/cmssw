@@ -1,6 +1,9 @@
 #ifndef RecoTracker_LSTCore_src_alpaka_LSTEvent_h
 #define RecoTracker_LSTCore_src_alpaka_LSTEvent_h
 
+#include "RecoTracker/LSTCore/interface/OTPull.h"
+#include "RecoTracker/LSTCore/interface/PixelObjectOptions.h"
+#include "RecoTracker/LSTCore/interface/alpaka/OTPullCellsDeviceCollection.h"
 #include <algorithm>
 #include <optional>
 
@@ -110,6 +113,20 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     bool keepHostCopies_ = false;  // copy a device collection to host before it is released (standalone writer)
     double memoryAllocatedMB_ = 0;
     double memoryLiveMB_ = 0;
+    PixelObjectOptions pixelObjectOptions_;
+    unsigned int tcHeadroom_ = 0;  // extra track candidate slots (OT-seeded cell lookup), 0 = off
+    // OT-seeded cell lookup: its parameters and the CA cells (set for one event), the cells binned by radial shell x phi,
+    // the bin starts and the diagnostic counters
+    OTPullParams const* otpullParams_ = nullptr;
+    OTPullCellsDeviceCollection const* otpullCellsIn_ = nullptr;
+    uint32_t const* otpullPixKey_ = nullptr;  // CA pixel hit row -> pixel cluster key (pixel stubs only)
+    unsigned int otpullNPixKey_ = 0;
+    static constexpr unsigned int kOTPullNCounters = 18;
+    std::optional<cms::alpakatools::device_buffer<Device, float[]>> otpullCells_;
+    // pixel stubs: the two pixel cluster keys of each binned cell
+    std::optional<cms::alpakatools::device_buffer<Device, uint32_t[]>> otpullCellKeys_;
+    std::optional<cms::alpakatools::device_buffer<Device, uint32_t[]>> otpullBinStart_;
+    std::optional<cms::alpakatools::device_buffer<Device, unsigned int[]>> otpullCounters_;
     double memoryPeakLiveMB_ = 0;
 
     void trackAllocatedMB(double mb);
@@ -157,6 +174,19 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     void compactSegments(SegmentCandidatesDeviceCollection const& candidatesDC);
     void createTriplets();
     void createTrackCandidates(bool no_pls_dupclean, bool tc_pls_triplets);
+    void setOTPull(OTPullParams const& p,
+                   OTPullCellsDeviceCollection const& cells,
+                   uint32_t const* pixKey = nullptr,
+                   unsigned int nPixKey = 0) {
+      otpullParams_ = &p;
+      otpullCellsIn_ = &cells;
+      otpullPixKey_ = pixKey;
+      otpullNPixKey_ = nPixKey;
+      tcHeadroom_ = p.capacity;
+    }
+    void setPixelObjectOptions(PixelObjectOptions const& opts) { pixelObjectOptions_ = opts; }
+    void binOTCells();
+    void pullOTCells();
     void createPixelTriplets();
     void createQuintuplets();
     void pixelLineSegmentCleaning(bool no_pls_dupclean);
