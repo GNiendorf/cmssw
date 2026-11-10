@@ -15,6 +15,7 @@
 #include "MagneticField/Engine/interface/MagneticField.h"
 #include "MagneticField/Records/interface/IdealMagneticFieldRecord.h"
 #include "RecoTracker/LSTCore/interface/LSTOTHits.h"
+#include "RecoTracker/LSTCore/interface/OTPull.h"
 #include "RecoTracker/LSTCore/interface/LSTPixelSeedRefs.h"
 #include "RecoTracker/LSTCore/interface/TrackCandidatesHostCollection.h"
 #include "RecoTracker/TkSeedingLayers/interface/SeedingHitSet.h"
@@ -42,6 +43,8 @@ private:
   const edm::EDGetTokenT<lst::TrackCandidatesBaseHostCollection> lstOutputToken_;
   const edm::EDGetTokenT<lst::LSTOTHits> lstOTHitsToken_;
   const edm::EDGetTokenT<lst::LSTPixelSeedRefs> lstPixelSeedRefsToken_;
+  // pixel rechits of the otpull pixel stubs (by cluster key); unset: the stubs are ignored
+  edm::EDGetTokenT<SiPixelRecHitCollectionNew> stubPixelRecHitsToken_;
   const bool includeT5s_;
   const bool includeNonpLSTSs_;
   const bool dropOTHitsPurePLS_;
@@ -108,7 +111,10 @@ LSTOutputConverter::LSTOutputConverter(edm::ParameterSet const& iConfig)
       t4t5TCsSeedStopInfoPutToken_(produceTrackCandidates_ ? produces<std::vector<SeedStopInfo>>("t4t5TCsLST")
                                                            : edm::EDPutTokenT<std::vector<SeedStopInfo>>{}),
       pTTCsSeedStopInfoPutToken_(produceTrackCandidates_ ? produces<std::vector<SeedStopInfo>>("pTTCsLST")
-                                                         : edm::EDPutTokenT<std::vector<SeedStopInfo>>{}) {}
+                                                         : edm::EDPutTokenT<std::vector<SeedStopInfo>>{}) {
+  if (auto const t = iConfig.getParameter<edm::InputTag>("pixelStubRecHits"); !t.label().empty())
+    stubPixelRecHitsToken_ = consumes(t);
+}
 
 void LSTOutputConverter::fillDescriptions(edm::ConfigurationDescriptions& descriptions) {
   edm::ParameterSetDescription desc;
@@ -121,6 +127,10 @@ void LSTOutputConverter::fillDescriptions(edm::ConfigurationDescriptions& descri
   desc.add<int>("maxITHitsToDropOTHitsPurePLS", 3);
   desc.add<bool>("produceSeeds", true);
   desc.add<bool>("produceTrackCandidates", true);
+  desc.add<edm::InputTag>("pixelStubRecHits", edm::InputTag(""))
+      ->setComment(
+          "pixel rechits whose cluster keys LSTProducer's otpull stubs hold (T5 / T4 candidates); empty: stubs "
+          "ignored");
   desc.add("propagatorAlong", edm::ESInputTag{"", "PropagatorWithMaterial"});
   desc.add("propagatorOpposite", edm::ESInputTag{"", "PropagatorWithMaterialOpposite"});
 
@@ -167,6 +177,17 @@ void LSTOutputConverter::produce(edm::Event& iEvent, const edm::EventSetup& iSet
 
   auto const& otHits = iEvent.get(lstOTHitsToken_).hits;
 
+  // pixel rechit of each cluster key, for the otpull stubs
+  std::vector<SiPixelRecHit const*> stubHits;
+  if (!stubPixelRecHitsToken_.isUninitialized()) {
+    for (auto const& hit : iEvent.get(stubPixelRecHitsToken_).data()) {
+      auto const key = hit.firstClusterRef().index();
+      if (key >= stubHits.size())
+        stubHits.resize(key + 1, nullptr);
+      stubHits[key] = &hit;
+    }
+  }
+
   TrajectorySeedCollection seeds;
   using Hit = SeedingHitSet::ConstRecHitPointer;
   std::vector<Hit> hitsForSeed;
@@ -197,6 +218,19 @@ void LSTOutputConverter::produce(edm::Event& iEvent, const edm::EventSetup& iSet
 
       for (auto const& hit : seed.recHits())
         recHits.push_back(hit.clone());
+    }
+
+    if (isT5orT4 && !stubHits.empty()) {
+      // otpull pixel stub: flagged pixel cluster keys in the first pixel layer slot
+      for (unsigned int hitSlot = 0; hitSlot < lst::Params_TC::kHitsPerLayer; ++hitSlot) {
+        unsigned int const key = lstOutput_view.hitIndices()[i][0][hitSlot];
+        if (key == lst::kTCEmptyHitIdx || !(key & lst::kOTPullPixFlag))
+          continue;
+        unsigned int const k = key & ~lst::kOTPullPixFlag;
+        if (k >= stubHits.size() || stubHits[k] == nullptr)
+          throw cms::Exception("LogicError") << "LST pixel stub cluster key " << k << " has no pixel rechit";
+        recHits.push_back(stubHits[k]->clone());
+      }
     }
 
     if (iType != lst::LSTObjType::pLS) {
@@ -248,6 +282,10 @@ void LSTOutputConverter::produce(edm::Event& iEvent, const edm::EventSetup& iSet
         int n = 0;
         unsigned int firstLayer;
         for (auto const& hit : recHits) {
+          if (GeomDetEnumerators::isInnerTracker(hit.det()->subDetector())) {
+            hitsForSeed.emplace_back(dynamic_cast<Hit>(&hit));  // pixel hits (a T5 / T4 stub) are all kept
+            continue;
+          }
           if (iType == lst::LSTObjType::T5) {
             auto hType = tracker.getDetectorType(hit.geographicalId());
             if (hType != TrackerGeometry::ModuleType::Ph2PSP && n < 2)
