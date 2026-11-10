@@ -78,6 +78,7 @@ def main():
         R, pv = load_rows(pat)
         prov[nm] = pv
         good = np.isfinite(R["X"]).all(axis=1)
+        nbad = int((~good).sum())
         part, (ev, ntr, nva) = split_events(R["ev"], a.seed)
         # train split only: false pairs kept 1 in 1/false_keep with weight 1/false_keep (val/test keep every row)
         drop = (part == 0) & (R["y"] == 0) & (np.random.default_rng(a.seed + 1).random(len(part)) >= a.false_keep)
@@ -87,7 +88,7 @@ def main():
         R["part"] = part[good]
         S[nm] = R
         y = R["y"] > 0
-        log(f"{nm}: {len(y)} rows ({(~good).sum()} non-finite dropped), true {y.sum()} (weighted false "
+        log(f"{nm}: {len(y)} rows kept ({nbad} non-finite dropped, {int(drop.sum())} train false pairs subsampled away), true {y.sum()} (weighted false "
             f"{R['w'][~y].sum():.4g}), events {len(ev)} (train {ntr}, val {nva}, test {len(ev) - ntr - nva})")
 
     # weights: sampling x displaced tiers; pos_weight on the reference train split; shares

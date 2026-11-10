@@ -4,6 +4,8 @@
 target fraction q of the TRUE pairs of that cell (test split of every sample, pooled). Floor: a cell never keeps fewer
 true pairs than the current decision (chi2 below 1 inside the one-sigma windows) does there. Cells with fewer than
 --nmin true pairs take the threshold of their pT row pooled over |eta| (or of every pair at or above that pT row).
+With --match-false-row R the pT rows from index R on take instead the score passing no more false pairs than the current
+decision does in that cell (high-pT fake control).
 Also emulates the arbitration (per-T3 best, per-cell mutual best) on the test split and prints true / false objects per
 event against the current decision. The final q is chosen by the end-to-end MTV scan, never by these offline numbers.
   python3 wp_otpull.py models/otpull_v1.json --lab ttbar='rows/ttbar_*.npz' --lab qcd='rows/qcd_*.npz' \
@@ -53,9 +55,11 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("model")
     ap.add_argument("--lab", action="append", required=True)
-    ap.add_argument("--q", default="0.6,0.7,0.8,0.9")
+    ap.add_argument("--q", default="0.6,0.7,0.8,0.9", help="comma list; an item may give one q per |eta| column, a/b/c")
     ap.add_argument("--nmin", type=int, default=40)
     ap.add_argument("--no-floor", action="store_true")
+    ap.add_argument("--match-false-row", type=int, default=99,
+                    help="pT rows from this index on: the threshold that passes no more false pairs than the current decision")
     ap.add_argument("--chi2-cut", type=float, default=1.0, help="the current decision's chi2 cut (floor, comparison)")
     ap.add_argument("--out", required=True)
     a = ap.parse_args()
@@ -77,10 +81,15 @@ def main():
     ip = np.concatenate([T[nm]["ip"] for nm in T])
     ie = np.concatenate([T[nm]["ie"] for nm in T])
     cur = np.concatenate([(T[nm]["gate1"] > 0) & (T[nm]["chi2"] < a.chi2_cut) for nm in T])
+    yf = ~yt
+    wall = np.concatenate([T[nm]["w"] for nm in T]).astype(np.float64)
     res = {"model": a.model, "pt_edges": WP_PT_EDGES, "eta_edges": WP_ETA_EDGES, "tables": {}}
     os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
     lines = []
-    for q in [float(x) for x in a.q.split(",")]:
+    for qs in a.q.split(","):
+        qv = [float(x) for x in qs.split("/")]  # one q, or one per |eta| column ("0.5/0.7/0.5")
+        qv = qv * NE if len(qv) == 1 else qv
+        assert len(qv) == NE, qs
         wp = np.zeros((NP, NE))
         info = []
         for p in range(NP):
@@ -95,11 +104,22 @@ def main():
                 if mm.sum() < a.nmin:
                     src, mm = "all", yt
                 fcur = float(cur[mm].mean())
-                qq = q if a.no_floor else max(q, fcur)
-                wp[p, e] = float(np.quantile(s[mm], 1.0 - qq))
+                if p >= a.match_false_row:
+                    # false pairs of the same pooled population, weighted (dump sampling)
+                    fm = yf & (ip >= p) if src in ("rows above", "all") else (yf & (ip == p) & ((ie == e) if src == "cell" else True))
+                    nfc = (wall[fm] * cur[fm]).sum()
+                    o = np.argsort(-s[fm])
+                    cw = np.cumsum(wall[fm][o])
+                    k = np.searchsorted(cw, nfc, side="right")
+                    wp[p, e] = float(s[fm][o][k]) if k < len(o) else 0.0
+                    qq = float((s[mm] > wp[p, e]).mean())
+                    src += ", matched false"
+                else:
+                    qq = qv[e] if a.no_floor else max(qv[e], fcur)
+                    wp[p, e] = float(np.quantile(s[mm], 1.0 - qq))
                 info.append((p, e, int(m.sum()), src, fcur, qq, wp[p, e]))
-        res["tables"][str(q)] = {"wp": wp.tolist(), "cells": info}
-        lines.append(f"q {q}:")
+        res["tables"][qs] = {"wp": wp.tolist(), "cells": info}
+        lines.append(f"q {qs}:")
         for p, e, n, src, fcur, qq, w in info:
             lines.append(f"  pT row {p} |eta| col {e}: true {n:7d} ({src}) current keep "
                          f"{'-' if fcur is None else f'{fcur:.3f}'} target {'-' if qq is None else f'{qq:.3f}'} wp {w:.6f}")

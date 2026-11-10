@@ -45,7 +45,8 @@ enabled (e.g. the extension-off `customizeOP`).
 * Adam lr 3e-3 cosine to 1e-5, batch 16384; keeps the epoch with the best worst-sample validation AUC.
 * Working points: per (T3 pT, |eta|) cell, the score keeping a fraction q of the true pairs of that cell (test split,
   both samples), never fewer than the chi2 decision keeps there; sparse cells pool their pT row (or every pair at or above
-  it). q is chosen by the end-to-end MTV scan, never by the offline numbers.
+  it). With --match-false-row R, the pT rows from R on instead take the threshold that passes no more false pairs than
+the current decision there (high-pT fake control). q is chosen by the end-to-end MTV scan, never by the offline numbers.
 
 ## Samples
 
@@ -53,4 +54,51 @@ enabled (e.g. the extension-off `customizeOP`).
 
 ## Commands
 
-(filled in below)
+All python runs inside a CMSSW environment (torch, uproot; the CMSSW torch has no NumPy bridge, `common.py` uses DLPack).
+
+```bash
+# 0. a scram area of this branch for the dump (CPU serial is enough), with the dump patch:
+cd <area>/src && patch -p1 < RecoTracker/LSTCore/standalone/analysis/DNN/otpull_score/dump.patch && scram b -j 16
+# 1. training caches (one per RAW file, events disjoint from dev / holdout / 5k lists), made with
+#    analysis/DNN/pixel_track_torch/scripts/make_cache.sh (cache_cfg.py: pixel digis, OT clusters, beamspots,
+#    random-engine states and the compact cluster truth pttTruth), e.g. <cachedir>/{ttbar,qcd}/cache_*.root
+# 2. the arm config of the deployed chain: a full-menu CPU config + customizeOP (or the integration stack)
+#    + cfg/otpull_score_block.py customizeOtpullScore(process, wp=[...]); its WP values do not change the dump
+# 3. dump -> rows -> train -> export (writes src/alpaka/OTPullNeuralNetworkWeights.h) -> working points:
+OTP_DUMP_AREA=<area> OTP_ARM=<arm cfg> OTP_WORK=<workdir> OTP_TAG=<tag> \
+OTP_CACHE_TTBAR='<cachedir>/ttbar/cache_*.root' OTP_CACHE_QCD='<cachedir>/qcd/cache_*.root' \
+OTP_SLOT='<optional slot wrapper prefix>' bash run_chain.sh all
+# 4. rebuild the branch area (and the dump area); C++ parity on a few events of one cache file (in the dump area):
+OTP_ARM=<arm cfg> OTP_CACHE=<one cache file> OTP_OUT=parity.root OTP_NEV=10 cmsRun cfg/dump_cfg.py
+python3 make_rows.py parity.npz parity.root && python3 parity_otpull.py parity.npz --model <workdir>/models/otpull_<tag>.json
+# 5. MTV scan of the WP tables in <workdir>/wp/otpull_<tag>.json (one arm per q); the chosen table goes into the menu
+#    configuration (otpullScoreWP).
+```
+
+## Production record: weights v1 (2026-11-03)
+
+* Dump binary: commit `7697f7266ca` (branch itaca-290-extoff-f4) + `dump.patch`, CMSSW_20_1_X_2026-11-02-1100, CPU
+  serial; arm = the extension-off prototype menu (`customizeOP`) + `customizeOtpullScore` (`production/v1/dump_arm_cpu.py`).
+* Training caches (one per RAW file; `production/v1/dump_provenance.txt` lists cache, RAW LFN, events, date per dump):
+  * ttbar: 10 files of `/RelValTTbar_14TeV/CMSSW_20_0_0_pre1-PU_150X_mcRun4_realistic_v1_STD_D121_RegeneratedGS_PU-v1/GEN-SIM-DIGI-RAW`
+    (all events of each file, 1000 events): 8c0c2859 98494d5b a3269634 a3cad76a d18a7913 d3b7463e d47af44a d9e9d5b0
+    ddd5b33a e57ac69b;
+  * QCD: 6 files of `/RelValQCD_Pt_1800_2400_14/...` (same campaign, 300 events): 8cc1c5f7 8d48d7b0 8d740de8 8f22095f
+    8fb2514c 94743cd7.
+  * Disjoint from the itaca_extoff dev files (local ttbar_raw / qcd_raw), the regions holdout lists and the 5k plot lists
+    (/mnt/data1/gsn27/here/hltqcd/val5k/files_{ttbar,qcd}.txt); cache production: analysis/DNN/pixel_track_torch.
+* Rows: 33.0M pairs (110k true) from ttbar, 11.9M (35k true) from QCD; all pairs dumped (falsePairKeep 1).
+* Training (`production/v1/train_v1.log`):
+  `python3 train_otpull.py --lab ttbar='rows/ttbar_*.npz' --lab qcd='rows/qcd_*.npz' --ref ttbar --share qcd=0.25 --false-keep 0.25 --epochs 120 --tag v1 --out models`
+  (= `run_chain.sh train` with OTP_EPOCHS=120); pos_weight 112.2; best epoch 80, validation worst-sample AUC 0.99437;
+  test AUC ttbar 0.99613, QCD 0.99676 (the chi2 alone: about 0.981).
+* Export: `python3 export_otpull.py models/otpull_v1.json` (max |header - model| logit 1.5e-5).
+* Working points: `python3 wp_otpull.py models/otpull_v1.json --lab ... --q 0.5,0.6,0.7,0.5/0.7/0.5,0.5/0.8/0.5,0.6/0.8/0.6`
+  (`production/v1/otpull_v1.{json,txt}`; with `--match-false-row 3`: `otpull_v1_mf3.*`).
+* Model json (with the training history and the weights before folding): `production/v1/otpull_v1.json`.
+* Selected working points (end-to-end MTV scan on the itaca_extoff dev files + streamed holdout, against the chi2 decision
+  of the same menu): q 0.6 / 0.8 / 0.6 in the |eta| columns, `production/v1/wp_selected.py` (`OTPULL_WP_V1`). Scanned:
+  provisional-model q 0.5 and 0.7 (one q: the gain grows with q, but q 0.7 raised the barrel fake rate), per-column
+  0.5 / 0.7 / 0.5 (provisional), and v1 0.6 / 0.8 / 0.6 (chosen) and 0.5 / 0.8 / 0.5 (barrel efficiency loss).
+* C++ parity of v1: the dump build's logits vs `OTPullNeuralNetworkWeights.h` in numpy (`parity_otpull.py`), see the
+  lane report.
