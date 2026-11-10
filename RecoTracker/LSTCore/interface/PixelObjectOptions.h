@@ -2,8 +2,8 @@
 #define RecoTracker_LSTCore_interface_PixelObjectOptions_h
 
 namespace lst {
-  // Options of the pT5 selection and ranking and of the pLS cross cleaning (plain data, passed to the kernels by
-  // value). The defaults are the standard selection.
+  // Options of the pT5 selection and ranking (plain data, passed to the kernels by value). The defaults are the
+  // standard selection.
   struct PixelObjectOptions {
     // pT5 rz and outward rPhi chi2 cuts at every pLS pT, not only below the high-pT threshold
     bool pT5Chi2CutsAllPt = false;
@@ -18,8 +18,6 @@ namespace lst {
     // outward rPhi cut for pLS above the high-pT threshold: 0 unchanged, > 0 threshold x (pT / threshold)^p,
     // < 0 no cut
     float pT5RPhiOutHiPow = 0.f;
-    // T5 track candidates remove the pLSs they embed close to (pLS x T5 cross cleaning)
-    bool t5CleanspLS = true;
     // 3-hit pLSs become track candidates last, after every other candidate (the OT-seeded ones included), and only if
     // none of their hits is in a track candidate
     bool tripletpLSFillHoles = false;

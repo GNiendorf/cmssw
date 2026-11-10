@@ -50,7 +50,6 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
       pixelObjectOptions_.pT5RPhiInHiScale = config.getParameter<double>("pT5RPhiInHiScale");
       pixelObjectOptions_.pT5WpHigh = config.getParameter<double>("pT5WpHigh");
       pixelObjectOptions_.pT5RPhiOutHiPow = config.getParameter<double>("pT5RPhiOutHiPow");
-      pixelObjectOptions_.t5CleanspLS = config.getParameter<bool>("t5CleanspLS");
       pixelObjectOptions_.tripletpLSFillHoles = config.getParameter<bool>("tripletpLSFillHoles");
       if (otpullOn_) {
         otpullToken_ = consumes(config.getParameter<edm::InputTag>("otpullCells"));
@@ -171,7 +170,6 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
           ->setComment(
               "pT5 outward rPhi cut for high-pT pLS: 0 unchanged, > 0 threshold scaled by (pT / threshold)^p, < 0 "
               "off");
-      desc.add<bool>("t5CleanspLS", true)->setComment("T5 track candidates remove the pLSs they embed close to");
       desc.add<bool>("tripletpLSFillHoles", false)
           ->setComment(
               "3-hit pLSs become track candidates after all other candidates, only if none of their hits is in a track "

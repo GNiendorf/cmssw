@@ -110,8 +110,9 @@ def customizeCandidate(process,
         if 'LSTProducer' in m.type_():
             m.tcpLSTriplets = False
             m.tripletpLSFillHoles = cms.bool(True)
-            m.t5CleanspLS = cms.bool(t5CleanspLS)
-            done.append('%s fill-holes, T5 x pLS cleaning %s' % (n, t5CleanspLS))
+            if t5CleanspLS:
+                raise RuntimeError('candidate: the T5 x pLS cross cleaning is removed on this branch')
+            done.append('%s fill-holes, T5 x pLS cleaning removed' % n)
     pttDeploy(process, pttModel, pttWP)
     customizeOtpullScore(process, wp=otpullWP)
     nb = nf = 0

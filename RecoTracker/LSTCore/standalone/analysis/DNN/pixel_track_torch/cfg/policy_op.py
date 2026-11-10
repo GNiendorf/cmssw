@@ -156,7 +156,6 @@ def customizeOP(process, budget=_OP_BUDGET, keepForwardSkipPairs=False):
         m.pT5WpHigh = cms.double(0.7)
         m.pT5RPhiOutHiPow = cms.double(-1.)
         m.pT5Chi2CutsAllPt = cms.bool(True)
-        m.t5CleanspLS = cms.bool(False)
         done.append('%s otpull %s attach 5 pT5 opts, noT5cc, c2, tcpLSTriplets False' % (n, m.otpullCells.value()))
     so = [n for n, m in process.producers_().items() if 'MkFitAlpakaBuildProducer' in m.type_()]
     for n in so:
