@@ -59,6 +59,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     int nAbsEtaEdges = 0;
     float highPurityThreshold = -1.f;
     int highPurityMinNumberOfHits = 0;
+    // per (pT, |eta|) cell, same layout as thresholds (may be null): the high-purity cut of the tracks with at least
+    // highPurityMinNumberOfHits hits (in place of highPurityThreshold), and of three-hit tracks (null: never high purity)
+    const float* highPurityThresholds = nullptr;
+    const float* highPurityThresholdsThreeHit = nullptr;
   };
 
   // selectedHighPurity (may be null): per selected track, whether it is in the high-purity subset; filled only

@@ -170,6 +170,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     const std::vector<float> wpThresholdsThreeHit_;
     const double highPurityThreshold_;
     const int highPurityMinNumberOfHits_;
+    const std::vector<float> highPurityThresholds_;
+    const std::vector<float> highPurityThresholdsThreeHit_;
     std::optional<cms::alpakatools::device_buffer<Device, float[]>> wpDevice_;
     // wait for the selector's device work at the end of produce, so that its input tracks may be deleted early
     const bool waitBeforeReturn_;
@@ -210,6 +212,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
         wpThresholdsThreeHit_(toFloats(iConfig.getParameter<std::vector<double>>("wpThresholdsThreeHit"))),
         highPurityThreshold_(iConfig.getParameter<double>("highPurityThreshold")),
         highPurityMinNumberOfHits_(iConfig.getParameter<int>("highPurityMinNumberOfHits")),
+        highPurityThresholds_(toFloats(iConfig.getParameter<std::vector<double>>("highPurityThresholds"))),
+        highPurityThresholdsThreeHit_(
+            toFloats(iConfig.getParameter<std::vector<double>>("highPurityThresholdsThreeHit"))),
         waitBeforeReturn_(iConfig.getParameter<bool>("waitBeforeReturn")),
         tokenTrackOut_(produces()) {
     checkEdges(wpPtEdges_, "wpPtEdges");
@@ -222,6 +227,13 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     if (!wpThresholdsThreeHit_.empty() && (wpThresholds_.empty() || wpThresholdsThreeHit_.size() != nCells)) {
       throw cms::Exception("PixelTrackConfiguration")
           << "wpThresholdsThreeHit needs wpThresholds and the same number of entries (" << nCells << ")";
+    }
+    for (auto const* hp : {&highPurityThresholds_, &highPurityThresholdsThreeHit_}) {
+      if (!hp->empty() && (wpThresholds_.empty() || hp->size() != nCells || highPurityThreshold_ < 0.)) {
+        throw cms::Exception("PixelTrackConfiguration")
+            << "highPurityThresholds(ThreeHit) need wpThresholds, a non-negative highPurityThreshold and " << nCells
+            << " entries";
+      }
     }
     if (useHitFeatures_) {
       pixelHitsToken_ = consumes(iConfig.getParameter<edm::InputTag>("pixelRecHitSrc"));
@@ -245,12 +257,15 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
   }
 
   void PixelTrackTorchHighPuritySelector::beginStream(edm::StreamID /*sid*/, Queue queue) {
-    // The working-point table goes to the device once: edges, then the cut block, then the three-hit block
+    // The working-point table goes to the device once: edges, then the cut block, the three-hit block and the
+    // high-purity blocks
     if (!wpThresholds_.empty()) {
       std::vector<float> packed(wpPtEdges_);
       packed.insert(packed.end(), wpAbsEtaEdges_.begin(), wpAbsEtaEdges_.end());
       packed.insert(packed.end(), wpThresholds_.begin(), wpThresholds_.end());
       packed.insert(packed.end(), wpThresholdsThreeHit_.begin(), wpThresholdsThreeHit_.end());
+      packed.insert(packed.end(), highPurityThresholds_.begin(), highPurityThresholds_.end());
+      packed.insert(packed.end(), highPurityThresholdsThreeHit_.begin(), highPurityThresholdsThreeHit_.end());
       auto host = cms::alpakatools::make_host_buffer<float[]>(queue, packed.size());
       std::copy(packed.begin(), packed.end(), host.data());
       wpDevice_.emplace(cms::alpakatools::make_device_buffer<float[]>(queue, packed.size()));
@@ -397,8 +412,17 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
       wp.ptEdges = base;
       wp.absEtaEdges = base + wp.nPtEdges;
       wp.thresholds = wp.absEtaEdges + wp.nAbsEtaEdges;
-      if (!wpThresholdsThreeHit_.empty())
-        wp.thresholdsThreeHit = wp.thresholds + wpThresholds_.size();
+      const float* next = wp.thresholds + wpThresholds_.size();
+      if (!wpThresholdsThreeHit_.empty()) {
+        wp.thresholdsThreeHit = next;
+        next += wpThresholdsThreeHit_.size();
+      }
+      if (!highPurityThresholds_.empty()) {
+        wp.highPurityThresholds = next;
+        next += highPurityThresholds_.size();
+      }
+      if (!highPurityThresholdsThreeHit_.empty())
+        wp.highPurityThresholdsThreeHit = next;
     }
     wp.highPurityThreshold = highPurityThreshold_;
     wp.highPurityMinNumberOfHits = highPurityMinNumberOfHits_;
@@ -479,6 +503,11 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     // qualities as they are.
     desc.add<double>("highPurityThreshold", -1.0);
     desc.add<int>("highPurityMinNumberOfHits", 4);
+    // High-purity cuts per (pT, |eta|) cell, in the layout of wpThresholds (need wpThresholds and highPurityThreshold
+    // >= 0): highPurityThresholds replaces highPurityThreshold for the tracks with at least highPurityMinNumberOfHits
+    // hits; highPurityThresholdsThreeHit puts the selected three-hit tracks at or above it in the subset. Empty: unused.
+    desc.add<std::vector<double>>("highPurityThresholds", {});
+    desc.add<std::vector<double>>("highPurityThresholdsThreeHit", {});
     desc.add<bool>("waitBeforeReturn", false)
         ->setComment(
             "Wait for the selector's device work before produce returns, so that the input tracks can be listed in "
