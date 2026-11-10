@@ -13,6 +13,7 @@
 #include "T5EmbedNetworkWeights.h"
 #include "pLSEmbedNetworkWeights.h"
 #include "T4NeuralNetworkWeights.h"
+#include "OTPullNeuralNetworkWeights.h"
 
 namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
 
@@ -191,6 +192,31 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::lst {
     }
 
   }  // namespace pt3dnn
+
+  namespace otpulldnn {
+    // logit of the (OT T3, IT cell) pair network of the OT-seeded lookup; x as built in otpullScan, clipped here
+    // (the input standardisation is folded into the first layer)
+    template <alpaka::concepts::Acc TAcc>
+    ALPAKA_FN_ACC ALPAKA_FN_INLINE float runInference(TAcc const& acc, float (&x)[dnn::otpulldnn::kInputFeatures]) {
+      constexpr unsigned int kInputFeatures = dnn::otpulldnn::kInputFeatures;
+      constexpr unsigned int kHiddenFeatures = dnn::otpulldnn::kHiddenFeatures;
+      CMS_UNROLL_LOOP
+      for (unsigned int i = 0; i < kInputFeatures; ++i)
+        x[i] = alpaka::math::min(
+            acc, alpaka::math::max(acc, x[i], dnn::otpulldnn::kClipLo[i]), dnn::otpulldnn::kClipHi[i]);
+
+      float x1[kHiddenFeatures];
+      float x2[kHiddenFeatures];
+      float x3[1];
+
+      linear_layer<kInputFeatures, kHiddenFeatures>(x, x1, dnn::otpulldnn::wgtT_layer1, dnn::otpulldnn::bias_layer1);
+      relu_activation<kHiddenFeatures>(x1);
+      linear_layer<kHiddenFeatures, kHiddenFeatures>(x1, x2, dnn::otpulldnn::wgtT_layer2, dnn::otpulldnn::bias_layer2);
+      relu_activation<kHiddenFeatures>(x2);
+      linear_layer<kHiddenFeatures, 1>(x2, x3, dnn::otpulldnn::wgtT_output_layer, dnn::otpulldnn::bias_output_layer);
+      return x3[0];
+    }
+  }  // namespace otpulldnn
 
   namespace t5dnn {
     // Fills the softmax outputs (fake, prompt, displaced); returns the creation decision.

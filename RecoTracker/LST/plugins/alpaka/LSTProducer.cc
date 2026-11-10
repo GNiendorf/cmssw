@@ -76,6 +76,22 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
         otpullParams_.attachPLSVeto = config.getParameter<int>("otpullAttachPLSVeto");
         otpullParams_.attachHiPt = config.getParameter<double>("otpullAttachHiPt");
         otpullParams_.attachChi2CutHi = config.getParameter<double>("otpullAttachChi2CutHi");
+        otpullParams_.scoreMode = config.getParameter<int>("otpullScoreMode");
+        otpullParams_.scoreWindow = config.getParameter<double>("otpullScoreWindow");
+        otpullParams_.scoreJrmsCut = config.getParameter<double>("otpullScoreJrmsCut");
+        auto const wpPt = config.getParameter<std::vector<double>>("otpullScoreWPPtEdges");
+        auto const wpEta = config.getParameter<std::vector<double>>("otpullScoreWPEtaEdges");
+        auto const wp = config.getParameter<std::vector<double>>("otpullScoreWP");
+        if (wpPt.size() != lst::OTPullParams::kNWpPt - 1 || wpEta.size() != lst::OTPullParams::kNWpEta - 1 ||
+            wp.size() != lst::OTPullParams::kNWpPt * lst::OTPullParams::kNWpEta)
+          throw cms::Exception("Configuration") << "otpullScoreWPPtEdges / otpullScoreWPEtaEdges / otpullScoreWP size";
+        for (int i = 0; i < lst::OTPullParams::kNWpPt - 1; ++i)
+          otpullParams_.wpPtEdges[i] = wpPt[i];
+        for (int i = 0; i < lst::OTPullParams::kNWpEta - 1; ++i)
+          otpullParams_.wpEtaEdges[i] = wpEta[i];
+        for (int i = 0; i < lst::OTPullParams::kNWpPt; ++i)
+          for (int j = 0; j < lst::OTPullParams::kNWpEta; ++j)
+            otpullParams_.wp[i][j] = wp[i * lst::OTPullParams::kNWpEta + j];
         if (otpullParams_.attach) {
           auto const t = config.getParameter<edm::InputTag>("otpullPixelSrcRows");
           if (t.label().empty())
@@ -182,6 +198,15 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
       desc.add<double>("otpullAttachHiPt", 1e9)
           ->setComment("GeV, anchor-circle pT above which otpullAttachChi2CutHi applies");
       desc.add<double>("otpullAttachChi2CutHi", 1.0);
+      desc.add<int>("otpullScoreMode", 0)
+          ->setComment("T3 lookup decision: 0 chi2 below otpullChi2Cut, 1 the pair network with the working points");
+      desc.add<double>("otpullScoreWindow", 3.0)->setComment("sigma, outer-hit residual windows of the pair network");
+      desc.add<double>("otpullScoreJrmsCut", 5.0)->setComment("sigma, joint circle rms prefilter of the pair network");
+      desc.add<std::vector<double>>("otpullScoreWPPtEdges", {2., 5., 10., 25., 50.})->setComment("GeV, T3 pT");
+      desc.add<std::vector<double>>("otpullScoreWPEtaEdges", {0.9, 1.5})->setComment("T3 |eta|");
+      desc.add<std::vector<double>>("otpullScoreWP",
+                                    std::vector<double>(lst::OTPullParams::kNWpPt * lst::OTPullParams::kNWpEta, 0.5))
+          ->setComment("pair-network working points, row-major (pT bins x |eta| bins)");
       desc.add<int>("otpullAttachPLSVeto", 0)
           ->setComment("1: cells sharing a hit with the pLS of a pLS/pT3/pT5 TC are not offered to TCs");
       desc.add<edm::InputTag>("otpullPixelSrcRows", edm::InputTag(""))

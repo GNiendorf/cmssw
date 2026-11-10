@@ -1454,7 +1454,7 @@ void LSTEvent::pullOTCells() {
                     n[16]));
   lstWarning(
       std::format("[OTPULL] cells {} pLS-matched {} (last-hit pos <50um {} <500um {} far {}) kept {} T3s searched {} "
-                  "window tests {} "
+                  "window tests {} network evaluations {} "
                   "added {} dropped {}",
                   nCells,
                   n[4],
@@ -1464,6 +1464,7 @@ void LSTEvent::pullOTCells() {
                   n[8],
                   n[0],
                   n[1],
+                  n[17],
                   n[2],
                   n[3]));
 }
