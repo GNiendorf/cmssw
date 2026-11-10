@@ -229,8 +229,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
                               const ::reco::CAGraphSoAConstView& cc,
                               const ::reco::CANtupletCutsSoAConstView& ntupletCuts,
                               Queue& queue);
-    // The buffers sized by the tuple capacity, allocated by the constructor unless countTripletTuples defers them
-    void allocateTuples(uint32_t maxTuples, Queue& queue);
+    // The buffers sized by the tuple capacity, allocated by the constructor unless countTripletTuples defers them;
+    // nShortTuples is the 3-hit tuple count when countTripletTuples sized maxTuples (zero otherwise)
+    void allocateTuples(uint32_t maxTuples, uint32_t nShortTuples, Queue& queue);
 
     void launchKernels(const HitsMultiView& hh,
                        uint32_t offsetBPIX2,

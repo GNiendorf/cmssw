@@ -806,9 +806,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
 
     if (countShort) {
       kernels.connectCells(trackingHits, offsetBPIX2, layers, graph, tripletCuts, queue);
-      const uint32_t maxTuples = nTracks + kernels.countShortTuples(trackingHits, graph, ntupletCuts, queue);
+      const uint32_t nShort = kernels.countShortTuples(trackingHits, graph, ntupletCuts, queue);
+      const uint32_t maxTuples = nTracks + nShort;
       emplaceTracks(maxTuples);
-      kernels.allocateTuples(maxTuples, queue);
+      kernels.allocateTuples(maxTuples, nShort, queue);
     }
 
     kernels.otpullExport_ = otpullExport;
