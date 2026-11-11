@@ -702,9 +702,24 @@ void TrackListMerger::produce(edm::Event& e, const edm::EventSetup& es) {
   // One particle as a track with pixel hits and one without shares no hit: compare the helices at the beam line (chisq
   // with both covariances); one parameter's term never exceeds the full chisq, so phi and lambda reject most pairs first.
   if (maxSameParticleChisq_ > 0 && ngood > 1) {
-    auto trackOf = [&](unsigned int j) -> const reco::Track& {
-      return trackColls[trackCollNum[j]]->at(j - trackCollFirsts[trackCollNum[j]]);
+    struct Candidate {
+      unsigned int index;
+      const reco::Track* track;
+      double phi, lambda, phiVariance, lambdaVariance;
     };
+    std::vector<Candidate> withPixels, withoutPixels;
+    for (unsigned int j = 0; j < rSize; j++) {
+      if (selected[j] == 0)
+        continue;
+      const reco::Track& track = trackColls[trackCollNum[j]]->at(j - trackCollFirsts[trackCollNum[j]]);
+      (track.hitPattern().numberOfValidPixelHits() >= 2 ? withPixels : withoutPixels)
+          .push_back({j,
+                      &track,
+                      track.phi(),
+                      track.lambda(),
+                      track.covariance(reco::TrackBase::i_phi, reco::TrackBase::i_phi),
+                      track.covariance(reco::TrackBase::i_lambda, reco::TrackBase::i_lambda)});
+    }
     auto commonModule = [&](unsigned int k1, unsigned int k2) {
       auto ih = rh1[k1].begin(), jh = rh1[k2].begin();
       while (ih != rh1[k1].end() && jh != rh1[k2].end()) {
@@ -714,33 +729,26 @@ void TrackListMerger::produce(edm::Event& e, const edm::EventSetup& es) {
       }
       return false;
     };
-    std::vector<unsigned int> withPixels, withoutPixels;
-    for (unsigned int j = 0; j < rSize; j++) {
-      if (selected[j] != 0)
-        (trackOf(j).hitPattern().numberOfValidPixelHits() >= 2 ? withPixels : withoutPixels).push_back(j);
-    }
-    for (auto ip : withPixels) {
-      const reco::Track& pixelTrack = trackOf(ip);
-      for (auto jo : withoutPixels) {
-        if (selected[jo] == 0)
+    for (auto const& pixel : withPixels) {
+      for (auto const& other : withoutPixels) {
+        if (selected[other.index] == 0)
           continue;
-        const reco::Track& otherTrack = trackOf(jo);
-        reco::TrackBase::CovarianceMatrix cov = pixelTrack.covariance() + otherTrack.covariance();
-        reco::TrackBase::ParameterVector diff = pixelTrack.parameters() - otherTrack.parameters();
-        diff[reco::TrackBase::i_phi] = reco::deltaPhi(pixelTrack.phi(), otherTrack.phi());
-        if (diff[reco::TrackBase::i_phi] * diff[reco::TrackBase::i_phi] >
-                maxSameParticleChisq_ * cov(reco::TrackBase::i_phi, reco::TrackBase::i_phi) ||
-            diff[reco::TrackBase::i_lambda] * diff[reco::TrackBase::i_lambda] >
-                maxSameParticleChisq_ * cov(reco::TrackBase::i_lambda, reco::TrackBase::i_lambda))
+        const double dPhi = reco::deltaPhi(pixel.phi, other.phi);
+        const double dLambda = pixel.lambda - other.lambda;
+        if (dPhi * dPhi > maxSameParticleChisq_ * (pixel.phiVariance + other.phiVariance) ||
+            dLambda * dLambda > maxSameParticleChisq_ * (pixel.lambdaVariance + other.lambdaVariance) ||
+            commonModule(indexG[pixel.index], indexG[other.index]))
           continue;
-        if (commonModule(indexG[ip], indexG[jo]) || !cov.Invert() ||
-            !(ROOT::Math::Similarity(diff, cov) < maxSameParticleChisq_))
+        reco::TrackBase::CovarianceMatrix cov = pixel.track->covariance() + other.track->covariance();
+        reco::TrackBase::ParameterVector diff = pixel.track->parameters() - other.track->parameters();
+        diff[reco::TrackBase::i_phi] = dPhi;
+        if (!cov.Invert() || !(ROOT::Math::Similarity(diff, cov) < maxSameParticleChisq_))
           continue;
-        if (otherTrack.numberOfValidHits() > pixelTrack.numberOfValidHits()) {
-          selected[ip] = 0;
+        if (other.track->numberOfValidHits() > pixel.track->numberOfValidHits()) {
+          selected[pixel.index] = 0;
           break;
         }
-        selected[jo] = 0;
+        selected[other.index] = 0;
       }
     }
   }
